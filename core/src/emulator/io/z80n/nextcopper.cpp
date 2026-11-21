@@ -96,13 +96,7 @@ void NextCopper::RunTo(uint64_t target)
             return;
         }
         _t = 0;
-        _idleUntil = 0;  // a new frame: the wait of the old one says nothing
-        // mode 11 restarts at line 0, horizontal 0
-        if (_mode == 3)
-        {
-            _pc = 0;
-            _pending = false;
-        }
+        _idleUntil = 0;  // a new frame: the wait of the old one says nothing (mode 11 restarts in RunSegment)
     }
     RunSegment(target);
     _running = false;
@@ -126,6 +120,14 @@ bool NextCopper::RunSegment(uint64_t end)
         {
             _t = end;
             break;
+        }
+        // mode 11 restarts the list where the copper's line counter cvc is 0 at horizontal 0 (copper.vhd: `copper_en_i = "11" and
+        // vcount_i = 0 and hcount_i = 0`); cvc is NR #64 on the first paper line (zxula_timing.vhd), so that is NR #64 lines before it
+        const uint64_t restart = _mode == 3 ? RestartClock() : UINT64_MAX;
+        if (_t == restart)
+        {
+            _pc = 0;
+            _pending = false;
         }
         if (_pending)
         {
@@ -161,9 +163,13 @@ bool NextCopper::RunSegment(uint64_t end)
                 wanted = (rawLine * _hcPerLine + threshold) * 4;
             }
             const bool comes = wanted != UINT64_MAX && wanted > _t;
-            // Nothing happens before `wanted`; a beam that is past the place for this frame waits for the next one
-            _idleUntil = comes ? wanted : _frameClocks;
-            _t = comes ? (wanted < end ? wanted : end) : end;
+            // Nothing happens before `wanted`; a beam that is past the place for this frame waits for the next one. Mode 11's restart
+            // comes first when it is earlier
+            uint64_t until = comes ? wanted : _frameClocks;
+            if (restart > _t && restart < until)
+                until = restart;
+            _idleUntil = until;
+            _t = until < end ? until : end;
             continue;
         }
         const uint8_t reg = static_cast<uint8_t>((instruction >> 8) & 0x7F);

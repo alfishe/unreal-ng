@@ -89,12 +89,14 @@ protected:
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
     NextBoard& Board() { return _ports->Board(); }
-    /// Presses a board button the way a program or the host key does (NR #02); true when the board took the NMI request
+    /// Presses a board button the way a program or the host key does (NR #02); true when the board took the NMI request (the journal's
+    /// last NMI request; the NR #02 flag says only that no NMI was on its way)
     bool Press(uint8_t bit)
     {
         Board().WriteNextReg(kRegResetType, 0);
         Board().WriteNextReg(kRegResetType, bit);
-        return (Board().Read(kRegResetType) & bit) != 0;
+        const std::vector<NextIntEvent> events = _ports->IntJournal().Query(NextIntJournalQuery{});
+        return !events.empty() && events.back().kind == NextIntKind::NmiRequest && events.back().accepted;
     }
     StateNode Report() { return DeviceState::NextNmiReport(_context, NextIntJournalQuery{}); }
     const StateNode& Event(const StateNode& report, size_t index)

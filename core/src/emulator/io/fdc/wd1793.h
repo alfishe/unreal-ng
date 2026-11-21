@@ -1109,6 +1109,9 @@ public:
     void selectDriveLine(int drive);
     /// The card's side select latch (the WD1772 has no side output)
     void setSide(bool side1);
+    /// The card's /DDEN line (the DISCiPLE's control latch bit 2; the +D ties it low): true = single density (FM).
+    /// Kept in the density bit of the Beta 128 register image, which the TTD blob carries
+    void setDensityLine(bool singleDensity);
     /// endregion </Methods>
 
     /// region <Helper methods>

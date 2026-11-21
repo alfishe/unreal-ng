@@ -471,10 +471,13 @@ bool CaptureImage(EmulatorContext& context, const MachineView& view, Image& out)
     out.paging.p1FFD = view.p1FFD;
     out.paging.pEFF7 = view.pEFF7;
     out.trdosPaged = (state.flags & CF_TRDOS) != 0;
-    // An MGT +D: its paging, as the .z80 v3 hardware 3 / 6 keep it (SZX writes the whole card: LoaderSZX::Capture)
+    // An MGT card: its paging and model (byte 83: 16 +D, 0 DISCiPLE with an Epson printer), as the .z80 v3 hardware
+    // 3 / 6 keep it (SZX writes the whole +D: LoaderSZX::Capture)
     if (const PlusDCard* plusd = PlusDCard::Find(&context))
-        out.extensions.push_back({"capture", "plusd", 2, plusd->IsPaged() ? "MGT +D, paged in" : "MGT +D, paged out",
-                                  {static_cast<uint8_t>(plusd->IsPaged() ? 1 : 0), 16}});
+        out.extensions.push_back({"capture", "plusd", 2,
+                                  std::string(plusd->DisplayName()) + (plusd->IsPaged() ? ", paged in" : ", paged out"),
+                                  {static_cast<uint8_t>(plusd->IsPaged() ? 1 : 0),
+                                   static_cast<uint8_t>(plusd->IsDisciple() ? 0 : 16)}});
 
     Cpu& cpu = out.cpu;
     cpu.af = z.af;

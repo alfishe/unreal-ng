@@ -112,6 +112,8 @@ enum Z80_Models_v3 : uint8_t
 };
 
 /// v3 byte 83 (mgtType): the M.G.T. interface of hardware 3 / 6 (0 DISCiPLE + Epson, 1 DISCiPLE + HP, 16 +D)
+constexpr uint8_t kMgtTypeDiscipleEpson = 0;
+constexpr uint8_t kMgtTypeDiscipleHp = 1;
 constexpr uint8_t kMgtTypePlusD = 16;
 
 struct Z80Header_v2 : public Z80Header_v1

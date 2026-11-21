@@ -301,6 +301,7 @@ StateNode NextPixel(EmulatorContext* context, const NextPixelQuery& query)
     NextLayer::InspectEnv env;
     env.ram = context->pMemory ? context->pMemory->RAMPageAddress(0) : nullptr;
     env.ramPages = context->pMemory ? static_cast<NextMemory*>(context->pMemory)->InstalledRamPages() : MAX_RAM_PAGES;
+    env.sramTwin = context->pMemory ? static_cast<NextMemory*>(context->pMemory)->SramTwin() : nullptr;
     env.regs = &decoder->Board().Video();
     env.sprites = &decoder->Board().Sprites();
     return NextLayer::InspectPixel(*frame, env, query.x, query.y, query.sub);

@@ -125,9 +125,13 @@ std::string DescribeFittedDevices(EmulatorContext* context)
     out << "ttd";
     for (const auto& [id, size] : sizes)
     {
-        // The Ethernet NICs' blob carries per-process network state of variable length (its layout is guarded by
-        // the TTD corpus): only its presence is compared
-        if (id == static_cast<int>(ttd::PeripheralId::EthernetNics))
+        // Only the presence of these blobs is compared:
+        // - the Ethernet NICs' blob carries per-process network state of variable length (its layout is guarded by
+        //   the TTD corpus);
+        // - the Next's NextState image grows with every recorded Next field; its layout is guarded by its own image
+        //   version and the round-trip tests (core/tests/debugger/ttd/ttdnextstate_test.cpp), so a size here only made
+        //   correct changes fail
+        if (id == static_cast<int>(ttd::PeripheralId::EthernetNics) || id == static_cast<int>(ttd::PeripheralId::NextState))
         {
             out << " " << id << ":var";
             continue;

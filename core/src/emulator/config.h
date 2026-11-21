@@ -211,6 +211,11 @@ public:
 	/// @p folder as "<config folder>.nvram" (the desktop app sets it to ~/.unreal-ng/nvram). Empty (the default:
 	/// tests, headless instances) = such a config keeps its NVRAM for the session only
 	static void SetDefaultNvramFolder(const std::string& folder);
+	/// The VDAC4 ESP's LittleFS (module cache, path.cfg) that outlives the process: a config with no [VDAC4] EspCache
+	/// keeps it in @p folder (the desktop app sets ~/.unreal-ng/vdac4/zm). Empty (the default: tests, headless
+	/// instances) = every board gets an empty one of its own, removed with it: each run starts from the same state
+	static void SetDefaultVdac4EspCacheFolder(const std::string& folder);
+	static const std::string& DefaultVdac4EspCacheFolder();
 
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/

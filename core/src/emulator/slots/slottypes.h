@@ -112,7 +112,11 @@ enum class Src : uint16_t
     SincTimesKempston,
     MameBeta128,
     FusePlusD,
+    FuseDisciple,
     MameMgt,
+    MpratoDivMmc,
+    RepoDivMmcRtl,
+    RepoDivMmcSurvey,
     // The SL-0 research of this design (facts collected from sources without a direct URL, e.g. SVN-only)
     RepoSlotsResearchMachines,
     RepoSlotsResearchCards,

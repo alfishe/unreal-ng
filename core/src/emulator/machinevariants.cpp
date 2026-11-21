@@ -141,13 +141,15 @@ bool Beta128Supported(std::string* reason)
     return true;
 }
 
-/// A 48K / 128K with the MGT +D disk interface on its edge connector (docs/inprogress/2026-11-15-mgt-plus-d/design.md
-/// §2): `edge.1 = plusd` on top of the machine's own slots; the 48K's Beta 128 is not fitted. G+DOS v1a pages in at
-/// /RESET and on the traps #0008 / #003A / #0066 / #028E; two drives `fdd.plusd1` / `fdd.plusd2`
+/// A 48K / 128K with an MGT disk interface on its edge connector (docs/inprogress/2026-11-15-mgt-plus-d/design.md
+/// §2, §12): `edge.1 = plusd` / `disciple` on top of the machine's own slots; the 48K's Beta 128 is not fitted.
+/// G+DOS v1a pages in on the traps #0008 / #003A / #0066 / #028E, GDOS 3 on #0001 / #0008 / #0066 / #028E; two drives
+/// `fdd.plusd1` / `fdd.plusd2` or `fdd.disciple1` / `fdd.disciple2`
 constexpr const char* kPlusDSlot = "edge.1";
 constexpr const char* kPlusDCard = "plusd";
+constexpr const char* kDiscipleCard = "disciple";
 
-void ApplyPlusD(CONFIG& config)
+void ApplyMgtCard(CONFIG& config, const char* card)
 {
     config.trdos_present = false;
     config.dos_rom_path[0] = '\0';
@@ -155,16 +157,41 @@ void ApplyPlusD(CONFIG& config)
     std::erase_if(slots.entries, [](const SlotConfigEntry& entry) { return entry.slot == kPlusDSlot; });
     SlotConfigEntry entry;
     entry.slot = kPlusDSlot;
-    entry.card = kPlusDCard;
-    entry.source = "variant PLUSD";
+    entry.card = card;
+    entry.source = std::string("variant ") + (std::string(card) == kDiscipleCard ? "DISCIPLE" : "PLUSD");
     slots.entries.push_back(entry);
     SlotManager::UseSlots(slots, config);
 }
 
-bool HasPlusD(const CONFIG& config)
+void ApplyPlusD(CONFIG& config)
+{
+    ApplyMgtCard(config, kPlusDCard);
+}
+
+void ApplyDisciple(CONFIG& config)
+{
+    ApplyMgtCard(config, kDiscipleCard);
+}
+
+bool HasCard(const CONFIG& config, const char* card)
 {
     return std::any_of(config.slotConfig.entries.begin(), config.slotConfig.entries.end(),
-                       [](const SlotConfigEntry& entry) { return entry.slot == kPlusDSlot && entry.card == kPlusDCard; });
+                       [card](const SlotConfigEntry& entry) { return entry.slot == kPlusDSlot && entry.card == card; });
+}
+
+bool HasPlusD(const CONFIG& config)
+{
+    return HasCard(config, kPlusDCard);
+}
+
+bool Is48kDisciple(const CONFIG& config)
+{
+    return config.mem_model == MM_SPECTRUM48 && HasCard(config, kDiscipleCard);
+}
+
+bool Is128kDisciple(const CONFIG& config)
+{
+    return config.mem_model == MM_SPECTRUM128 && HasCard(config, kDiscipleCard);
 }
 
 bool Is48kPlusD(const CONFIG& config)
@@ -193,6 +220,14 @@ const std::vector<MachineVariant> kVariants = {
     {"128K-PLUSD", "ZX-Spectrum 128k + Plus D (G+DOS)",
      "ZX-Spectrum 128k with the MGT +D disk interface: G+DOS v1a, WD1772, 2 floppy drives (.mgt), snapshot button",
      "128K", 128, ApplyPlusD, Is128kPlusD, PlusDSupported},
+    {"48K-DISCIPLE", "ZX-Spectrum 48k + DISCiPLE (GDOS)",
+     "ZX-Spectrum 48k with the MGT DISCiPLE interface: GDOS v3, WD1772, 2 floppy drives (.mgt), Kempston joystick, "
+     "snapshot and inhibit buttons",
+     "48K", 48, ApplyDisciple, Is48kDisciple, PlusDSupported},
+    {"128K-DISCIPLE", "ZX-Spectrum 128k + DISCiPLE (GDOS)",
+     "ZX-Spectrum 128k with the MGT DISCiPLE interface: GDOS v3, WD1772, 2 floppy drives (.mgt), Kempston joystick, "
+     "snapshot and inhibit buttons",
+     "128K", 128, ApplyDisciple, Is128kDisciple, PlusDSupported},
     {"TSL-VDAC2", "TS-Conf + VDAC2 (FT812)",
      "TS-Conf with the TS-Labs VDAC2 card: FT812 graphics on the IDE connector (no IDE)", "TSL", 4096,
      ApplyTsConfVdac2, IsTsConfVdac2, TsConfVdac2Supported},

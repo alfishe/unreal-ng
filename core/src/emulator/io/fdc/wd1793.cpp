@@ -558,6 +558,18 @@ void WD1793::setSide(bool side1)
     notifyFdcStateChanged();
 }
 
+void WD1793::setDensityLine(bool singleDensity)
+{
+    const uint8_t value = singleDensity ? static_cast<uint8_t>(_beta128Register | BETA_CMD_DENSITY)
+                                        : static_cast<uint8_t>(_beta128Register & ~BETA_CMD_DENSITY);
+    if (value == _beta128Register)
+        return;
+    wakeUp();
+    process();
+    _beta128Register = value;
+    notifyFdcStateChanged();
+}
+
 void WD1793::RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
                                       bool stepIn)
 {

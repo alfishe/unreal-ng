@@ -56,24 +56,19 @@ Layer 2 views, config mode; the slot table is rebuilt after a load), the video r
 copper (list, position, mode, clock, the held instruction), the DMA, the CTC, the interrupt controller, the I2C bus with the DS1307, the Multiface
 and DivMMC latches, the decoder's SD SPI and timing latches, the three AY chips with pan and mode bits and the four DACs, both SD cards' protocol
 state, the extended keys and both joystick pads. `NextSystemArea` is the 256 KB system area as plain bytes: the ROMs the firmware loads in config
-mode (pages 0-7) and the DivMMC RAM (pages 8-15). Measured (a program writing NextREGs, 9 checkpoints): 196 KB of history in all, i.e. the engine
+mode (pages 0-7) and the DivMMC RAM (pages 8-15), then (2026-11-20) the 24 KB SRAM side of banks 5 and 7 (`NextMemory::SramTwin`, pages
+`#0A`, `#0B`, `#0E`: what Layer 2 and NR `#04` reach under the ULA's block RAM; 280 KB in all, an older recording's 256 KB blob does not
+load). Measured (a program writing NextREGs, 9 checkpoints): 196 KB of history in all, i.e. the engine
 keeps an unchanged 4 KB piece once, so the 256 KB blob costs next to nothing per frame while it does not change. **Not in it:** the audio render
 clock (resyncs), the UARTs (not built), the media of the SD cards (the media rule).
 
-**Fragile golden (2026-10-13).** `testdata/slots/fitted-devices.txt` pins, per machine folder, the size of every blob the TTD
+**Golden: presence only (2026-11-20).** `testdata/slots/fitted-devices.txt` pins, per machine folder, the size of every blob the TTD
 registry captures (`ttd id:size ...`, written by `DescribeFittedDevices` in `core/tests/emulator/slots/slotmanager_test.cpp`). For the Next
-that is `62:<size>` of the captured `NextState` blob, so every change of the Next's recorded state (a new field, an image version bump, a
-different reset value) changes the number and fails `Configs/SlotManagerShipped_Test.FitsTheDevicesOfMaster/next`, also when the change
-itself is correct and its own tests pass. That broke CI on 2026-10-13 (fixed by `fced9a3da`). Rule: a commit that touches `NextStateCodec`
-or anything it saves regenerates the golden in the same commit:
-
-```bash
-UNREAL_SLOTS_FITTED_UPDATE=1 tools/build/test.sh --gtest_filter='*SlotManagerShipped_Test.FitsTheDevicesOfMaster/next*'
-git diff testdata/slots/fitted-devices.txt   # only the `62:` number of the next block may differ
-```
-
-Open: compare only the presence of id 62, as the test already does for `EthernetNics` (`:var`), since the layout of `NextState` is guarded
-by its own image version and codec tests; see [TODO.md](TODO.md), "Remaining".
+that was `62:<size>` of the captured `NextState` blob, so every change of the Next's recorded state (a new field, an image version bump, a
+different reset value) failed `Configs/SlotManagerShipped_Test.FitsTheDevicesOfMaster/next` although the change was correct (CI broke on it
+2026-10-13, `fced9a3da`). Since 2026-11-20 the golden reads `62:var`, as for `EthernetNics`: only the presence of the blob is compared; the
+layout is guarded by the image version (`kImageVersion` in `nextstatecodec.cpp`) and the round trips in
+`core/tests/debugger/ttd/ttdnextstate_test.cpp`. `NextSystemArea` (id 63) keeps its size: it changes only with the memory layout.
 
 ## 4. DMA port reads and media
 

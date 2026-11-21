@@ -52,6 +52,7 @@ enum class Function : uint8_t
     FullerJoystick,     ///< "fuller-joystick": the Fuller stick on #7F
     AmxMouse,           ///< "amx-mouse": the AMX mouse's Z80 PIO on #1F / #3F / #5F / #7F and its buttons on #DF
     DiskMgt,            ///< "disk.mgt": MGT disk interface (+D; DISCiPLE later): WD1772 on #E3-#FB, paging on #E7
+    SdDivmmc,           ///< "sd.divmmc": DivMMC SD interface: #E3 paging, #E7 / #EB SPI, the automap
     Count
 };
 
@@ -189,6 +190,8 @@ enum class Opt : uint8_t
     Rom,        ///< card ROM / firmware version
     Jp1,        ///< ZXM-MoonSound JP1 "PentEvo"
     Decode,     ///< port decode width (Covox, Fuller Box)
+    Inhibit,    ///< the DISCiPLE's inhibit button (off / on)
+    Automap,    ///< the DivMMC's automap (on / off: the EEPROM jumper / rom3: the Next's ROM-3 rule)
     Count
 };
 constexpr int kOptCount = static_cast<int>(Opt::Count);

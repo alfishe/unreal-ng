@@ -11,7 +11,17 @@ NextInterruptSource::NextInterruptSource(EmulatorContext* context) : _context(co
 
 void NextInterruptSource::SetGeometry(const NextTiming& timing)
 {
+    FoldStatus();  // the requests of the old frame family first: Now() scales the frame counter by the frame length
     _timing = timing;
+    _lineStartKnown = false;
+    if (_context && _context->pCore)
+        _statusAt = Now();
+}
+
+void NextInterruptSource::SetCounterOffset(uint8_t offset)
+{
+    FoldStatus();
+    _counterOffset = offset;
     _lineStartKnown = false;
 }
 
@@ -27,6 +37,8 @@ void NextInterruptSource::Reset()
     _lineControl = _lineValue = 0;
     _lineStartKnown = false;
     _pending = _inService = 0;
+    _status = 0;
+    _statusAt = (_context && _context->pCore) ? Now() : 0;
     _lastT = 0;
 }
 
@@ -36,11 +48,26 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
 {
     switch (reg)
     {
+        case kRegGenerate:
+        {
+            // zxnext.vhd 1946: im2_int_unq = bit 7 the line, bit 6 the ULA, bits 3:0 CTC 3-0. An unqualified request: the status bit
+            // is set, and whatever the enables the hardware-mode request or the pulse (im2_peripheral.vhd 160, 172, 186)
+            const uint16_t mask = static_cast<uint16_t>(((value & 0x80) ? 1u << kLine : 0u) | ((value & 0x40) ? 1u << kUla : 0u) |
+                                                        (static_cast<unsigned>(value & 0x0F) << kCtc0));
+            _status |= mask;
+            if (mask && HardwareMode())
+                _pending |= mask;
+            else if (mask)
+                StartPulse();
+            return true;
+        }
         case kRegLineControl:
+            FoldStatus();
             _lineControl = value & 0x07;
             _lineStartKnown = false;
             return true;
         case kRegLineValue:
+            FoldStatus();
             _lineValue = value;
             _lineStartKnown = false;
             return true;
@@ -58,6 +85,7 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
         case kRegEnable0:
             // zxnext.vhd 5607-5610, 3621: bit 7 is the expansion bus enable, bits 1 and 0 are no flops of their own - the line
             // interrupt enable is nr_22_line_interrupt_en and the ULA one is port_ff_reg(6) inverted, NR #22 bits 1 and 2
+            FoldStatus();
             _enable0 = value & 0x80;
             _lineControl = static_cast<uint8_t>((_lineControl & ~0x06) | (value & 0x02) | ((value & 0x01) ? 0 : 0x04));
             _lineStartKnown = false;
@@ -70,16 +98,19 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
         case kRegEnableUart:
             _enableUart = value;
             return true;
+        // zxnext.vhd 1952 im2_status_clear: a write of 1 clears the status record (int_status) only. A hardware-mode request stays
+        // until its RETI (im2_int_req, im2_device.vhd S_REQ / S_ISR) and keeps the bit reading 1 until then
         case kRegStatus0:
-            // write 1 clears: bit 1 line, bit 0 ULA
-            _pending &= static_cast<uint16_t>(~(((value & 2) ? 1u << kLine : 0u) | ((value & 1) ? 1u << kUla : 0u)));
+            // bit 1 line, bit 0 ULA
+            FoldStatus();
+            _status &= static_cast<uint16_t>(~(((value & 2) ? 1u << kLine : 0u) | ((value & 1) ? 1u << kUla : 0u)));
             return true;
         case kRegStatusCtc:
-            _pending &= static_cast<uint16_t>(~(static_cast<unsigned>(value) << kCtc0));
+            _status &= static_cast<uint16_t>(~(static_cast<unsigned>(value) << kCtc0));
             return true;
         case kRegStatusUart:
-            // zxnext.vhd im2_status_clear: UART 0 Rx by bit 1 or 0, Tx by bit 2; UART 1 Rx by bit 5 or 4, Tx by bit 6
-            _pending &= static_cast<uint16_t>(~(((value & 0x03) ? 1u << kUart0Rx : 0u) | ((value & 0x30) ? 1u << kUart1Rx : 0u) |
+            // UART 0 Rx by bit 1 or 0, Tx by bit 2; UART 1 Rx by bit 5 or 4, Tx by bit 6
+            _status &= static_cast<uint16_t>(~(((value & 0x03) ? 1u << kUart0Rx : 0u) | ((value & 0x30) ? 1u << kUart1Rx : 0u) |
                                                 ((value & 0x04) ? 1u << kUart0Tx : 0u) | ((value & 0x40) ? 1u << kUart1Tx : 0u)));
             return true;
         case kRegDma0:
@@ -96,14 +127,26 @@ bool NextInterruptSource::ReadNr(uint8_t reg, uint8_t& value) const
 {
     switch (reg)
     {
+        case kRegGenerate:
+        {
+            // zxnext.vhd 5989: im2_int_status(0) & im2_int_status(11) & "00" & im2_int_status(6 downto 3)
+            const uint16_t status = StatusMask();
+            value = static_cast<uint8_t>((((status >> kLine) & 1) << 7) | (((status >> kUla) & 1) << 6) | ((status >> kCtc0) & 0x0F));
+            return true;
+        }
         case kRegLineControl:
-            value = _lineControl;
+            // zxnext.vhd 5992: (not pulse_int_n) & "0000" & port_ff_interrupt_disable & nr_22_line_interrupt_en & nr_23_line_interrupt(8)
+            value = static_cast<uint8_t>(_lineControl | (PulseLow() ? 0x80 : 0));
             return true;
         case kRegLineValue:
             value = _lineValue;
             return true;
         case kRegControl:
+            // zxnext.vhd 6230: nr_c0_im2_vector & '0' & nr_c0_stackless_nmi & z80_im_mode & nr_c0_int_mode_pulse_0_im2_1; the mode is the
+            // last IM instruction's (im2_control.vhd: 00 IM 0, 01 IM 1, 10 IM 2)
             value = _control;
+            if (_context && _context->pCore)
+                value = static_cast<uint8_t>(value | ((_context->pCore->GetZ80()->im & 3) << 1));
             return true;
         case kRegNmiReturnLow:
         case kRegNmiReturnHigh:
@@ -120,16 +163,22 @@ bool NextInterruptSource::ReadNr(uint8_t reg, uint8_t& value) const
             value = _enableUart & 0x77;  // bits 7 and 3 read 0 (zxnext.vhd 6245)
             return true;
         case kRegStatus0:
-            value = static_cast<uint8_t>((((_pending >> kLine) & 1) << 1) | ((_pending >> kUla) & 1));
+        {
+            const uint16_t status = StatusMask();
+            value = static_cast<uint8_t>((((status >> kLine) & 1) << 1) | ((status >> kUla) & 1));
             return true;
+        }
         case kRegStatusCtc:
-            value = static_cast<uint8_t>(_pending >> kCtc0);
+            value = static_cast<uint8_t>(StatusMask() >> kCtc0);
             return true;
         case kRegStatusUart:
+        {
             // zxnext.vhd 6254: bit 6 UART 1 Tx, bits 5:4 UART 1 Rx, bit 2 UART 0 Tx, bits 1:0 UART 0 Rx
-            value = static_cast<uint8_t>((((_pending >> kUart0Rx) & 1) * 0x03) | (((_pending >> kUart0Tx) & 1) << 2) |
-                                         (((_pending >> kUart1Rx) & 1) * 0x30) | (((_pending >> kUart1Tx) & 1) << 6));
+            const uint16_t status = StatusMask();
+            value = static_cast<uint8_t>((((status >> kUart0Rx) & 1) * 0x03) | (((status >> kUart0Tx) & 1) << 2) |
+                                         (((status >> kUart1Rx) & 1) * 0x30) | (((status >> kUart1Tx) & 1) << 6));
             return true;
+        }
         case kRegDma0:
             value = _dma[0] & 0x83;  // NMI, line, ULA
             return true;
@@ -159,6 +208,7 @@ uint16_t NextInterruptSource::Blocked() const
 
 void NextInterruptSource::SetUlaInterruptDisabled(bool disabled)
 {
+    FoldStatus();
     _lineControl = static_cast<uint8_t>(disabled ? (_lineControl | 0x04) : (_lineControl & ~0x04));
 }
 
@@ -187,6 +237,7 @@ bool NextInterruptSource::Enabled(Source source) const
 
 void NextInterruptSource::Raise(Source source)
 {
+    _status |= static_cast<uint16_t>(1u << source);  // int_status has no enable term (im2_peripheral.vhd 160)
     if (!Enabled(source))
         return;
     if (HardwareMode())
@@ -194,8 +245,73 @@ void NextInterruptSource::Raise(Source source)
         _pending |= static_cast<uint16_t>(1u << source);
         return;
     }
-    // im2_peripheral.vhd: with the hardware IM2 mode off every enabled request makes a pulse (the same 32 / 36 T the ULA's is);
-    // the vector is whatever the bus carries (#FF)
+    StartPulse();
+}
+
+uint16_t NextInterruptSource::StatusMask() const
+{
+    FoldStatus();
+    return static_cast<uint16_t>(_status | _pending | _inService);
+}
+
+uint64_t NextInterruptSource::Now() const
+{
+    return static_cast<uint64_t>(_context->emulatorState.frame_counter) * _timing.frame + BaseT(_context->pCore->GetZ80()->t);
+}
+
+void NextInterruptSource::FoldStatus() const
+{
+    if (!_context || !_context->pCore)
+        return;
+    const uint64_t now = Now();
+    if (now > _statusAt)  // earlier (a state load, a new run): nothing to fold, the record starts again from now
+    {
+        const uint64_t span = now - _statusAt;
+        const uint32_t from = static_cast<uint32_t>(_statusAt % _timing.frame);
+        // a request at frame position `pos` in (_statusAt, now], as Latch takes them
+        auto crossed = [&](uint32_t pos) {
+            if (span >= _timing.frame)
+                return true;
+            uint32_t distance = (pos % _timing.frame + _timing.frame - from) % _timing.frame;
+            if (distance == 0)
+                distance = _timing.frame;
+            return distance <= span;
+        };
+        // zxula_timing.vhd 551, 577: the ULA and line pulses exist only while enabled (i_inten_ula_n, i_inten_line)
+        if (Enabled(kUla) && crossed(_timing.intStart))
+            _status |= static_cast<uint16_t>(1u << kUla);
+        if ((_lineControl & 0x02) && crossed(LineStartT()))
+            _status |= static_cast<uint16_t>(1u << kLine);
+    }
+    _statusAt = now;
+}
+
+bool NextInterruptSource::PulseLow() const
+{
+    // The pulse-mode part of IsIntAsserted, without its bookkeeping (kept apart: that one runs at every instruction)
+    if (HardwareMode() || !_context || !_context->pCore)
+        return false;
+    const uint32_t baseT = BaseT(_context->pCore->GetZ80()->t);
+    if (_pulseOn)
+    {
+        const uint64_t frame = _context->emulatorState.frame_counter;
+        const bool sameFrame = frame == _pulseFrame;
+        const bool nextFrame = frame == _pulseFrame + 1;
+        const uint32_t end = _pulseStart + _timing.intLength;
+        if (sameFrame && baseT >= _pulseStart && baseT < end)
+            return true;
+        if (end > _timing.frame && ((sameFrame && baseT < end - _timing.frame && baseT < _pulseStart) || (nextFrame && baseT < end - _timing.frame)))
+            return true;
+    }
+    if (Enabled(kUla) && PulseAt(baseT, _timing.intStart))
+        return true;
+    return (_lineControl & 0x02) != 0 && PulseAt(baseT, LineStartT());
+}
+
+void NextInterruptSource::StartPulse()
+{
+    // im2_peripheral.vhd 186: with the hardware IM2 mode off every enabled (or NR #20) request makes a pulse (the same 32 / 36 T
+    // the ULA's is); the vector is whatever the bus carries (#FF)
     _pulseOn = true;
     _pulseFrame = _context->emulatorState.frame_counter;
     _pulseStart = BaseT(_context->pCore->GetZ80()->t) % _timing.frame;
@@ -305,10 +421,17 @@ void NextInterruptSource::Latch(uint32_t baseT)
     };
     if (baseT == _lastT)
         return;
+    // the status record takes the request too (only on the event: the boundary without one costs nothing more)
     if (crossed(_timing.intStart) && Enabled(kUla))
+    {
         _pending |= 1u << kUla;
+        _status |= 1u << kUla;
+    }
     if ((_lineControl & 0x02) && crossed(LineStartT()) && Enabled(kLine))
+    {
         _pending |= 1u << kLine;
+        _status |= 1u << kLine;
+    }
     _lastT = baseT;
 }
 

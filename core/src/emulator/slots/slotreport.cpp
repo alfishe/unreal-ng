@@ -6,6 +6,7 @@
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/slots/slotvocabulary.h"
 
@@ -239,7 +240,17 @@ StateNode Slots(EmulatorContext* context)
     StateNode slotList = StateNode::Array();
     for (const SlotManager::Slot& slot : result.entries)
     {
-        slotList.push(SlotNode(slot, planner, networkOff));
+        StateNode entry = SlotNode(slot, planner, networkOff);
+        // The running card's own state (the DivMMC's paging and SD cards), when it reports one
+        if (const ICard* card = manager->FindCard(slot.entry.slot))
+        {
+            StateNode live = StateNode::Object();
+            if (card->ReportLiveState(live))
+            {
+                entry["live"] = std::move(live);
+            }
+        }
+        slotList.push(std::move(entry));
     }
     node["slots"] = std::move(slotList);
 

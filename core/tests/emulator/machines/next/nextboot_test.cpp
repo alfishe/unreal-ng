@@ -19,6 +19,8 @@
 #include "emulator/media/mediamanager.h"
 #include "common/filehelper.h"
 #include <filesystem>
+#include "emulator/io/z80n/nextdivmmc.h"
+#include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
@@ -80,6 +82,45 @@ TEST_F(NextBoot_Test, PowerOnIsConfigModeWithTheBootRomAtZero)
     // the system area is empty until the firmware fills it
     Out(0x243B, 0x04);
     EXPECT_EQ(_memory->ROMPageHostAddress(0)[0x100], 0xFF);
+}
+
+// zxnext.vhd 1856-1857 and 3199-3204: while bootrom_en is 1 every read of #0000-#3FFF is the boot ROM, addressed by cpu_a(12:0): its
+// 8K shows at #0000 and again at #2000, ahead of the MMU (an MMU RAM page in slot 0 / 1 does not replace it)
+TEST_F(NextBoot_Test, BootRomIsEightKMirroredAtTwoThousandHex)
+{
+    ASSERT_TRUE(_memory->BootRomEnabled());
+    EXPECT_STREQ(_memory->SlotKind(0), "boot rom");
+    EXPECT_STREQ(_memory->SlotKind(1), "boot rom");
+    for (uint16_t a = 0; a < 0x2000; a += 0x101)
+        ASSERT_EQ(_memory->PeekSlot(static_cast<uint16_t>(0x2000 + a)), _memory->PeekSlot(a)) << "at #" << std::hex << a;
+    EXPECT_EQ(_memory->PeekSlot(0x2000), 0xF3) << "DI at #2000 too";
+    NextReg(0x50, 0x10);  // RAM pages in both slots
+    NextReg(0x51, 0x11);
+    EXPECT_EQ(_memory->PeekSlot(0x0000), 0xF3) << "the boot ROM is ahead of the MMU";
+    EXPECT_EQ(_memory->PeekSlot(0x2000), 0xF3);
+}
+
+// The boot ROM takes the reads only: a write goes where the decode under it points (zxnext.vhd 3044-3050: in config mode the NR #04
+// bank, nr_04_romram_bank & A13, not read-only), which shows once NR #03 switches the boot ROM off
+TEST_F(NextBoot_Test, WritesUnderTheBootRomLandInTheNr04Bank)
+{
+    ASSERT_TRUE(_memory->BootRomEnabled());
+    const uint8_t rom0100 = _memory->PeekSlot(0x0100), rom2100 = _memory->PeekSlot(0x2100);
+    NextReg(0x04, 0x10 + 2);                 // RAM bank 2 (SRAM #048000)
+    _memory->SlotWriteFast(0x0100, 0x5A);
+    _memory->SlotWriteFast(0x2100, 0xA5);
+    EXPECT_EQ(_memory->PeekSlot(0x0100), rom0100) << "reads stay on the boot ROM";
+    EXPECT_EQ(_memory->PeekSlot(0x2100), rom2100);
+    EXPECT_EQ(_memory->RAMPageAddress(2)[0x0100], 0x5A) << "the write reached NR #04's bank";
+    EXPECT_EQ(_memory->RAMPageAddress(2)[0x2100], 0xA5) << "the second 8K: A13 is the SRAM's";
+    NextReg(0x04, 0x00);                     // the system area's first 16K (ROM 0 of the personality)
+    _memory->SlotWriteFast(0x0200, 0x3C);
+    EXPECT_EQ(_memory->ROMPageHostAddress(0)[0x0200], 0x3C);
+    NextReg(0x04, 0x10 + 2);
+    NextReg(0x03, 0x00);                     // boot ROM off, still config mode
+    ASSERT_FALSE(_memory->BootRomEnabled());
+    EXPECT_EQ(_memory->PeekSlot(0x0100), 0x5A) << "the NR #04 bank now reads back the bytes written under the boot ROM";
+    EXPECT_EQ(_memory->PeekSlot(0x2100), 0xA5);
 }
 
 TEST_F(NextBoot_Test, AnyNr03WriteSwitchesTheBootRomOffButKeepsConfigMode)
@@ -526,7 +567,8 @@ TEST(NextResetType_Test, ReadsHowTheLastResetHappened)
 }
 
 // NR #02 bit 2 written 1 is the same NMI as the DRIVE button (zxnext.vhd nmi_gen_nr_divmmc): NextZXOS enters its esxDOS code with it.
-// The bit reads 1 once the NMI was generated and until it is written 0
+// The bit reads 1 once written 1 while no NMI was on its way (nmi_accept_cause, 3855-3862) and until it is written 0; NR #06 bit 4 gates
+// only the NMI (nmi_assert_divmmc, 2091)
 TEST(NextDriveNmiByNextReg_Test, WritingNr02Bit2StartsTheNmi)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
@@ -536,13 +578,41 @@ TEST(NextDriveNmiByNextReg_Test, WritingNr02Bit2StartsTheNmi)
     NextBoard& board = ports->Board();
     board.Write(0x0A, 0x10);
     board.Write(0x02, 0x04);
-    EXPECT_EQ(board.Read(0x02) & 4, 0) << "the button is off (NR #06 bit 4): no NMI, the bit stays 0";
+    EXPECT_NE(board.Read(0x02) & 4, 0) << "the button is off (NR #06 bit 4): no NMI, but the flag is set";
     EXPECT_FALSE(ports->DivMmc().ButtonPending());
+    board.Write(0x02, 0x00);
+    EXPECT_EQ(board.Read(0x02) & 4, 0);
     board.Write(0x06, 0x10);
     board.Write(0x02, 0x04);
     EXPECT_NE(board.Read(0x02) & 4, 0);
     EXPECT_TRUE(ports->DivMmc().ButtonPending());
     board.Write(0x02, 0x00);
     EXPECT_EQ(board.Read(0x02) & 4, 0);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// zxnext.vhd 3843-3862: the NR #02 NMI flags are set by the write while nmi_accept_cause (the NMI state machine idle or fetching), with
+// or without NR #06's button enables, which gate only the NMI (2090-2091). While an NMI is on its way the flag is not taken
+TEST(NextDriveNmiByNextReg_Test, Nr02FlagsFollowTheAcceptCauseNotTheButtonEnables)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    NextBoard& board = ports->Board();
+    board.Write(0x06, 0x00);  // both buttons off
+    board.Write(0x02, 0x0C);
+    EXPECT_EQ(board.Read(0x02) & 0x0C, 0x0C) << "both flags set although no NMI was raised";
+    EXPECT_FALSE(ports->Multiface().NmiHold());
+    EXPECT_FALSE(ports->DivMmc().ButtonPending());
+    board.Write(0x02, 0x00);
+    EXPECT_EQ(board.Read(0x02) & 0x0C, 0x00);
+
+    board.Write(0x06, 0x08);  // the M1 button on: its NMI is on its way after this write
+    board.Write(0x02, 0x08);
+    EXPECT_TRUE(ports->Multiface().NmiHold());
+    EXPECT_NE(board.Read(0x02) & 0x08, 0);
+    board.Write(0x02, 0x04);
+    EXPECT_EQ(board.Read(0x02) & 0x0C, 0x00) << "bit 3 written 0 clears; bit 2 is not taken while the NMI is on its way";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

@@ -79,7 +79,11 @@ Not planned yet:
 
 - [ ] NR #8F memory mapping modes (Pentagon 512 / 1024 paging through #EFF7): stored only
 - [ ] SPI flash on port #E7 (config mode, 16 MB, a `[NEXT] FlashFile=`): the select is decoded and ignored
-- [ ] The generic `DivMmcPaging` as a `divmmc` slot card (machine reset, TTD blob, the +2A/+3 ROM-3-only automap); the Next has its own
+- [x] The generic `DivMmcPaging` as a `divmmc` slot card (2026-11-21): the edge card `divmmc` on the 48K / 128K / +2A / +3
+  (UnoDOS 3 shipped, esxDOS by the user's file), the CPLD's two-stage automap latch, reset = /RESET (the map stays, a hard reset
+  clears it), TTD device `DivMmc` 77 + region `divmmc.ram`, `live` state in the slot report. The board has no ROM-3 condition
+  (`divmmc.vhd`): the +2A/+3 ROM-3-only rule is the option `automap=rom3`; divide-divmmc-esxdos.md section 9, `DivMmcCard_Test`. The
+  Next keeps its own
 - [x] Border colour changes of the CPU (#FE) inside a line (2026-11-20): `ScreenNext::SetBorderColor` queues the place where the new
   colour reaches the output and the line is drawn once with its border in runs (2000 changes a frame: +3.3 %), by the rule POC 028 scenario 54 measured on the RTL (17 clocks after the CPU clock's falling edge, the
   next 8-pixel cell; the Pentagon timing at once); design-video-timing.md section 6a, `NextBorder*_Test`. The outer border around
@@ -117,25 +121,29 @@ Not planned yet:
 - [x] Reference compares (2026-11-20): the NextZXOS welcome-screen border matches jnext's headless reference pixel for pixel
   (`(182, 182, 182)`, palette entry 23; bright / flash have no part in a plain border, zxula.vhd 419 / 471), the wiki pages and the
   manual ([research-reference-compares.md](research-reference-compares.md)), the full ZEsarUX `tbblue.c` diff
-  ([research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md)). Bug candidates, each against the VHDL, none fixed yet:
-- [ ] NextREG read-back of narrow and unknown registers follows the VHDL mux (zxnext.vhd 5881-6285; tbblue diff #1)
-- [ ] NR #22 bit 7 reads the INT pulse (zxnext.vhd 5991; tbblue diff #2, reference compares #2)
-- [ ] NR #C0 bits 2:1 read the CPU's IM mode (zxnext.vhd 6229; tbblue diff #3)
-- [ ] NR #02 bits 3:2 kept when NR #06 refuses the NMI (zxnext.vhd 2090, 3843; tbblue diff #4)
-- [ ] NR #20 generates interrupts (im2_peripheral.vhd 186-192; tbblue diff #5)
-- [ ] Interrupt status set for a disabled source and in pulse mode (im2_peripheral.vhd 160; tbblue diff #6)
-- [ ] Boot ROM window 8K mirrored at #2000, writes to SRAM (zxnext.vhd 3199-3204; tbblue diff #7)
-- [ ] Copper mode 11 restarts at cvc 0, not at the paper top with NR #64 (copper.vhd 80; tbblue diff #8)
-- [ ] Blend modes 110 / 111 and the stencil use the full 3-bit blue (zxnext.vhd 7286-7341; tbblue diff #9)
-- [ ] Blend source 00 keeps the ULA mix when NR #68 bit 7 disables the ULA (zxnext.vhd 7100; tbblue diff #10, check on a board first)
-- [ ] ULANext full-ink paper / border is the NR #4A colour, not transparent (zxula.vhd 500-525; tbblue diff #11)
-- [ ] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
-  (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A)
-- [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
-- [ ] The `NextState` golden: `testdata/slots/fitted-devices.txt` pins `62:<size>`, so every Next state change regenerates it; switch the
-  `next` block to presence only (`62:var`) or keep regenerating
-- [ ] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data
-  file
+  ([research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md)). Bug candidates, each against the VHDL, #8-#11 fixed 2026-11-20:
+- [x] NextREG read-back of narrow and unknown registers follows the VHDL mux (zxnext.vhd 5881-6285; tbblue diff #1): `kReadMasks` in nextboard.cpp; the stored byte keeps every bit
+- [x] NR #22 bit 7 reads the INT pulse (zxnext.vhd 5991; tbblue diff #2, reference compares #2): pulse mode (the hardware-mode ULA exception, zxnext.vhd 1962, is not modelled)
+- [x] NR #C0 bits 2:1 read the CPU's IM mode (zxnext.vhd 6229; tbblue diff #3)
+- [x] NR #02 bits 3:2 kept when NR #06 refuses the NMI (zxnext.vhd 2090, 3843; tbblue diff #4): set when the cause is accepted (`NmiAcceptsCause`)
+- [x] NR #20 generates interrupts (im2_peripheral.vhd 186-192; tbblue diff #5): whatever the enables
+- [x] Interrupt status set for a disabled source and in pulse mode (im2_peripheral.vhd 160; tbblue diff #6): `_status`; #C8-#CA clear the status only, not a pending request (zxnext.vhd 1952)
+- [x] Boot ROM window 8K mirrored at #2000, writes to SRAM (zxnext.vhd 3199-3204; tbblue diff #7): reads of slots 0-1, writes keep the decode
+- [x] Copper mode 11 restarts at cvc 0, not at the paper top with NR #64 (copper.vhd 80; tbblue diff #8): `NextCopper::RestartClock`, NR #64 lines before the paper
+- [x] Blend modes 110 / 111 and the stencil use the full 3-bit blue (zxnext.vhd 7286-7341; tbblue diff #9): the compositor and the pixel inspector
+- [x] Blend source 00 keeps the ULA mix when NR #68 bit 7 disables the ULA (zxnext.vhd 7100; tbblue diff #10): the VHDL is unambiguous (ula_en only in ula_transparent and the stencil select); a board check is still welcome
+- [x] ULANext full-ink paper / border is the NR #4A colour, not transparent (zxula.vhd 500-525; tbblue diff #11): an opaque ULA pixel, transparent only when NR #4A = NR #14; the paper of a non-solid mask too
+- [x] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
+  (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A): `NextMemory::SramTwin`, saved in the `NextSystemArea` blob
+- [x] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes (2026-11-20, 20
+  interleaved rounds + A/A: N2 cost the classic Debug frames +1.2 % (48K +2.5 %), N3b none; on master the out-of-line
+  `ReadDebugEffects` cost 2-5 %, now forced inline into `MemoryReadDebug`: Debug -2.9 %, Fast unchanged;
+  [ab-n2-n3c-2026-11-20.md](ab-n2-n3c-2026-11-20.md))
+- [x] The `NextState` golden: `testdata/slots/fitted-devices.txt` pinned `62:<size>`, so every Next state change regenerated it; now
+  presence only (`62:var`, 2026-11-20), the layout guarded by the image version and `ttdnextstate_test.cpp` (design-ttd.md section 3)
+- [x] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data
+  file. Three copies (browser-drive, `regress.py`, `NexBrowserRun_Test`) now read `testdata/machines/zxnext/browser-navigation.json`
+  (keys, frames, seconds, idle `#0C8F`, the order, the search rule, the run steps per extension); regress pictures unchanged
 - [ ] SPED (the distribution's editor / assembler): blocked, no format documentation
 
 ## History (closed 2026-10-16)

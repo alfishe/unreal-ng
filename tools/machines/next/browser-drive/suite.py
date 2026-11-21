@@ -5,7 +5,8 @@
 
 The card is the folder the running NEXT machine uses as its SD card (its tests/<area>/<test>/ folders hold the ZXSpectrumNextTests
 programs and board photographs; see tools/machines/next/realboard). For each program: reset, boot, Browser, tests/<area>/<test>/,
-run the program, wait, capture the screen. Writes <out>/<program>.png, <out>/sheet-<area>.png (ours | board photo) and report.md.
+run the program, wait, capture the screen (the keys and waits of testdata/machines/zxnext/browser-navigation.json). Writes
+<out>/<program>.png, <out>/sheet-<area>.png (ours | board photo) and report.md.
 This tests NextZXOS's own loading of snapshots (the Multiface NMI, esxDOS, the 48K mode switch) - the path a person takes - where
 tools/machines/next/realboard tests the snapshot loader.
 """
@@ -48,20 +49,17 @@ def main():
                 if args.only and program not in args.only:
                     continue
                 machine.call('/%s/reset' % machine.id, {})
-                machine.idle(2.5)  # the welcome page waits for a key
-                machine.tap('space')
-                machine.idle(2)
-                machine.tap('b')
-                machine.idle(2.5)
+                machine.step('boot')  # the welcome page waits for a key
+                machine.step('menu')
+                machine.step('browser')
                 machine.root()
                 folder = args.card
                 for part in ('tests', area, test):
-                    machine.reach(folder, part)
+                    machine.reach(folder, part, root=folder == args.card)
+                    machine.step('open')
                     folder = os.path.join(folder, part)
-                machine.reach(folder, program, runs=True)
-                if program.lower().endswith('.sna'):  # NextZXOS's own snapshot loader page: ENTER starts the program
-                    time.sleep(4)
-                    machine.tap('enter')
+                machine.reach(folder, program)
+                machine.run_file(program)  # a .sna: NextZXOS's own snapshot loader page, its ENTER starts the program
                 for key in KEYS.get(program, []):
                     time.sleep(2)
                     machine.tap(key)

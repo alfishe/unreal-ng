@@ -644,6 +644,16 @@ protected:
         _regs.WritePaletteValue8(rrrgggbb);
         _regs.WritePaletteControl(0);
     }
+    /// A palette entry with all nine bits (RRRGGGBBB)
+    void WritePalette9(unsigned control, unsigned index, uint16_t rgb9)
+    {
+        _regs.WritePaletteControl(static_cast<uint8_t>(control));
+        _regs.WritePaletteIndex(static_cast<uint8_t>(index));
+        _regs.WritePaletteValue9(static_cast<uint8_t>(rgb9 >> 1));
+        _regs.WritePaletteValue9(static_cast<uint8_t>(rgb9 & 1));
+        _regs.WritePaletteControl(0);
+    }
+    static uint32_t Rgb9(uint16_t rgb9) { return NextVideoRenderer::Rgba(rgb9); }
 };
 
 // zxula.vhd: o_ula_clipped = '0' when the pixel is inside the window "or border_active = '1'": the border is never clipped
@@ -693,6 +703,14 @@ TEST_F(NextCompose_Test, StencilAndsTheUlaAndTheTilemapChannels)
     const auto g = [](uint16_t c) { return (c >> 3) & 7; };
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft) & 0xFF, NextVideoRenderer::Rgba((r(tile) & r(white)) << 6 | (g(tile) & g(white)) << 3 | (((tile >> 1) & 3) & ((white >> 1) & 3)) << 1) & 0xFF)
         << "stencil: the red channel is the AND of both";
+    // zxnext.vhd stencil_rgb = ula_rgb and tm_rgb: all nine bits, the low blue bit included (blue 001 and 001 is 001, not 000)
+    WritePalette9(0x30, 1, 0x049);       // tile: 001 001 001
+    WritePalette9(0x00, 16 + 7, 0x1FF);  // ULA paper white: 111 111 111
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Rgb9(0x049)) << "stencil: the nine-bit AND";
+    WritePalette9(0x00, 16 + 7, 0x1AE);  // 110 101 110
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Rgb9(0x008)) << "000 001 000: each bit ANDed";
 }
 
 TEST_F(NextCompose_Test, AdditiveBlendMixesLayer2WithTheUlaAndClamps)
@@ -709,9 +727,128 @@ TEST_F(NextCompose_Test, AdditiveBlendMixesLayer2WithTheUlaAndClamps)
     const uint16_t ula = _regs.PaletteEntry(0, 1), l2 = _regs.PaletteEntry(1, 0x81);
     const unsigned expected = std::min(7u, ((ula >> 6) & 7u) + ((l2 >> 6) & 7u));
     const uint32_t px = Px(NextVideoRenderer::kPaperLeft);
+    // zxnext.vhd mixer_*_t: each channel of the 9-bit colours adds in four bits and clamps at 7, blue with all three bits
     const uint32_t want = NextVideoRenderer::Rgba(static_cast<uint16_t>((expected << 6) | (std::min(7u, ((ula >> 3) & 7u) + ((l2 >> 3) & 7u)) << 3) |
-                                                  (std::min(3u, ((ula >> 1) & 3u) + ((l2 >> 1) & 3u)) << 1) | 0));
-    EXPECT_EQ(px & 0x0000FFFF, want & 0x0000FFFF) << "red and green channels add";
+                                                  std::min(7u, (ula & 7u) + (l2 & 7u))));
+    EXPECT_EQ(px, want) << "the three channels add";
+    // blue 011 + 011 = 110 (two bits of blue would give 01 + 01 = 10, shown as 101)
+    WritePalette9(0x10, 0x81, 0x003);
+    WritePalette9(0x00, 1, 0x003);
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Rgb9(0x006)) << "blue 011 + 011";
+    WritePalette9(0x10, 0x81, 0x0F6);  // 011 110 110
+    WritePalette9(0x00, 1, 0x0D3);     // 011 010 011
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Rgb9(0x1BF)) << "110 111 111: green 6 + 2 and blue 6 + 3 clamp at 7";
+}
+
+// zxnext.vhd mode 111 (others): with a mix pixel, each four-bit channel sum <= 4 is 0, one with bits 3:2 = 11 (12 and up) is 7, else
+// sum - 5; blue keeps its three bits
+TEST_F(NextCompose_Test, SubtractiveBlendTakesFiveOffEachChannelOfTheNineBitColours)
+{
+    _in.layer2Enable = true;
+    _in.nr[0x15] = 7 << 2;  // mode 111
+    _in.nr[0x68] = 0x00;    // blend source 00: the ULA
+    WritePalette9(0x10, 0x81, 0x1CE);  // Layer 2: 111 001 110 (not 111 000 11x: that is the global transparent #E3)
+    WritePalette9(0x00, 1, 0x153);     // ULA ink: 101 010 011
+    Page(8)[0] = 0x81;
+    Page(5)[0] = 0x80;
+    Page(5)[0x1800] = 0x01;  // ink 1
+    Render(NextVideoRenderer::kPaperTop);
+    // red 7 + 5 = 12 -> 7; green 1 + 2 = 3 -> 0; blue 6 + 3 = 9 -> 4 (two bits of blue: 3 + 1 = 4 -> 0)
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Rgb9(0x1C4));
+    WritePalette9(0x00, 1, 0x0D3);  // 011 010 011
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Rgb9(0x144)) << "red 7 + 3 = 10 -> 5, blue 6 + 3 = 9 -> 4";
+}
+
+// zxnext.vhd: ula_mix_rgb / ula_mix_transparent have no ula_en term (ula_transparent has), and blend source 00 mixes them: with the
+// ULA hidden by NR #68 bit 7 its pixel still adds to Layer 2 in the modes 110 / 111
+TEST_F(NextCompose_Test, BlendSourceUlaMixesTheUlaEvenWhenNr68HidesIt)
+{
+    _in.layer2Enable = true;
+    _in.nr[0x15] = 6 << 2;  // mode 110
+    WritePalette9(0x10, 0x81, 0x007);       // Layer 2 blue
+    WritePalette9(0x00, 16 + 2, 0x1C0);     // ULA paper red
+    Page(8)[0] = 0x81;
+    Page(5)[0x1800] = 0x10;  // paper 2
+    std::vector<NextLayer::Pixel> planes(NextLayer::kPlanes * NextVideoRenderer::kWidth);
+    std::vector<uint8_t> ids(NextVideoRenderer::kWidth), info(NextVideoRenderer::kWidth);
+    NextLayer::LineSink sink;
+    for (unsigned p = 0; p < NextLayer::kPlanes; p++)
+        sink.plane[p] = planes.data() + p * NextVideoRenderer::kWidth;
+    sink.ids = ids.data();
+    sink.info = info.data();
+    const unsigned left = NextVideoRenderer::kPaperLeft;
+    for (bool record : {false, true})
+    {
+        _in.layerOut = record ? &sink : nullptr;
+        _in.nr[0x68] = 0x80;  // ULA off, blend source 00
+        Render(NextVideoRenderer::kPaperTop);
+        EXPECT_EQ(Px(left), Rgb9(0x1C7)) << "red + blue: the hidden ULA still mixes (record " << record << ")";
+        if (record)
+        {
+            EXPECT_EQ(ids[left], NextLayer::kIdBlend);
+            EXPECT_TRUE(planes[NextLayer::kUla * NextVideoRenderer::kWidth + left].opaque) << "the ULA plane holds the mixed pixel";
+        }
+        _in.nr[0x68] = 0xC0;  // ULA off, blend source 10 (ula_final_rgb: with ula_transparent, so no ULA)
+        Render(NextVideoRenderer::kPaperTop);
+        EXPECT_EQ(Px(left), Rgb9(0x007)) << "blend source 10 honours the enable (record " << record << ")";
+        _in.nr[0x68] = 0x80;
+        _in.nr[0x15] = 0;  // SLU: no blend, the hidden ULA is just off
+        Render(NextVideoRenderer::kPaperTop);
+        EXPECT_EQ(Px(left), Rgb9(0x007)) << "plain order (record " << record << ")";
+        _in.nr[0x15] = 6 << 2;
+    }
+    _in.layerOut = nullptr;
+}
+
+// zxula.vhd: ULANext raises ula_select_bgnd for the border with the full-ink format and for the paper of any format that is not a solid
+// mask; zxnext.vhd then makes the ULA pixel NR #4A, an ordinary ULA colour (transparent only when it equals NR #14)
+TEST_F(NextCompose_Test, UlaNextFullInkPaperIsTheFallbackColourAsAnOpaqueUlaPixel)
+{
+    _in.layer2Enable = true;
+    WritePalette9(0x10, 0x81, 0x007);  // Layer 2 blue under the paper
+    Page(8)[0] = 0x81;
+    Page(8)[1] = 0x81;
+    Page(5)[0] = 0x80;       // pixel 0 ink, pixel 1 paper
+    Page(5)[0x1800] = 0x42;  // full ink: the ink is entry #42
+    _regs.WritePaletteControl(0x01);  // ULANext on (the palette writes above leave the control at 0)
+    _regs.WriteUlaNextFormat(0xFF);
+    _in.nr[0x4A] = 0x1C;
+    _in.nr[0x14] = 0xE3;
+    _in.nr[0x15] = 2 << 2;  // SUL: the ULA above Layer 2
+    const unsigned left = NextVideoRenderer::kPaperLeft;
+    const uint32_t fallback = Rgb9(0x1C << 1);  // NR #4A 000 111 00, low blue bit 0
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 0x42)) << "ink: the attribute is the index";
+    EXPECT_EQ(Px(left + 2), fallback) << "paper: NR #4A as an opaque ULA pixel, not the Layer 2 pixel beneath";
+    _in.nr[0x15] = 3 << 2;  // LUS: Layer 2 above the ULA
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left + 2), Rgb9(0x007)) << "an ordinary layer: Layer 2 above it wins";
+    _in.nr[0x15] = 2 << 2;
+    _regs.WriteUlaNextFormat(0x05);  // not a solid mask: the paper takes the fallback colour too
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 0x42 & 0x05)) << "ink: attribute and mask";
+    EXPECT_EQ(Px(left + 2), fallback);
+    _regs.WriteUlaNextFormat(0x07);  // a solid mask: paper 128 + attribute >> 3
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left + 2), Pal(0, 128 + (0x42 >> 3)));
+    _regs.WriteUlaNextFormat(0xFF);
+    _in.nr[0x4A] = 0xE3;  // the fallback in the global transparent colour: ula_mix_transparent, Layer 2 shows through
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left + 2), Rgb9(0x007));
+    // the border of full ink: the fallback colour too, an opaque ULA border pixel (Layer 2 320 x 256 under it in SUL)
+    _in.nr[0x4A] = 0x1C;
+    _in.nr[0x70] = 0x10;  // 320 x 256
+    Page(8)[0] = 0x81;    // column 0, row 0 (column-major)
+    for (uint8_t v : {uint8_t(0), uint8_t(159), uint8_t(0), uint8_t(255)})
+        _regs.WriteClip(0, v);  // the whole 320 x 256 grid
+    Render(0);
+    EXPECT_EQ(Px(0), fallback) << "border: NR #4A above Layer 2";
+    _in.nr[0x15] = 3 << 2;  // LUS
+    Render(0);
+    EXPECT_EQ(Px(0), Rgb9(0x007)) << "the Layer 2 pixel is there, below the ULA in SUL";
 }
 
 // endregion
@@ -1088,11 +1225,12 @@ TEST_F(NextVideoRenderer_Test, RandomStatesDigestIsUnchanged)
     for (unsigned state = 0; state < 72; state++)
     {
         // The second half: lines with nothing above the ULA (Layer 2, the tilemap and the sprites off, alone or together), which the
-        // compositor draws by its ULA-only path. Its digest was recorded with that path switched off
+        // compositor draws by its ULA-only path. Its digest was recorded with that path switched off. Both re-taken 2026-11-20 for the
+        // VHDL's 9-bit blue in the blend / stencil, the hidden ULA in blend source 00 and ULANext's fallback paper (tbblue diff #9-#11)
         const bool quiet = state >= 48;
         if (state == 48)
         {
-            EXPECT_EQ(digest, 0xD15149A1F677E1AEull) << "the general compositor";
+            EXPECT_EQ(digest, 0x41211F32F7D55468ull) << "the general compositor";
         }
         // (the quiet half keeps the last memory and palettes: filling them is most of the test's time)
         for (uint8_t& b : _ram)
@@ -1181,7 +1319,7 @@ TEST_F(NextVideoRenderer_Test, RandomStatesDigestIsUnchanged)
         }
         _in.layerOut = nullptr;
     }
-    EXPECT_EQ(digest, 0x9E17D7C1D3AC0ADAull);
+    EXPECT_EQ(digest, 0xED85BF8E3953DECFull);
 }
 
 // endregion

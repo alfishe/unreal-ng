@@ -734,12 +734,14 @@ namespace
             case TTDDeviceType::BetaDisk:
             case TTDDeviceType::Upd765:
             case TTDDeviceType::PlusD:  // the card's blob holds its WD1772 and drives
+            case TTDDeviceType::Disciple:
                 return Binding::Floppy;
             case TTDDeviceType::Tape:
                 return Binding::Tape;
             case TTDDeviceType::AtaChannel:
             case TTDDeviceType::CdDrive:
             case TTDDeviceType::EvoSdCard:
+            case TTDDeviceType::DivMmc:  // the card's blob holds its SD cards' protocol state
                 return Binding::Storage;
             default:
                 return IsPortable(id) ? Binding::Portable : Binding::Machine;

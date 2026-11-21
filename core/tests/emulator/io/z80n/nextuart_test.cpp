@@ -277,7 +277,8 @@ TEST_F(NextUartMachine_Test, ThePortsReachTheDeviceAndNR0x82To0x85Gate)
 TEST_F(NextUartMachine_Test, TheEnableAndStatusBitsOfNR0xC6AndNR0xCAAreTheVhdlsPlaces)
 {
     NextInterruptSource& ints = _ports->Interrupts();
-    _ports->Board().WriteNextReg(0xC0, 0x01);  // hardware IM2 mode
+    // pulse mode: no hardware-mode request holds the status bits (im2_int_req is held in reset), the clears show alone
+    _ports->Board().WriteNextReg(0xC0, 0x00);
     _ports->Board().WriteNextReg(0xC6, 0xFF);
     EXPECT_EQ(_ports->Board().Read(0xC6), 0x77) << "bits 7 and 3 read 0";
     ints.Raise(NextInterruptSource::kUart1Rx);

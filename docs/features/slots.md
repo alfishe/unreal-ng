@@ -21,7 +21,7 @@ slots with it (the NeoGS brings `sd.ngs`).
 |---|---|
 | **Bus** | A connector family of the machine: `zxbus` (ZX-bus / NemoBus), `edge` (the Sinclair edge connector), `iobus` (ATM Turbo), `profi-bus`, `isa` (Sprinter), `cpu-socket` (a card on an adapter in the Z80 socket), and `ay-socket` (the AY chip's socket) |
 | **Slot** | One place on a bus: `zxbus.1`, `zxbus.2`, `edge.1`, `ay-socket`. `zxbus.next` means "the next free one" |
-| **Card** | What sits in a slot: `gs`, `gs-lw`, `neogs`, `tsfm`, `ts`, `ay`, `none` (an empty AY socket), `moonsound`, `covox-fb`, `soundrive`, `multisound`, `zxnetusb`, `zx-wifi`; on the Sinclair edge `kempston`, `fuller-box`, `amx-mouse` |
+| **Card** | What sits in a slot: `gs`, `gs-lw`, `neogs`, `tsfm`, `ts`, `ay`, `none` (an empty AY socket), `moonsound`, `covox-fb`, `soundrive`, `multisound`, `zxnetusb`, `zx-wifi`; on the Sinclair edge `kempston`, `fuller-box`, `amx-mouse`, `plusd`, `disciple`, `divmmc` |
 | **Built-in device** | Something the board itself has: the AY, the Beta 128 disk interface, a Covox. A card can **shadow** it (the card answers its ports, the built-in stays silent) or switch it off |
 | **Function** | The job a card does: `gs`, `ay-socket`, `opl4`, `covox-fb`, `soundrive`, `midi`, ... Two cards with the same job do not fit together (rule D1) |
 | **Fit** | How a card fits the bus: `real` (as on real hardware), `adapter` (behind a bus adapter), `unrealistic` (it works in the emulator although the bus lacks a signal the card needs) |
@@ -150,6 +150,20 @@ The disk autostart of a `.mgt` on these machines is the card's (`basic` 48 / 128
 state report `fdc` is the card's WD1772 with the autostart's progress; the history `plusd` records its FDC commands; TTD
 carries the card as `<slot>.plusd` (type 75); SZX carries it as the `PLSD` chunk (the Fuse layout). Recipe:
 [.recipe/machines/plusd.md](../../.recipe/machines/plusd.md).
+
+## The DivMMC
+
+The DivMMC (Mario Prato's SD interface) is the edge card `divmmc` on the 48K, 128K, +2 and +2A / +3: an 8 KB EEPROM and
+128 KB of RAM paged at `#0000-#3FFF` through `#E3` (CONMEM, MAPRAM, the bank), the automap trap (an opcode fetch at
+`#0000`, `#0008`, `#0038`, `#0066`, `#04C6` or `#0562` maps the board from the next fetch on, `#3D00-#3DFF` at once,
+`#1FF8-#1FFF` maps it out) and two SD sockets on `#E7` (selects) and `#EB` (SPI). Options: `rom` = `unodos` (UnoDOS 3,
+shipped, default) or `esxdos` (the user's `data/rom/divmmc/esxmmc.bin`); `automap` = `on` (the board as built, any ROM),
+`off` (the EEPROM jumper) or `rom3` (an emulator option, the entries count only with the 48K BASIC ROM paged, the
+Next's rule). Media: `sd.divmmc0` and `sd.divmmc1` (aliases `divmmc`, `divmmc1`), an image or a host folder. A reset
+keeps the board's map (the CPLD has no reset on it), a hard reset clears it. The slot report's entry carries the card's
+`live` state; TTD carries it as `<slot>.divmmc` (type 77) with its RAM as the region `divmmc.ram`. Machines whose decoder
+holds the Z80's M1 hook (ATM3, Sprinter, TS-Conf) cannot take it; the Next has its own DivMMC. Recipe:
+[.recipe/machines/slots.md](../../.recipe/machines/slots.md#the-divmmc-on-a-48k--128k--2a--3-edge-card).
 
 ## The General Sound personality
 

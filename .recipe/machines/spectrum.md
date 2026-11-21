@@ -10,8 +10,8 @@ card availability without checking the instance's actual config.
 
 | Model id | RAM (KB) | Sound | Disk |
 |:--|:--|:--|:--|
-| `48K` | 48 | beeper only | none; `48K-BETA128` adds the Beta 128 ([48k-beta128.md](48k-beta128.md)), `48K-PLUSD` the MGT +D ([plusd.md](plusd.md)) |
-| `128k` | 128 | AY (`#FFFD`/`#BFFD`) | none (interface needed); `128K-PLUSD` adds the MGT +D ([plusd.md](plusd.md)) |
+| `48K` | 48 | beeper only | none; `48K-BETA128` adds the Beta 128 ([48k-beta128.md](48k-beta128.md)), `48K-PLUSD` the MGT +D, `48K-DISCIPLE` the MGT DISCiPLE ([plusd.md](plusd.md)) |
+| `128k` | 128 | AY (`#FFFD`/`#BFFD`) | none (interface needed); `128K-PLUSD` adds the MGT +D, `128K-DISCIPLE` the MGT DISCiPLE ([plusd.md](plusd.md)) |
 | `PLUS2` (config `spectrum2`) | 128 | AY | none (grey +2: 128K hardware, Amstrad ROM) |
 | `PLUS2A` (config `spectrum2a`) | 128 | AY | none (the +3 without its floppy controller) |
 | `PLUS3` | 128 | AY | built-in +3 FDC, +3DOS |
