@@ -106,10 +106,24 @@ the pictures of Vulkan Intel and GL Intel within 4 levels on Wayland and X11 (pr
 | Wayland, Vulkan NVIDIA | 404 | 13.6 / 23 ms | 8 ms |
 | Wayland, Vulkan Intel | 969 | 16.6 / 33.7 ms | 8 ms |
 
-Wayland: mutter shows Mesa's FIFO present about a refresh after the time asked, whatever the lead (8, 20 ms: ~16 ms;
-40 ms: ~33 ms, the queue only grows), so on Wayland a late present does not widen the lead. GL on Wayland has no
-native presenter (no screen times) to compare with. Open: timed presents through the Wayland presentation-time /
-commit-timing protocols (POC 053) would take this refresh back. The refresh estimate: the screen's rate (QScreen)
+Wayland: the rows above present at the frame's time, and mutter takes a commit for a refresh only some ms before it,
+so nearly every frame came a refresh late (the draw lead does not help: 8, 20 ms ~16 ms after, 40 ms ~33 ms). The
+present now goes ahead of the time on Wayland (`aheadNs`, 2-20 ms, from 10 ms: a late present widens it by 1 ms, one
+shown more than 1 ms early narrows it by 0.25 ms) and the window draws 2 ms before that. 40 s runs, 2026-11-20:
+
+| Wayland run | Late | Error p50 / p99 | Present ahead at the end |
+|-------------|------|-----------------|--------------------------|
+| Intel, at the time (before) | 845 of 1459 | 16.1 / 34.8 ms | 0 |
+| NVIDIA, at the time (before) | 1072 of 1083 | 17.1 / 50.5 ms | 0 |
+| Intel, fixed 4 / 6 / 8 / 10 ms | 1223 / 1311 / 168 / 21 of ~1460 | 17.1 / 17.5 / 8.3 / 5.9 ms p50 | fixed |
+| Intel, widening only (to 20 ms) | 16-18 of 2199 | -5 to -6 / 5-14 ms (shown early) | 20 ms |
+| Intel, adaptive both ways | 79-91 of 2198 | 5.0-6.2 / 17-26 ms | 7.25-9.5 ms |
+| NVIDIA, adaptive both ways | 50-67 of 2198 | 6.2-7.3 / 17-18 ms | 6.5-9.25 ms |
+
+A 50 Hz frame on a 60 Hz screen waits up to a refresh for the first one after its time (p50 ~8 ms with no lateness),
+so the extra refresh is gone; the rest (2-4 % late) is mutter's deadline wandering by a few ms. A commit held to its
+time by the compositor (`VK_EXT_present_timing`, Mesa 26.1; .238 has 26.0.8) would remove that too. GL on Wayland has
+no native presenter (no screen times) to compare with. The refresh estimate: the screen's rate (QScreen)
 refined by the steps between screen times near 1-3 refreshes (the shortest step alone read 71-329 Hz at 60 Hz:
 present_wait wakes jitter).
 

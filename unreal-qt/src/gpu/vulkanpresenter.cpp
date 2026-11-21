@@ -29,6 +29,20 @@ namespace
 constexpr int64_t kPresentCostNs = 500'000;
 /// The adaptive lead's first margin (the wake's slack, the draw, the blit, the compositor)
 constexpr int64_t kLeadStartNs = 8'000'000;
+/// Wayland: how far ahead of the frame's time the present goes at first. The compositor takes a commit for a refresh
+/// only some ms before it (mutter, measured 2026-11-20 on .238: presented at the time, 845-1072 of 1460 frames came a
+/// refresh late; 4-6 ms ahead no better; 8-10 ms ahead 21-168)
+constexpr int64_t kWaylandAheadStartNs = 10'000'000;
+/// Wayland: the draw lead beyond the present's: the draw and the blit before the present goes
+constexpr int64_t kDrawHeadroomNs = 2'000'000;
+/// Wayland: the present's lead bounds and steps. A present a refresh late widens it by 1 ms; one shown before its time
+/// (more than the jitter) narrows it by a quarter of that: it settles where an early present comes about four times as
+/// often as a late one, the deadline's wander (a fixed lead of 20 ms showed the frames 5 ms early)
+constexpr int64_t kAheadMinNs = 2'000'000;
+constexpr int64_t kAheadMaxNs = 20'000'000;
+constexpr int64_t kAheadWidenNs = 1'000'000;
+constexpr int64_t kAheadNarrowNs = 250'000;
+constexpr int64_t kEarlyJitterNs = 1'000'000;
 /// The swapchain images beyond the surface's minimum: the most the window holds queued for their time
 constexpr uint32_t kExtraImages = 2;
 /// Waits on the GUI thread: for an image, for the present thread to drain before a new swapchain
@@ -122,6 +136,9 @@ struct VulkanPresenter::Impl
     int64_t lastStepNs = 0;  ///< present thread: the step before (a period without the screen's: two alike)
     mutable std::atomic<bool> exposed{true};
     mutable PresentLead lead{kLeadStartNs};
+    /// Wayland: how far ahead of the frame's time the present goes (kAhead*): the compositor's own deadline before
+    /// each refresh. Written by the present thread, read by the drawing one
+    std::atomic<int64_t> aheadNs{kWaylandAheadStartNs};
 
     mutable std::mutex statsMutex;
     std::string failure;
@@ -315,7 +332,8 @@ struct VulkanPresenter::Impl
                 queue.pop_front();
                 busy = true;
             }
-            const int64_t wakeNs = item.atNs - kPresentCostNs;
+            const int64_t wakeNs =
+                item.atNs - kPresentCostNs - (wayland ? aheadNs.load(std::memory_order_relaxed) : 0);
             if (item.atNs > 0 && wakeNs > SteadyNs())
                 TimeHelper::WaitUntilPrecise(std::chrono::steady_clock::time_point(std::chrono::nanoseconds(wakeNs)),
                                              [this] { return stop.load(); }, &wake);
@@ -454,6 +472,17 @@ struct VulkanPresenter::Impl
             refreshPeriodNs.store(step, std::memory_order_relaxed);
     }
 
+    /// Present thread, Wayland: the present's lead after a frame shown `errorNs` after its time
+    void AdaptAhead(int64_t errorNs)
+    {
+        const int64_t period = refreshPeriodNs.load(std::memory_order_relaxed);
+        const int64_t now = aheadNs.load(std::memory_order_relaxed);
+        if (period > 0 && errorNs > period + kEarlyJitterNs)
+            aheadNs.store(std::min(now + kAheadWidenNs, kAheadMaxNs), std::memory_order_relaxed);
+        else if (errorNs < -kEarlyJitterNs)
+            aheadNs.store(std::max(now - kAheadNarrowNs, kAheadMinNs), std::memory_order_relaxed);
+    }
+
     void Record(const Item& item, int64_t screenNs)
     {
         if (screenNs > 0)
@@ -469,10 +498,12 @@ struct VulkanPresenter::Impl
             const int64_t asked = std::max(item.atNs, item.submittedNs);
             errors.Add(static_cast<double>(screenNs - asked) / 1e6);
             const int64_t own = item.atNs > 0 ? item.atNs : asked;
-            // Wayland: a late present was held by the compositor (Mesa's FIFO queues behind its repaint), more lead
-            // only queues more (measured on mutter: a lead of 8 or 20 ms shows ~16 ms after the time, 40 ms ~33 ms)
+            // Wayland: the present goes `ahead` before the time, and a late one widens that, not the draw lead (a present
+            // at the time came a refresh late with any lead: 8 or 20 ms ~16 ms after, 40 ms ~33 ms, the queue only grows)
             lead.Shown(screenNs - own, item.number,
                        wayland ? std::numeric_limits<int64_t>::max() : std::max(own, item.handedNs) - item.handedNs);
+            if (wayland && item.atNs > 0)
+                AdaptAhead(screenNs - own);
             const int64_t period = refreshPeriodNs.load(std::memory_order_relaxed);
             beat.Shown(item.trace.picture, item.trace.targetNs, screenNs, period > 0 ? period : 16'666'667);
         }
@@ -684,7 +715,12 @@ bool VulkanPresenter::IsVisible() const
 
 int64_t VulkanPresenter::LeadNs(int64_t refreshPeriodNs) const
 {
-    return _impl->lead.Margin(refreshPeriodNs);
+    const Impl& impl = *_impl;
+    const int64_t margin = impl.lead.Margin(refreshPeriodNs);
+    if (!impl.wayland)
+        return margin;
+    // Drawn before its present goes
+    return std::max(margin, impl.aheadNs.load(std::memory_order_relaxed) + kDrawHeadroomNs);
 }
 
 bool VulkanPresenter::RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const
@@ -751,7 +787,9 @@ NativePresenter::Stats VulkanPresenter::GetStats() const
         s.soundOffsetP99 = beat.offsetP99Ms;
     }
     s.late = impl.lead.Late();
-    s.leadMs = static_cast<double>(impl.lead.MarginNs()) / 1e6;
+    s.leadMs = static_cast<double>(impl.wayland ? std::max(impl.lead.MarginNs(), impl.aheadNs.load() + kDrawHeadroomNs)
+                                                : impl.lead.MarginNs()) /
+               1e6;
     presentstats::Fill(s, std::move(errors), std::move(waits), std::move(acquires));
     const bool vrr = impl.mode != VK_PRESENT_MODE_FIFO_KHR;
     const int64_t period = impl.refreshPeriodNs.load(std::memory_order_relaxed);
