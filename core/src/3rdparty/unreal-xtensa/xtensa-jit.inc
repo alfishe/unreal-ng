@@ -194,7 +194,7 @@ uint32_t NativePrefix(const Insn* insns, uint32_t count, const RegionLoop& loop)
 
 } // namespace xtensa
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) || defined(_M_ARM64)
 #include "xtensa-jit-a64.inc"
 #else
 #include "xtensa-jit-x64.inc"
