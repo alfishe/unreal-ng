@@ -5,9 +5,12 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextstatecodec.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 namespace ttd {
+
+static_assert(TTDNextSystemArea::kTwinBytes == NextMemory::kSramTwinBytes, "the blob carries the whole SRAM twin");
 
 TTDNextState::TTDNextState(PortDecoder_Next& decoder) : _decoder(decoder), _size(NextStateCodec::Save(decoder).size()) {}
 
@@ -43,6 +46,7 @@ void TTDNextSystemArea::TTDSaveState(uint8_t* dst) const
     Memory* memory = &_memory;
     for (unsigned i = 0; i < kPages; i++)
         std::memcpy(dst + i * 16384, memory->ROMPageHostAddress(static_cast<uint8_t>(kFirstPage + i)), 16384);
+    std::memcpy(dst + kAreaBytes, memory->CacheBase(), kTwinBytes);
 }
 
 void TTDNextSystemArea::TTDLoadState(const uint8_t* src)
@@ -52,6 +56,7 @@ void TTDNextSystemArea::TTDLoadState(const uint8_t* src)
     Memory* memory = &_memory;
     for (unsigned i = 0; i < kPages; i++)
         std::memcpy(memory->ROMPageHostAddress(static_cast<uint8_t>(kFirstPage + i)), src + i * 16384, 16384);
+    std::memcpy(memory->CacheBase(), src + kAreaBytes, kTwinBytes);
 }
 
 uint64_t TTDNextSystemArea::TTDHashState() const
@@ -69,6 +74,14 @@ uint64_t TTDNextSystemArea::TTDHashState() const
             h ^= word;
             h *= 0x100000001b3ULL;  // FNV-1a prime
         }
+    }
+    const uint8_t* twin = _memory.CacheBase();
+    for (size_t offset = 0; offset < kTwinBytes; offset += sizeof(uint64_t))
+    {
+        uint64_t word;
+        std::memcpy(&word, twin + offset, sizeof(word));
+        h ^= word;
+        h *= 0x100000001b3ULL;
     }
     return h;
 }

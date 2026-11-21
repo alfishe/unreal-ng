@@ -117,20 +117,20 @@ Not planned yet:
 - [x] Reference compares (2026-11-20): the NextZXOS welcome-screen border matches jnext's headless reference pixel for pixel
   (`(182, 182, 182)`, palette entry 23; bright / flash have no part in a plain border, zxula.vhd 419 / 471), the wiki pages and the
   manual ([research-reference-compares.md](research-reference-compares.md)), the full ZEsarUX `tbblue.c` diff
-  ([research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md)). Bug candidates, each against the VHDL, none fixed yet:
-- [ ] NextREG read-back of narrow and unknown registers follows the VHDL mux (zxnext.vhd 5881-6285; tbblue diff #1)
-- [ ] NR #22 bit 7 reads the INT pulse (zxnext.vhd 5991; tbblue diff #2, reference compares #2)
-- [ ] NR #C0 bits 2:1 read the CPU's IM mode (zxnext.vhd 6229; tbblue diff #3)
-- [ ] NR #02 bits 3:2 kept when NR #06 refuses the NMI (zxnext.vhd 2090, 3843; tbblue diff #4)
-- [ ] NR #20 generates interrupts (im2_peripheral.vhd 186-192; tbblue diff #5)
-- [ ] Interrupt status set for a disabled source and in pulse mode (im2_peripheral.vhd 160; tbblue diff #6)
-- [ ] Boot ROM window 8K mirrored at #2000, writes to SRAM (zxnext.vhd 3199-3204; tbblue diff #7)
-- [ ] Copper mode 11 restarts at cvc 0, not at the paper top with NR #64 (copper.vhd 80; tbblue diff #8)
-- [ ] Blend modes 110 / 111 and the stencil use the full 3-bit blue (zxnext.vhd 7286-7341; tbblue diff #9)
-- [ ] Blend source 00 keeps the ULA mix when NR #68 bit 7 disables the ULA (zxnext.vhd 7100; tbblue diff #10, check on a board first)
-- [ ] ULANext full-ink paper / border is the NR #4A colour, not transparent (zxula.vhd 500-525; tbblue diff #11)
-- [ ] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
-  (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A)
+  ([research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md)). Bug candidates, each against the VHDL, #8-#11 fixed 2026-11-20:
+- [x] NextREG read-back of narrow and unknown registers follows the VHDL mux (zxnext.vhd 5881-6285; tbblue diff #1): `kReadMasks` in nextboard.cpp; the stored byte keeps every bit
+- [x] NR #22 bit 7 reads the INT pulse (zxnext.vhd 5991; tbblue diff #2, reference compares #2): pulse mode (the hardware-mode ULA exception, zxnext.vhd 1962, is not modelled)
+- [x] NR #C0 bits 2:1 read the CPU's IM mode (zxnext.vhd 6229; tbblue diff #3)
+- [x] NR #02 bits 3:2 kept when NR #06 refuses the NMI (zxnext.vhd 2090, 3843; tbblue diff #4): set when the cause is accepted (`NmiAcceptsCause`)
+- [x] NR #20 generates interrupts (im2_peripheral.vhd 186-192; tbblue diff #5): whatever the enables
+- [x] Interrupt status set for a disabled source and in pulse mode (im2_peripheral.vhd 160; tbblue diff #6): `_status`; #C8-#CA clear the status only, not a pending request (zxnext.vhd 1952)
+- [x] Boot ROM window 8K mirrored at #2000, writes to SRAM (zxnext.vhd 3199-3204; tbblue diff #7): reads of slots 0-1, writes keep the decode
+- [x] Copper mode 11 restarts at cvc 0, not at the paper top with NR #64 (copper.vhd 80; tbblue diff #8): `NextCopper::RestartClock`, NR #64 lines before the paper
+- [x] Blend modes 110 / 111 and the stencil use the full 3-bit blue (zxnext.vhd 7286-7341; tbblue diff #9): the compositor and the pixel inspector
+- [x] Blend source 00 keeps the ULA mix when NR #68 bit 7 disables the ULA (zxnext.vhd 7100; tbblue diff #10): the VHDL is unambiguous (ula_en only in ula_transparent and the stencil select); a board check is still welcome
+- [x] ULANext full-ink paper / border is the NR #4A colour, not transparent (zxula.vhd 500-525; tbblue diff #11): an opaque ULA pixel, transparent only when NR #4A = NR #14; the paper of a non-solid mask too
+- [x] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
+  (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A): `NextMemory::SramTwin`, saved in the `NextSystemArea` blob
 - [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
 - [ ] The `NextState` golden: `testdata/slots/fitted-devices.txt` pins `62:<size>`, so every Next state change regenerates it; switch the
   `next` block to presence only (`62:var`) or keep regenerating

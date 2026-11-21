@@ -80,10 +80,13 @@
 #include <unordered_map>
 #include <vector>
 
-// POC 053: the region JIT (xtensa-jit.inc) on arm64 and x86_64 hosts (macOS, Linux, Windows; GCC, Clang, MSVC); off
-// unless UNREAL_XTENSA_JIT=1
+// POC 053: the region JIT (xtensa-jit.inc) on arm64 and x86_64 hosts (macOS, Linux; Windows x86_64; GCC, Clang,
+// MSVC); off unless UNREAL_XTENSA_JIT=1. Not on Windows arm64 yet: the arm64 backend has never run there (no such
+// host to check it on); the interpreter gives the same results
 #if !defined(UNREAL_XTENSA_JIT)
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_X64)
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#define UNREAL_XTENSA_JIT 0
+#elif defined(__aarch64__) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_X64)
 #define UNREAL_XTENSA_JIT 1
 #else
 #define UNREAL_XTENSA_JIT 0

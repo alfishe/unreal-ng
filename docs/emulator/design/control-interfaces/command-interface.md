@@ -3292,6 +3292,8 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ### 8. Time-Travel Debugging (TTD)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../debugger/time-travel-debug/README.md)
+
 Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. GDB/LLDB clients reach the same engine through the reverse-execution packets (`bs` / `bc`, advertised as `ReverseStep+` / `ReverseContinue+`; see [gdb-protocol.md](./gdb-protocol.md)).
 
 **Background design:** [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md). This section describes what the CLI handlers (`core/automation/cli/src/commands/cli-processor-ttd.cpp`) actually accept and print today. The same rules apply to the WebAPI, Lua and Python surfaces, which all call the same `TTDControl` methods (the time-travel controller behind them).
@@ -4944,7 +4946,7 @@ The `disk` commands below keep working for drive-letter scripts.
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `disk insert <drive> <file> [autostart [48\|128]]` | `<A\|B\|C\|D> <filename> [autostart\|--autostart [48\|128]]` | Insert disk image (.trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img). Optional trailing `autostart` (drive A only): quick-reset into TR-DOS and run the disk, same as the Qt UI's drag-and-drop autostart and the WebAPI's `"autostart": true` insert flag. An `.mgt` on the MGT +D (`48K-PLUSD`, `128K-PLUSD`) runs its plan instead (run, run+load, system-disk+load, mount; the steps go on after the answer, progress in `state fdc` -> `autostart`); the word after `autostart` is the BASIC of its reset: omitted = the machine's own (48 BASIC on a 48K, 128 BASIC on a 128K), `48` = 48 BASIC on any machine, `128` = 128 BASIC (refused on a 48K). Every plane: WebAPI / MCP `basic`, Python / Lua `basic` argument, action `media.open` param `basic`. See [.recipe/machines/plusd.md](../../../../.recipe/machines/plusd.md). | ✅ Implemented (`CLIProcessor::HandleDiskInsert`) |
+| `disk insert <drive> <file> [autostart [48\|128]]` | `<A\|B\|C\|D> <filename> [autostart\|--autostart [48\|128]]` | Insert disk image (.trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img). Optional trailing `autostart` (drive A only): quick-reset into TR-DOS and run the disk, same as the Qt UI's drag-and-drop autostart and the WebAPI's `"autostart": true` insert flag. An `.mgt` on an MGT card (+D: `48K-PLUSD`, `128K-PLUSD`; DISCiPLE: `48K-DISCIPLE`, `128K-DISCIPLE`) runs its plan instead (run, run+load, system-disk+load, mount; the steps go on after the answer, progress in `state fdc` -> `autostart`); the word after `autostart` is the BASIC of its reset: omitted = the machine's own (48 BASIC on a 48K, 128 BASIC on a 128K), `48` = 48 BASIC on any machine, `128` = 128 BASIC (refused on a 48K). Every plane: WebAPI / MCP `basic`, Python / Lua `basic` argument, action `media.open` param `basic`. See [.recipe/machines/plusd.md](../../../../.recipe/machines/plusd.md). | ✅ Implemented (`CLIProcessor::HandleDiskInsert`) |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
 | `disk catalog <drive>` | `<A\|B\|C\|D>` | List the files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, MDOS, FAT) through DiskFs; every volume and directory: `media files <drive>`. | ✅ Implemented |

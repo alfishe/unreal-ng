@@ -1,5 +1,7 @@
 # Time-Travel Debugging — Tracking
 
+> **Historical:** this folder tracked TTD v1, deleted on 2026-10-30; the "Not started" rows below are out of date. Status: [DONE.md](DONE.md); TTD now: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md).
+
 This folder tracks all sprints and phases of the Time-Travel Debugging (TTD) +
 GDB reverse-debugging implementation for Unreal-NG.
 

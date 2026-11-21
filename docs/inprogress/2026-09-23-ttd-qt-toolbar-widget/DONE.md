@@ -1,5 +1,7 @@
 # DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Landed in `b4afd9a3` (PLAN #36 retired).
 
 ---

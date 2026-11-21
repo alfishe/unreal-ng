@@ -5,6 +5,7 @@
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/nextregtable.h"
 
+#include <array>
 #include <cstdio>
 #include "emulator/memory/next/nextmemory.h"
 
@@ -17,6 +18,33 @@ bool SoftResetKeeps(uint8_t number)
 {
     return number == 0x04 || number == 0x7F || number == 0x80 || number == 0x81 || (number >= 0x82 && number <= 0x89) || number == 0x8F;
 }
+
+/// The bits of the stored byte the NextREG read multiplexer of zxnext.vhd (port_253b_dat, 5878-6290) returns, for the registers whose
+/// read is the stored field at the place it was written (the others have their own case in NextBoard::Read). A register the
+/// multiplexer has no case for reads 0 (`when others`): #0C, #0D, #24, #29-#2B, #A3, ... The stored byte keeps every bit (the devices
+/// behind the registers read it)
+constexpr std::array<uint8_t, 256> MakeReadMasks()
+{
+    std::array<uint8_t, 256> m{};
+    m[0x06] = 0xFF;  // 5900
+    m[0x0B] = 0xB1;  // 5915: joy_iomode_en & '0' & joy_iomode & "000" & joy_iomode_0
+    m[0x11] = 0x07;  // 5927: "00000" & nr_11_video_timing
+    m[0x12] = 0x7F;  // 5930: '0' & nr_12_layer2_active_bank
+    m[0x13] = 0x7F;  // 5933
+    for (uint8_t r : {0x14, 0x15, 0x16, 0x17, 0x26, 0x27, 0x30, 0x31, 0x32, 0x33, 0x4A, 0x4B, 0x6B, 0x6C, 0x7F, 0x80, 0x82, 0x83, 0x84, 0x86, 0x87,
+                      0x88, 0x91, 0x92, 0xB8, 0xB9, 0xBA, 0xBB, 0xD9})
+        m[r] = 0xFF;
+    m[0x2F] = 0x03;  // 6018: "000000" & nr_30_tm_scrollx(9 downto 8)
+    m[0x4C] = 0x0F;  // 6057: "0000" & nr_4c_tm_transparent_index
+    m[0x68] = 0xFD;  // 6093: bit 1 reads 0; bit 3 is the ULA+ enable flop, which port #FF3B writes too
+    m[0x6A] = 0x3F;  // 6099: "00" & radastan & radastan_xor & palette offset
+    m[0x70] = 0x3F;  // 6114: "00" & layer2 resolution & palette offset
+    m[0x71] = 0x01;  // 6117: "0000000" & nr_71_layer2_scrollx_msb
+    m[0x8F] = 0x03;  // 6162: "000000" & nr_8f_mapping_mode
+    m[0xD8] = 0x01;  // 6266: "0000000" & nr_d8_io_trap_fdc_en
+    return m;
+}
+constexpr std::array<uint8_t, 256> kReadMasks = MakeReadMasks();
 }  // namespace
 
 void NextBoard::Reset(bool hard)
@@ -263,7 +291,7 @@ uint8_t NextBoard::Read(uint8_t reg) const
     uint8_t value;
     if (_interrupts && _interrupts->ReadNr(reg, value))
         return value;
-    return _regs[reg];
+    return static_cast<uint8_t>(_regs[reg] & kReadMasks[reg]);
 }
 
 uint32_t NextBoard::GpioPins() const
@@ -524,12 +552,25 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
                 _resetClock = false;
             }
             {
-                // bit 7 the expansion bus reset is held; bits 3:2 read 1 once their NMI was generated and until written 0
+                // bit 7 the expansion bus reset is held; bits 3:2 read 1 once written 1 while no NMI is on its way (zxnext.vhd 3843-3862:
+                // nmi_gen_nr_* and nmi_accept_cause, the NMI state machine idle or fetching) and until written 0. NR #06's button
+                // enables gate only the NMI itself (nmi_assert_mf / nmi_assert_divmmc, 2090-2091), not the flags
                 uint8_t generated = _regs[reg] & 0x0C & value;
-                if ((value & 0x04) && _machine && _machine->GenerateDriveNmi())
-                    generated |= 0x04;
-                if ((value & 0x08) && _machine && _machine->GenerateMultifaceNmi())
-                    generated |= 0x08;
+                const bool accept = !_machine || _machine->NmiAcceptsCause();  // taken before this write's own NMI starts
+                if (value & 0x04)
+                {
+                    if (accept)
+                        generated |= 0x04;
+                    if (_machine)
+                        _machine->GenerateDriveNmi();
+                }
+                if (value & 0x08)
+                {
+                    if (accept)
+                        generated |= 0x08;
+                    if (_machine)
+                        _machine->GenerateMultifaceNmi();
+                }
                 _regs[reg] = static_cast<uint8_t>((value & 0x80) | generated);
                 if (!(value & 0x10))
                     _regs[0xDA] = 0;  // writing bit 4 as 0 clears the trap cause (3880)
@@ -599,6 +640,10 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
                 _machine->UnlockPaging();
             if (_machine)
                 _machine->SetContentionDisabled((value & 0x40) != 0);
+            return;
+        case 0x06:
+            // zxnext.vhd 5167-5169: the PS/2 mode (bit 2) is written in config mode only
+            _regs[reg] = _memory->InConfigMode() ? value : static_cast<uint8_t>((value & ~0x04) | (_regs[reg] & 0x04));
             return;
         case 0x05:  // the Pentagon is always 50 Hz (zxnext.vhd nr_05_5060): bit 2 does not stay set under its timing
             _regs[reg] = _timing == 4 ? static_cast<uint8_t>(value & ~0x04) : value;

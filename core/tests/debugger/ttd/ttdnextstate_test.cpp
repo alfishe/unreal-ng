@@ -105,6 +105,16 @@ TEST(TTDNextState_Test, TheSoundAndTheSystemAreaTravelToo)
     EXPECT_EQ(divMmcRam[0x10], ramOriginal) << "and the DivMMC RAM";
     EXPECT_NE(area.TTDHashState(), changedHash) << "the divergence hash sees the area";
     EXPECT_EQ(area.TTDStateSize(), ttd::TTDNextSystemArea::kBytes);
+
+    // and the SRAM side of banks 5 / 7 (what Layer 2 and NR #04 reach under the ULA's block RAM) travels with it
+    uint8_t* twin = static_cast<NextMemory*>(context->pMemory)->SramTwin();
+    const uint8_t twinOriginal = twin[NextMemory::kSramTwinBytes - 1];
+    area.TTDSaveState(image.data());
+    twin[NextMemory::kSramTwinBytes - 1] = static_cast<uint8_t>(twinOriginal ^ kByte);
+    const uint64_t twinHash = area.TTDHashState();
+    area.TTDLoadState(image.data());
+    EXPECT_EQ(twin[NextMemory::kSramTwinBytes - 1], twinOriginal) << "the load put the SRAM twin back";
+    EXPECT_NE(area.TTDHashState(), twinHash) << "the divergence hash sees the twin";
 }
 
 TEST(TTDNextState_Test, SeeksRestoreTheNextRegisterFileAndTheMemoryMap)

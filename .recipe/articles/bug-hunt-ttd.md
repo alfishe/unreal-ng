@@ -1,5 +1,7 @@
 # Article: "Who Corrupted This Memory?" — a Full TTD Bug Hunt
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 A worked end-to-end workflow combining
 [snapshots](../media/load-snapshot.md),
 [TTD recording](../analysis/ttd-recording.md) and

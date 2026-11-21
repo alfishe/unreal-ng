@@ -141,6 +141,8 @@ constexpr SourceRef kSources[] = {
       "https://github.com/mamedev/mame/blob/master/src/devices/bus/spectrum/beta128.cpp" },
     { Src::FusePlusD, "FUSE peripherals/disk/plusd.c (ports, control latch, paging traps)",
       "https://sourceforge.net/p/fuse-emulator/fuse/ci/master/tree/peripherals/disk/plusd.c" },
+    { Src::FuseDisciple, "FUSE peripherals/disk/disciple.c (ports, control latch, paging traps, RAM / ROM swap)",
+      "https://sourceforge.net/p/fuse-emulator/fuse/ci/master/tree/peripherals/disk/disciple.c" },
     { Src::MameMgt, "MAME spectrum/mgt.cpp (+D / DISCiPLE)",
       "https://github.com/mamedev/mame/blob/master/src/devices/bus/spectrum/mgt.cpp" },
 

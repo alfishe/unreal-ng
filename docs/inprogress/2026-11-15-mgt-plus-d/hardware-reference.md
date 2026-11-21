@@ -149,6 +149,40 @@ Read in S-ROM:
 | `.z80` v3 | hardware mode 3 = "48K + M.G.T.", 6 = "128K + M.G.T." | `core/src/loaders/snapshot/loader_z80.cpp` |
 | `.szx` | block `PLSD`: flags (paged, compressed, seek direction), RAM length, ROM length, ROM type (G+DOS / UNI-DOS / custom), control latch, drive count, track, sector, data, status; then 8 KB RAM and an optional custom ROM. Block `PDSK` names the disk images | S-FUSE `libspectrum/szx.c` |
 
+## 9. DISCiPLE (P7)
+
+The DISCiPLE (MGT, 1986) is the +D's predecessor: the same WD1772 and 8K RAM, an 8K GDOS 3 ROM
+(`data/rom/gdos.rom`), plus two joystick sockets, the network, an inhibit button, a pass-through edge and the
+printer port. S-MAME `mgt.cpp` (`spectrum_disciple_device`, noted "GDOS v3 all ok") and S-FUSE
+`peripherals/disk/disciple.c` agree on everything below; it is what the card `disciple` implements.
+
+| Port (low byte, A8-A15 not decoded) | Read | Write |
+|---|---|---|
+| `#1B` / `#5B` / `#9B` / `#DB` | WD1772 status / track / sector / data (register = A7..A6) | command / track / sector / data |
+| `#1F` | bits 0-4 the Kempston socket (`000FUDLR`, active high); bit 6 printer not busy (no printer: 0, S-FUSE `#BF`); bits 5, 7 low | control latch (below) |
+| `#3B` | - | network (not emulated) |
+| `#7B` | the ROM back at `#0000`, the RAM at `#2000` | the RAM at `#0000`, the ROM at `#2000` |
+| `#BB` | page in | page out |
+| `#FB` | - | printer data |
+
+Control latch (`#1F` write): bit 0 drive 1 (1) or drive 2 (0): one drive is always selected; bit 1 side; bit 2
+`/DDEN` (1 = single density, FM); bit 3 ROM bank (A13 of a 16K ROM; the 8K GDOS ignores it); bit 4 inhibit
+override; bit 5 the expansion select; bit 6 printer strobe; bit 7 the network line.
+
+Traps (M1 fetch while paged out): `#0001`, `#0008`, `#0066`, `#028E` (not the +D's `#003A`). Each is gated by
+"inhibit released, or latch bit 4"; a latch write with the button pressed and bit 4 clear pages out.
+
+`/RESET`: paged out, memory not swapped, the latch keeps its value; then a hold-off (S-MAME `m_reset_delay`,
+10 µs, 35 T at 3.5 MHz) in which no trap counts and `#7B` / `#BB` do nothing. Without it the trap at `#0001` (the
+reset's second fetch) would page GDOS in: its own reset (`DI; XOR A; OUT (#1F),A; JP #02F2`) ends at the 48K ROM's
+`START` (`#11CB`), which on a 128K skips the menu. The emulator measures the hold-off from the first fetch after
+the reset (the T-state counter is reset with the machine).
+
+GDOS 3 boots on `RUN` from drive 1 with the first CODE file whose name starts with `SYS` (G+DOS: `+SYS`), loaded
+into the card RAM. The system tape (GDOS 3d, `CONFIG` with `CONFIG1_C`-`CONFIG3_C`) writes that file:
+`data/boot/disciple/README.md`. `.z80` v3 byte 83 = 0 / 1 names the DISCiPLE (Epson / HP printer); SZX has no
+DISCiPLE block (S-FUSE `libspectrum` writes none).
+
 ## Open items
 
 | # | Question | How to settle |

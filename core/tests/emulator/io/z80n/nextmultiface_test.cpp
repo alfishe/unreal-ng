@@ -44,7 +44,7 @@ TEST_F(NextMultiface_Test, ButtonStartsAnNmiSessionAndTheFetchOfTheVectorComesFr
     NextMultiface& mf = _ports->Multiface();
     _ports->Board().Write(0x02, 0x08);
     EXPECT_FALSE(mf.NmiHold()) << "NR #06 bit 3 is off: no NMI";
-    EXPECT_EQ(_ports->Board().Read(0x02) & 8, 0);
+    EXPECT_NE(_ports->Board().Read(0x02) & 8, 0) << "the flag follows nmi_accept_cause, not NR #06 (zxnext.vhd 3843-3849)";
 
     _ports->Board().Write(0x02, 0x00);
     _ports->Board().Write(0x06, 0x08);

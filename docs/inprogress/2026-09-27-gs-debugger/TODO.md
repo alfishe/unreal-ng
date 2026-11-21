@@ -1,5 +1,7 @@
 # TODO — GS/NeoGS card-CPU debugger
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Requirements rev. 3 and design rev. 2 (2026-09-28): NeoGS in master, NeoGS target moved to phases 1-2, front-ends handed to the [debugger model](../2026-09-28-debugger-model/). (#44, the thread-safe GS control path, landed in `8dacbc82`.)
 
 Plan: [PLAN.md](../PLAN.md) #45 (T2).
@@ -174,7 +176,7 @@ fixed RAM window, 3: high ROM at `#C000`).
      warnings, live `test_gs_debugger.py` 15/15; A/B benchmarks on .20 in neogs-automation-design.md §10 (frames
      unchanged, +0.5 ns per host `OUT`). Left: the gcc check.
 
-## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), not landed
+## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 
 Owner decision 2026-11-17: either CPU is stepped both ways; the other CPU is computed by replay from the nearest
 checkpoint; the main CPU is shown at its last completed instruction plus a T offset; a run first lets the main CPU
@@ -205,7 +207,7 @@ reach its boundary.
   `LastStop().serial`; a move in time does not. Guiplane: `debugger.select_cpu {cpu}`, `cpu` / `cpus` in the
   `debugger` state, `cpu` in the views'. Code: `unreal-qt/src/debugger/debuggercpu.cpp`. Tests:
   `DebuggerCpuTabs_Test` (unreal-qt-tests).
-- [x] The card tab's open ends (2026-11-19, branch `card-tails`, not landed):
+- [x] The card tab's open ends (2026-11-19, landed 61276899f / 065836119):
   - Labels: the card's own `LabelManager` (`DebugManager::GetLabelManager(cpu)`) in the Embedded memory view's
     tooltip and Label Manager, and in eCat's card disassembly (`Z80DisAsm` with the card's labels); no markup and no
     main CPU labels on a card's tab.

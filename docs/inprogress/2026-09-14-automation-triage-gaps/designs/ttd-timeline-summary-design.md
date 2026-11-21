@@ -1,5 +1,7 @@
 # Technical Design Document: TD-5 TTD Timeline Summary Endpoint
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Document Path:** [`docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md`](ttd-timeline-summary-design.md)  
 **Feature Target:** TD-5 (P1) — Timeline Summary Endpoint (`GET /ttd/timeline`)  
 **Status:** Architectural Specification  

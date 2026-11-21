@@ -1,5 +1,7 @@
 # TTD Coverage Evaluation — Time-Travel Debugging for AI Reverse-Engineering Workflows
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Date:** 2026-09-15
 **Trigger:** the umt23x reverse-engineering package
 (`docs/disasm/software/umt23x/`) posed the litmus test — could an AI agent
@@ -43,7 +45,7 @@ code path that implements them.
 
 | Capability | Evidence |
 |:--|:--|
-| Recording lifecycle: Idle/Recording/Detached, baseline checkpoint, stop-retains-history, invalidate | [timetravelmanager.h](../../../core/src/debugger/ttd/timetravelmanager.h) §class doc; `StartRecording` refuses if a declared peripheral lacks a serializer (timetravelmanager.cpp:117-125) |
+| Recording lifecycle: Idle/Recording/Detached, baseline checkpoint, stop-retains-history, invalidate | `timetravelmanager.h` (v1, deleted 2026-10-30) §class doc; `StartRecording` refuses if a declared peripheral lacks a serializer (timetravelmanager.cpp:117-125) |
 | Per-frame checkpoints, COW page store, I/P-frame codec (K=50, ~2 ms avg seek) | `kKeyFrameInterval` (timetravelmanager.h:189); TTDSessionInfo codec telemetry fields (140-144) |
 | Peripheral state in checkpoints: TurboSound slot (legacy/TSFM guarded), Covox, **Tape**, Kempston mouse, BetaDisk, + per-model decoder serializers | `RegisterModelPeripherals` (timetravelmanager.cpp:1028-1070) |
 | Input journals (keyboard, mouse) replayed at recorded timestamps during seek | `RecordInputEvent`/`RecordMouse*` (timetravelmanager.h:458-465) |

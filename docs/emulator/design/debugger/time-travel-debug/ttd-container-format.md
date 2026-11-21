@@ -1,5 +1,7 @@
 # TTD container format: streams, frames and muxing
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 | | |
 |---|---|
 | **Status** | History. Section 2 describes v1's file, which nothing reads since v1 was deleted (2026-10-30). Sections 4-6 are the proposal that led to the engine's container, built differently: see [As built](#as-built-2026-10-31) |

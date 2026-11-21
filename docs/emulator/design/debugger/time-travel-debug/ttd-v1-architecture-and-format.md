@@ -1,5 +1,7 @@
 # TTD v1: architecture, data streams and the .ttd file format (as built)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 > **History.** This is the description of TTD v1 (`TimeTravelManager`), deleted on 2026-10-30 (TTD v2
 > migration, Phase 6, `d4d7bc34a`). Nothing reads its file format any more: no reader, analyzer or test is left
 > for it. Its peripheral id table survives as `legacy_id` in [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy).

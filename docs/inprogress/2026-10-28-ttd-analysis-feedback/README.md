@@ -1,5 +1,7 @@
 # TTD v2 queries: feedback from game analysis
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 A game-analysis agent used TTD v2 to find event addresses (coverage scan over rare code, find-last on a speed byte,
 reverse-continue). It works, and the answers reproduce across two independent recordings. The loop around each
 query costs too much, though. This folder holds the fixes.

@@ -173,6 +173,8 @@ smart tool doesn't cover the use case.
 
 ## Time-travel debugging
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Time-travel debugging (TTD) records the machine while it runs, so that
 afterwards you can move backward through what happened: jump to any recorded
 moment, step back one instruction, or ask "who last wrote to this address?".

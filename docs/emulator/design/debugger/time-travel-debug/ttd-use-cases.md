@@ -1,5 +1,7 @@
 # What you can do with a `.ttd` recording
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 | | |
 |---|---|
 | **Audience** | Anyone debugging ZX Spectrum software with Unreal-NG |

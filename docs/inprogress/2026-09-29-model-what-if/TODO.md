@@ -1,5 +1,7 @@
 # TODO — Model what-if and branched history
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Status: **design written and decided, W0 and W0b done.** Design: [design.md](design.md). Reference
 UI analysis: [reference-branched-ttd-ui.md](reference-branched-ttd-ui.md).
 Scene and requirements OR-30 … OR-37:

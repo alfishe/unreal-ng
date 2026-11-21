@@ -1,5 +1,7 @@
 # TTD replay check
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Status (2026-11-06): landed on github/master (`124fb512f`): the verb, the
 seek check, the findings of section 6 fixed.
 

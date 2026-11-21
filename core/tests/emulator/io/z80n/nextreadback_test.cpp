@@ -10,6 +10,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextboard.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 namespace
@@ -147,4 +148,61 @@ TEST_F(NextReadBack_Test, TheVideoBitsAreTheOnesTheLastFrameSyncTookAndNr81HasIt
     EXPECT_EQ(board.Read(0x81), 0x78) << "bit 7 ROMCS_n of an empty bus (0 on the real board), bits 6:3 stored, bit 2 and the speed 00";
     board.WriteNextReg(0x81, 0x00);
     EXPECT_EQ(board.Read(0x81), 0x00) << "the board's NextReg_defaults: #81 reads #00";
+}
+
+// zxnext.vhd 5878-6290 (port_253b_dat): the multiplexer returns only the bits each register keeps, at their places, and 0 for a
+// register it has no case for (`when others`). Every register below is written #FF and read back
+TEST_F(NextReadBack_Test, NarrowAndUnknownRegistersReadWhatTheMultiplexerReturns)
+{
+    struct Case
+    {
+        uint8_t reg;
+        uint8_t read;
+    };
+    static constexpr Case kCases[] = {
+        {0x0B, 0xB1},  // 5915: joy_iomode_en & '0' & joy_iomode & "000" & joy_iomode_0
+        {0x12, 0x7F},  // 5930: '0' & nr_12_layer2_active_bank
+        {0x13, 0x7F},  // 5933
+        {0x2F, 0x03},  // 6018: "000000" & nr_30_tm_scrollx(9 downto 8)
+        {0x4C, 0x0F},  // 6057: "0000" & nr_4c_tm_transparent_index
+        {0x68, 0xFD},  // 6093: ... & nr_68_ula_fine_scroll_x & '0' & nr_68_ula_stencil_mode
+        {0x6A, 0x3F},  // 6099: "00" & radastan & radastan_xor & lores palette offset
+        {0x70, 0x3F},  // 6114: "00" & layer 2 resolution & palette offset
+        {0x71, 0x01},  // 6117: "0000000" & nr_71_layer2_scrollx_msb
+        {0x8F, 0x03},  // 6162: "000000" & nr_8f_mapping_mode
+        {0xD8, 0x01},  // 6266: "0000000" & nr_d8_io_trap_fdc_en
+        // whole bytes
+        {0x14, 0xFF}, {0x15, 0xFF}, {0x16, 0xFF}, {0x17, 0xFF}, {0x26, 0xFF}, {0x27, 0xFF}, {0x30, 0xFF}, {0x31, 0xFF}, {0x32, 0xFF},
+        {0x33, 0xFF}, {0x4A, 0xFF}, {0x4B, 0xFF}, {0x6B, 0xFF}, {0x6C, 0xFF}, {0x7F, 0xFF}, {0x82, 0xFF}, {0x83, 0xFF}, {0x84, 0xFF},
+        {0x86, 0xFF}, {0x87, 0xFF}, {0x88, 0xFF}, {0x91, 0xFF}, {0x92, 0xFF}, {0xB8, 0xFF}, {0xB9, 0xFF}, {0xBA, 0xFF}, {0xBB, 0xFF},
+        {0xD9, 0xFF},
+        // no case in the multiplexer: the key joystick map (#29-#2B), the commented-out #A3, the gaps
+        {0x0C, 0x00}, {0x0D, 0x00}, {0x24, 0x00}, {0x29, 0x00}, {0x2A, 0x00}, {0x2B, 0x00}, {0x3A, 0x00}, {0xA3, 0x00}, {0xC1, 0x00},
+        {0xC7, 0x00}, {0xE0, 0x00}, {0xFF, 0x00},
+    };
+    NextBoard& board = _ports->Board();
+    for (const Case& c : kCases)
+    {
+        board.WriteNextReg(c.reg, 0xFF);
+        EXPECT_EQ(board.Read(c.reg), c.read) << "NR #" << std::hex << int(c.reg);
+    }
+    EXPECT_EQ(board.Stored(0x70), 0xFF) << "the stored byte keeps what was written: only the read path masks";
+}
+
+// zxnext.vhd 5167-5169: NR #06 bit 2 (the PS/2 mode) is written in config mode only; the other bits always (5900 reads them all)
+TEST_F(NextReadBack_Test, Nr06TakesThePs2ModeInConfigModeOnly)
+{
+    NextBoard& board = _ports->Board();
+    NextMemory* memory = dynamic_cast<NextMemory*>(_context->pMemory);
+    ASSERT_NE(memory, nullptr);
+    memory->SetConfigMode(false);
+    board.WriteNextReg(0x06, 0x00);
+    board.WriteNextReg(0x06, 0xFF);
+    EXPECT_EQ(board.Read(0x06), 0xFB);
+    memory->SetConfigMode(true);
+    board.WriteNextReg(0x06, 0xFF);
+    EXPECT_EQ(board.Read(0x06), 0xFF);
+    memory->SetConfigMode(false);
+    board.WriteNextReg(0x06, 0x00);
+    EXPECT_EQ(board.Read(0x06), 0x04) << "outside config mode the PS/2 bit keeps its value";
 }

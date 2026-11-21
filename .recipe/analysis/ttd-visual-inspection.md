@@ -1,5 +1,7 @@
 # Recipe: Record with TTD, Then Freely Navigate + Inspect Any Point
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Goal: record a session through the interesting section, then move freely
 back and forth to any frame and get a **guaranteed-stable** snapshot of
 that exact moment — registers, memory, and a screenshot that's actually

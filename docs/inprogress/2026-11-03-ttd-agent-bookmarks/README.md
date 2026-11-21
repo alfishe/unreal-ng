@@ -1,5 +1,7 @@
 # TTD agent bookmarks: notes, tags, the moment's context, export
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Status 2026-11-03:** done on all six planes, measured, accepted ([plan.md](plan.md)). The fifth item of the agent UX roadmap, after the diff of two moments
 ([2026-11-03-ttd-diff-moments](../2026-11-03-ttd-diff-moments/README.md)). Accepted only if WebAPI / MCP measurements
 prove it (owner 2026-11-01).

@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "common/stringhelper.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/video/next/nextlayerimage.h"
 #include "emulator/video/next/nextvideorenderer.h"
 
@@ -33,10 +34,10 @@ uint16_t Nine(uint8_t rrrgggbb)
 
 unsigned R3(uint16_t c) { return (c >> 6) & 7; }
 unsigned G3(uint16_t c) { return (c >> 3) & 7; }
-unsigned B2(uint16_t c) { return (c >> 1) & 3; }
+unsigned B3(uint16_t c) { return c & 7; }  // the blend keeps the 9-bit blue (zxnext.vhd mixer_b_t)
 uint16_t Pack(unsigned r, unsigned g, unsigned b)
 {
-    return static_cast<uint16_t>((r << 6) | (g << 3) | (b << 1) | (b ? 1 : 0));
+    return static_cast<uint16_t>((r << 6) | (g << 3) | b);
 }
 
 const char* const kOrders[8] = {"SLU", "LSU", "SUL", "LUS", "USL", "ULS", "blend", "blend"};
@@ -125,6 +126,8 @@ StateNode Inspector::UlaLayer(Pixel pixel, bool& clipped)
     if (Nr(0x68) & 0x80)
     {
         source["kind"] = "disabled";
+        if (pixel.opaque)
+            source["note"] = "NR #68 bit 7 hides the ULA, but blend source 00 (NR #68 bits 6:5) still mixes its pixel";
         return source;
     }
     clipped = UlaClipped();
@@ -218,7 +221,7 @@ StateNode Inspector::UlaLayer(Pixel pixel, bool& clipped)
     if (index >= 0)
         source["palette_index"] = index;
     else
-        source["note"] = "no ink: ULANext leaves the paper transparent here";
+        source["note"] = "no ink: ULANext paper takes the fallback colour NR #4A (format not a solid mask)";
     source["palette"] = int(palette);
     (void)pixel;
     return source;
@@ -296,7 +299,11 @@ StateNode Inspector::Layer2Layer(Pixel pixel, bool& clipped)
         address = static_cast<long long>(sx) * 256 + sy;
     }
     bool inRam;
-    const uint8_t byte = Ram(static_cast<size_t>(bank) * 0x4000 + static_cast<size_t>(address), inRam);
+    const size_t at = static_cast<size_t>(bank) * 0x4000 + static_cast<size_t>(address);
+    uint8_t byte = Ram(at, inRam);
+    const int side = NextMemory::SramTwinOffset(static_cast<unsigned>(at >> 13));
+    if (inRam && _env.sramTwin && side >= 0)
+        byte = _env.sramTwin[static_cast<size_t>(side) + (at & 0x1FFF)];  // Layer 2 reads the SRAM side of banks 5 and 7
     // the bitmap runs on from the bank (256x192: 3 pages, the others 5): the 16K page the byte is in and its offset in that page
     source["kind"] = "bitmap";
     source["ram_page16"] = int(bank + (static_cast<unsigned>(address) >> 14));
@@ -687,9 +694,9 @@ StateNode Inspector::Run()
                  source.find("pixel_value")->i == source.find("transparent_index")->i)
             why = "transparent (tile pixel index " + std::to_string(source.find("pixel_value")->i) + " is the tilemap transparent index NR #4C)";
         else if (l == kUla && kind == "border" && source.find("note") && source.find("note")->s.find("full-ink") != std::string::npos)
-            why = "transparent (ULANext full-ink mode: the border comes from the fallback colour)";
+            why = "transparent (ULANext full-ink mode: the border takes the fallback colour NR #4A, which is the global transparency colour NR #14)";
         else if (source.find("note") && source.find("note")->s.find("no ink") != std::string::npos)
-            why = "transparent (ULANext: no ink here)";
+            why = "transparent (ULANext: no ink here; the fallback colour NR #4A is the global transparency colour NR #14)";
         else
         {
             // painted in the global transparency colour
@@ -728,7 +735,7 @@ uint16_t ComposedColour(const Frame& frame, unsigned y, unsigned subpixel)
         case kIdLayer2: return l2.colour & 0x1FF;
         case kIdTilemap: return tile.colour & 0x1FF;
         case kIdSprite: return sprite.colour & 0x1FF;
-        case kIdStencil: return Pack(R3(ula.colour) & R3(tile.colour), G3(ula.colour) & G3(tile.colour), B2(ula.colour) & B2(tile.colour));
+        case kIdStencil: return ula.colour & tile.colour & 0x1FF;  // zxnext.vhd stencil_rgb: the nine bits ANDed
         case kIdBlend:
         {
             const unsigned order = segment ? (segment->Reg(0x15) >> 2) & 7 : 6;
@@ -739,13 +746,13 @@ uint16_t ComposedColour(const Frame& frame, unsigned y, unsigned subpixel)
             uint16_t mix = 0;
             switch (blend)
             {
-                case 0: mixOpaque = ulaV; mix = ula.colour; break;
+                case 0: mixOpaque = ulaV; mix = ula.colour; break;  // the ULA's plane holds its pixels even when it is off here
                 case 1: break;
                 case 2:
                     if (stencilMode)
                     {
                         mixOpaque = ulaV && tv;
-                        mix = Pack(R3(ula.colour) & R3(tile.colour), G3(ula.colour) & G3(tile.colour), B2(ula.colour) & B2(tile.colour));
+                        mix = ula.colour & tile.colour & 0x1FF;
                     }
                     else if (tv && (!below || !ulaV))
                     {
@@ -762,9 +769,9 @@ uint16_t ComposedColour(const Frame& frame, unsigned y, unsigned subpixel)
             }
             unsigned r = (lv ? R3(l2.colour) : 0) + (mixOpaque ? R3(mix) : 0);
             unsigned g = (lv ? G3(l2.colour) : 0) + (mixOpaque ? G3(mix) : 0);
-            unsigned b = (lv ? B2(l2.colour) : 0) + (mixOpaque ? B2(mix) : 0);
+            unsigned b = (lv ? B3(l2.colour) : 0) + (mixOpaque ? B3(mix) : 0);
             if (order == 6)
-                return Pack(std::min(r, 7u), std::min(g, 7u), std::min(b, 3u));
+                return Pack(std::min(r, 7u), std::min(g, 7u), std::min(b, 7u));
             auto sub = [](unsigned v) -> unsigned { return v <= 4 ? 0 : (((v >> 2) & 3) == 3 ? 7 : ((v + 0x0B) & 0x0F)); };
             if (mixOpaque)
             {
@@ -772,7 +779,7 @@ uint16_t ComposedColour(const Frame& frame, unsigned y, unsigned subpixel)
                 g = sub(g);
                 b = sub(b);
             }
-            return Pack(r & 7, g & 7, b & 3);
+            return Pack(r & 7, g & 7, b & 7);
         }
         default: return Nine(segment ? segment->Reg(0x4A) : 0);
     }

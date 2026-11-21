@@ -1,5 +1,7 @@
 # TTD diff of two moments: what differs between two points of the history, in one call
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Status 2026-11-03:** done on all six planes, measured and accepted ([plan.md](plan.md)): 1 call instead of 18-74,
 6.3-17.4x less MCP text, any T inside a frame. The fourth item of the agent UX roadmap, after the cause chain
 ([2026-11-02-ttd-cause-chain](../2026-11-02-ttd-cause-chain/README.md)), find event

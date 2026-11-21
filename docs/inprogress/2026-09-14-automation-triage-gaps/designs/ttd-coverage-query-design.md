@@ -1,5 +1,7 @@
 # Technical Design Document: TD-7 TTD Coverage Index Query
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Document Path:** `docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-coverage-query-design.md`
 **Feature Target:** TD-7 (P2) — Query the Coverage Index
 **Status:** Architectural Specification

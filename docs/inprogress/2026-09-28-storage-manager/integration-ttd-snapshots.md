@@ -1,5 +1,7 @@
 # Integration: time travel and snapshots
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
