@@ -70,6 +70,11 @@ only ever advanced by `run_frames`; keys are the frame-driven keyboard queue.
 | `title-NNN-br` | a `.nex` / `.snx` title once more through the Browser (`--load-only` skips it): NextZXOS's own loader, the current directory set to the title's folder. A `.sna` is refused by `/snapshot/load` on a NEXT (it names no model and the launcher boots NextZXOS only for `.nex` / `.snx`), so it is Browser-only; an `.snx` loaded directly does not get the title's folder as its current directory (a demo that loads its data files from there shows nothing) |
 | `realboard` | `tools/machines/next/realboard/run-all.py` (ZXSpectrumNextTests through `core-tests`, its automatic verdicts), when `--next-tests` is given; `core-tests` is looked for beside the binary's bundle, or `--core-tests` |
 
+The Browser steps (the keys, hold frames, idle waits, the search rule, the run steps per extension) are not in `regress.py`: they come
+from [`testdata/machines/zxnext/browser-navigation.json`](../../../../testdata/machines/zxnext/browser-navigation.json) through
+[`browser-drive/navigation.py`](../browser-drive/README.md), the data the real-time Browser drivers and `NexBrowserRun_Test` use too.
+Changing a frame count there changes the pictures of every Browser job: rerun the baseline.
+
 Per picture: PNG (`shots/<job>-<label>.png`), SHA-1 of the raw RGBA frame (`/capture/framebuffer`), PC, HALT, NR `#07`, whether
 NextZXOS is idle (`HALT` at `#0C8F`) and the screen kind (flat / NextZXOS grey / picture).
 

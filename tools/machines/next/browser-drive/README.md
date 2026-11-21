@@ -20,6 +20,24 @@ tools/machines/next/browser-drive/drive.py status        # CPU clock, DivMMC map
 | `enter`, `break` | one key |
 | `status` | prints the machine report |
 
+The navigation itself - the keys, hold frames and waits of every step, the idle loop (`HALT` at `#0C8F`), the Browser's order
+(`.` and `..` except at the card root, then the names case-insensitively), the search rule (`H` + the shortest unique prefix of the
+name's letters, digits, spaces, `.`, `_`, `-`, else counting down) and the run steps per extension (`.sna` ENTER, the Snapshot
+Loader page, ENTER; `.tap` SYMBOL SHIFT + ENTER, the TAP loader, `N`; the rest ENTER) - is one data file,
+[`testdata/machines/zxnext/browser-navigation.json`](../../../../testdata/machines/zxnext/browser-navigation.json), read through
+`navigation.py`. The same file drives the frame-counted [`regress.py`](../regress/README.md) and the C++ `NexBrowserRun_Test`
+(`core/tests/loaders/nex/nexbrowser_test.cpp`); a step has frame counts for those and `seconds` for the real-time drivers here.
+
+| Script | Does |
+|:--|:--|
+| `drive.py` | the steps above, one command line (`Machine`: `step`, `reach`, `type_search`, `run_file`) |
+| `suite.py` | every program of a card's `tests/` tree (ZXSpectrumNextTests) through the Browser, one fresh boot each, with the board photo |
+| `collection.py` | the titles of a games / demos collection on the card through the Browser |
+| `navigation.py` | the loader of `browser-navigation.json` and the step runners (real-time and frame-counted) |
+
+The screen checks of the real-time drivers (the Search prompt line that proves typed text arrived, the Browser's header and status
+bars) are placed relative to the paper (`drive.paper`), so a 640 x 480 or a 720 x 576 capture both work.
+
 Timing is real emulator time: NextZXOS reaches the menu in about 5-6 s (no turbo needed). The recipe
 [`.recipe/machines/next.md`](../../../../.recipe/machines/next.md) shows it with the NextREG journal.
 

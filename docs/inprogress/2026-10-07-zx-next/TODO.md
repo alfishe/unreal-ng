@@ -134,8 +134,9 @@ Not planned yet:
 - [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
 - [x] The `NextState` golden: `testdata/slots/fitted-devices.txt` pinned `62:<size>`, so every Next state change regenerated it; now
   presence only (`62:var`, 2026-11-20), the layout guarded by the image version and `ttdnextstate_test.cpp` (design-ttd.md section 3)
-- [ ] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data
-  file
+- [x] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data
+  file. Three copies (browser-drive, `regress.py`, `NexBrowserRun_Test`) now read `testdata/machines/zxnext/browser-navigation.json`
+  (keys, frames, seconds, idle `#0C8F`, the order, the search rule, the run steps per extension); regress pictures unchanged
 - [ ] SPED (the distribution's editor / assembler): blocked, no format documentation
 
 ## History (closed 2026-10-16)

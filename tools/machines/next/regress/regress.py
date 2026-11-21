@@ -15,17 +15,19 @@ Everything is frame-counted (the machine never runs on its own), so the same bin
 Output: <DIR>/results.json (per job: status, verdict, shots with the SHA-1 of the raw frame, PC, NR #07), <DIR>/shots/*.png,
 <DIR>/logs/, <DIR>/realboard/, <DIR>/report.md and contact sheets. Compare two runs with compare.py.
 """
-import argparse, base64, csv, hashlib, io, json, os, queue, re, shutil, subprocess, sys, tempfile, threading, time
+import argparse, base64, csv, hashlib, io, json, os, queue, shutil, subprocess, sys, tempfile, threading, time
 import urllib.error, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..', '..', '..'))
+sys.path.insert(0, os.path.join(HERE, '..', 'browser-drive'))
+import navigation as nav  # noqa: E402  the Browser's keys, waits and rules (testdata/machines/zxnext/browser-navigation.json)
+
 SHOT_FRAMES = (250, 750, 1500)
 KEYS_FRAME = 1800
-IDLE_PC = 0x0C8F
+IDLE_PC = nav.IDLE_PC
 WAIT_SCRIPT = 'io.read("*l")\nreturn 0\n'
 TITLE_DIR = 'zt'      # the title's folder on the card root (unique first letter among dot, machines, nextzxos, sys, TBBLUE.FW)
-SEARCHABLE = re.compile(r'^[A-Za-z0-9 ._-]+')
 
 
 class Crash(Exception):
@@ -176,9 +178,9 @@ class Machine:
         self.call('POST', self.e + '/keyboard/combo', {'keys': keys, 'frames': frames})
         self.run(frames + after)
 
-    def type(self, text, delay=5):
+    def type(self, text, delay, frames):
         self.call('POST', self.e + '/keyboard/type', {'text': text, 'delay_frames': delay})
-        self.run(len(text) * (delay + 8) + 20)
+        self.run(frames)
 
     def framebuffer(self):
         data, headers = self.api.raw('GET', self.e + '/capture/framebuffer?format=rgba')
@@ -255,55 +257,20 @@ def make_card(base_card, workdir, job, title_dir=None):
     return card
 
 
-# ---- the Browser (frame-driven version of browser-drive/collection.py) ----
-
-def browser_entries(folder, root=False):
-    names = sorted(os.listdir(folder), key=lambda n: n.lower())
-    return names if root else ['.', '..'] + names
-
-
-def search_prefix(entries, name):
-    match = SEARCHABLE.match(name)
-    if not match:
-        return None
-    text = match.group(0)
-    lower = [e.lower() for e in entries]
-    for length in range(1, len(text) + 1):
-        if sum(e.startswith(text[:length].lower()) for e in lower) == 1:
-            return text[:length]
-    return None
-
-
-def reach(m, folder, name, root=False):
-    """Cursor onto @p name in the Browser listing of host folder @p folder: H + the shortest unique prefix, else count down"""
-    entries = browser_entries(folder, root)
-    prefix = search_prefix(entries, name)
-    if prefix:
-        m.tap('h', after=20)
-        m.type(prefix)
-        m.run_until_idle(100)
-        m.tap('enter', after=20)   # accept the search: the cursor stays on the match
-        m.run_until_idle(100)
-        return 'search:' + prefix
-    for _ in range(entries.index(name)):
-        m.tap('down', 4, after=6)
-    return 'down:%d' % entries.index(name)
-
+# ---- the Browser (frame-driven steps of browser-drive/navigation.py) ----
 
 def boot_to_menu(m, notes):
     """Power on -> NextZXOS welcome (idle) -> SPACE -> menu"""
-    if not m.run_until_idle(1500, step=10, settle=50):
+    if not nav.frame_step(m, 'boot'):
         notes.append('no idle after boot')
         return False
-    m.tap('space', 8, 20)
-    if not m.run_until_idle(300, settle=20):
+    if not nav.frame_step(m, 'menu'):
         notes.append('no idle after SPACE')
     return True
 
 
 def open_browser(m, notes):
-    m.tap('b', 6, 20)
-    ok = m.run_until_idle(400, settle=30)
+    ok = nav.frame_step(m, 'browser')
     if not ok:
         notes.append('Browser: no idle')
     return ok
@@ -316,22 +283,19 @@ def job_os_boot(m, shotdir, base_card):
     for f in (50, 150, 250, 350):     # boot ROM / firmware / NextZXOS start
         m.run(f - m.frame)
         shots.append(shoot(m, shotdir, 'os-boot', 'f%d' % f))
-    if m.run_until_idle(1500, step=10, settle=50):
+    if nav.frame_step(m, 'boot'):
         shots.append(shoot(m, shotdir, 'os-boot', 'welcome'))
         notes.append('welcome idle at frame %d' % m.frame)
     else:
         notes.append('no idle after boot')
-    m.tap('space', 8, 20)
-    m.run_until_idle(300, settle=20)
+    nav.frame_step(m, 'menu')
     shots.append(shoot(m, shotdir, 'os-boot', 'menu'))
     open_browser(m, notes)
     shots.append(shoot(m, shotdir, 'os-boot', 'browser'))
-    notes.append('reach nextzxos: ' + reach(m, base_card, 'nextzxos', root=True))
-    m.tap('enter', 6, 20)
-    m.run_until_idle(400, settle=30)
+    notes.append('reach nextzxos: ' + nav.frame_reach(m, base_card, 'nextzxos', root=True))
+    nav.frame_step(m, 'open')
     shots.append(shoot(m, shotdir, 'os-boot', 'dir-nextzxos'))
-    m.tap('edit', 6, 20)
-    m.run_until_idle(400, settle=30)
+    nav.frame_step(m, 'up')
     shots.append(shoot(m, shotdir, 'os-boot', 'dir-up'))
     last = shots[-1]
     status = 'ok' if last['os_idle'] and last['kind'] == 'nextzxos' else 'fail'
@@ -354,23 +318,15 @@ def job_title(m, shotdir, job, title, collection, card, browser_ext, force_brows
         if not boot_to_menu(m, notes):
             return {'status': 'no-boot', 'verdict': 'no-boot', 'via': via, 'notes': notes, 'shots': []}
         open_browser(m, notes)
-        notes.append('dir: ' + reach(m, card, TITLE_DIR, root=True))
-        m.tap('enter', 6, 20)
-        m.run_until_idle(400, settle=30)
-        notes.append('file: ' + reach(m, os.path.join(card, TITLE_DIR), parts[-1]))
+        notes.append('dir: ' + nav.frame_reach(m, card, TITLE_DIR, root=True))
+        nav.frame_step(m, 'open')
+        notes.append('file: ' + nav.frame_reach(m, os.path.join(card, TITLE_DIR), parts[-1]))
         shots.append(shoot(m, shotdir, job, 'cursor'))
-        if ext == 'tap':
-            # SYMBOL SHIFT + ENTER: the TAP loader's options; N = the Next's own mode (collection.py)
-            m.combo(['sym_shift', 'enter'], 6, 150)
-            m.tap('n', 6, 10)
-        else:
-            m.tap('enter', 6, 10)
-            if ext == 'sna':
-                # the first run of a snapshot shows the Snapshot Loader's options ("To begin loading, press ENTER")
-                m.run(100)
-                m.tap('enter', 6, 10)
+        # the run steps of the extension: .tap SYMBOL SHIFT + ENTER (the TAP loader's options), N (the Next's own mode); .sna ENTER,
+        # the Snapshot Loader's options page, ENTER; the rest ENTER
+        nav.frame_run(m, parts[-1])
         if ext == 'bas':
-            m.run(300)
+            m.run(nav.BASIC_RUN['frames'])
             w, h, data = m.framebuffer()
             im = image_of(w, h, data)
             x0, y0 = (w - 512) // 2, (h - 384) // 2   # the paper in the 720 x 576 frame
@@ -381,8 +337,8 @@ def job_title(m, shotdir, job, title, collection, card, browser_ext, force_brows
             # the NextBASIC editor: its black status bar near the bottom (character rows 20-23), no black header bar on row 0 (the Browser has one)
             if max(black((x0, y0 + r * 16, x0 + 512, y0 + r * 16 + 16)) for r in (20, 21, 22, 23)) > 0.5 and black((x0, y0, x0 + 512, y0 + 16)) < 0.4:
                 # the Browser only LOADS a .bas without an autostart line: the editor shows it, RUN starts it
-                m.type('run')
-                m.tap('enter', 6, 10)
+                nav.frame_type(m, nav.BASIC_RUN['text'], wait_idle=False)
+                nav.frame_step(m, nav.BASIC_RUN['then'])
                 notes.append('RUN typed')
     m.frame = 0   # the start marker: shots count from here
     for f in SHOT_FRAMES:
