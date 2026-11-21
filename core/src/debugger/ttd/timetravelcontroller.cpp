@@ -4299,7 +4299,19 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     // a new branch forks there and records (§4.5). At the active branch's end the recording just goes on
     // branch-create forks at the end too (PrepareBranchCreate)
     const bool forceFork = std::exchange(_forceFork, false);
-    if ((forceFork || HasHistoryAfter(cut)) && ForkBranchAt(from, cut))
+    const bool historyAfter = HasHistoryAfter(cut);
+    const bool forked = (forceFork || historyAfter) && ForkBranchAt(from, cut);
+    if (!forked && historyAfter)
+    {
+        // The history after the resume point stays whatever happens: a fork that fails refuses the resume (it used to
+        // cut that history away instead; P1.S10 soak, 2026-11-21)
+        _lastStartError = "the recording cannot branch here: see the log";
+        MLOGWARNING("TimeTravelController::ResumeRecordingFrom — refused: no branch forks at (frame=%llu, "
+                    "tInFrame=%u), the history after it stays",
+                    static_cast<unsigned long long>(cut.frame), static_cast<unsigned>(cut.tInFrame));
+        return false;
+    }
+    if (forked)
     {
         EngageCaptureFeatures();
         SetState(TTDSessionState::Recording);
@@ -5498,6 +5510,22 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
     // segment after the truncate (F-1). The writer reads the engine: it stops first
     if (_shadowWriter)
         _shadowWriter->StopWriting();
+
+    // The cut's segment is written again from memory and its file is forgotten below: with the disk tier it may have
+    // left memory (the head was on a branch) or sit in the read-back cache, which would drop it once its file is
+    // unknown - the history after it then could not be read back (P1.S10 soak, 2026-11-21). It comes back and stays
+    if (_engine->EvictedSegments() != 0 || _engine->ReadBackSegments() != 0)
+    {
+        const uint32_t activeLine = _engine->ActiveLine();
+        const size_t cutSegment = _engine->SegmentOf(activeLine, keepEngine);
+        if (cutSegment != SIZE_MAX)
+        {
+            if (!_engine->EnsureResident(keepEngine))
+                MLOGWARNING("TimeTravelController::TruncateTimelineAfter — the cut's segment cannot be read back: "
+                            "its file is written again without it");
+            _engine->SetSegmentReadBack(activeLine, cutSegment, false);
+        }
+    }
 
     std::string error;
     const TTDPosition engineCut{0, cut.frame, cut.frame == kept.time.frame ? cut.tInFrame : 0};

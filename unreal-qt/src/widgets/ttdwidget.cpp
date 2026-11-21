@@ -163,8 +163,8 @@ TtdWidget::TtdWidget(QWidget* parent)
     connect(_journalCheck, &QCheckBox::toggled, this, &TtdWidget::onJournalToggled);
 
     // History limit: the oldest frames are released beyond it while recording, so
-    // a long session stays within memory. Applied to the active emulator (an
-    // automation call may set another one afterwards)
+    // a long session stays within memory. Applied to the active emulator when it changes here, and to a newly
+    // shown one that has no limit of its own (a limit an automation call set stays)
     auto* historyLabel = new QLabel(tr("History:"), _advancedContainer);
     _historyCombo = new QComboBox(_advancedContainer);
     _historyCombo->addItem(tr("Keep all"), QVariant::fromValue<qulonglong>(0));
@@ -536,13 +536,19 @@ QSize TtdWidget::minimumSizeHint() const
     return QSize(0, desiredHeight());
 }
 
-void TtdWidget::applyHistoryLimit()
+void TtdWidget::applyHistoryLimit(bool keepSessionLimit)
 {
     if (!_activeEmulator || !_historyCombo)
         return;
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !ttd::HasTimeTravelSession(context))
         return;
+    if (keepSessionLimit)
+    {
+        const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetSessionInfo();
+        if (info.historyLimitFrames != 0 || info.historyLimitBytes != 0)
+            return;
+    }
     (void)ttd::TTDControl(context).Execute(
         {"history-limit", {{"frames", "0"}, {"bytes", std::to_string(_historyCombo->currentData().toULongLong())}}});
 }
@@ -566,7 +572,7 @@ void TtdWidget::updateState(std::shared_ptr<Emulator> activeEmulator)
     _activeEmulator = activeEmulator;
     if (changed)
     {
-        applyHistoryLimit();
+        applyHistoryLimit(/*keepSessionLimit=*/true);
         applyJournalPreference();   // before the black box starts on a new instance (MainWindow::applyBlackBox)
     }
 
