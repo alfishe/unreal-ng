@@ -1,0 +1,41 @@
+data #00
+anomaly data_before_command #0 (#23 Get number of RAM pages)
+#23 Get number of RAM pages
+card took #23 Get number of RAM pages
+reply 0 #0F: pages (#23 Get number of RAM pages)
+anomaly reply_read_without_poll #F (#23 Get number of RAM pages)
+data #00
+#1E
+card took #1E
+reply 0 #0F (#1E)
+#F4 Cold restart
+card took #F4 Cold restart
+reply 0 #00: pages, 0 until the memory test ends, not ready (#F4 Cold restart) (repeated)
+reply 0 #0F: pages, 0 until the memory test ends (#F4 Cold restart)
+#20 Get total RAM
+card took #20 Get total RAM
+reply 0 #00: bytes, low, middle, high (#20 Get total RAM)
+reply 1 #C0: bytes, low, middle, high (#20 Get total RAM)
+anomaly reply_read_without_poll #C0 (#20 Get total RAM)
+reply 2 #07: bytes, low, middle, high (#20 Get total RAM)
+anomaly reply_read_without_poll #7 (#20 Get total RAM)
+#FA Test mode
+card took #FA Test mode
+#0B (test selection)
+card took #0B (test selection)
+#0C (test selection)
+card took #0C (test selection)
+#0D (test selection)
+card took #0D (test selection)
+#0E (test selection)
+card took #0E (test selection)
+#30 Load module
+card took #30 Load module
+reply 0 #01: the module handle (#30 Load module)
+#D1 Open stream
+card took #D1
+module upload: 27862 bytes (#30 Load module)
+#D2 Close stream
+card took #D2
+data #01
+#31 Play module, module #01

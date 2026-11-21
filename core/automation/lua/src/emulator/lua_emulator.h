@@ -73,6 +73,7 @@
 #include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../temporalstatus.h"
@@ -6032,6 +6033,20 @@ public:
             GSStatsQuery query;
             query.waitMs = 500;
             return StateNodeToLua(s, GSStatsResetCounters(ctx, query).body);
+        });
+
+        // The firmware objects through the card's profile (gsfirmwareobjects.h, gs-debugger §8A.9): struct instances
+        // as rows of fields, variables; one object by name; another profile by id
+        lua.set_function("gs_firmware", [this](sol::this_state s, sol::optional<std::string> object,
+                                               sol::optional<std::string> profile) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSFirmwareObjectsQuery query;
+            query.object = object.value_or("");
+            query.profile = profile.value_or("");
+            return StateNodeToLua(s, GSFirmwareObjectsRead(ctx, query).body);
+        });
+        lua.set_function("gs_firmware_profiles", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, GSFirmwareProfilesState()["profiles"]);
         });
 
         // Reads are peeks: no host read cycle (read_data leaves status bit 7

@@ -1,0 +1,1613 @@
+
+; LAST UPDATE: 11.12.2024 savelij
+
+		include ../macros.a80
+		include ../ports_ngs.a80
+		include ../sdcomand.a80
+
+; адрес загрузки найденной прошивки
+ADRLOAD		EQU 0x8000
+
+RAMCOD		EQU 0x4080			; адрес работы основного кода
+RAM8KB		EQU 0x6000			; адрес буфера для переброски кода
+STRPAG		EQU 0x8000			; адрес куда загрузки
+
+FREQUENCY	EQU C_20MHZ			; текущая частота для основной прошивки
+
+		ORG 0
+		DI
+		LD SP,RAMCOD
+		XOR A
+		OUT (VOL1),A
+		OUT (VOL2),A
+		OUT (VOL3),A
+		OUT (VOL4),A
+		OUT (VOL5),A
+		OUT (VOL6),A
+		OUT (VOL7),A
+		OUT (VOL8),A			; заглушили мод порты для использования буфера
+
+;		JP RDBYT_DBG			; отладочная фигня
+
+; ожидание загрузки прошивки со спека
+		LD B,0				; читаем 256 порт статуса
+.L1		IN A,(ZXSTAT)			; на предмет изменения состояния 
+		RRA
+		JR C,RDBYT01
+		DJNZ .L1
+		DEC B				; счетчик обнулился, состояние порта не изменилось
+		JR RDBYT03			; грузим стандартную прошивку
+
+RDBYT01		IN A,(ZXCMD)			; читем пришедший байт из порта команд
+		LD C,A				; сохранили для проверки
+		IN A,(ZXDATRD)			; читем байт из порта данных
+		OUT (CLRCBIT),A			; сбросили команд бит
+		CP C				; сравниваем пришедшие байты
+		JR NZ,RDBYT03			; не совпали, грузим стандартную прошивку
+		CP 0x55				; пришел байт 0x55?
+		JR NZ,RDBYT03			; если нет, грузим стандартную прошивку
+		LD B,0				; читаем 256 раз изменение порта команд
+		IN A,(ZXSTAT)
+		RRA
+		JR C,RDBYT02
+		DJNZ $-5
+		DEC B
+		JR RDBYT03			; не дождались, грузим стандартную прошивку
+
+RDBYT02		IN A,(ZXCMD)			; забрали байт из порта команд
+		LD C,A				; сохранили для проверки
+		IN A,(ZXDATRD)			; забрали байт из порта данных
+		CP C				; сравнили
+		JR NZ,RDBYT03			; если не совпадают, грузим стандартную прошивку
+RDBYT_DBG	CP 0xAA				; это 0xAA?
+RDBYT03		EX AF,AF'			; временно спрятали флаги процессора
+		LD HL,GRUZILA
+		LD DE,RAMCOD
+		LD BC,RAMCEND-VERLOAD
+		LDIR				; перенесли основной код в адрес работы
+		OUT (CLRCBIT),A			; сбросили команд бит
+		EX AF,AF'			; вернули спрятанные флаги
+		JP Z,GRUZIM2			; если все условия совпали, запускаем загрузчик
+		JP GRUZIM0			; иначе грузим стандартную прошивку из пзу
+
+GRUZILA
+		PHASE RAMCOD
+
+VERLOAD		DB "Loader"
+		DW DATA_VERS
+
+; путь до файла прошивки GS
+F_PATH		DB "NEOGS.ROM",0
+
+UPDATENAME	DB "NGS_ROM.UPD",0
+
+TXT1		DB "not found",0
+TXT1E
+TXT2		DB "beta",0
+TXT2E
+TXT3		DB 0;"stable",0
+TXT3E
+
+GRUZIM0		CALL RROMSD			; загружаем и запускаем прошивку с SD карты, если она там есть
+		JP GS105			; иначе загружаем прошивку из пзу и запускаем
+
+GRUZIM2		LD A,0x11			; конфигурим НГС
+		LD (NGS_MODES),A
+		OUT (GSCFG0),A			; отрубаем пзу и врубаем частоту 12МГЦ
+		XOR A
+		OUT (MPAG),A			; включаем страницу 0
+GRUZIM		IN A,(ZXSTAT)			; постоянно ждем команд от спека
+		RRA
+		JR NC,GRUZIM
+		IN A,(ZXCMD)			; поймали команду
+		CP 0x1D				; это команда проверки? 
+		JR NZ,GRUZIM1
+		LD A,0x76
+		OUT (ZXDATWR),A			; отдаем байт идентификации загрузчика
+		OUT (CLRCBIT),A
+		JR GRUZIM			; и продолжаем ждать команд
+
+GRUZIM1		CP 0xF3
+		JP Z,GS105			; при поступлении команд 0xF3 и
+		CP 0xF4
+		JP Z,GS105			; 0xF4 загружаем и запускаем прошивку из пзу
+		CP LOW (FLOADE-FLOADER)/2+1
+		JP NC,GS105			; аналогично не команда загрузчика переходим на основное пзу
+		ADD A,A
+		LD L,A
+		LD H,0
+		LD DE,GRUZIM2
+		PUSH DE				; на стеке адрес возврата после исполнения команды
+		LD DE,FLOADER
+		ADD HL,DE
+		LD E,(HL)
+		INC HL
+		LD D,(HL)			; забрали адрес исполнения команды
+		EX DE,HL
+		JP (HL)				; поехали на исполнение
+
+FLOADER		DW LOADROM			; 00 загрузка rom со спека вместо скопированной из ROM
+		DW JPLDROM			; 01 запуск загруженной прошивки 
+		DW GS105			; 02 копирование из ROM и запуск
+		DW RROMSD			; 03 загрузка и запуск ROM с SD карты
+		DW LOADCOD			; 04 загрузка кода со спека
+		DW LDINSD			; 05 загрузка файла с SD карты
+		DW RUNCOD			; 06 запуск кода с любого адреса и в любой странице
+		DW STATSD			; 07 статус загруженного файла
+		DW VERPAGE			; 08 версия в текстовом виде для указанной страницы
+		DW GET_CRC			; 09 получить CRC16
+		DW LOADUPDATE			; 0A загрузка файла с обновлением
+		DW SET_FREQ			; 0B установка частоты процессора
+FLOADE
+
+SET_FREQ	IN A,(ZXDATRD)			; приняли номер частоты
+		BIT 7,A
+		JR NZ,SET_FREQ2
+		OUT (CLRCBIT),A			; сбросили команд бит
+		AND 3
+		LD L,C_10MHZ			; установка частоты 10 МГЦ
+		JR Z,SET_FREQ1
+		DEC A
+		LD L,C_12MHZ			; установка частоты 12 МГЦ
+		JR Z,SET_FREQ1
+		DEC A
+		LD L,C_20MHZ			; установка частоты 20 МГЦ
+		JR Z,SET_FREQ1
+		LD L,C_24MHZ			; установка частоты 24 МГЦ
+SET_FREQ1	LD A,(NGS_MODES)
+		AND %11001111
+		OR L
+		LD (NGS_MODES),A
+		OUT (GSCFG0),A
+		RET
+
+SET_FREQ2	LD A,(NGS_MODES)
+		AND 0x30
+		RRCA
+		RRCA
+		RRCA
+		RRCA
+		OUT (CLRCBIT),A
+		OUT (ZXDATWR),A
+		JP WDN
+
+; передача на спек версии в текстовом виде
+VERPAGE		IN A,(ZXDATRD)			; забрали байт номера запрошенной страницы пзу
+		AND 7				; старшие 5 бит в игноре
+		EX AF,AF'			; временно спрятали флаги проца
+		LD A,0x30
+		OUT (GSCFG0),A			; включили 10 МГЦ и вернули пзу
+		EX AF,AF'			; вернули флаги
+		ADD A,A				; нам нужна вторые 32К страницы пзу
+;		AND A				; выбрана страница 0?
+;		JR NZ,VERPAG1			; если нет, то идем на извлечение последних 8 байт
+;		LD HL,VERLOAD			; для загрузчика берем из другого адреса
+;		LD DE,RAMCEND
+;		LD BC,8
+;		PUSH DE
+;		LDIR
+;		POP DE
+;		JR VERPAG2			; пошли на переводчик в текстовый вид
+
+VERPAG1		INC A
+		OUT (MPAG),A			; включили последние 16К выбранной страницы пзу
+		LD HL,0xFFF8
+		LD BC,8
+		LD DE,RAMCEND
+		PUSH DE
+		LDIR				; перенесли 8 байт из хвоста пзу
+		POP DE
+VERPAG2		LD A,0x11
+		OUT (GSCFG0),A			; отрубили пзу и вернули 12МГЦ
+		XOR A
+		OUT (MPAG),A			; вернули страницу 0 озу
+		LD B,8				; проверям перенесенные 8 байт, а не 0xFF ли там?
+		LD A,(DE)
+		INC DE
+		INC A
+		JR NZ,VFPGA1			; не 0xFF, продолжаем
+		DJNZ $-5
+		DEC SP				; таки все 8 байт 0xFF, версии у пзу страницы нету
+		DEC SP
+		POP DE
+		LD HL,TXT1
+		LD BC,TXT1E-TXT1
+		LDIR				; отдать текст об этом
+		JR VFPGA0
+
+VFPGA1		DEC SP
+		DEC SP
+		POP DE
+		CALL UNVERS			; распаковка полученных 8 байт в текст
+VFPGA0		OUT (CLRCBIT),A			; сбросили команд бит
+		LD HL,RAMCEND
+		LD BC,ZXDATWR
+VFPGA2		LD A,(HL)
+		OUTI
+		EX AF,AF'
+		CALL WDN
+		EX AF,AF'
+		AND A
+		JR NZ,VFPGA2			; отдаем текст версии пока не встретится байт 0, который тоже отдаем
+		RET
+
+; распаковщик даты
+UNVERS		LD HL,6
+		ADD HL,DE			; пропустили 6 байт текста версии
+		LD C,(HL)			; забрали младший байт версии
+		LD (HL)," "			; на его место пробел
+		INC HL
+		LD B,(HL)			; забрали старший байт
+		LD A,C				; взяли младший байт версии
+		AND 0x1F			; нас интересуют младшие 5 бит (день месяца)
+		JR NZ,.L1
+		RES 7,B				; если получился 0, возможно это бета версия
+.L1		CP 32
+		JR C,.L2			; в месяце не может быть более 31 дня
+		RES 7,B				; иначе это бета версия
+.L2		CALL A2TXT			; переводим полученное число в текст
+		SRL B				; сдинули версию на 1 бит влево чтобы номер месяца
+		RR C				; оказался в одном байте
+		LD A,C				; забрали этот байт
+		RRCA
+		RRCA
+		RRCA
+		RRCA				; сдвинули нужные биты в младшие разрады байта
+		AND 0x0F			; оставили нужные 4 бита (номер месяца)
+		JR NZ,.L3			; номер месяца неможет быть 0
+		RES 6,B				; иначе это бета версия
+.L3		CP 13				; и номер месяца не может быть больше 12
+		JR C,.L4
+		RES 6,B				; иначе бета версия
+.L4		LD (HL),"."			; отделили номер дня месяца точкой
+		INC HL
+		CALL A2TXT			; конвертировали номер месяца
+		LD (HL),"."			; так же отделили точкой
+		INC HL
+		LD A,B				; взяли оставшиеся биты
+		AND 0x3F			; нам нужны 6 бит номера года
+		CALL A2TXT			; конвертнули в текст
+		BIT 6,B				; бета или стабл версия?
+		JR NZ,.L5
+		LD DE,TXT2			; все-таки бета, о чем и добавляем текст к версии
+		LD BC,TXT2E-TXT2
+		JR .L6
+
+.L5		LD DE,TXT3			; версия стабл
+		LD BC,TXT3E-TXT3
+.L6		LD (HL)," "			; перед текстом (бета или стабл) вставляем пробел
+		INC HL
+		EX DE,HL
+		LDIR				; перетащили текст
+		EX DE,HL
+		LD (HL),0			; завершили строку нулем
+		RET
+
+; перевод "A" в десятичный вид и в текст. для чисел от 0 до 99
+A2TXT		PUSH HL				; сохранили адрес куда ложить сконверченное
+		LD L,A
+		LD H,0
+		LD DE,10
+		XOR A
+		DEC A
+.L1		INC A
+		SBC HL,DE
+		JR NC,.L1			; считаем количество десятков в числе
+		ADD HL,DE			; вернули перебор вычитания
+		ADD A,"0"			; перевели в тесктовый вид полученное число
+		LD D,A				; пока сохранили
+		LD A,L				; взяли оставшиеся единицы числа
+		ADD A,"0"			; конвертули в текст
+		POP HL				; вернули адрес куда ложить
+		LD (HL),D			; положили десятки заданного числа
+		INC HL
+		LD (HL),A			; положили единицы того же числа
+		INC HL
+		RET
+
+; загрузка с SD карты по указанному пути
+; первый байт-номер страницы озу куда начинать грузить 
+; далее байты текстовой строка пути и имени файла
+; конец строки байт 0, он же стоп байт
+LDINSD		LD BC,ZXDATRD			; адрес порта данных
+		LD HL,RAMCEND			; адрес куда строку пути складировать
+		PUSH HL
+		IN A,(C)			; приняли номер страницы откуда начинать загрузку
+		OUT (CLRCBIT),A			; сбросили команд бит
+		EX AF,AF'
+LDINSD1		CALL WDY
+		IN A,(C)
+		LD (HL),A
+		INC HL
+		AND A
+		JR NZ,LDINSD1			; принимаем строку пока не встретится байт 0
+		EX AF,AF'
+		POP HL
+		JP LOAD_SD			; далее запускаем загрузку с SD карты
+
+; загрузка файла с обновлениями
+LOADUPDATE	LD HL,UPDATENAME		; имя файла обновления
+		LD A,2				; грузить начиная со 2 страницы
+		OUT (CLRCBIT),A
+		JP LOAD_SD
+
+; статус загрузки файла с SD карты
+STATSD		LD A,(STATUS)
+		OUT (ZXDATWR),A
+		OUT (CLRCBIT),A
+		RET
+
+; загрузка и запуск прошивки с SD карты
+; имя, путь и адрес фиксирован
+RROMSD		LD HL,F_PATH			; адрес строки фиксированного пути для загрузки 
+		XOR A
+		CALL LOAD_SD			; загружаем
+		AND A
+		RET NZ				; если ошибка, то грузим из пзу
+		JP JPLDROM
+
+; запуск кода в любой странице
+; 0 - номер страницы озу
+; 1 - младший байт адреса запуска
+; 2 - старший байт адреса запуска
+RUNCOD		LD BC,ZXDATRD			; адрес порта данных
+		IN A,(C)			; приняли номер страницы озу
+		OUT (CLRCBIT),A			; сбросили команд бит
+		OUT (MPAG),A
+		CALL WDY
+		IN L,(C)			; приняли младший байт адреса запуска
+		CALL WDY
+		IN H,(C)			; приняли старший байт адреса запуска
+		JP (HL)				; запускаем
+
+; 0 - номер страницы озу
+; 1 - младший байт длины загрузки
+; 2 - старший байт длины загрузки
+; загрузка не более 32КБ
+LOADCOD		LD BC,ZXDATRD			; адрес порта данных
+		LD HL,0x8000			; адрес начала зaгрузки
+		IN A,(C)			; приняли номер страницы озу
+		OUT (CLRCBIT),A			; сбросили команд бит
+		OUT (MPAG),A			; включили заданную страницу озу
+		CALL WDY
+		IN E,(C)			; приняли младший байт длины загрузки
+		CALL WDY
+		IN D,(C)			; приняли старший байт длины загрузки
+LOADCO1		CALL WDY
+		INI
+		LD A,H
+		AND A
+		RET Z				; если озу кончилось, выходим
+		DEC DE
+		LD A,D
+		OR E
+		JR NZ,LOADCO1			; грузим скока указано
+		RET
+
+; загрузка прошивки 32КБ со спека
+LOADROM		XOR A
+		OUT (MPAG),A			; включаем страницу
+		LD HL,0x8000			; адрес загрузки
+		OUT (CLRCBIT),A			; сброс команд бита
+		LD BC,ZXDATRD			; адрес порта данных
+LOADROM1	CALL WDY
+		INI
+		LD A,H
+		AND A
+		JR NZ,LOADROM1			; грузим пока память не кончится
+		RET
+
+; грузилка стандартной прошивки из ROM
+GS105		LD HL,STRPAG			; адрес куда переносить
+		LD A,4				; переносить 4 куска по 8 килобайт
+MOV1		EX AF,AF'			; прячем счетчик
+		LD A,0x30
+		OUT (GSCFG0),A			; включили пзу
+		LD A,2
+		OUT (MPAG),A			; страницу 2 со стандартной прошивкой 
+		PUSH HL
+		LD DE,RAM8KB
+		LD BC,0x2000
+		LDIR				; перенесли в буфер 8 килобайт
+		LD A,0x31
+		OUT (GSCFG0),A			; переключили пзу
+		XOR A
+		OUT (MPAG),A			; включили страницу 0 озу
+		POP DE
+		LD HL,RAM8KB
+		LD BC,0x2000
+		LDIR				; перенесли из буфера 8 килобайт
+		EX DE,HL
+		EX AF,AF'
+		DEC A
+		JR NZ,MOV1			; и так 4 раза
+
+; запуск загруженной прошивки
+JPLDROM		XOR A
+		OUT (MPAG),A			; включили страницу 0 озу
+;		LD A,0x13			; включили частоту 12МГЦ, отключили пзу и защитили озу от записи
+;		LD A,0x23			; включили частоту 20МГЦ, отключили пзу и защитили озу от записи
+		LD A,3+FREQUENCY		; включили указанную частоту, отключили пзу и защитили озу от записи
+		OUT (GSCFG0),A
+		JP 0				; стартуем стандартную прошивку
+
+; ждем пока спек даст байт
+WDY		IN A,(ZXSTAT)
+		RLA
+		JR NC,WDY
+		RET
+
+; ждем пока спек заберет байт из порта
+WDN		IN A,(ZXSTAT)
+		RLA
+		JR C,WDN
+		RET
+
+; подсчет CRC16
+GET_CRC		LD A,2
+		OUT (MPAG),A
+		DEC A
+		OUT (GSCFG0),A
+		LD HL,(0x8000)
+		SRL H
+		RR L
+		SRL H
+		RR L
+		SRL H
+		RR L
+		SRL H
+		RR L
+		LD A,L
+		LD IYH,A
+;		LD IX,0x8000
+;		LD C,(IX+0)
+;		LD B,(IX+1)
+;		CALL CRC16
+;		LD C,(IX+0)
+;		LD B,(IX+1)
+;		LD A,0x81
+;		AND A
+;		SBC HL,BC
+;		JR NZ,OUT_ERR			; CRC16 заголовка ERROR
+		LD IX,0x8000+8-0x10
+SCHET		LD DE,0x10
+		ADD IX,DE			; в IX адрес выбранного блока
+		LD C,(IX+4)
+		LD B,(IX+5)			; в BC длина блока
+		LD E,(IX+1)
+		LD L,(IX+2)
+		LD H,(IX+3)
+		LD A,L
+		AND 0x7F
+		LD D,A				; в DE смещение в странице
+		ADD HL,HL
+		LD A,2
+		ADD A,H
+		LD IYL,A
+		OUT (MPAG),A			; номер страницы
+		PUSH IX
+		LD IX,0x8000
+		ADD IX,DE			; в IX адрес начала блока
+		CALL CRC16
+		POP IX
+		LD C,(IX+6)
+		LD B,(IX+7)
+		LD A,0x82
+		AND A
+		SBC HL,BC
+		JR NZ,OUT_ERR
+		DEC IYH
+		JR NZ,SCHET
+ERR_OK		LD A,0x80
+
+; CRC16 ERROR
+; 0x80 - CRC16 блока ok
+; 0x81 - CRC16 заголовка error
+; 0x82 - CRC16 блока ERROR
+OUT_ERR		OUT (CLRCBIT),A
+		OUT (ZXDATWR),A
+		CALL WDN
+		LD A,L
+		OUT (ZXDATWR),A
+		CALL WDN
+		LD A,H
+		OUT (ZXDATWR),A
+		RET
+
+CRC16		LD HL,0xFFFF
+		LD DE,0x1021
+CRC_0		LD A,(IX)
+		INC IX
+		EX AF,AF'
+		LD A,IXL
+		OR IXH
+		JR NZ,CRC_3
+		INC IYL
+		LD A,IYL
+		OUT (MPAG),A
+		LD IX,0x8000
+CRC_3		EX AF,AF'
+		XOR H
+		LD H,A
+		LD A,8
+CRC_1		ADD HL,HL
+		JR NC,CRC_2
+		EX AF,AF'
+		LD A,L
+		XOR E
+		LD L,A
+		LD A,H
+		XOR D
+		LD H,A
+		EX AF,AF'
+CRC_2		DEC A
+		JR NZ,CRC_1
+		DEC BC
+		LD A,B
+		OR C
+		JR NZ,CRC_0
+		LD A,2
+		OUT (MPAG),A
+		RET
+
+;---------------------------------
+; грузилка файла по указанному пути
+
+ INIT_VAR 0x5000
+ SETVAR BUF_512,	0x200		; буфер сектора
+ SETVAR TDIRCLS,	0x400		; буфер кластеров ROOT директории
+ SETVAR CAL_FAT,	BYTE		; калибр FAT
+ SETVAR BYTSSEC,	BYTE		; количество секторов в кластере
+ SETVAR ROOTCLS,	DWORD		; кластер начала ROOT директории
+ SETVAR ROOTSEC,	WORD		; размер в секторах ROOT директории
+ SETVAR SEC_FAT,	DWORD		; количество секторов одной FAT
+ SETVAR RSVDSEC,	WORD		; размер резервной области
+ SETVAR STARTRZ,	DWORD		; начало диска/раздела
+ SETVAR FRSTDAT,	DWORD		; адрес первого сектора данных от BPB
+ SETVAR SEC_DSC,	DWORD		; количество секторов на диске/разделе
+ SETVAR CLS_DSC,	DWORD		; количество кластеров на диске/разделе
+ SETVAR FATSTR,		DWORD		; начало первой FAT таблицы
+ SETVAR ADRPATH,	WORD		; адрес текста пути файла
+ SETVAR STATUS,		BYTE		; статус после вызова LOAD_SD
+ SETVAR OLD_SP,		WORD		; стек для выхода
+ SETVAR FB_EXT,		0x0B		; буфер 8.3 для поиска имени
+ SETVAR LVL_DIR,	BYTE		; номер уровня директории
+ SETVAR LSTLOAD,	DWORD		; номер сектора загруженного в буфер
+ SETVAR NGS_MODES,	BYTE		; текущий установленный режим
+
+; SD карта не найдена
+ZAW003		LD A,0xEE
+WR_STAT		LD SP,(OLD_SP)
+		LD (STATUS),A
+		RET
+
+; загрузка файла
+; на входе: A - страница начала загрузки
+; HL - адрес текстовой строки
+; пути к файлу вместе с именем и расширением файла. путь полностью от ROOT 
+; загружается файл по размеру дополненому до полных секторов (сектор 512 байт)
+; пример: размер файла =0x80-после дополнения будет загружен 1 сектор
+; =0x401 - будет загружено 3 сектора
+; на выходе: A =
+		; 0x00 - файл загружен
+		; 0xAA - файл не найден
+		; 0xDD - FAT не обнаружен
+		; 0xEE - SD карта не обнаружена
+LOAD_SD		LD IYL,A			; сохранили номер страницы куда грузить
+		LD (ADRPATH),HL			; сохранили адрес строки пути
+		LD (OLD_SP),SP			; сохранили стек
+		LD A,0xFF
+		LD (LSTLOAD+3),A		; принудительная загрузка сектора без проверки
+		LD A,1
+		OUT (GSCFG0),A			; отключили пзу, все страница озу
+		LD A,M_SDNCS+M_SNCLR;%10011011
+		OUT (SCTRL),A			; сконфигурили нгс с CS=1 для SD карты		
+		LD B,0x10
+.L1		LD A,0xFF
+		OUT (SD_SEND),A			; пишем 0x80 байт 0xFF в порт карточки
+		DJNZ .L1
+		XOR A				; 256 попыток найти SD карту
+		EX AF,AF'
+		LD A,M_SDNCS
+		OUT (SCTRL),A			; выбрали SD карту CS=0
+.L2		LD HL,CMD00
+		CALL OUTCOM			; переводим карточку в режим SPI командой 0
+		CALL IN_OOUT			; ждем ответа
+		EX AF,AF'
+		DEC A
+		JR Z,ZAW003			; ждем по счептчику 256 раз
+		EX AF,AF'
+		DEC A
+		JR NZ,.L2			; ждем пока карта ответит байтом 1
+		LD BC,SD_RSTR
+		LD HL,CMD08
+		CALL OUTCOM			; определяем спецификацию карты
+		CALL IN_OOUT			; в "A" ответ карты R1
+		IN H,(C)
+		NOP
+		IN H,(C)	
+		NOP
+		IN H,(C)
+		NOP
+		IN H,(C)			; прочитали остальные байты в никуда
+		BIT 2,A				; если ошибка, то
+		LD HL,0				; карта спецификации 1.0
+		JR NZ,.L3			; иначе 
+		LD H,0x40			; карта спецификации 2.0
+.L3		LD A,CMD_55
+		CALL OUT_COM			; запускаем внутреннюю инициализацию карты
+		CALL IN_OOUT
+		in (c) ;in f,(c)
+		in (c) ;in f,(c)
+		LD BC,SD_SEND
+		LD A,ACMD_41
+		OUT (C),A
+		LD A,H
+		OUT (C),A
+		XOR A
+		OUT (C),A
+		NOP
+		OUT (C),A
+		NOP
+		OUT (C),A
+		DEC A
+		OUT (C),A
+		CALL IN_OOUT
+		AND A
+		JR NZ,.L3			; ждем пока карты перейдет в режим готовности
+.L4		LD A,CMD_59
+		CALL OUT_COM			; принудительно отключаем CRC16
+		CALL IN_OOUT
+		AND A
+		JR NZ,.L4
+.L5		LD HL,CMD16
+		CALL OUTCOM			; принудительный размер сектора 512 байт
+		CALL IN_OOUT
+		AND A
+		JR NZ,.L5
+
+; инициализация переменных FAT
+WC_FAT		LD DE,0
+		LD B,D
+		LD C,E
+		CALL LOADLST			; читаем сектор 0 карточки
+		PUSH HL
+		POP IX
+		LD DE,0x01BE
+		ADD HL,DE			; переходим на смещение для проверок
+		LD A,(HL)			; проверям чтобы был 0, карточки не могут быть загрузочными
+		AND A
+		JR NZ,.L2			; если не 0, проверить другое
+		LD DE,4
+		ADD HL,DE			; переходим к проверке типа раздела
+		LD A,(HL)
+		LD B,0
+		CP 1				; FAT12?
+		JR Z,.L1
+		LD B,2
+		CP 0x0B				; FAT32?
+		JR Z,.L1
+		CP 0x0C				; FAT32?
+		JR Z,.L1
+		LD B,1
+		CP 6				; FAT16?
+		JR Z,.L1
+		CP 4				; FAT16?
+		JR Z,.L1
+		CP 0x0E				; FAT16?
+		JR NZ,.L2		
+.L1		LD A,B				; берем из "B" тип раздела
+		LD (CAL_FAT),A			; сохранили
+		ADD HL,DE
+		CALL LOADZP			; берем номер сектора начала основного раздела
+		JR .R1				; переходим к инициализации переменных для работы с фатом
+
+; MBR не обнаружен, проверяем сектор 0 карты как описатель
+.L2		LD C,(IX+0x0D)			; C = количество секторов в кластере
+		XOR A
+		LD E,A
+		LD B,8
+.L3		RR C
+		ADC A,0
+		DJNZ .L3			; количество секторов в кластере должно быть степенью 2
+		DEC A
+		JR NZ,.L4			; проверили количество бит
+		INC E				; +1, есть такое
+.L4		LD A,(IX+0x0E)
+		OR (IX+0x0F)
+		JR Z,.L5			; количество зарезервированных секторов должно быть >0
+		INC E				; +1, есть такое
+.L5		LD A,(IX+0x13)
+		OR (IX+0x14)
+		JR NZ,.L6			; количество секторов на разделе для ФАТ16?
+		INC E
+.L6		LD A,(IX+0x20)
+		OR (IX+0x21)
+		OR (IX+0x22)
+		OR (IX+0x23)
+		JR NZ,.L7			; количество секторов на разделе для ФАТ32?
+		INC E				; од но из них должно быть =0, другое >0
+.L7		LD A,(IX+0x15)
+		AND 0xF0
+		CP 0xF0
+		JR NZ,.L8			; старшие биты должны быть в 1
+		INC E
+.L8		LD A,E
+		CP 4				; условия совпали?
+		LD A,0xDD			; FAT не найден
+		JP NZ,WR_STAT
+		LD A,0xFF
+		LD (CAL_FAT),A			; тип фат пока не определен
+		LD DE,0
+		LD B,D
+		LD C,E
+
+.R1		LD (STARTRZ),DE
+		LD (STARTRZ+2),BC		; положили номер стартового сектора раздела
+		CALL LOADLST			; загрузили его
+		LD HL,0
+		LD DE,(BUF_512+0x16)		; BPB_FATSZ16
+		LD A,D
+		OR E
+		JR NZ,.R2			; если не FAT12/16 (BPB_FATSZ16=0)
+		LD DE,(BUF_512+0x24)
+		LD HL,(BUF_512+0x26)		; BPB_FATSZ32
+						; то берем из смещения +36
+.R2		LD (SEC_FAT+2),HL
+		LD (SEC_FAT),DE			; число секторов на FAT-таблицу
+		LD HL,0
+		LD DE,(BUF_512+0x13)		; BPB_TOTSEC16
+		LD A,D
+		OR E
+		JR NZ,.R3			; если не FAT12/16 (BPB_TOTSEC16=0)
+		LD DE,(BUF_512+0x20)
+		LD HL,(BUF_512+0x22)		; BPB_TOTSEC32
+						; то берем из смещения +32
+.R3		LD (SEC_DSC+2),HL
+		LD (SEC_DSC),DE			; к-во секторов на диске/разделе
+
+; вычисляем ROOTDIRSECTORS
+		LD BC,(BUF_512+0x0B)		; BPB_BYTSPERSEC
+		LD DE,(BUF_512+0x11)		; BPB_ROOTENTCNT
+		LD HL,0
+		LD A,D
+		OR E
+		JR Z,.R4
+		LD B,H
+		LD C,L
+		LD A,0x10
+		CALL BCDE_A
+		EX DE,HL
+
+; это реализована формула
+; ROOTDIRSECTORS = ((BPB_ROOTENTCNT*32) + (BPB_BYTSPERSEC-1)) / BPB_BYTSPERSEC
+; В HL=ROOTDIRSECTORS. если FAT32, то HL=0 всегда
+
+.R4		PUSH HL				; ROOTDIRSECTORS
+		LD (ROOTSEC),HL
+		LD A,(BUF_512+0x10)
+		LD DE,(SEC_FAT)
+		LD HL,(SEC_FAT+2)
+		DEC A
+.R5		EX DE,HL
+		ADD HL,HL
+		EX DE,HL
+		ADC HL,HL
+		DEC A
+		JR NZ,.R5
+		POP BC				; полный размер FAT-области в секторах
+		CALL HLDEPBC			; прибавили ROOTDIRSECTORS
+		LD BC,(BUF_512+0x0E)		; BPB_RSVDSECCNT
+		LD (RSVDSEC),BC
+		CALL HLDEPBC			; прибавили BPB_RESVDSECCNT
+		LD (FRSTDAT),DE
+		LD (FRSTDAT+2),HL		; положили номер первого сектора данных
+		LD B,H
+		LD C,L
+		LD HL,SEC_DSC			; BCDE + 32-ое число по адресу HL
+		CALL BCDEHLM			; вычли из полного к-ва секторов раздела
+		LD A,(BUF_512+0x0D)
+		LD (BYTSSEC),A
+		CALL BCDE_A			; разделили на к-во секторов в кластере
+		LD (CLS_DSC),DE
+		LD (CLS_DSC+2),BC		; положили кол-во кластеров на разделе
+
+		LD A,(CAL_FAT)
+		CP 0xFF
+		JR NZ,.R6
+; определение типа FAT при отсуствии MBR
+		LD DE,(SEC_FAT-1)
+		LD BC,(SEC_FAT+1)
+		LD E,0				; BCDE = количество секторов *0x100
+		PUSH BC
+		PUSH DE				; сохранили
+		SRL B
+		RR C
+		RR D
+		RR E				; BCDE = количество секторов *0x80
+		LD HL,CLS_DSC			; количество кластеров на FAT
+		PUSH HL				; сохранили
+		CALL HLBCDEM			; количество кластеров-(количество секторов*0x80)
+		LD A,E
+		AND 0x80			; количество менее 128 кластеров в секторе для FAT32
+		OR D
+		OR C
+		OR B
+		LD A,2
+		POP HL
+		POP DE
+		POP BC
+		JR Z,.R6			; FAT32 если флаг Z=0
+		CALL HLBCDEM			; количество кластеров-(количество секторов*0x100)
+		LD A,D
+		OR C
+		OR B
+		LD A,1
+		JR Z,.R6			; FAT16 если флаг Z=0
+		XOR A				; иначе FAT12
+
+; для FAT12/16 вычисляем адрес первого сектора директории
+; для FAT32 берем по смещемию +44, на выходе BCDE - сектор ROOTDIR
+.R6		LD (CAL_FAT),A			; уточнили тип фата
+		EX AF,AF'
+		LD DE,(RSVDSEC)
+		LD BC,0
+		LD HL,STARTRZ
+		CALL BCDEHLP
+		LD (FATSTR),DE
+		LD (FATSTR+2),BC		; вычислили и положили номер сектора начала FAT-таблиц
+		EX AF,AF'
+		AND A
+		LD DE,0
+		LD B,D
+		LD C,E
+		JR Z,.F1			; FAT12 - none
+		DEC A
+		JR Z,.F1			; FAT16
+		LD DE,(BUF_512+0x2C)
+		LD BC,(BUF_512+0x2E)		; FAT32
+.F1		LD (ROOTCLS),DE
+		LD (ROOTCLS+2),BC		; положили номер кластер ROOT директории
+
+		XOR A
+		LD (LVL_DIR),A			; начинаем с ROOT директории
+		LD HL,(ADRPATH)			; вернули адрес строки пути до файла
+.F6		PUSH BC
+		PUSH DE				; сохранили номер кластера
+		CALL FNDBUF			; распаковка части текстовой строки для создания маски поиска
+		POP DE
+		POP BC				; восстановили номер кластера
+		PUSH HL				; сохранили текущий адрес текстовой строки
+
+		LD HL,TDIRCLS			; адрес таблицы кластеров текущей директории
+		LD A,D
+		OR E
+		OR B
+		OR C
+		CALL SAVEZP			; сохранили в таблицу номер текущего кластера
+		JR Z,.F3			; если номер кластера 0, то это ROOT дира (для ФАТ12/16)
+.F2		PUSH HL
+		CALL RDFATZP			; читаем следущий номер кластера из цепочки директории
+		CALL LST_CLS			; проверяем на конец цепочки
+		POP HL
+		JR C,.F3
+		CALL SAVEZP			; если непоследний сохраняем в таблицу
+		JR .F2				; следующий номер кластера
+
+.F3		LD BC,0xFFFF
+		CALL SAVEZP			; кладем маркер конца цепочки
+		EXX
+		LD HL,LVL_DIR
+		LD A,(HL)			; текущий уровень директории
+		INC (HL)			; следующий уровень директории
+		AND A
+		LD BC,0				; количество записей ROOT директории
+		JR NZ,.F4
+		LD A,(CAL_FAT)
+		CP 2
+		JR NC,.F4
+		LD HL,(ROOTSEC)			; уже не ROOT директория
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		LD B,H
+		LD C,L
+.F4		EXX
+
+.F5		INC BC				; ищем по заданной маске начиная с 0
+		CALL RDDIRSC			; грузим по номеру описателя сектор директории
+		LD A,C
+		AND 0x0F			; в секторе максимум 16 описателей
+		LD E,A
+		LD D,0
+		EX DE,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,DE			; получили адрес нужного описателя
+		EXX
+		DEC BC
+		LD A,B
+		OR C
+		EXX
+		LD A,0xAA
+		JP Z,WR_STAT
+		LD A,(HL)			; проверяем первый байт имени описателя
+		AND A
+		LD A,0xAA			; если байт =0, то
+		JP Z,WR_STAT			; переход по ошибке = файл не найден
+		PUSH HL
+		PUSH BC
+		CALL COMPARE			; сравниваем с заданной маской
+		POP BC
+		POP DE
+		PUSH DE
+		POP IX				; содержимое IX = адрес описателя
+		JR NZ,.F5			; не совпадает, переходим к следующему описателю
+		CALL RD_CLAS			; забираем номер кластера из найденного описателя
+		EX (SP),HL			; восстановили текущий адрес в строке пути до файла
+		INC SP
+		INC SP				; маскировка на стеке адреса размера в байтах текущего файла
+		LD A,(HL)
+		AND A				; текстовая строка кончилась?
+		JR NZ,.F6			; если нет, то ищем дальше
+		LD A,(IX+0x0B)			; проверяем это дира или файл?
+		AND 0x10
+		LD A,0xAA			; если дира, то ошибка
+		JP NZ,WR_STAT			; текстовая строка должна указывать на файл
+		DEC SP
+		DEC SP
+		POP HL				; восстановили в HL адрес откуда взять размер файла в байтах
+		PUSH BC
+		PUSH DE
+		CALL LOADZP			; забираем размер файла (в байтах)
+		LD A,E
+		AND A
+		JR Z,.F8			; младший байт размера файла =0?
+		INC D				; увеличиваем размер на 256 байт без учета младшего байта
+.F8		BIT 0,D				; проверяем чет/нечет
+		JR Z,.F9			; если нечет, то
+		INC D				; увеличиваем размер еще на 256 байт
+.F9		CALL BCDE200			; делим на 512 (на размер сектор)
+		PUSH DE
+		EXX
+		POP HL
+		EXX
+		LD A,(BYTSSEC)			; взяли размер кластера в секторах
+		LD IXH,A			; сохранили
+		POP DE
+		POP BC
+		LD HL,0x8000			; адрес загрузки
+
+; HX - размер кластера
+; HL' - кол-во секторов файла
+; BCDE - номер стартового кластера
+; LY - стартовая страница загрузки
+
+		LD A,IYL			; восстановили страницу загрузки
+		AND A
+		JR NZ,CP_PAGE			; проверка для загрузки в страницу 0
+		OUT (MPAG),A			; включаем страницу 0
+		EXX
+		LD A,L
+		LD DE,0x41
+		SBC HL,DE
+		JR C,.F7			; если файл 0x41 и более секторов
+		LD A,0x40			; то грузим только 0x40 первых секторов
+.F7		EXX
+		JP LDMINI			; переходим на загрузку
+
+; загрузка в страницу 1 запрещена
+CP_PAGE		DEC A
+		LD A,0xAA
+		JP Z,WR_STAT
+		LD A,IYL
+
+; включаем страницу загрузки
+LDFILE0		OUT (MPAG),A			; включаем заданную страницу для загрузки
+
+; загрузка в страницы 02...7F
+LD_FILE		EXX
+		LD E,IXH
+		LD D,0				; DE = размер кластера в секторах
+		AND A
+		SBC HL,DE			; сверяем с количеством секторов для загрузки
+		LD IXL,IXH			; LX = количество секторов для загрузки
+		EXX
+		JR NC,.L1
+		EXX				; секторов для загрузки меньше размера кластера
+		ADD HL,DE	
+		LD A,L
+		LD IXL,A			; LX = количество секторов для загрузки
+		EXX
+
+.L1		PUSH BC
+		PUSH DE
+		PUSH HL
+		CALL REALSEC			; перевели номер кластера в номер реального сектора
+		LD A,IXL
+		CP 0x41				; количество секторов для загрузки больше 0x40?
+		JR C,.L2
+		LD A,0x40			; будем грузить 0x40 секторов
+.L2		POP HL
+		LD IYH,A
+		CALL RDMULTI			; загружаем сектора
+		LD A,IXH
+		AND 0x80
+		JR Z,.L5
+		LD A,IXL
+		SUB IYH
+		JR Z,.L3
+		JR C,.L3
+		LD HL,0x40
+		ADD HL,DE
+		EX DE,HL
+		LD HL,0
+		ADC HL,BC
+		LD B,H
+		LD C,L
+		LD L,A
+		INC IYL
+		LD A,IYL
+		CP 0x40
+		JR C,.L4
+.L3		INC SP
+		INC SP
+		INC SP
+		INC SP
+		JR LDEFILE
+
+.L4		OUT (MPAG),A			; следующая страница
+		LD A,L
+		LD HL,0x8000
+		CALL RDMULTI
+.L5		POP DE
+		POP BC
+		PUSH HL
+		CALL RDFATZP
+		CALL LST_CLS
+		POP HL
+		JR C,LDEFILE
+		LD A,IXL
+		CP IXH
+		JR C,LDEFILE
+		LD A,H
+		AND A
+		JR NZ,LD_FILE
+		LD HL,0x8000
+		INC IYL
+		LD A,IYL
+		CP 0x40
+		JR C,LDFILE0
+LDEFILE		XOR A
+		JP WR_STAT
+
+LDMINI		EXX
+		LD L,A
+		LD A,IXH
+		LD H,A
+		CP L
+		JR C,$+3
+		LD A,L
+		EXX
+		PUSH BC
+		PUSH DE
+		PUSH AF
+		PUSH HL
+		CALL REALSEC
+		POP HL
+		POP AF
+		CALL RDMULTI
+		POP DE
+		POP BC
+		LD A,H
+		AND A
+		RET Z
+		PUSH HL
+		CALL RDFATZP
+		CALL LST_CLS
+		POP HL
+		JR C,LDEFILE
+		EXX
+		LD A,L
+		SUB H
+		EXX
+		JR NC,LDMINI
+		JR LDEFILE
+
+SAVEZP		LD (HL),E
+		INC HL
+		LD (HL),D
+		INC HL
+		LD (HL),C
+		INC HL
+		LD (HL),B
+		INC HL
+		RET
+
+LOADZP		LD E,(HL)
+		INC HL
+		LD D,(HL)
+		INC HL
+		LD C,(HL)
+		INC HL
+		LD B,(HL)
+		INC HL
+		RET
+
+; чтение сектора DIR по номеру BC
+RDDIRSC		PUSH BC
+		LD D,B
+		LD E,C
+		LD BC,0
+		LD A,0x10
+		CALL BCDE_A
+		LD A,E
+		PUSH AF
+		LD A,(BYTSSEC)
+		PUSH AF
+		CALL BCDE_A
+		LD HL,TDIRCLS
+		EX DE,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,DE
+		CALL LOADZP
+		CALL REALSEC
+		POP AF
+		DEC A
+		LD L,A
+		POP AF
+		AND L
+		LD L,A
+		LD H,0
+		ADD HL,DE
+		EX DE,HL
+		LD HL,0
+		ADC HL,BC
+		LD B,H
+		LD C,L
+		CALL LOADLST
+		POP BC
+		RET
+
+; проверка на последний кластер в цепочке
+LST_CLS		LD A,(CAL_FAT)			; зависит от разрядности фата
+		AND A
+		JR NZ,LST_CL1
+		LD HL,0x0FF7			; проверка для ФАТ12
+		SBC HL,DE
+		RET
+
+LST_CL1		DEC A
+		JR NZ,LST_CL2
+LST_CL3		LD HL,0xFFF7			; проверкам для ФАТ16 и младших бит ФАТ32
+		SBC HL,DE
+		RET
+
+LST_CL2		LD HL,0x0FFF			; проверка для старших бит ФАТ32
+		SBC HL,BC
+		RET NZ
+		JR LST_CL3
+
+; чтение следующего номера кластера в цепочке
+RDFATZP		LD A,(CAL_FAT)			; чтение зависит от разрадности фата
+		AND A
+		JR Z,RDFATS0			; переход вперед для ФАТ12
+		DEC A
+		JR Z,RDFATS1			; переход вперед для ФАТ16
+		EX DE,HL			; здесь чтение для ФАТ32
+		ADD HL,HL
+		EX DE,HL
+		LD HL,0
+		ADC HL,BC
+		ADC HL,BC			; умножили номер кластера на 2
+		LD A,E
+		LD E,D
+		LD D,L
+		LD C,H
+		LD B,0				; разделили номер кластера на 256
+		CALL RDFATS2			; читаем младшие 16 бит используя чтение для ФАТ16
+		INC HL
+		LD C,(HL)
+		INC HL
+		LD B,(HL)			; прочитали последующие старшие 16 бит
+		RET
+
+; чтение 16 битного номера кластера из цепочки для ФАТ16
+RDFATS1		LD BC,0
+		LD A,E
+		LD E,D
+		LD D,C				; разделили номер кластера на 256, старшие 16 бит =0
+RDFATS2		PUSH AF				; общее чтение 16 битного номера кластера для ФАТ16/32
+		PUSH BC
+		LD HL,FATSTR
+		CALL BCDEHLP			; прибавили смещение от начала фат таблицы
+		CALL LOADLST			; загрузили вычисленный номер сектора
+		POP BC
+		POP AF
+		LD E,A
+		LD D,0
+		ADD HL,DE
+		ADD HL,DE			; вычислили смещение до нужного номера в загруженном секторе
+		LD E,(HL)
+		INC HL
+		LD D,(HL)			; получили 16 бит номера кластера
+		RET
+
+; чтение 12 битного номера кластера из цепочки для ФАТ12
+RDFATS0		LD H,D
+		LD L,E
+		ADD HL,HL
+		ADD HL,DE			; HL = HL * 3
+		SRL H
+		RR L				; HL = HL / 2 - в итоге умножили номер кластера на 1,5
+		LD A,E				; A - нам интересен только бит номер старого номера кластера
+		LD E,H
+		LD D,0
+		LD B,D
+		LD C,D				; разделили номер кластера на 256
+		SRL E
+		PUSH AF
+		PUSH HL
+		LD HL,FATSTR
+		CALL BCDEHLP			; прибавили смещение от начала фат таблицы
+		CALL LOADLST			; загрузили вывчисленный сектор
+		POP BC
+		LD A,B
+		AND 1
+		LD B,A				; BC = смещение в загруженном секторе
+		ADD HL,BC			; HL = адрес откуда читать байты номера кластера
+		LD B,(HL)			; прочитали младшую часть номера кластера
+		INC HL				; адрес следующего байта
+		LD A,H
+		CP HIGH (BUF_512)+2		; проверка на переход границы загруженного сектора
+		JR NZ,RDFATS4
+		PUSH BC				; выход за пределы текущего загруженного сектора
+		LD BC,0
+		INC DE
+		CALL LOADLST			; загружаем следующий сектор фат таблицы
+		POP BC
+RDFATS4		POP AF
+		LD D,(HL)			; читаем старшие биты номера кластера
+		LD E,B				; теперь DE = номер следующего кластера в цепочке
+		LD BC,0
+		RRA				; проверяем бит 0 старого номера кластера
+		JR NC,RDFATS3
+		SRL D				; сдвигаем номер прочитанного номера кластера в младшие 12 бит
+		RR E
+		SRL D
+		RR E
+		SRL D
+		RR E
+		SRL D
+		RR E
+RDFATS3		LD A,D
+		AND 0x0F
+		LD D,A				; сбросили незначащие старшие 4 бита у полученного номера кластера
+		RET
+
+; вычисление реального сектора
+; на входе BCDE = номер кластера FAT
+; на выходе BCDE = номер реального сектора
+REALSEC		LD A,B
+		OR C
+		OR D
+		OR E
+		JR NZ,REALSE1			; BCDE = 0?
+		LD HL,SEC_FAT			; это root директория у ФАТ12/16
+		LD DE,(FATSTR)			; местоположение ROOT диры сразу после фат таблицы
+		LD BC,(FATSTR+2)
+		PUSH HL
+		CALL BCDEHLP			; прибавили к началу фат таблицы ее размер
+		POP HL
+		JP BCDEHLP			; прибавили еще раз и получили номер сектора начала ROOT диры
+
+REALSE1		LD HL,0xFFFE
+		EX DE,HL
+		ADD HL,DE
+		EX DE,HL
+		INC HL
+		ADC HL,BC			; HLDE = номер кластера - 2
+		LD A,(BYTSSEC)			; нужно умножить на размер кластера
+		JR REALSE2
+
+REALSE3		SLA E
+		RL D
+		RL L
+		RL H
+REALSE2		RRCA
+		JR NC,REALSE3			; умножили на размер кластера
+		LD B,H
+		LD C,L
+		LD HL,STARTRZ
+		CALL BCDEHLP			; прибавили смещение от начала диска
+		LD HL,FRSTDAT
+		JP BCDEHLP			; прибавили смещение от начала раздела
+
+; BCDE = BCDE / 512
+BCDE200		LD E,D
+		LD D,C
+		LD C,B
+		LD B,0
+		LD A,2
+		JR BCDE_A
+
+; BCDE = BCDE >> A
+BCDE_A1		SRL B
+		RR C
+		RR D
+		RR E
+BCDE_A		RRCA
+		JR NC,BCDE_A1
+		RET
+
+; BCDE = (ADR) - BCDE
+BCDEHLM		LD A,(HL)
+		INC HL
+		SUB E
+		LD E,A
+		LD A,(HL)
+		INC HL
+		SBC A,D
+		LD D,A
+		LD A,(HL)
+		INC HL
+		SBC A,C
+		LD C,A
+		LD A,(HL)
+		SBC A,B
+		LD B,A
+		RET
+
+; BCDE = (ADR) + BCDE
+BCDEHLP		LD A,(HL)
+		INC HL
+		ADD A,E
+		LD E,A
+		LD A,(HL)
+		INC HL
+		ADC A,D
+		LD D,A
+		LD A,(HL)
+		INC HL
+		ADC A,C
+		LD C,A
+		LD A,(HL)
+		ADC A,B
+		LD B,A
+		RET
+
+; HLDE = HLDE + BC
+HLDEPBC		EX DE,HL
+		ADD HL,BC
+		EX DE,HL
+		LD BC,0
+		ADC HL,BC
+		RET
+
+; BCDE = BCDE - (ADR)
+HLBCDEM		LD A,E
+		SUB (HL)
+		INC HL
+		LD E,A
+		LD A,D
+		SBC A,(HL)
+		INC HL
+		LD D,A
+		LD A,C
+		SBC A,(HL)
+		INC HL
+		LD C,A
+		LD A,B
+		SBC A,(HL)
+		LD B,A
+		RET
+
+; грузилка одного сектора
+LOADLST		CALL CPNUMSC
+		JR NZ,LOADLST1
+		LD HL,BUF_512
+		RET
+
+LOADLST1	LD HL,BUF_512			; адрес буфера сектора
+		LD A,1				; грузить 1 сектор
+		PUSH HL
+		CALL RDMULTI			; загрузили сектор
+		POP HL				; на выходе HL=адрес начала буфера загруженного сектора
+		RET
+
+; проверка на уже загруженный сектор
+CPNUMSC		LD HL,LSTLOAD
+		LD A,(HL)
+		INC HL
+		CP E
+		RET NZ
+		LD A,(HL)
+		INC HL
+		CP D
+		RET NZ
+		LD A,(HL)
+		INC HL
+		CP C
+		RET NZ
+		LD A,(HL)
+		CP B
+		RET
+
+; подача команды в SD карту без параметров
+OUTCOM		PUSH BC
+		LD BC,0x0600+SD_SEND		; выдать в порт 6 байт
+		OTIR
+		POP BC
+		RET
+
+; выдача в порт SD карты команды с параметром 0
+OUT_COM		PUSH BC
+		LD BC,SD_SEND
+		in (c) ;in f,(c)
+		in (c) ;in f,(c)
+		OUT (C),A			; отправили код команды
+		XOR A
+		OUT (C),A			; биты 31-24 параметра
+		NOP
+		OUT (C),A			; биты 23-16 параметра
+		NOP
+		OUT (C),A			; биты 15-8 параметра
+		NOP
+		OUT (C),A			; биты 7-0 параметра
+		DEC A
+		OUT (C),A			; без CRC16
+		POP BC
+		RET
+
+SECM200		PUSH HL
+		PUSH BC
+		LD A,CMD_58
+		LD BC,SD_RSTR
+		CALL OUT_COM
+		CALL IN_OOUT
+		IN H,(C)
+		NOP
+		IN A,(C)
+		NOP
+		IN A,(C)
+		NOP
+		IN A,(C)
+		BIT 6,H
+		POP HL
+		JR NZ,.L1
+		EX DE,HL
+		ADD HL,HL
+		EX DE,HL
+		ADC HL,HL
+		LD H,L
+		LD L,D
+		LD D,E
+		LD E,0
+.L1		LD A,CMD_18
+		LD C,SD_SEND
+		in (c) ;in f,(c)
+		in (c) ;in f,(c)
+		OUT (C),A
+		NOP
+		OUT (C),H
+		NOP
+		OUT (C),L
+		NOP
+		OUT (C),D
+		NOP
+		OUT (C),E
+		LD A,0xFF
+		OUT (C),A
+		POP HL
+		RET
+
+IN_OOUT		EXX
+		LD DE,0x30FF
+.L1		IN A,(SD_RSTR)
+		CP E
+		JR NZ,.L2
+		DEC D
+		JR NZ,.L1
+.L2		EXX
+		RET
+
+CMD00		DB 0x40,0x00,0x00,0x00,0x00,0x95;GO_IDLE_STATE
+CMD08		DB 0x48,0x00,0x00,0x01,0xAA,0x87;SEND_IF_COND
+CMD16		DB 0x50,0x00,0x00,0x02,0x00,0xFF;SET_BLOCKEN
+
+; много секторное чтение с SD карты
+RDMULTI		EX AF,AF'
+		CALL SECM200
+		EX AF,AF'
+		LD BC,SD_RSTR
+.L1		EX AF,AF'
+.L2		CALL IN_OOUT
+		CP 0xFE
+		JR NZ,.L2
+		INIR
+		NOP
+		INIR
+		NOP
+		IN A,(C)
+		NOP
+		IN A,(C)
+		EX AF,AF'
+		DEC A
+		JR NZ,.L1
+		LD A,CMD_12
+		CALL OUT_COM
+.L3		CALL IN_OOUT
+		INC A
+		JR NZ,.L3
+		RET
+
+; выборка номера кластера из файлового описателя
+RD_CLAS		EX DE,HL
+		LD DE,0x14			; старшие 16 бит читаем из смещения +20
+		ADD HL,DE
+		LD C,(HL)
+		INC HL
+		LD B,(HL)
+		LD E,5				; младшие 16 бит читаем из смещения +26
+		ADD HL,DE
+		LD E,(HL)
+		INC HL
+		LD D,(HL)
+		INC HL
+		RET
+
+; проверка по маске
+COMPARE		LD DE,FB_EXT
+		LD B,0x0B
+		LD A,(DE)
+		CP (HL)
+		RET NZ
+		INC HL
+		INC DE
+		DJNZ $-5
+		RET
+
+; распаковщик пути к файлу
+FNDBUF		LD BC,0x0802
+		LD DE,FB_EXT
+FNDBUF4		LD A,(HL)
+		INC HL
+		CP "."
+		JR Z,FNDBUF2
+		CP "/"
+		JR Z,FNDBUF5
+		LD (DE),A
+		INC DE
+		DJNZ FNDBUF4
+		LD A,(HL)
+		AND A
+		RET Z
+		INC HL
+		JR FNDBUF3
+
+FNDBUF5		LD A,C
+		AND A
+		RET Z
+FNDBUF2		LD A,B
+		AND A
+		JR Z,FNDBUF3
+		LD A," "
+		LD (DE),A
+		INC DE
+		DJNZ $-2
+FNDBUF3		LD B,3
+		DEC C
+		DEC HL
+		LD A,(HL)
+		CP "/"
+		JR Z,FNDBUF4
+		INC HL
+		JR FNDBUF4
+RAMCEND
+		DEPHASE

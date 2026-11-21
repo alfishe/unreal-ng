@@ -874,6 +874,7 @@ uint8_t SoundChip_GSLightweight::portDeviceInMethod(uint16_t port)
         case 0xBB: // GSCOM read: status, bits 1-6 read as 1 (pull-ups)
             flush();
             _activityCounters.hostStatusPolls++;
+            logHostStatusRead(_mb.status);
             traceEvent(GSTraceSide::Host, PORT_COMMAND, static_cast<uint8_t>(_mb.status | 0x7E), false);
             return _mb.status | 0x7E;
         default:

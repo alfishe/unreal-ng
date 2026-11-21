@@ -1,0 +1,71 @@
+data #00
+anomaly data_before_command #0 (#23 Get number of RAM pages)
+#23 Get number of RAM pages
+card took #23 Get number of RAM pages
+reply 0 #3E: pages (#23 Get number of RAM pages)
+anomaly reply_read_without_poll #3E (#23 Get number of RAM pages)
+card reset
+#F3 Warm restart
+card took #F3 Warm restart
+reply 0 #3E, not ready (#F3 Warm restart)
+data #00
+#14 Receive block, length #00
+card took #14 Receive block
+length #03 (#14 Receive block)
+address #00 (#14 Receive block)
+address #5B (#14 Receive block)
+block upload: 768 bytes at #5B00 (#14 Receive block)
+data #00
+#13 Jump to address, address #00
+card took #13 Jump to address
+address #5B (#13 Jump to address)
+reply 0 #77 (#13 Jump to address)
+data #00
+#1E SD driver (GSDDRV), sub-command #00
+card took #1E SD driver (GSDDRV)
+LBA 31-24 #02 (#1E SD driver (GSDDRV))
+LBA 23-16 #B3 (#1E SD driver (GSDDRV))
+LBA 15-8 #00 (#1E SD driver (GSDDRV))
+LBA 7-0 #00 (#1E SD driver (GSDDRV))
+sectors #47 (#1E SD driver (GSDDRV))
+reply 0 #77: status (#1E SD driver (GSDDRV))
+data #02
+#1E SD driver (GSDDRV), sub-command #02
+card took #1E SD driver (GSDDRV)
+LBA 31-24 #00 (#1E SD driver (GSDDRV))
+LBA 23-16 #00 (#1E SD driver (GSDDRV))
+LBA 15-8 #00 (#1E SD driver (GSDDRV))
+LBA 7-0 #00 (#1E SD driver (GSDDRV))
+sectors #01 (#1E SD driver (GSDDRV))
+sector read: 512 bytes (#1E SD driver (GSDDRV))
+reply 0 #77: status (#1E SD driver (GSDDRV))
+data #02
+#1E SD driver (GSDDRV), sub-command #02
+card took #1E SD driver (GSDDRV)
+LBA 31-24 #00 (#1E SD driver (GSDDRV))
+LBA 23-16 #00 (#1E SD driver (GSDDRV))
+LBA 15-8 #08 (#1E SD driver (GSDDRV))
+LBA 7-0 #00 (#1E SD driver (GSDDRV))
+sectors #01 (#1E SD driver (GSDDRV))
+sector read: 512 bytes (#1E SD driver (GSDDRV))
+reply 0 #77: status (#1E SD driver (GSDDRV))
+data #02
+#1E SD driver (GSDDRV), sub-command #02
+card took #1E SD driver (GSDDRV)
+LBA 31-24 #00 (#1E SD driver (GSDDRV))
+LBA 23-16 #00 (#1E SD driver (GSDDRV))
+LBA 15-8 #09 (#1E SD driver (GSDDRV))
+LBA 7-0 #03 (#1E SD driver (GSDDRV))
+sectors #01 (#1E SD driver (GSDDRV))
+sector read: 512 bytes (#1E SD driver (GSDDRV))
+reply 0 #77: status (#1E SD driver (GSDDRV))
+data #02
+#1E SD driver (GSDDRV), sub-command #02
+card took #1E SD driver (GSDDRV)
+LBA 31-24 #00 (#1E SD driver (GSDDRV))
+LBA 23-16 #00 (#1E SD driver (GSDDRV))
+LBA 15-8 #09 (#1E SD driver (GSDDRV))
+LBA 7-0 #23 (#1E SD driver (GSDDRV))
+sectors #01 (#1E SD driver (GSDDRV))
+sector read: 512 bytes (#1E SD driver (GSDDRV))
+reply 0 #77: status (#1E SD driver (GSDDRV))

@@ -408,6 +408,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStats, "/api/v1/emulator/{id}/state/audio/gs/stats", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStatsSection, "/api/v1/emulator/{id}/state/audio/gs/stats/{section}",
                   drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmware, "/api/v1/emulator/{id}/state/audio/gs/firmware", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmwareProfiles, "/api/v1/emulator/{id}/state/audio/gs/firmware/profiles",
+                  drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovox, "/api/v1/emulator/{id}/state/audio/covox", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannels, "/api/v1/emulator/{id}/state/audio/channels", drogon::Get);
     // GS control actions (GS design §11.2)
@@ -1585,6 +1588,18 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioGSStatsSection(const drogon::HttpRequestPtr& req,
                                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                      const std::string& id, const std::string& section) const;
+
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/firmware?profile=<id>&object=<name>
+    ///        The firmware objects of the GS slot card through its profile (gsfirmwareobjects.h, gs-debugger §8A.9
+    ///        M1-M3, M7): struct instances bound to a physical page, variables in memory, registers or code
+    void getStateAudioGSFirmware(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/firmware/profiles — the firmware profiles known (built-in and
+    ///        the files of <symbols>/gs/profiles)
+    void getStateAudioGSFirmwareProfiles(const drogon::HttpRequestPtr& req,
+                                         std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/control/audio/gs — body:
     ///        {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",

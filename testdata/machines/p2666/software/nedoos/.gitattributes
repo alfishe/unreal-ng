@@ -1,2 +1,4 @@
 # The NedoOS SD card is kept byte for byte (CRLF texts included)
 sdcard/** -text
+# The patched kernels: the patch carries the CRLF line ends of the NedoOS sources it applies to
+kernel-ngsfix/** -text

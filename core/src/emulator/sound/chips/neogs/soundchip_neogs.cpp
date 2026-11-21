@@ -1340,6 +1340,7 @@ uint8_t SoundChip_NeoGS::portDeviceInMethod(uint16_t port)
         case 0xBB: // status: bit 7 data, bit 0 command; bits 6:1 read as 1
             hostPortSync();
             _activityCounters.hostStatusPolls++;
+            logHostStatusRead(_mb.status);
             traceEvent(GSTraceSide::Host, PORT_COMMAND, _mb.status | 0x7E, false);
             return _mb.status | 0x7E;
         default:
@@ -1782,6 +1783,22 @@ const uint8_t* SoundChip_NeoGS::cardRomPage(uint32_t page) const
     if (!_cpu || (static_cast<size_t>(page) + 1) * NeoGSMemory::PAGE_SIZE > Flash29F040B::SIZE)
         return nullptr;
     return _flash.data() + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
+}
+
+const uint8_t* SoundChip_NeoGS::cardRamPage(uint32_t page) const
+{
+    if (!_cpu || page >= _mem.ramPages())
+        return nullptr;
+    return _mem.ram() + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
+}
+
+const uint8_t* SoundChip_NeoGS::firmwarePage(uint32_t page) const
+{
+    if (!_cpu || page > 1)
+        return nullptr;
+    if (_mainRomStartTicks >= 0)
+        return _mem.ram() + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
+    return _flash.data() + FLASH_MAIN_ROM + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
 }
 
 bool SoundChip_NeoGS::cardRegisters(Z80CpuRegisters& out) const

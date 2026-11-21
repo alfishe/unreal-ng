@@ -149,7 +149,7 @@ fixed RAM window, 3: high ROM at `#C000`).
    - Done (uncommitted, worktree `scratch/wt-gs-firmware`): store and bundles as in design §6.2 "As built", `cpu`
      on every plane, card breakpoint conditions by name, tests `GSCardTarget_Test.TheFirmwareSymbolsNameTheCardsCode`,
      `TheMachinesCardLoadsItsFirmwareSymbols`, `McpTools_Test.ManageSymbols_Cpu_NamesTheCardsLabels`. The label byte
-     check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, NeoGS (N5), Qt card labels.
+     check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, Qt card labels. NeoGS (N5) done (uncommitted): see item 11.
 2. [x] **Firmware profiles (F2).** `GSFirmwareProfile` tables for v1.04 / v1.05a / v1.05b from `COMTAB` / `COMTABH`,
    selected by the ROM image SHA-256; the card names its firmware; self-check test: every non-stub handler in the
    ROM's tables has a named command.
@@ -167,12 +167,95 @@ fixed RAM window, 3: high ROM at `#C000`).
      debugger's send: each byte when the mailbox allows it, replies read, decoded; TTD input `GSReadData`), CLI /
      WebAPI / MCP / Lua / Python, `GSHostDriver_Test`. Design §6.4 "As built". Left: firmware objects (F5, phase
      6), a MultiSound card's send, Qt.
-5. [ ] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
+5. [x] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
    - 5a done (17c5a3e40): the boards and the SD board over `sd.ngs`, design §6.5.
    - 5b done (bbe0ec4aa, 2026-11-18): the statistics block, the `gs_stats` board, every plane; design §6.6,
      neogs-automation-design.md §10. Checked: `core-tests` (GS, NeoGS, boards, MCP filters), `unreal-qt` zero
      warnings, live `test_gs_debugger.py` 15/15; A/B benchmarks on .20 in neogs-automation-design.md §10 (frames
-     unchanged, +0.5 ns per host `OUT`). Left: the gcc check.
+     unchanged, +0.5 ns per host `OUT`). Landed 628936545 (2026-11-18). Left: the gcc check (batched).
+
+### Phase 4, revision 3 additions (M1-M8, AU6, the F4 extensions; design §8A.8-§8A.10) — branch `gs-firmware`
+
+Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design §10).
+
+6. [x] **Profile schema 2 (M1, M2, M6, M7).** Profiles as JSON files (`data/symbols/gs/profiles/`), the built-in tables in
+   the same structure: `match` (ROM / upload digests), `dispatch`, per-command `handshake`, `structs`, `instances`
+   bound to a physical page, `variables` (register in a PC range, SMC operand). Firmware objects read through
+   `peekPage` on every plane (the data side of M3 and F5).
+   Done (uncommitted): `gsfirmwareobjects.h`, `cardRamPage`, WebAPI `/state/audio/gs/firmware[/profiles]`, CLI
+   `gs firmware`, MCP `audio_gs_firmware[.<object>]`, Lua / Python `gs_firmware`; design §8A.9 "As built".
+7. [ ] **F4 extensions.** `reply_read_without_poll`, `data_before_command`, `command_while_busy`,
+   `card_reply_stall`, `stale_reply_drain`, `upload_over_running_code`, `command_rejected_in_state`; the handshake
+   (M6) suppresses legal firmware-specific ones; the same flags on LW (W4).
+   Done (uncommitted): the host status-read hook on LLE / LW / NeoGS; handshake `ack`, `barrier`, `strobe`,
+   `replyWait`, `exit`; profile `modes`, `unsolicitedReplies`; design §6.3. Left: an A/B of the status-read hook
+   (P2), batched with the next .20 run.
+8. [ ] **Profiles for uploaded code (M5).** The `#14` upload hashed as it arrives, `#13` pushes the matching
+   profile, a card reset pops to the ROM's, the decoder asks the stack top-down; an unknown upload logged with its
+   address, length and digest. Profiles: GP `gscode.bin`, the kernel's `ngssd.bin`, NeoTracker `ngsldr` / `ngsdrv`
+   / `neopg2`.
+   Done (uncommitted): `GSCommandLog::Uploads()` (also `uploads` in the protocol state), the profile stack with
+   `extends`, upload matches that cover a prefix (the kernel's padded 768 bytes), five NedoOS profiles in
+   `data/symbols/gs/profiles/`, the blobs in `testdata/software/nedoos/card-code/`. The `#1E` sector transfer with its
+   `#BB` strobes (M12): the profile transfer `sectors` (design §6.3), done with V-5.
+9. [x] **Dispatch view and unknown commands (M4, AU6).** The dispatch table read and compared with the ROM / upload
+   baseline (patched entries named with their upload); the dispatch PC as a probe filling `card_pc` /
+   `card_label`; the unknown-command set with counts (LW default branch, LLE `unknownStub`).
+10. [x] **Generator (M8).** `tools/gsfirmware/profile_from_source.py`: commands from `COMTAB` / `COMTABH`, structs
+    from `STRUCT … ENDS` and `EQU` blocks, symbols; the v1.05a profile regenerated equals the committed one (a test).
+    Done (uncommitted, items 9-10): `dispatch` in the firmware objects read (handler, ROM baseline, `patched_by`,
+    `unknown`), `highFrom`, `stock_split` in JSON; `card_pc` / `card_label` from the table at the command write (no
+    per-instruction probe); `UnknownCommands()` in the log; the generator with `gs105a.profile.json` and its check.
+    Design §8A.9 "As built" (items 8-10).
+11. [ ] **Validation scenarios V-1 to V-6 (§8A.10).** NedoOS fixtures in `testdata/software/nedoos/` (README with the
+    revision), `gs_nedoos_scenarios_test.cpp` against golden logs; the `SSTAT.MCRDY` polling and host `IN (#0F)`
+    accuracy checks.
+    Progress (uncommitted): the test boots NedoOS on the ZX-Evo from a host folder (long tier); V-1 gstest passes on
+    the classic GS against `testdata/software/nedoos/golden/v1-gstest.txt`. It found and closed: the stock test mode
+    (`selects` / `leaveFrom`), the `#F4` value poll (`valuePoll`), a transfer stall counted before the card took its
+    command. V-2 passes: GP plays a `.mod` on the stock firmware to its end (`v2-gp-mod.txt`: one 61902-byte block,
+    `#60` every frame, the position falls, `#F3`), and Esc during the load sends `#F4` after the first 32 KB chunk
+    (`v2-gp-cancel.txt`; one `command_while_busy`, as F4 names it). A 128 KB card: with the ZX-Evo's 512 KB the stock
+    RAM test takes 127 frames and GP gives up on the card after 50 (gshardreset), as on such a board. Keys go in as
+    PS/2 keys: NedoOS for the ZX-Evo (`PS2KBD=1`) reads the AVR's PS/2 log, not the matrix. The module needs an 8.3
+    name (`afterwr2.mod`): GP does not open a longer one from its command line. V-3 passes: GP streams an 8 s MP3
+    on the NeoGS (`v3-gp-mp3.txt`): both streamer uploads select `nedoos-gp-gscode`, the data is one host data
+    stream block (new profile flag `hostDataStream`, design §6.3; 162970 bytes with the padding), `#01` every frame,
+    12 MHz while streaming and 20 MHz after `#00` (six clock switches), timer interrupts, no anomalies (GP reads
+    `#01` at once: no `card_reply_stall` in this run). `SoundChip_NeoGS::counters()` for the test. V-4 passes:
+    ngsplay loads an S3M through the NeoTracker BIOS (`v4-ngsplay-s3m.txt`): the uploads to `#5100`, `#0000` and
+    `#D000` select `nedoos-ngsldr`, `nedoos-neotracker`, `nedoos-neopg2`; two jumps, the barrier `#00`, the `#E8`
+    header as one block, `#E9` / `#EA` until done, `#E2`, `#E3`, `#E4` on [S] in PlayCykl, no anomalies. The release
+    ngsplay never sent its `#E6` status poll in 3,000 frames after the autostart, though its loop took keys. It fixed the
+    NeoTracker profile (`#E2` / `#E3` take module and sample / order, `#E8` `block256`, `#EA` the new
+    `block_pages`) and the decoder, which ended a `block256` only at the next command.
+    N5 (uncommitted): the NeoGS sources (NedoPC SVN r193) in `materials/neogs/ngs-firmware/`; `markup_symbols.py`
+    rebuilds the main ROM with asl byte for byte and writes `neogs.map`, the `gs:neogs` bundle and `NEOGS-VS-GS.md`;
+    the built-in profile `neogs` (v1.05a's tables, the same handlers) with `firmwarePage` (RAM pages 0-1 on NeoGS).
+    Design §6.2 "As built (N5)". V-5 passes (`v5-kernel-ngssd.txt`, P2666 + NeoGS via `GeneralSoundFitScope`): needed the P2666 decoder to pass
+    the GS mailbox (`#33` / `#B3` / `#BB`, low byte) to a ZX-BUS card (read mux row 13, every write). The release
+    kernel hangs on the real board as well, a NedoOS bug: its NGS SD driver (`src/kernel/ngssddrv.asm`, `ISDD3`
+    installer upload and `SDWRSN2` sector write) sends with `LD BC,GSDAT` : `OUTI`, so B counts down on A15..A8, and
+    `#E0B3`..`#EFB3` match the board's `#EFF7` decode (`A15..13 = 111`, `A12 = 0`, `A5 = 1`, `A3 = 0`, `A0 = 1`,
+    PaE.vhd:1280). After the installer `#EFF7` holds `#8F` (RAM 0 at `#0000`), and the next ISR's call into the DOS ROM
+    through `#3D2F` runs RAM and ends at `#0000`. The emulator matches the VHDL. The test boots the same kernel rebuilt
+    from source with `INC B` before each `OUTI` (`testdata/machines/p2666/software/nedoos/kernel-ngsfix/`, recipe
+    `.recipe/software/nedoos-build.md`, `tools/nedoos/kernel.sh`; the unpatched build equals the release in every
+    code byte). The log shows the installer upload and jump (`nedoos-ngssd`), `#1E` init (`#77`), then the sector reads
+    of the MBR, the boot sector, the root directory and the file, each `sector read: 512 bytes` with its `#77` status
+    (M12: profile transfer `sectors`, the `#BB` strobes inside it), no anomalies; `type n:/ngssd.txt` prints the file.
+    A relative `n:ngssd.txt` fails ("Wrong file"): a NedoOS process has one current directory cluster for all drives
+    (`app.dircluster`), so it searched `M:/bin`'s cluster on drive N. For the `IN (#0F)` check: INSTSDD's host
+    `IN (C)` of `#000F` read something other than `#FF` on the P2666 (value and source not checked yet), so it took
+    NEOGSINIT.
+    Left: V-6; the MCRDY and `IN (#0F)` checks.
+
+### Phase 5 (U1, U1a, U2, B3; design §10) — the GUI skin
+
+12. [ ] **Main debugger** per [gui-main-debugger.md](../2026-09-28-debugger-model/gui-main-debugger.md), its
+    acceptance checklist.
+13. [ ] **Card debugger** per [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md) (GS, then
+    NeoGS): two Qt windows paused together, its acceptance checklists.
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), not landed
 

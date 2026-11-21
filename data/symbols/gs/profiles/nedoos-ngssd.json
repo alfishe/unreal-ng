@@ -1,0 +1,63 @@
+{
+  "id": "nedoos-ngssd",
+  "title": "NedoOS kernel NeoGS SD driver installer (ngssd.bin)",
+  "note": "ngsinst.asm at #5B00: patches the stock COMTAB[#1E] to GSDDRV at #1D00 and returns to COMINT_; the kernel sends 768 bytes, the match covers the 686 of the blob",
+  "extends": true,
+  "match": [
+    {
+      "kind": "upload",
+      "addr": "#5B00",
+      "length": 686,
+      "sha256": "7e6ac5c61eb27260f97cee80a97ba24020b71047f614006b8d90ef61907db30c"
+    }
+  ],
+  "commands": [
+    {
+      "number": "1E",
+      "name": "SD driver (GSDDRV)",
+      "pre": 1,
+      "params": [
+        {
+          "name": "sub-command",
+          "kind": "byte"
+        },
+        {
+          "name": "LBA 31-24",
+          "kind": "byte"
+        },
+        {
+          "name": "LBA 23-16",
+          "kind": "byte"
+        },
+        {
+          "name": "LBA 15-8",
+          "kind": "byte"
+        },
+        {
+          "name": "LBA 7-0",
+          "kind": "byte"
+        },
+        {
+          "name": "sectors",
+          "kind": "byte"
+        }
+      ],
+      "post": 5,
+      "reply": 1,
+      "reply_meaning": "status",
+      "transfer": "sectors",
+      "sectors": {
+        "length": 512,
+        "count": 5,
+        "select": 0,
+        "read": 2,
+        "write": 3
+      },
+      "handshake": {
+        "strobe": true
+      },
+      "note": "sub-command 0 init, 1 compare, 2 read, 3 write (TABLSDG); a read / write moves the count of 512-byte sectors (0: 256), each after a #BB strobe; one status byte after all: #77 done, #88 no card (compare), #99 card lost, #EE card not found (init)",
+      "handler": "GSDDRV"
+    }
+  ]
+}

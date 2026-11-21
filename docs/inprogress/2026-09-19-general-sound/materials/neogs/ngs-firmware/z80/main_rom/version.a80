@@ -1,0 +1,5 @@
+
+; LAST UPDATE: 07.02.2026 savelij
+
+VERS_TXT	EQU "1.11"
+VERS_BIN	EQU 1 << 8 + 0x11

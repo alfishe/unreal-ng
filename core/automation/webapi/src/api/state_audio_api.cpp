@@ -20,6 +20,7 @@
 #include <emulator/sound/audiomixer.h>
 #include <debugger/ttd/timetravelcontroller.h>
 #include <emulator/sound/chips/gs/gshostdriver.h>
+#include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
@@ -622,6 +623,55 @@ void EmulatorAPI::getStateAudioGSStats(const HttpRequestPtr& req, std::function<
         return;
     }
     GetGSStats(emulator, req, "", std::move(callback));
+}
+
+namespace
+{
+void ReplyNotFound(const std::function<void(const HttpResponsePtr&)>& callback, const std::string& message)
+{
+    Json::Value error;
+    error["error"] = "Not Found";
+    error["message"] = message;
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k404NotFound);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+} // namespace
+
+void EmulatorAPI::getStateAudioGSFirmware(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback,
+                                          const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound(callback, "Emulator not found with ID: " + id);
+    GSFirmwareObjectsQuery query;
+    query.profile = req->getParameter("profile");
+    query.object = req->getParameter("object");
+    const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(emulator->GetContext(), query);
+    if (reply.status != 200)
+        return ReplyNotFound(callback, reply.text);
+    Json::Value body = StateNodeToJson(reply.body);
+    body["text"] = reply.text; // the same lines as CLI 'gs firmware': an agent may read only the text
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void EmulatorAPI::getStateAudioGSFirmwareProfiles(const HttpRequestPtr& req,
+                                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                                  const std::string& id) const
+{
+    (void)req;
+    if (!getEmulatorByIdOrIndex(id))
+        return ReplyNotFound(callback, "Emulator not found with ID: " + id);
+    std::string text;
+    Json::Value body = StateNodeToJson(GSFirmwareProfilesState(&text));
+    body["text"] = text;
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 void EmulatorAPI::getStateAudioGSStatsSection(const HttpRequestPtr& req,
