@@ -1,5 +1,7 @@
 # TTD analyzer
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Reads Unreal-NG `.ttd` session files without an emulator: the time-travel engine's format (schema 2), records in
 parts, every record checked by CRC32C, one file per segment of history
 ([container format](../../../docs/emulator/design/debugger/time-travel-debug/ttd-container-format.md),

@@ -1,5 +1,7 @@
 # ZX Spectrum Next: time travel (TTD)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Date:** 2026-10-07 · part of [README.md](README.md)
 
 ## 1. Recording first

@@ -57,6 +57,8 @@ translation, TTD v2, the core perf review, devtools/roadmap visions. Ordered by 
 
 ## T2 — high value, medium-large effort
 
+> TTD rows (#7, #27, #40, #76, #112-#116, #119, #122 here; #45 in T3): every TTD folder, design, code area and open task is in the TTD index, [docs/emulator/design/debugger/time-travel-debug/README.md](../emulator/design/debugger/time-travel-debug/README.md).
+
 | # | Item | Tracked in | Notes |
 |:--|:--|:--|:--|
 | 6 | **Expression evaluator + conditional breakpoints** (slices 1d/1e first): `bpcondition` engine, wiring into `Handle*`, hit counters (1f), ranges (1c), IRQ breakpoints, frontends (1h) | [2026-08-17-conditional-breakpoints](2026-08-17-conditional-breakpoints/); consumes [2026-08-26-expression-evaluator](2026-08-26-expression-evaluator/) and [2026-08-26-breakpoint-enhancements](2026-08-26-breakpoint-enhancements/) | Zero code yet (only `BreakpointRangeDescription` exists). The only remaining **P0** in the feature-parity matrix; the most-reused piece (see rationale 4). Phase 0 speed substrate landed (12–18× miss-path) with benchmarks as regression gates |

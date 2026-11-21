@@ -1,5 +1,7 @@
 # TTD backtrace: the call stack at a moment
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Status 2026-11-07:** implemented on all six planes (CLI `ttd bt`, `GET /ttd/backtrace` and its WebSocket call, MCP
 `time_travel backtrace`, Lua / Python `ttd_backtrace`); unit tests `TTDBacktrace_Test`, live MCP check in
 `tools/verification/mcp/test_time_travel.py`.

@@ -3292,6 +3292,8 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ### 8. Time-Travel Debugging (TTD)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../debugger/time-travel-debug/README.md)
+
 Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. GDB/LLDB clients reach the same engine through the reverse-execution packets (`bs` / `bc`, advertised as `ReverseStep+` / `ReverseContinue+`; see [gdb-protocol.md](./gdb-protocol.md)).
 
 **Background design:** [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md). This section describes what the CLI handlers (`core/automation/cli/src/commands/cli-processor-ttd.cpp`) actually accept and print today. The same rules apply to the WebAPI, Lua and Python surfaces, which all call the same `TTDControl` methods (the time-travel controller behind them).

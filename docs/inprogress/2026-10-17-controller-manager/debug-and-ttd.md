@@ -1,5 +1,7 @@
 # Controller manager: the debugger and time-travel layer
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 | | |
 |---|---|
 | **Date** | 2026-10-17 |

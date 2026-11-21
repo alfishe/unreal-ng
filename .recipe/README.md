@@ -179,6 +179,8 @@ call.
 
 ### `analysis/` — instrumenting the machine
 
+> TTD index (designs, plans, code, tests, open tasks): [docs/emulator/design/debugger/time-travel-debug/README.md](../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 | Recipe | What it covers |
 |:--|:--|
 | [analysis/reverse-engineering.md](analysis/reverse-engineering.md) | Reverse engineering on the analysis layers: capture from the game's medium, directed coverage, the review queue and resolve, experiments on muted clones, export, the rebuild / assemble gates, the score against a reference |

@@ -1,5 +1,7 @@
 # TODO — RE agents vs MCP / WebAPI efficiency (2026-11-12)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Status:** analysis done; F3, F6, V4 done. PLAN row **#122** (T2).
 
 ## Documents

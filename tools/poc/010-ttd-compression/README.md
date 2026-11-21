@@ -1,5 +1,7 @@
 # 010 — TTD compression codec comparison
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 This POC is **not** part of the shipping product. It answers one design
 question — which codec the TTD recorder should use — and feeds the result
 back into the production code. (Index of all POCs: [`../README.md`](../README.md).)
