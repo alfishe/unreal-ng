@@ -14,6 +14,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/io/keyboard/pckey.h>
+#include <emulator/io/network/virtualnetwork.h>
 #include <emulator/media/mediamanager.h>
 #include <emulator/cpu/core.h>
 #include <emulator/cpu/z80.h>
@@ -25,10 +26,13 @@
 #include <emulator/sound/chips/neogs/soundchip_neogs.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/state/devicestate.h>
+#include <emulator/state/statenodejson.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <map>
 #include <numeric>
@@ -38,6 +42,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
+#include "_helpers/scriptedhostnet.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtier.h"
@@ -68,6 +73,9 @@ protected:
     EmulatorContext* _context = nullptr;
     GSCommandLog* _log = nullptr;
     SoundCardScope _sound{TestSound::GeneralSound};  // the runner leaves the card out unless asked; the shipped NeoGS
+    std::string _comPort;                  ///< [NETWORK] ComPort= of the machine Boot creates (empty: none)
+    std::function<void()> _onCreate;       ///< run once Boot created the machine, before it boots
+    std::function<void()> _atMenu;         ///< run at the ERS menu, before the SD boot
 
     void SetUp() override
     {
@@ -108,13 +116,18 @@ protected:
     /// `gsRamKB`: the classic card's RAM (0: the machine's, 512 on the ZX-Evo)
     void Boot(const fs::path& card, GSTypeKind kind, unsigned gsRamKB = 0)
     {
+        const std::string comPort = _comPort;
         _emulator = _manager->CreateEmulatorWithModelAndRAM(
-            "zxevo-ers", "ATM3", 4096, LoggerLevel::LogError, nullptr, [gsRamKB](CONFIG& config) {
+            "zxevo-ers", "ATM3", 4096, LoggerLevel::LogError, nullptr, [gsRamKB, comPort](CONFIG& config) {
                 if (gsRamKB)
                     config.sound.gsRamKB = gsRamKB;
+                if (!comPort.empty())
+                    std::snprintf(config.network.comPort, sizeof(config.network.comPort), "%s", comPort.c_str());
             });
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
+        if (_onCreate)
+            ASSERT_NO_FATAL_FAILURE(_onCreate());
         if (auto* decoder = static_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
             decoder->GetRtc().SetFixedTime(1767268830);  // deterministic RTC, as the ERS tests
         _emulator->EnableTurboMode();
@@ -139,6 +152,8 @@ protected:
         const auto atMenu = [&] { return z80->pc == 0x6117 && memory->IsBank0ROM() && memory->GetROMPage() == 28u; };
         EmulatorTestHelper::RunUntil(_emulator.get(), atMenu, 300);
         ASSERT_TRUE(atMenu()) << "the ERS main menu";
+        if (_atMenu)
+            ASSERT_NO_FATAL_FAILURE(_atMenu());
         _context->pKeyboard->PressKey(ZXKEY_5);
         _emulator->RunNFrames(4, true);
         _context->pKeyboard->ReleaseKey(ZXKEY_5);
@@ -595,6 +610,110 @@ TEST_F(GSNedoOsGp_Test, V4NgsplayLoadsAnS3mThroughTheNeoTrackerBios)
 /// kernel asks #23, uploads the 768-byte installer to #5B00 (#14), jumps there (#13); the installer patches the
 /// firmware's COMTAB[#1E] in RAM and replies #77; the kernel then drives sector I/O through #1E. The board's NeoGS
 /// (none by default: its ZX-BUS is empty) carries a second SD card, which NedoOS mounts as a drive
+/// V-6: Moon Rabbit (mrfue, the ZX-Evo UART build with GS support) streams a MOD from a gopher server straight into
+/// the stock firmware (drivers/general-sound.asm): #F3, #30, #D1, then every byte of the network's packets with WD,
+/// #D2, data 1, #31, then #60 from the play loop (player/mod-processor.asm: HALT, the key read, the clock, #60 to see the
+/// song wrap; about every other frame). The ESP on the AVR's COM port has the AT firmware (ComPort=AT); behind the
+/// virtual network a scripted gopher server answers the selector with the module, so the run is the same every time.
+/// The ESP passes the module at 115200 baud: the #D1 stream stays open for hundreds of frames (F1a: still one block).
+/// The home page (bin/browser/index.gph) is a menu with the module's row first: Enter opens it (a .mod row is
+/// Gopher.loadMod, gopher/render/row.asm)
+class GSNedoOsMoonRabbit_Test : public GSNedoOsGp_Test
+{
+protected:
+    static constexpr uint32_t kServer = NetIp(192, 0, 2, 10);
+
+    void BootMoonRabbit(GSTypeKind kind, unsigned gsRamKB)
+    {
+        const fs::path root = TestPathHelper::FindProjectRoot();
+        const fs::path bin = root / "testdata/machines/p2666/software/nedoos/sdcard/bin";
+        _mod = root / "testdata/software/nedoos/media/afterwr2.mod";
+        const fs::path page = fs::path(TestPathHelper::GetUniqueTestScratchPath("moon-rabbit-home")) / "index.gph";
+        fs::create_directories(page.parent_path());
+        std::ofstream(page, std::ios::binary) << "9afterwr2.mod\t/afterwr2.mod\t192.0.2.10\t70\r\n"
+                                                 "iThe module streams into the GS\t-\t-\t-\r\n";
+        const fs::path card = Card({{"mrfue.com", bin / "mrfue.com"},
+                                    {"browser/auth.pwd", bin / "browser/auth.pwd"},
+                                    {"browser/index.gph", page}},
+                                   "mrfue");
+        _comPort = "AT";
+        _onCreate = [this] {
+            ASSERT_NE(_context->pVirtualNetwork, nullptr) << "ComPort=AT brings the virtual network";
+            auto host = std::make_unique<ScriptedHostNet>();
+            std::ifstream in(_mod, std::ios::binary);
+            host->AddGopher({kServer, 70}, {{"/afterwr2.mod", std::string{std::istreambuf_iterator<char>(in),
+                                                                          std::istreambuf_iterator<char>()}}});
+            _context->pVirtualNetwork->ReplaceHost(std::move(host));
+        };
+        // The ESP's power-up lines ("ready", WIFI CONNECTED, WIFI GOT IP) wait for RTS: the AVR holds it off from its
+        // start, and Moon Rabbit's init raises it after its FIFO reset, so the 38 bytes would flood the 16-byte FIFO
+        // while it sends ATE0 and its OK would be lost (it does not resync). A session before Moon Rabbit takes them,
+        // as a terminal does: RTS up until the ESP is done, then the FIFO reset
+        _atMenu = [this] {
+            const auto pending = [&] {
+                const StateNode net = DeviceState::Network(_context);
+                const StateNode* com = net.find("com_port");
+                const StateNode* n = com ? com->find("peer_pending") : nullptr;
+                return n ? n->i : -1;
+            };
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return pending() >= 38; }, 300, 5);
+            ASSERT_GE(pending(), 38) << "the ESP's power-up lines";
+            Z80* z80 = _context->pCore->GetZ80();
+            for (int i = 0; i < 100 && pending() != 0; ++i)
+            {
+                z80->out(0xFCEF, 0x02);   // MCR: RTS
+                z80->in(0xF8EF);          // RBR: one byte out of the FIFO
+                _emulator->RunNFrames(1, true);
+            }
+            ASSERT_EQ(pending(), 0);
+            z80->out(0xFCEF, 0x00);
+            z80->out(0xFAEF, 0x87);       // FCR: FIFO on, both reset
+        };
+        ASSERT_NO_FATAL_FAILURE(Boot(card, kind, gsRamKB));
+    }
+
+    /// The frames between the first #D1 and the first #D2
+    uint32_t StreamFrames() const
+    {
+        uint32_t open = 0;
+        for (const GSCommandLogEntry& e : Entries())
+        {
+            if (e.kind != Kind::Command)
+                continue;
+            if (e.command == 0xD1 && !open)
+                open = e.frame ? e.frame : 1;
+            if (e.command == 0xD2 && open)
+                return e.frame - open;
+        }
+        return 0;
+    }
+};
+
+TEST_F(GSNedoOsMoonRabbit_Test, V6MoonRabbitStreamsAModFromTheNetwork)
+{
+    ASSERT_NO_FATAL_FAILURE(BootMoonRabbit(GSTypeKind::Z80, 128));
+    // Moon Rabbit shows its home page (the module's row, then the info line)
+    const auto home = [&] { return Screen().find("The module streams") != std::string::npos; };
+    EmulatorTestHelper::RunUntil(_emulator.get(), home, 3000, 25);
+    ASSERT_TRUE(home()) << "screen:\n" << Screen() << "\nnetwork:\n" << StateNodeToJsonText(DeviceState::Network(_context));
+    _emulator->RunNFrames(25, true);
+    _context->pKeyboard->ApplyPcKey(PcKey::Enter, true);
+    _emulator->RunNFrames(4, true);
+    _context->pKeyboard->ApplyPcKey(PcKey::Enter, false);
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return Has(Kind::Command, 0x31); }, 3000, 25);
+    ASSERT_TRUE(Has(Kind::Command, 0x31)) << Golden() << "\nscreen:\n" << Screen() << Frames();
+    const int pollsBefore = Count(Kind::Command, 0x60);
+    _emulator->RunNFrames(100, true);
+    EXPECT_GE(Count(Kind::Command, 0x60) - pollsBefore, 40) << "the play loop polls the position every other frame";
+
+    // The module is one block of its whole size over the network's packets and the UART's pace (F1a, F1c)
+    EXPECT_EQ(ModuleBlocks(), std::vector<uint32_t>{static_cast<uint32_t>(fs::file_size(_mod))}) << Golden(0x60, 3);
+    EXPECT_GE(StreamFrames(), 100u) << "the #D1 stream stays open while the ESP passes the module";
+    ExpectNoAnomalies(0x60, 3);
+    ExpectGolden("v6-moon-rabbit-mod", 0x60, 3);
+}
+
 class GSNedoOsP2666_Test : public GSNedoOsScenarios_Test
 {
 protected:

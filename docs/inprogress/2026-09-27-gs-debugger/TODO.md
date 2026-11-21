@@ -248,7 +248,16 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
     (`app.dircluster`), so it searched `M:/bin`'s cluster on drive N. For the `IN (#0F)` check: INSTSDD's host
     `IN (C)` of `#000F` read something other than `#FF` on the P2666 (value and source not checked yet), so it took
     NEOGSINIT.
-    Left: V-6; the MCRDY and `IN (#0F)` checks.
+    V-6 passes (`GSNedoOsMoonRabbit_Test.V6MoonRabbitStreamsAModFromTheNetwork`, golden `v6-moon-rabbit-mod`):
+    Moon Rabbit (`mrfue`, ZX-Evo UART + GS) on the ZX-Evo with `ComPort=AT` opens a `.mod` row of its home page, a
+    scripted gopher server behind the virtual network sends the module, and Moon Rabbit streams the network's bytes
+    into the stock firmware: `#F3`, `#30`, `#D1`, one `module upload: 61902 bytes` over more than 100 frames, `#D2`,
+    data 1, `#31`, then `#60` from the play loop (`player/mod-processor.asm`, about every other frame), no anomalies.
+    The test takes the ESP's power-up lines at the ERS menu (RTS up, FIFO reset), as a terminal session before Moon
+    Rabbit would: the AVR holds RTS off from its start, the flow-controlled ESP keeps "ready" / WIFI CONNECTED /
+    WIFI GOT IP (38 bytes) until Moon Rabbit's init raises RTS after its FIFO reset, they flood the 16-byte FIFO while
+    it sends `ATE0`, the OK is lost and `checkOkErr` waits for ever (it does not resync).
+    Left: the MCRDY and `IN (#0F)` checks.
 
 ### Phase 5 (U1, U1a, U2, B3; design §10) — the GUI skin
 

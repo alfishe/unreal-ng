@@ -32,6 +32,7 @@ equal lines kept once with `(repeated)`, a run of an equal block of 2 to 4 lines
 | `golden/v3-gp-mp3.txt` | V-3, without the streamer's polls `#01` / `#06` (the test counts them) | `gp.com` + `gp/gp.plr`, `testdata/sound/neogs/mp3/eyeache1-22k-mono-vbr-id3.mp3` as `eyeache1.mp3` | the ZX-Evo's NeoGS, v1.11 |
 | `golden/v4-ngsplay-s3m.txt` | V-4: ngsplay loads and starts the S3M, [S] stops it (`#E4`) | `bin/ngsplay.com`, `testdata/sound/wildsound/src/kj_jose_-_a_new_frontend.s3m` as `frontend.s3m` | the ZX-Evo's NeoGS, v1.11 |
 | `golden/v5-kernel-ngssd.txt` | V-5: the P2666 kernel mounts the NeoGS SD card (drive N) and `type n:/ngssd.txt` reads a file from it: the installer upload, `#1E` init, the sector reads (`sectors`, M12) | the P2666 kernel rebuilt with the NGS SD driver fix (`testdata/machines/p2666/software/nedoos/kernel-ngsfix/`) | NeoGS on the Pentagon 2.666's ZX-BUS, v1.11 |
+| `golden/v6-moon-rabbit-mod.txt` | V-6: Moon Rabbit opens a `.mod` row and streams the module from a scripted gopher server (`ComPort=AT`, the virtual network) into the GS: `#30`, `#D1`, one 61902-byte block, `#D2`, `#31`, the `#60` play loop | `testdata/machines/p2666/software/nedoos/sdcard/bin/mrfue.com`, `browser/auth.pwd`, a generated `browser/index.gph`; `media/afterwr2.mod` served | the classic GS (128 KB, stock firmware) on the ZX-Evo |
 | `golden/v2-gp-cancel.txt` | V-2, Esc during the load (a PS/2 key: NedoOS for the ZX-Evo reads the AVR's PS/2 log) | the same | the same |
 
 ## Programs (`bin/`)
