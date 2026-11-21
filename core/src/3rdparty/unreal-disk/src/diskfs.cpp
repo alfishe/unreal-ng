@@ -387,7 +387,8 @@ bool ParseTrdosName(const std::string& path, std::string& name, char& type)
     return !name.empty() && name.size() <= 8;
 }
 
-/// G+DOS (MGT +D), read only: a flat directory, a file named as G+DOS shows it (trailing blanks cut)
+/// G+DOS (MGT +D): a flat directory, a file named as G+DOS shows it (trailing blanks cut); put / rm / mv / attrib as
+/// G+DOS SAVE / ERASE / RENAME / PROTECT and HIDE do it
 struct GdosDriver : DiskFs::Driver
 {
     explicit GdosDriver(DiskImage& image) : fs(image) {}
@@ -413,20 +414,79 @@ struct GdosDriver : DiskFs::Driver
         return true;
     }
 
-    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    /// The file `path` names: the exact name first, then any case
+    bool Find(const std::string& path, GdosFile& out, std::string& error)
     {
         std::vector<GdosFile> files;
         if (!fs.List(files, error))
             return false;
+        const std::string name = path.substr(!path.empty() && path.front() == '/');
         for (int pass = 0; pass < 2; pass++)
             for (const GdosFile& f : files)
             {
-                const std::string name = Ascii(f.name);
-                if (pass == 0 ? name == path : Lower(name) == Lower(path))
-                    return fs.Read(f, data, error);
+                const std::string listed = Ascii(f.name);
+                if (pass == 0 ? listed == name : Lower(listed) == Lower(name))
+                {
+                    out = f;
+                    return true;
+                }
             }
-        error = "no " + path + " on the G+DOS disk";
+        error = "no " + name + " on the G+DOS disk";
         return false;
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        GdosFile f;
+        return Find(path, f, error) && fs.Read(f, data, error);
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        const std::string name = path.substr(!path.empty() && path.front() == '/');
+        const uint8_t type = static_cast<uint8_t>(options.basicType >= 0 ? options.basicType : 3);
+        // A program: PROG of a 48K, the autostart line from `start`, param its length without variables; else the
+        // load address from `start`, param as G+DOS SAVE writes it for CODE (#FFFF)
+        const bool program = type == 0;
+        const uint16_t param = static_cast<uint16_t>(options.param2 >= 0 ? options.param2
+                                                     : program          ? std::min<size_t>(data.size(), 0xFFFF)
+                                                                        : 0xFFFF);
+        return fs.Write(name, type, data, program ? 23755 : options.start, param, program ? options.start : 0,
+                        error);
+    }
+
+    std::string BasicTypes() const override { return "0123"; }
+    bool TakesParam2() const override { return true; }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        GdosFile f;
+        return Find(path, f, error) && fs.Delete(f, error);
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override
+    {
+        if (entry.attributes.find('P') == std::string::npos)
+            return true;
+        error = entry.path + " is protected";
+        return false;
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        GdosFile f;
+        return Find(path, f, error) && fs.Rename(f, to.substr(!to.empty() && to.front() == '/'), error);
+    }
+
+    std::string AttributeLetters() const override { return "HP"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        GdosFile f;
+        return Find(entry.path, f, error) &&
+               fs.SetAttributes(f, letters.find('H') != std::string::npos, letters.find('P') != std::string::npos,
+                                error);
     }
 
     GdosFileSystem fs;
@@ -2267,6 +2327,7 @@ void DiskFs::Probe()
             v.system = "G+DOS";
             v.bytes = gdos.Bytes();
             v.freeBytes = static_cast<int64_t>(gdos.FreeSectors()) * GdosFileSystem::kDataPerSector;
+            v.writable = true;
             add(std::move(v), std::make_unique<GdosDriver>(*_floppy));
             return;
         }

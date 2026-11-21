@@ -1,4 +1,4 @@
-# 052 — xtensa-jit
+# 053 — xtensa-jit
 
 Feature: [`docs/inprogress/2026-11-15-tsconf-vdac4`](../../../docs/inprogress/2026-11-15-tsconf-vdac4/design.md)
 (§7.2 execution engine, §7.3 speed target, §7.5 jobs).

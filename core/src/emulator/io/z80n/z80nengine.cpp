@@ -90,11 +90,14 @@ void Z80NEngine::Enter()
     if (_z80->boundary != _boundarySeen)
         Z80nCpuSetReg(_cpu, Z80nCpuRegBoundary, _z80->boundary);
     Z80nCpuSetTstates(_cpu, _z80->t);
+    if (_z80->t < _leftAt) [[unlikely]]
+        _turnNotBefore = 0;  // T went back between two steps (the frame rollover, a slower CPU speed): the threshold's base is gone
 }
 
 void Z80NEngine::Leave(bool wasHalted)
 {
     _z80->tt = (Z80nCpuTstates(_cpu) << 8) | (_z80->tt & 0xFF);
+    _leftAt = _z80->t;
     _boundarySeen = static_cast<uint8_t>(Z80nCpuGetReg(_cpu, Z80nCpuRegBoundary));
     _z80->boundary = _boundarySeen;
 
@@ -184,13 +187,70 @@ uint8_t Z80NEngine::MemRead(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind,
 // memory cycle's first T; the +3 form waits on MREQ cycles only (600). POC 036 measured it on the simulated core
 int Z80NEngine::Contend(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind, void* user)
 {
+    Z80NEngine& e = *static_cast<Z80NEngine*>(user);
+    const int taken = e._cycleEndTurn ? e.MachineCycleEndTurn(cpu, kind) : 0;
     if (kind != Z80nCpuAccessInternal)
-        return 0;
-    const Z80NEngine& e = *static_cast<const Z80NEngine*>(user);
+        return taken;
     const UlaContention* ula = e._z80->ioContention;  // null without contention and on the +3 gate array (Core::SelectMemoryInterface)
     if (!ula || !ula->IsContendedAt(addr))
+        return taken;
+    return taken + ula->DelayAt(static_cast<uint32_t>(Z80nCpuTstates(cpu)) + static_cast<uint32_t>(taken));
+}
+
+// The T80 has its own machine cycles; the library's are FUSE's: a memory or port cycle starts one of the T80's, an idle group (internal
+// T-states) either stretches the cycle before it or is a machine cycle of its own, or two (t80n_mcode.vhd MCycles / TStates):
+// - after an M1: 1 or 2 T-states are the M1's T5 / T6 (INC rr, PUSH, LD SP,HL, the CB / ED prefixes' extra T); 7 are ADD HL,rr's
+//   internal M2 (4) and M3 (3) - ADC / SBC HL and ADD IX / IY the same
+// - after a memory or port cycle: 1 or 2 stretch it (INC (HL), CALL's high byte, EX (SP),HL, LD (IX+d),n, the block moves' write);
+//   7 are the block move's 2 and its repeat cycle 5 (LDIR, LDDR, LDIRX, LDDRX); 10 the compare's 5 and its repeat 5 (CPIR, CPDR);
+//   any other is a cycle of its own (JR / DJNZ's 5, the (IX+d) address 5, RLD / RRD's 4, PUSH nn's 3)
+// - after another group: a cycle of its own (LDIR's repeat after the write's 2)
+bool Z80NEngine::IdleGroupCycleStart(Z80nCpuAccessKind after, int n, int pos)
+{
+    if (after == Z80nCpuAccessM1)
+        return n == 7 && (pos == 0 || pos == 4);
+    if (after == Z80nCpuAccessInternal)
+        return pos == 0;
+    if (n <= 2)
+        return false;
+    if (n == 7)
+        return pos == 2;
+    if (n == 10)
+        return pos == 0 || pos == 5;
+    return pos == 0;
+}
+
+int Z80NEngine::MachineCycleEndTurn(Z80nCPU* cpu, Z80nCpuAccessKind kind)
+{
+    bool cycleStart = false;
+    switch (kind)
+    {
+        case Z80nCpuAccessPortInPost:
+        case Z80nCpuAccessPortOutPost:
+            return 0;  // IORQ inside the port cycle
+        case Z80nCpuAccessInternal:
+        {
+            if (_idleLeft == 0)
+                _idleLen = Z80nCpuIdleLeft(cpu);  // a group's first T-state
+            const int pos = _idleLen - Z80nCpuIdleLeft(cpu);
+            cycleStart = IdleGroupCycleStart(_afterKind, _idleLen, pos);
+            _idleLeft = Z80nCpuIdleLeft(cpu) - 1;
+            if (_idleLeft == 0)
+                _afterKind = Z80nCpuAccessInternal;
+            break;
+        }
+        default:  // M1, operand, read, write, port: a bus cycle starts
+            cycleStart = true;
+            _afterKind = kind;
+            _idleLeft = 0;
+            break;
+    }
+    if (!cycleStart || Z80nCpuTstates(cpu) < _turnNotBefore)
         return 0;
-    return ula->DelayAt(static_cast<uint32_t>(Z80nCpuTstates(cpu)));
+    Publish(cpu);  // the hook's T is the cycle's start
+    const uint32_t before = _z80->t;
+    _cycleEndTurn->AtMachineCycleEnd(kind == Z80nCpuAccessM1);
+    return static_cast<int>(_z80->t - before);
 }
 
 void Z80NEngine::MemWrite(Z80nCPU* cpu, uint16_t addr, uint8_t value, void* user)
@@ -217,6 +277,7 @@ void Z80NEngine::PortOut(Z80nCPU* cpu, uint16_t port, uint8_t value, void* user)
 {
     Z80NEngine& e = *static_cast<Z80NEngine*>(user);
     e.Publish(cpu);
+    e._turnNotBefore = 0;  // the write may reprogram the bus master or switch the CPU speed
     e._z80->out(port, value);
     e.Absorb(cpu);
 }
@@ -266,6 +327,7 @@ void Z80NEngine::NextReg(Z80nCPU* cpu, uint8_t reg, uint8_t value, void* user)
     if (!e._nextRegHost)
         return;
     e.Publish(cpu);
+    e._turnNotBefore = 0;  // NR #07 switches the CPU speed
     constexpr uint16_t kPortRegSelect = 0x243B;  // the NextREG select port
     constexpr uint16_t kPortRegData = 0x253B;    // the NextREG data port
     // TTD: the NEXTREG instruction has no bus cycle, so the port journal would never see it. It is journaled as the pair of writes the

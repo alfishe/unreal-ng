@@ -602,6 +602,9 @@ void MainLoop::OnFrameStart()
 
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
+    // The cards' controllers as they are now (a card attached before this loop existed set no flag)
+    if (_context->cardFdcCount != 0)
+        _context->RefreshCardFdcWork();
     _context->pMemory->handleFrameStart();
     _screen->handleFrameStart();
     _screen->InitFrame();
@@ -679,10 +682,16 @@ void MainLoop::OnCPUStep()
     }
 
     _context->pBetaDisk->handleStep();
-    for (size_t i = 0; i < _context->cardFdcCount; i++)
-        _context->cardFdcs[i]->handleStep();
+    if (_stepCardFdcs) [[unlikely]]
+        StepCardFdcs();
     _context->pTape->handleStep();  // Process tape audio each step
     _context->pSoundManager->handleStep();
+}
+
+void MainLoop::StepCardFdcs()
+{
+    for (size_t i = 0; i < _context->cardFdcCount; i++)
+        _context->cardFdcs[i]->handleStep();
 }
 
 void MainLoop::OnFrameEnd()

@@ -131,12 +131,20 @@ QByteArray MatroskaFrameHeader(uint64_t timeUs, qsizetype bytes)
 }
 
 /// The GPU encoder ffmpeg offers for the codec, found rather than assumed: the build lists it AND a real trial
-/// encode works (NVENC is listed by every build, whatever the card). Empty: none, the caller encodes in software.
-/// Cached per ffmpeg and codec: the trial runs once
-QString FfmpegHardwareEncoder(const QString& ffmpeg, bool h265)
+/// encode works (NVENC is listed by every build, whatever the card; VA-API needs the card's driver). Empty name:
+/// none, the caller encodes in software. Cached per ffmpeg and codec: the trials run once
+struct HardwareEncoder
+{
+    QString name;            ///< h264_nvenc, hevc_vaapi, ...; empty = none
+    QString device;          ///< VA-API: the render node the trial opened (/dev/dri/renderD128)
+    bool full = false;       ///< takes 4:4:4: the CRT's colour mask stays sharp (4:2:0 halves its colour resolution)
+    bool lowPower = false;   ///< VA-API: the fixed-function encoder (Intel VDENC): the fast one, and HEVC 4:4:4 only there
+};
+
+HardwareEncoder FfmpegHardwareEncoder(const QString& ffmpeg, bool h265)
 {
     static std::mutex cacheMutex;
-    static std::map<QString, QString> cache;
+    static std::map<QString, HardwareEncoder> cache;
     const QString key = ffmpeg + (h265 ? "|h265" : "|h264");
     {
         std::lock_guard<std::mutex> lock(cacheMutex);
@@ -146,31 +154,64 @@ QString FfmpegHardwareEncoder(const QString& ffmpeg, bool h265)
     }
     const std::string path = ffmpeg.toStdString();
     const FFmpegProbe::HWAccelInfo info = FFmpegProbe::detectHWAccel(path);
-    const char* codec = h265 ? "hevc_" : "h264_";
-    std::vector<std::string> candidates;
+    const QString codec = h265 ? "hevc_" : "h264_";
+    // Each way to run an encoder, the best first: a trial of a few frames into the null muxer opens the device or
+    // it does not (the card, its driver, the profile)
+    std::vector<HardwareEncoder> ways;
 #ifdef __APPLE__
     if (info.videoToolbox)
-        candidates.push_back(std::string(codec) + "videotoolbox");
+        ways.push_back({codec + "videotoolbox", {}, false, false});
 #else
     if (info.nvenc)
-        candidates.push_back(std::string(codec) + "nvenc");
-    if (info.qsv)
-        candidates.push_back(std::string(codec) + "qsv");
-    if (info.amf)
-        candidates.push_back(std::string(codec) + "amf");
-#endif
-    QString chosen;
-    for (const std::string& name : candidates)
     {
-        if (!FFmpegProbe::isEncoderAvailable(name, path))
+        ways.push_back({codec + "nvenc", {}, true, false});  // Turing and later: High 4:4:4 / HEVC Rext
+        ways.push_back({codec + "nvenc", {}, false, false});
+    }
+#ifdef __linux__
+    if (info.vaapi)
+    {
+        // Every render node: a laptop has the Intel and the NVIDIA one, VA-API runs on the one with its driver
+        const QStringList nodes = QDir("/dev/dri").entryList({"renderD*"}, QDir::System, QDir::Name);
+        for (const QString& node : nodes)
+        {
+            const QString device = "/dev/dri/" + node;
+            if (h265)
+            {
+                ways.push_back({codec + "vaapi", device, true, true});  // Intel Ice Lake and later: HEVC 4:4:4 low power
+                ways.push_back({codec + "vaapi", device, false, true});
+            }
+            ways.push_back({codec + "vaapi", device, false, false});
+        }
+    }
+#else
+    // QSV off Linux only. On Linux VA-API drives the same Intel encoder, and h264_qsv / hevc_qsv refused the
+    // recorder's stream there ("Current frame rate is unsupported": the rate comes from the VFR Matroska stream,
+    // which has none) while the trial's fixed-rate lavfi source passed (ffmpeg 8.0, oneVPL 26.1)
+    if (info.qsv)
+        ways.push_back({codec + "qsv", {}, false, false});
+#endif
+    if (info.amf)
+        ways.push_back({codec + "amf", {}, false, false});
+#endif
+    HardwareEncoder chosen;
+    for (const HardwareEncoder& way : ways)
+    {
+        if (!FFmpegProbe::isEncoderAvailable(way.name.toStdString(), path))
             continue;
-        // A few frames into the null muxer: the encoder opens its device or it does not
+        QStringList args{"-v", "error", "-f", "lavfi", "-i", "color=size=256x256:rate=10", "-frames:v", "3"};
+        if (!way.device.isEmpty())
+            args << "-vaapi_device" << way.device << "-vf" << (way.full ? "format=vuyx,hwupload" : "format=nv12,hwupload");
+        args << "-c:v" << way.name;
+        if (way.lowPower)
+            args << "-low_power" << "1";
+        if (way.device.isEmpty())
+            args << "-pix_fmt" << (way.full ? "yuv444p" : "yuv420p");
+        args << "-f" << "null" << "-";
         QProcess trial;
-        trial.start(ffmpeg, {"-v", "error", "-f", "lavfi", "-i", "color=size=256x256:rate=10", "-frames:v", "3",
-                             "-c:v", QString::fromStdString(name), "-pix_fmt", "yuv420p", "-f", "null", "-"});
+        trial.start(ffmpeg, args);
         if (trial.waitForFinished(15000) && trial.exitStatus() == QProcess::NormalExit && trial.exitCode() == 0)
         {
-            chosen = QString::fromStdString(name);
+            chosen = way;
             break;
         }
         if (trial.state() != QProcess::NotRunning)
@@ -470,8 +511,8 @@ struct WindowRecorder::Writer
             failure = "The hardware encoder did not start: " + encoder.GetLastError();
         if (!failure.empty())
             failed = true;
-        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
+        encoderReadyUs = std::max<int64_t>(1, sinceCreatedUs());  // after `ready`: > 0 tells a recorded step it may run
         for (;;)
         {
             Job job;
@@ -584,8 +625,8 @@ struct WindowRecorder::Writer
             failed = true;
         else
             process.write(MatroskaStreamHeader(size.width(), size.height()));
-        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
+        encoderReadyUs = std::max<int64_t>(1, sinceCreatedUs());  // after `ready`: > 0 tells a recorded step it may run
 
         // The last picture sent and its frame: a picture equal to it is not sent (a still screen; it only lengthens
         // the one before), unless a quarter second went by (seeking wants a frame that often)
@@ -1074,21 +1115,29 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // The picture in Matroska with each frame's time (see MatroskaStreamHeader), the output's frame rate variable:
     // those times, microsecond-exact, are the file's
     QStringList args{"-v", "error", "-y", "-f", "matroska", "-i", "-"};
-    QString hardwareEncoder;
     if (!fifo.isEmpty())
         args << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
              << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
+    const bool h265 = request.codec == "h265";
+    const HardwareEncoder hardware =
+        request.codec != "prores" && request.hardware ? FfmpegHardwareEncoder(ffmpeg, h265) : HardwareEncoder{};
+    if (!hardware.device.isEmpty())
+    {
+        // VA-API encodes from the card's memory: the picture goes up after the scaling, in the encoder's layout
+        args << "-vaapi_device" << hardware.device;
+        pipeFilter += QString(pipeFilter.isEmpty() ? "" : ",") +
+                      (hardware.full ? "format=vuyx,hwupload" : "format=nv12,hwupload");
+    }
     if (!pipeFilter.isEmpty())
         args << "-vf" << pipeFilter;
     args << FfmpegVfrArgs(ffmpeg);
     if (request.codec == "prores")
         args << "-c:v" << "prores_videotoolbox" << "-profile:v" << "4444";
-    else if (request.hardware && !(hardwareEncoder = FfmpegHardwareEncoder(ffmpeg, request.codec == "h265")).isEmpty())
+    else if (!hardware.name.isEmpty())
     {
-        // The GPU's encoder (found by probing): 4:2:0, real time at any size
-        const bool h265 = request.codec == "h265";
-        args << "-c:v" << hardwareEncoder;
-        if (hardwareEncoder.contains("videotoolbox"))
+        // The GPU's encoder (found by probing): real time at any size; 4:4:4 where the card takes it
+        args << "-c:v" << hardware.name;
+        if (hardware.name.contains("videotoolbox"))
         {
             // Measured on an M1 Ultra: hevc_videotoolbox takes 4:2:2 10-bit at best (rext, even when 4:4:4 is asked),
             // h264 4:2:0 only. Full 4:4:4 in hardware is ProRes 4444 alone
@@ -1097,9 +1146,19 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
             else
                 args << "-q:v" << "85" << "-pix_fmt" << "yuv420p";
         }
-        else if (hardwareEncoder.contains("nvenc"))
-            args << "-cq" << "18" << "-pix_fmt" << "yuv420p";
-        else if (hardwareEncoder.contains("qsv"))
+        else if (hardware.name.contains("nvenc"))
+        {
+            // Constant QP, as VA-API: hevc_nvenc keeps no -cq in its VBR (measured on a T1200, driver 595, ffmpeg
+            // 8.0: 0.2 MB a minute, 30.6 dB on CRT frames at cq 14 and 18 alike; constqp 18 46.1 dB, h264 45.2)
+            args << "-rc" << "constqp" << "-qp" << "18" << "-pix_fmt" << (hardware.full ? "yuv444p" : "yuv420p");
+        }
+        else if (hardware.name.contains("vaapi"))
+        {
+            if (hardware.lowPower)
+                args << "-low_power" << "1";
+            args << "-qp" << "18";
+        }
+        else if (hardware.name.contains("qsv"))
             args << "-global_quality" << "18" << "-pix_fmt" << "nv12";
         else  // amf
             args << "-quality" << "quality" << "-rc" << "cqp" << "-qp_i" << "18" << "-qp_p" << "18" << "-pix_fmt"

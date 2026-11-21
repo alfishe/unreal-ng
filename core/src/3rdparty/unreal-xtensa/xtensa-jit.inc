@@ -1,4 +1,4 @@
-// xtensa-jit.inc - POC 052 (tools/poc/052-xtensa-jit), included at the end of xtensa-cpu.cpp: a region JIT for
+// xtensa-jit.inc - POC 053 (tools/poc/053-xtensa-jit), included at the end of xtensa-cpu.cpp: a region JIT for
 // arm64 (xtensa-jit-a64.inc) and x86_64 (xtensa-jit-x64.inc) hosts. Never lands as is.
 //
 // A region is compiled from a hot block (its head) over every block reachable from it by direct branches and jumps,

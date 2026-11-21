@@ -32,6 +32,7 @@ core without a clashing symbol.
 | `NEXTREG` through `Z80nCpuSetNextRegFn` (no port cycle) | `z80ncpu.h`, `z80ncpu.cpp`, `opcodes-callback.cpp` | the host owns the NextREG file |
 | Stackless NMI: `Z80nCpuSetStacklessNmi` (the NMI acknowledge moves SP but writes no memory, the address goes to the host; the next RETN reads it back) | `z80ncpu.h`, `z80ncpu.cpp`, `opcodes-ed.inc` | NextREG `#C0` bit 3, `#C2` / `#C3` |
 | ED `5D`, `6D`, `7D` are RETN (as `45`, `55`, `65`, `75`); only `4D` is RETI | `opcodes-ed.inc` | the FPGA's microcode (`t80n_mcode.vhd`) |
+| `Z80nCpuIdleLeft`: inside the contend hook, the T-states left in the current idle group | `z80ncpu.h`, `z80ncpu.cpp`, `z80ncpu-internal.h`, `opcodes-callback.cpp` | the host grants the DMA's bus at the T80's machine-cycle ends; one group can hold two of them (LDIR's write tail and repeat) |
 
 ## The Z80N instructions
 

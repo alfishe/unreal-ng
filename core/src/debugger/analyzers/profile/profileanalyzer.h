@@ -15,7 +15,9 @@
 ///   - the per-frame series (frames=true, the default): every frame's self / inclusive per active routine, in a ring
 ///     (the last few thousand frames) and optionally streamed to a JSONL file by a writer thread.
 /// The interrupt acknowledge is booked to the handler's first instruction (and so to the interrupt's routine); a halted
-/// CPU's idle stretch to its HALT, which lets the CPU run the stretch in one go.
+/// CPU's idle stretch to its HALT, which lets the CPU run the stretch in one go. The frame end and the end of a run
+/// (onFrameEnd, onRunStop) book the last instruction and the frame end it crossed at once (CatchUp), so a report read
+/// after any run has every frame end and T-state the CPU ran; the next start books only the time after it.
 ///
 /// Threads: the step runs on the emulation thread and is the only writer of the counters; every counter is a relaxed
 /// atomic written by a plain load + store, so a reader on another thread never parks the emulation thread and never
@@ -54,11 +56,6 @@ struct Settings
     std::string stream;        ///< a JSONL file the series is appended to while the profile runs (empty: none)
     bool countReplay = false;  ///< book TTD replay passes too: the profile of a recording on an analysis clone
                                ///< (analysis::ReplayWindow); a live instance skips them (not the CPU's time now)
-    /// How the call stack learns of calls and returns. 0: the CPU's flow events (Z80::FlowHook, raised only by CALL /
-    /// RST / RET-family instructions); 1: the previous instruction's opcode (Z80::opcode / prefix) decoded at every
-    /// step; 2: the instruction's byte re-read from memory at every step (the first version). 1 and 2 are kept for
-    /// the A/B of POC 046 only
-    uint8_t flowSource = 0;
 };
 
 constexpr uint32_t kBeamBins = 64;
@@ -164,6 +161,10 @@ public:
     /// starts the window
     void onActivate(AnalyzerManager* manager) override;
     void onDeactivate() override;
+    /// The frame end and the end of a run (a direct run, a park): the last instruction and the frame end it crossed
+    /// are booked now (CatchUp), not at the next instruction start
+    void onFrameEnd() override;
+    void onRunStop() override;
 
     /// region <Control (the CPU held by the caller)>
     /// The settings of the next activation (while inactive)
@@ -236,12 +237,10 @@ private:
     };
 
     using StepFn = void (*)(void*, Z80*, uint16_t);
-    template <bool kStack, bool kBeam, bool kFrames, int kFlowSource>
-    static void Step(void* context, Z80* cpu, uint16_t pc);
     template <bool kStack, bool kBeam, bool kFrames>
-    StepFn PickFlow() const;
+    static void Step(void* context, Z80* cpu, uint16_t pc);
     StepFn PickStep() const;
-    /// Z80::FlowHook: a CALL / RST pushed or a RET popped (flowSource 0)
+    /// Z80::FlowHook: a CALL / RST pushed or a RET popped: the call stack's only source of transfers
     static void OnFlow(void* context, Z80* cpu, Z80::FlowEvent event, uint16_t target, uint16_t slot, uint16_t ret);
 
     static void Add(std::atomic<uint64_t>& a, uint64_t d)
@@ -265,9 +264,9 @@ private:
     void PopTop(bool abandoned);
     void ClearStack();
     void AbandonAt(uint16_t slot);
-    bool ResolveFlow(uint8_t flow, uint16_t spAfter, uint16_t next, uint16_t pc, uint32_t phys);
     void Called(uint16_t target, uint32_t phys, uint16_t slot, uint16_t ret, profile::EntryKind kind);
     void Returned(uint16_t target, uint32_t phys, uint16_t slot);
+    bool CatchUp();
     void Settle();
     void Discontinuity();
     void FlushFrame();
@@ -304,16 +303,14 @@ private:
     uint32_t _lastT = 0;
     uint64_t _lastFrameCounter = 0;
     uint64_t _ackSeen = 0;
+    uint32_t _heldAck = 0;  ///< an acknowledge's T-states a catch-up left to the handler's first step (CatchUp)
     uint32_t _frameT = 69888;
     uint32_t _beamMul = 0;
     std::vector<Frame> _stack;
     std::atomic<uint64_t> _topSince{0};  ///< when the routine on top last became the top
     std::atomic<uint32_t> _top{0};       ///< the routine on top (readers add its open stretch)
-    uint64_t _arrivedAt = ~uint64_t(0);  ///< _instructions when the last flow event moved the stack (flowSource 0)
+    uint64_t _arrivedAt = ~uint64_t(0);  ///< _instructions when the last flow event moved the stack
     Z80* _hookedCpu = nullptr;            ///< the CPU whose flow hook is ours
-    uint8_t _prevFlow = 0;
-    uint16_t _prevSp = 0;
-    uint16_t _prevPc = 0;
     std::vector<std::array<uint32_t, 3>> _flushScratch;
 
     // totals

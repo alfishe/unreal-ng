@@ -18,6 +18,8 @@
 ///   unarmed  debug mode and the breakpoints feature on, no breakpoint: the debug interface and the gates
 ///   armed/N  N breakpoints that never hit (code points in #8000-#FFFF, read / write points in #C000-#FFFF, port
 ///            points on odd ports): the filters on every access, a "maybe" never
+///   counting one breakpoint that only counts (stop false) on the execution of the whole ROM: a hit on most
+///            instructions, each counted (and, with the per-hit record of PLAN #122 V4, recorded)
 /// Only the single-address API that every version has, so the same file measures master and a branch (A/B).
 /// The breakpoints must not hit: the emulator's own run pauses and waits on a hit.
 namespace
@@ -26,7 +28,8 @@ enum class Mode
 {
     Off,
     Unarmed,
-    Armed
+    Armed,
+    Counting
 };
 
 void RunBreakpointFrame(benchmark::State& state, Mode mode, int count)
@@ -85,6 +88,28 @@ void RunBreakpointFrame(benchmark::State& state, Mode mode, int count)
             }
         }
     }
+    if (mode == Mode::Counting)
+    {
+        BreakpointSpec spec;
+        spec.type = BRK_MEMORY;
+        spec.access = BRK_MEM_EXECUTE;
+        spec.address = 0x0000;
+        spec.hasEnd = true;
+        spec.addressEnd = 0x3FFF;
+        spec.stop = false;
+        // count 1: the default record (the first 1000 hits, the rest only counted); 2: no record; 3: the newest 1000
+        if (count == 2)
+            spec.hitLog = 0;
+        if (count == 3)
+            spec.hitLogKeep = BreakpointHitLogKeep::Last;
+        std::string error;
+        if (emulator->GetBreakpointManager()->AddBreakpoint(spec, error) == BRK_INVALID)
+        {
+            state.SkipWithError(error.c_str());
+            manager->RemoveEmulator(emulator->GetUUID());
+            return;
+        }
+    }
     for (int i = 0; i < 5; i++)
         mainLoop->RunFramePublic();
 
@@ -92,7 +117,7 @@ void RunBreakpointFrame(benchmark::State& state, Mode mode, int count)
         mainLoop->RunFramePublic();
 
     state.SetItemsProcessed(state.iterations());
-    state.counters["breakpoints"] = mode == Mode::Armed ? count : 0;
+    state.counters["breakpoints"] = mode == Mode::Armed ? count : mode == Mode::Counting ? 1 : 0;
     manager->RemoveEmulator(emulator->GetUUID());
 }
 }  // namespace
@@ -104,6 +129,16 @@ static void BM_BreakpointFrame_Armed(benchmark::State& state)
     RunBreakpointFrame(state, Mode::Armed, static_cast<int>(state.range(0)));
 }
 
+static void BM_BreakpointFrame_Counting(benchmark::State& state) { RunBreakpointFrame(state, Mode::Counting, 1); }
+static void BM_BreakpointFrame_CountingNoLog(benchmark::State& state) { RunBreakpointFrame(state, Mode::Counting, 2); }
+static void BM_BreakpointFrame_CountingKeepLast(benchmark::State& state)
+{
+    RunBreakpointFrame(state, Mode::Counting, 3);
+}
+
 BENCHMARK(BM_BreakpointFrame_Off)->Iterations(600)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_BreakpointFrame_Unarmed)->Iterations(600)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_BreakpointFrame_Armed)->Arg(10)->Arg(1000)->Arg(10000)->Iterations(600)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_BreakpointFrame_Counting)->Iterations(600)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_BreakpointFrame_CountingNoLog)->Iterations(600)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_BreakpointFrame_CountingKeepLast)->Iterations(600)->Unit(benchmark::kMicrosecond);

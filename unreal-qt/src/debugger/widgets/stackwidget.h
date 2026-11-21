@@ -10,7 +10,10 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <vector>
+
+#include "debugger/targets/debugcpuid.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class StackWidget; }
@@ -40,6 +43,11 @@ public:
 
     /// "CALL 0D6B" / "RST 38" when the instruction ending right before `address` is a call that pushes it, else ""
     static QString ReturnHint(Memory& memory, uint16_t address);
+    /// The same over any CPU's bytes (a sound card's 64 KB)
+    static QString ReturnHint(const std::function<uint8_t(uint16_t)>& read, uint16_t address);
+
+    /// The CPU whose stack is shown (the window's processor tab)
+    void setCpu(DebugCpuId cpu) { m_cpu = cpu; }
 
     // Helper methods
 protected:
@@ -73,6 +81,7 @@ private:
     Ui::StackWidget* ui;
     QThread* m_mainThread;
     DebuggerWindow* m_debuggerWindow;
+    DebugCpuId m_cpu = DebugCpuId::Main;
 
     std::array<QLabel*, kEntries> m_offsets{};
     std::array<QClickableLabel*, kEntries> m_values{};

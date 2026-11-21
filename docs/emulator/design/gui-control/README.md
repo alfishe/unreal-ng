@@ -125,10 +125,10 @@ asks each host to `resolve` and takes the only match, else the one focused last.
 | Interface | Level | Commands | State |
 |:--|:--|:--|:--|
 | `window` | window | `window.raise`, `window.show`, `window.hide`, `window.move {x?, y?, w?, h?}`, `window.screenshot {path?}` (no path: the clipboard) | `title`, `geometry {x, y, w, h}`, `visible`, `active` |
-| `debugger` | host | `debugger.open`, `debugger.close`, `debugger.focus {pane}` (`disassembly`, `registers`, `memory`, `stack`), `debugger.focus_next`, `debugger.focus_prev`; on the focused pane: `debugger.cursor_move {dir}`, `debugger.page {n?}`, `debugger.activate` (Enter) | `open`, `pane` |
+| `debugger` | host | `debugger.open`, `debugger.close`, `debugger.focus {pane}` (`disassembly`, `registers`, `memory`, `stack`), `debugger.focus_next`, `debugger.focus_prev`; on the focused pane: `debugger.cursor_move {dir}`, `debugger.page {n?}`, `debugger.activate` (Enter); `debugger.select_cpu {cpu}` (`main`, `gs`, `ms`: the processor tab in front) | `open`, `pane`, `cpu` (the tab in front), `cpus` (the tabs) |
 | `metadata` | host | `metadata.set {switch, on?}`: `metadata`, `regions`, `colours`, `notes`, `labels` | each switch |
-| `disassembly` | view | `disassembly.goto {addr}`, `disassembly.follow_pc`, `disassembly.cursor {addr}`, `disassembly.cursor_move {dir}` (up, down), `disassembly.page {n?}` (16 rows), `disassembly.scroll_mode {mode?}` (`byte`, `command`); composed: `disassembly.run_to_cursor`, `disassembly.breakpoint_toggle_cursor` | `top`, `cursor`, `pc`, `scroll_mode` |
-| `memory` | view | `memory.goto {addr}`, `memory.cursor {addr}`, `memory.cursor_move {dir}`, `memory.page {n?}`, `memory.follow {register}` (`pc`, `sp`, `bc`, `de`, `hl`, `ix`, `iy`, `off`), `memory.select {from, to}` (on the page shown), `memory.follow_cursor` (the word at the cursor); composed: `memory.find_last_write`, `memory.find_last {access?}` | `top`, `cursor`, `selection {from, to}`, `follow` |
+| `disassembly` | view | `disassembly.goto {addr}`, `disassembly.follow_pc`, `disassembly.cursor {addr}`, `disassembly.cursor_move {dir}` (up, down), `disassembly.page {n?}` (16 rows), `disassembly.scroll_mode {mode?}` (`byte`, `command`); composed: `disassembly.run_to_cursor`, `disassembly.breakpoint_toggle_cursor` | `top`, `cursor`, `pc`, `scroll_mode`, `cpu` |
+| `memory` | view | `memory.goto {addr}`, `memory.cursor {addr}`, `memory.cursor_move {dir}`, `memory.page {n?}`, `memory.follow {register}` (`pc`, `sp`, `bc`, `de`, `hl`, `ix`, `iy`, `off`), `memory.select {from, to}` (on the page shown), `memory.follow_cursor` (the word at the cursor); composed: `memory.find_last_write`, `memory.find_last {access?}` | `top`, `cursor`, `selection {from, to}`, `follow`, `cpu` |
 | `unrealqt` | host | `unrealqt.osd_keyboard {on?}`, `unrealqt.osd_keyboard_nav {dir}`, `unrealqt.osd_keyboard_tap`, `unrealqt.osd_keyboard_force {keyboard?}`, `unrealqt.controllers_open`, `unrealqt.ttd_branches` (the TTD panel with its Branches row), `unrealqt.controllers_learn {device}` | `osd_keyboard`, `osd_keyboard_state` |
 | `handheld` | host | `handheld.menu {on?}`, `handheld.nav {dir}`, `handheld.accept`, `handheld.back`, `handheld.option {button}`, `handheld.section {dir}` (handheld mode only, [design](../../../inprogress/2026-11-12-handheld-menu/README.md)) | `handheld_menu` |
 | `tilegrid` | view | `tilegrid.single_sync {on?}`: every tile shows the first tile's machine in step with it, the others removed; `tilegrid.focus {tile}` (an index from 0: selects the tile as a click does, its machine plays the sound); `tilegrid.layout {preset}` (`windowed`, `frameless`, `fullscreen`: the wall's window mode, see below) | `tiles [{instance}]`, `focused` (null: none), `single_sync`, `layout` |
@@ -146,7 +146,10 @@ own: as wide as the window in unreal-qt, 16 bytes in unreal-debugger. A view's s
 
 unreal-qt binds its main window as `main`, the debugger as `debugger` with the views `debugger/disassembly` and
 `debugger/memory` (each names the machine it shows: `instance {endpoint, id}`), and the `debugger`, `metadata` and
-`unrealqt` interfaces on its root. Composed commands call the core with the view's address and the GUI origin
+`unrealqt` interfaces on its root. The debugger's processor tabs (Main CPU and each sound card CPU fitted) name the
+CPU the views show: `cpu` in their state, `debugger.select_cpu` puts a tab in front (`not_now` for a CPU the machine
+lacks); with a card in front `run_to_cursor` is the card's run to the cursor (`RunControl::CardStep`) and
+`follow_cursor` reads the card's word. Composed commands call the core with the view's address and the GUI origin
 (`run.to_cursor`, `ttd.find_last_write`, `ttd.find_last`), as the window's own buttons do; the core's refusal comes
 back as the command's (`not_now: no time travel history`). The catalogue in
 [`interfaces.cpp`](../../../../guicontrol/src/interfaces.cpp) is the source; a program adds its own commands with
@@ -160,7 +163,8 @@ with `--connect` they name the emulator taken over and its WebAPI, and the insta
 `run_to_cursor` and `breakpoint_toggle_cursor` are the window's F4 and F2 (`not_now` while the machine runs, or is only
 seen); `find_last_write` and `find_last` run the core action with the dump's address, through the registry in process
 and `POST /api/v1/controllers/actions/{action}` with `--connect` (the main processor only: a card's Z80 has no
-history). It has no `metadata` interface (no markup switches). The plane code is on the views' side and sees no core
+history). `debugger.select_cpu` takes its tab names (`cpu`, `gs`, `ms`; `main` is the first tab). It has no
+`metadata` interface (no markup switches). The plane code is on the views' side and sees no core
 header: the machine's id and its core actions come from the adapter through hooks.
 
 The video wall (unreal-videowall) binds its window as `main` and the view `main/tilegrid` (`tilegrid`). Its single

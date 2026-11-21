@@ -1134,6 +1134,7 @@ protected:
     // Sleep mode management - reduces CPU overhead when FDD is idle
     void wakeUp();          // Wake FDD from sleep mode
     void enterSleepMode();  // Put FDD into sleep mode
+    void setSleeping(bool sleeping);  // the one writer of _sleeping: an edge card's step work follows it
     bool isSleeping() const
     {
         return _sleeping;

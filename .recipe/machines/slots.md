@@ -149,6 +149,12 @@ holds `kempston-joystick`. In TR-DOS (`CF_TRDOS`) the card sees no cycle: `#1F` 
 on only outside DOS, MAME beta128.cpp). TTD carries it as `edge.1.kempston` (type 69) plus the machine's
 `kempstonjoystick` blob.
 
+## The MGT +D on a 48K / 128K (edge card)
+
+The machines `48K-PLUSD` / `128K-PLUSD` are the 48K / 128K with the edge card `plusd` in `edge.1`; another machine with
+an edge slot takes it by the plug (`slots plug edge.next plusd`, the same verbs as the Kempston above). The card brings
+the slots `fdd.plusd1` / `fdd.plusd2`; the autostart, the paging and the reports: [plusd.md](plusd.md).
+
 ## The Sprinter's ISA slots (SL-8)
 
 The ISA slots are the board's own: their cards come from `[ISA] SlotN` (or the create option `"sprinter"`), and the

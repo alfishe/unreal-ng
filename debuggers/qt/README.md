@@ -4,14 +4,15 @@ eCat3's debugger window (Mikhail Revzin, <https://github.com/Ptr314/ecat3>, GPL-
 the machine, a tab per processor (the main Z80, a General Sound card's Z80: its step buttons step the card's CPU, in
 this process and over the WebAPI's `?cpu=gs`), dumps of every address space and memory
 page, stack, breakpoints, history and a Devices tab with every report the machine has (the device catalog,
-`GET /state/devices`). Ported and measured in [POC 041](../../tools/poc/041-ecat-debugger/README.md); the port is ours
+`GET /state/devices`); on a ZX Spectrum Next also NextREG, MMU, Copper, Sprites, DMA and CTC / IM2 tabs, each a catalog report
+read whole (fields, its list as a table, values changed since the last stop in the changed colour). Ported and measured in [POC 041](../../tools/poc/041-ecat-debugger/README.md); the port is ours
 and is adapted freely.
 
 ## Layout
 
 | Folder | What |
 |--------|------|
-| `ecat/` | the window and its views, from ecat3 `dev` @ 27a98108 (`src/dialogs/debugger/`, `emulator/disasm_buffer.*`), plus our own paged-memory tab and bank strip |
+| `ecat/` | the window and its views, from ecat3 `dev` @ 27a98108 (`src/dialogs/debugger/`, `emulator/disasm_buffer.*`), plus our own paged-memory tab, bank strip and Next tabs (`nextviews.*`) |
 | `shimapi/ecatshim.h` | the part of ecat's core API the views call (Emulator, CPU, DisAsm, devices), declared over nothing |
 | `shim/` | ecat's header names (`emulator/core.h`, ...) standing for that API |
 | `adapter/` | the API over unreal-ng: `unrealmachine.cpp` (the core in this process), `remotemachine.cpp` (a running emulator through its WebAPI) |
@@ -24,7 +25,8 @@ the core's classes of the same names would clash.
 ## Time travel
 
 While the machine has a recorded history (TTD), the toolbar shows a time group after the forward steps, the same as
-unreal-qt's Embedded debugger ([TTD branches: debuggers](../../docs/inprogress/2026-11-08-ttd-branches/debuggers.md)):
+unreal-qt's Embedded debugger ([TTD branches: debuggers](../../docs/inprogress/2026-11-08-ttd-branches/debuggers.md);
+both route the group to a sound card's CPU when its tab is in front: Embedded has processor tabs too):
 
 | Button | Key | Verb |
 |--------|-----|------|
@@ -49,8 +51,10 @@ GS), the time group acts on the card, by card instructions
 |--------|-----|------------------------|
 | Step Back | Shift+F7 | `step-instruction {cpu, dir: back}` |
 | Step (in the past only) | F7 | `step-instruction {cpu, dir: forward}`: one card instruction forward through the history; live, the card's own step |
+| Step over / Step out (in the past only) | F8 / Ctrl+F8 | `step-instruction {cpu, kind: over \| out}`: the card's step through the history, where a live card step would end (its breakpoints end it first); live, the card's own step |
+| Run to cursor (in the past only) | F4 | `step-instruction {cpu, kind: to, pc}`: the card's next instruction at the cursor, through the history (its breakpoints end it first; never reached: said, nothing moves); live, the card's own run to the cursor |
 | Run Back | Shift+F9 | `reverse-continue {cpu}`: back to the previous hit of the card's own breakpoints |
-| Step Over Back | Shift+F8 | off: the main CPU's only |
+| Step Over Back | Shift+F8 | `reverse-step-over {cpu}`: one card instruction back, or back past a whole card routine when that instruction is its return |
 | Frame Back | - | `step-back`, as on the main CPU's tab |
 
 The state label then names both CPUs: `gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next
@@ -58,7 +62,10 @@ instruction` (the main CPU's tab shows its registers at its last completed instr
 when the card's moment is not inside one). Without a card position the card's tab adds where the card stands
 (`gs at instruction 1200, PC #0A3C`, or `gs: no instruction counts in this recording`). A refusal (no card
 breakpoint, no counts) and an answer that moved nothing (the start or the end of the history, no earlier hit) are
-said in a message with the core's words. The main CPU's tab acts on the main CPU as before; any main-CPU move ends
+said in a message with the core's words. At the history's end (`at_end`) F7, F8, Ctrl+F8 and F4 run the card's
+live step instead, unrecorded, as the main CPU's steps do there; a move in time right after such a live step works (the
+machine first leaves the card's run, up to the next main CPU instruction). The card's disassembly shows the card's own labels
+(its firmware symbols), never the main CPU's. The main CPU's tab acts on the main CPU as before; any main-CPU move ends
 the card position. A move in time or a pause keeps the tab in front (only a processor's own stop, a breakpoint or
 a step, brings its tab forward).
 

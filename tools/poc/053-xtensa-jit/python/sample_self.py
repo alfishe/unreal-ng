@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""POC 052: self time per function in the threads of a macOS `sample` report that contain <marker>.
+"""POC 053: self time per function in the threads of a macOS `sample` report that contain <marker>.
 
 usage: sample_self.py <sample.txt> <marker> [top]
 """

@@ -80,7 +80,7 @@
 #include <unordered_map>
 #include <vector>
 
-// POC 052: the region JIT (xtensa-jit.inc) on arm64 and x86_64 hosts (macOS, Linux, Windows; GCC, Clang, MSVC); off
+// POC 053: the region JIT (xtensa-jit.inc) on arm64 and x86_64 hosts (macOS, Linux, Windows; GCC, Clang, MSVC); off
 // unless UNREAL_XTENSA_JIT=1
 #if !defined(UNREAL_XTENSA_JIT)
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_X64)
@@ -93,7 +93,7 @@
 namespace xtensa
 {
 
-struct RegionLoop; // POC 052 (xtensa-jit-a64.inc)
+struct RegionLoop; // POC 053 (xtensa-jit-a64.inc)
 struct RegionBlock;
 
 enum class StopReason : uint8_t
@@ -228,13 +228,13 @@ public:
     // ---- statistics ----
     size_t BlockCount() const { return blockMap_.size(); }
 #ifdef UNREAL_XTENSA_PROFILE
-    /// POC 052 (compile-time only): per-block entries and executed instructions, as text lines
+    /// POC 053 (compile-time only): per-block entries and executed instructions, as text lines
     /// "pc len entries insns lastop ops..." (ops: the block's mnemonics), retired blocks folded in
     void DumpProfile(const char* path) const;
 #endif
 
 #if UNREAL_XTENSA_JIT
-    /// POC 052: the block JIT on / off and after how many entries a block is compiled
+    /// POC 053: the block JIT on / off and after how many entries a block is compiled
     void SetJit(bool on, uint32_t hot);
     struct JitStats
     {

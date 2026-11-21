@@ -1,4 +1,4 @@
-// POC 052 (tools/poc/052-xtensa-jit): the region JIT against the interpreter on random code. Never lands as is.
+// POC 053 (tools/poc/053-xtensa-jit): the region JIT against the interpreter on random code. Never lands as is.
 // Two CPUs with the same memory run the same random program (registers pointing into a data region, float registers
 // with NaNs, infinities and out-of-range values) with the same budgets; one interprets, the other compiles a region
 // at every block's first entry. Run result, the whole CPU state and all memory must be the same after every run.

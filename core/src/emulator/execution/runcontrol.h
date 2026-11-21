@@ -38,6 +38,47 @@ StateNode MainPositionNode(const MainPosition& main);
 /// The same in one line, the node's `text` ("main #8123: T 9 of 11, port write; 2 T past the card")
 std::string MainPositionText(const MainPosition& main);
 
+/// region <Counted runs: limits and the answer every plane sends (re-api-efficiency F1)>
+/// The most one remote call runs (REST, WebSocket, MCP, CLI, the actions). A larger count is refused with this limit
+/// named, never cut: runs on the timeline are split-independent (Emulator::RunNFrames), so a client splits a longer
+/// run into calls and lands exactly where one call would. The Lua and Python bindings run in-process and take any count
+constexpr uint64_t kMaxRunFrames = 200000;            ///< as run_until's max_frames (framewatch::kMaxRunFrames)
+constexpr uint64_t kMaxRunTStates = 14000000000ull;   ///< about 200 000 frames of a 3.5 MHz machine
+constexpr uint64_t kMaxRunSteps = 10000000;           ///< instructions of POST /steps
+
+/// What a counted run did, as every plane reports it
+struct RunOutcome
+{
+    const char* unit = "frames";   ///< "frames", "tstates" or "instructions": what `requested` counts
+    uint64_t requested = 0;
+    uint64_t framesRun = 0;        ///< frame ends passed
+    uint64_t tstatesRun = 0;       ///< CPU T-states run
+    uint64_t instructionsRun = 0;  ///< steps only
+    bool reached = false;          ///< all of it ran
+};
+/// A frames / t-states run's outcome from what Emulator::RunNFrames / RunTStates returned (DirectRunResult)
+inline RunOutcome RunOutcomeOf(const char* unit, uint64_t requested, uint64_t framesRun, uint64_t tstatesRun, bool reached)
+{
+    RunOutcome outcome;
+    outcome.unit = unit;
+    outcome.requested = requested;
+    outcome.framesRun = framesRun;
+    outcome.tstatesRun = tstatesRun;
+    outcome.reached = reached;
+    return outcome;
+}
+/// The answer's fields: count (as asked), frames_run, tstates_run (instructions_run / executed for steps), frame and t
+/// where it ended, stop {cpu, reason done / breakpoint / stopped, breakpoint_id, address, access, cpu_pc} (steps keep
+/// their reason "step" for done), message (RunOutcomeText)
+StateNode RunOutcomeNode(Emulator& emulator, const RunOutcome& outcome);
+/// One line built from what ran, never from the request alone: "Ran 31000 frames (frame 31012, t 1234)", "Ran 12 of
+/// 31000 frames: stopped at breakpoint #2 (execute $8000) (frame 24, t 5678)"
+std::string RunOutcomeText(Emulator& emulator, const RunOutcome& outcome);
+/// The refusal text of a count out of 1..`max` ("count 300000: 1..200000 frames in one call; split the run into calls,
+/// they end where one call would")
+std::string RunCountRefusal(const char* unit, uint64_t count, uint64_t max);
+/// endregion </Counted runs>
+
 /// One call's answer: the route's status, its error phrase and the body every surface converts
 struct RunReply
 {
@@ -91,12 +132,14 @@ public:
     RunReply RunToScanline(const Requester& requester, unsigned scanline);
     /// 1..1000 scanlines
     RunReply RunNScanlines(const Requester& requester, unsigned count);
-    /// 1..100000 instructions (POST /steps); a breakpoint ends them
-    RunReply Steps(const Requester& requester, unsigned count);
-    /// 1..10000 video frames (POST /run_frames), breakpoints skipped
-    RunReply RunFrames(const Requester& requester, unsigned count);
-    /// 1..10000000 t-states (POST /run_tstates), breakpoints skipped
-    RunReply RunTStates(const Requester& requester, uint64_t count);
+    /// 1..kMaxRunSteps instructions (POST /steps); a breakpoint ends them. Out of range: BadRequest, nothing runs
+    RunReply Steps(const Requester& requester, uint64_t count);
+    /// 1..kMaxRunFrames video frames (POST /run_frames) on the direct-run timeline (split-independent); breakpoints
+    /// skipped unless `breakpoints` (then the first one ends the run). Out of range: BadRequest, nothing runs. The body:
+    /// RunOutcomeNode
+    RunReply RunFrames(const Requester& requester, uint64_t count, bool breakpoints = false);
+    /// 1..kMaxRunTStates t-states (POST /run_tstates) on the direct-run timeline, as RunFrames
+    RunReply RunTStates(const Requester& requester, uint64_t count, bool breakpoints = false);
     /// To the next frame's first paper pixel (POST /run_to_pixel), breakpoints skipped
     RunReply RunToPixel(const Requester& requester);
     /// Until PC = `pc` (POST /skip_until; run to the cursor): at most `maxTStates` (0: 100 frames, at most
@@ -138,6 +181,20 @@ private:
     RunReply HeldReply(const char* verb) const;
     /// The breakpoint that ended the last direct run, as `stop` ({reason, breakpoint_id, address, access})
     void AddStop(RunReply& reply) const;
+
+    /// Where the machine stands: frame counter and t
+    struct Position
+    {
+        uint64_t frame = 0;
+        uint32_t t = 0;
+    };
+    Position Where() const;
+    /// The frames and T-states from `before` to now (steps: RunNCPUCycles reports instructions only)
+    void Since(const Position& before, RunOutcome& outcome) const;
+    /// BadRequest for a count out of 1..max: RunCountRefusal, with count and max in the body
+    RunReply CountRefusal(const char* unit, uint64_t count, uint64_t max) const;
+    /// Finish, then the counted run's fields (RunOutcomeNode)
+    RunReply FinishRun(const RunOutcome& outcome);
 
     std::shared_ptr<Emulator> _emulator;
 };

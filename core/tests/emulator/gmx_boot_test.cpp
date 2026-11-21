@@ -228,6 +228,18 @@ std::vector<uint8_t> RunBorderStripes(Emulator& emulator)
     Z80* z80 = context->pCore->GetZ80();
     z80->iff1 = z80->iff2 = 0;
     z80->halted = 0;
+    // Both machines start at the same phase of 4 T: a halted CPU accepts the interrupt at the end of a 4-T HALT
+    // cycle counted from where its HALT began, so the stripes' first OUT moves with t mod 4 at the start. LD A,0
+    // (7 T) shifts the phase by 3 each
+    for (uint16_t a = 0x7F00; a < 0x7F08; a += 2)
+    {
+        memory->DirectWriteToZ80Memory(a, 0x3E);
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(a + 1), 0x00);
+    }
+    z80->pc = 0x7F00;
+    for (int i = 0; i < 4 && z80->t % 4 != 0; ++i)
+        emulator.RunSingleCPUCycle(true);
+    EXPECT_EQ(z80->t % 4, 0u);
     z80->pc = 0x8000;
     emulator.RunNFrames(4, true);
 

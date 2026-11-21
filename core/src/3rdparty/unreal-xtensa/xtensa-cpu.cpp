@@ -35,7 +35,7 @@ struct Cpu::Block
     uint8_t maxGroup = 0;
     std::vector<Insn> insns;
 #if UNREAL_XTENSA_JIT
-    void* jit = nullptr;   ///< compiled region headed by this block (POC 052)
+    void* jit = nullptr;   ///< compiled region headed by this block (POC 053)
     uint32_t jitLo = 0;    ///< the region's address range (blocks' starts to ends)
     uint32_t jitHi = 0;
     uint8_t jitGroup = 0;  ///< highest register group the region touches
@@ -377,7 +377,7 @@ void Cpu::CodeWriteCheck(PageEntry& e, uint32_t addr, int size)
         if (o < 4096 && (e.code->bits[o >> 6] >> (o & 63)) & 1)
         {
 #ifdef UNREAL_XTENSA_PROFILE
-            // POC 052: which guest stores hit decoded code (each one drops every block)
+            // POC 053: which guest stores hit decoded code (each one drops every block)
             static uint64_t hits = 0;
             if (++hits <= 40 || (hits & (hits - 1)) == 0)
                 std::fprintf(stderr, "xtensa: code write #%llu at %08x pc %08x blocks %zu\n",
@@ -1150,7 +1150,7 @@ enterBlock:
 #endif
     wb4 = st.windowBase * 4;
 #if UNREAL_XTENSA_JIT
-    // POC 052: the compiled region headed by this block, where it holds as a whole (xtensa-jit-a64.inc)
+    // POC 053: the compiled region headed by this block, where it holds as a whole (xtensa-jit-a64.inc)
     if (jitOn_)
     {
         if (!b->jit && !b->jitTried && ++b->hot >= jitHot_)

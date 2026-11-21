@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""POC 052: the ESP's profile between two emulated seconds (UNREAL_XTENSA_PROFILE dumps).
+"""POC 053: the ESP's profile between two emulated seconds (UNREAL_XTENSA_PROFILE dumps).
 
 usage: analyze_profile.py <prefix> <from-second> <to-second> [--top N]
 

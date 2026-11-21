@@ -161,7 +161,7 @@ unsigned NextVideoRenderer::Layer2WideColumn(unsigned hc, unsigned scrollX)
 
 /// The ULA's border pixel of the moment; false when the ULA layer has no border pixel (the ULA off, or ULANext's full-ink format, whose
 /// paper and border come from the fallback colour)
-bool NextVideoRenderer::UlaBorderPixel(const NextVideoInputs& in, Pixel& p)
+bool NextVideoRenderer::UlaBorderPixel(const NextVideoInputs& in, unsigned border, Pixel& p)
 {
     const NextVideoRegs& regs = *in.regs;
     if (in.nr[0x68] & 0x80)
@@ -176,7 +176,7 @@ bool NextVideoRenderer::UlaBorderPixel(const NextVideoInputs& in, Pixel& p)
     const bool hiRes = (timexMode & 4) != 0;
     // Timex hi-res: the attribute of the border is 01 PPP III of port #FF (zxula.vhd border_clr_tmx): paper = 7 - ink and the bright
     // bit set, so the standard palette's bright paper entry; ULANext takes 128 + paper
-    const unsigned colour = hiRes ? 7 - ((in.portFf >> 3) & 7) : in.border;
+    const unsigned colour = hiRes ? 7 - ((in.portFf >> 3) & 7) : border;
     // ULA+: the border is the paper half of the CLUT's row of the attribute (zxula.vhd: 11 & attr(7:6) & 1 & attr(5:3); the border
     // attribute is 00 BBB BBB, the hi-res one 01 PPP III)
     const unsigned c = regs.PaletteEntry(palette, ulaPlus ? (hiRes ? 0xD8 : 0xC8) + colour : (ulaNext ? 128 + colour : 16 + (hiRes ? 8 : 0) + colour)) & 0x1FF;
@@ -189,7 +189,7 @@ uint32_t NextVideoRenderer::OuterBorderRgba(const NextVideoInputs& in)
     // Outside the 320 x 256 grid only the ULA's border is drawn (Layer 2, the tilemap and the sprites live in the grid): its colour,
     // or the fallback NR #4A where it is transparent
     Pixel p;
-    if (UlaBorderPixel(in, p) && p.opaque)
+    if (UlaBorderPixel(in, in.border, p) && p.opaque)
         return kRgba.value[p.colour & 0x1FF];
     return kRgba.value[Nine(in.nr[0x4A]) & 0x1FF];
 }
@@ -215,14 +215,48 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     if (!fullInk)
     {
         Pixel borderPixel;
-        UlaBorderPixel(in, borderPixel);
-        if (!inPaperRows)
+        UlaBorderPixel(in, in.border, borderPixel);
+        if (in.borderChangeCount == 0)
         {
-            std::fill(line, line + kW, borderPixel);
-            return;
+            if (!inPaperRows)
+            {
+                std::fill(line, line + kW, borderPixel);
+                return;
+            }
+            std::fill(line, line + kPaperLeft, borderPixel);
+            std::fill(line + kPaperLeft + 512, line + kW, borderPixel);
         }
-        std::fill(line, line + kPaperLeft, borderPixel);
-        std::fill(line + kPaperLeft + 512, line + kW, borderPixel);
+        else
+        {
+            // the border in runs between the CPU's writes; in the paper rows only the parts left and right of the paper
+            auto fill = [&](unsigned from, unsigned to) {
+                if (!inPaperRows)
+                    std::fill(line + from, line + to, borderPixel);
+                else
+                {
+                    if (from < kPaperLeft)
+                        std::fill(line + from, line + std::min(to, kPaperLeft), borderPixel);
+                    if (to > kPaperLeft + 512)
+                        std::fill(line + std::max(from, kPaperLeft + 512), line + to, borderPixel);
+                }
+            };
+            unsigned x = 0;
+            for (unsigned i = 0; i < in.borderChangeCount; i++)
+            {
+                const NextBorderChange& change = in.borderChanges[i];
+                const unsigned at = std::min<unsigned>(change.x, kW);
+                if (at > x)
+                {
+                    fill(x, at);
+                    x = at;
+                }
+                UlaBorderPixel(in, change.colour, borderPixel);
+            }
+            if (x < kW)
+                fill(x, kW);
+            if (!inPaperRows)
+                return;
+        }
     }
     else if (!inPaperRows)
         return;

@@ -16,6 +16,13 @@
 #include "emulator/io/z80n/nextvideoregs.h"
 #include "emulator/video/next/nextlayerframe.h"
 
+/// A border colour change inside a line: from sub-pixel x (0..639) on the border is `colour` (ScreenNext::SetBorderColor)
+struct NextBorderChange
+{
+    uint16_t x = 0;
+    uint8_t colour = 0;
+};
+
 struct NextVideoInputs
 {
     /// RAM as the video logic sees it: 16K page p (the numbering of the Layer 2 banks, NR #12) at ram + p * 16K
@@ -27,7 +34,10 @@ struct NextVideoInputs
     /// `sprites` as it is and set its collision / overtime flags at once
     const NextSprites::LineBuffer* spriteLine = nullptr;
     uint8_t nr[256] = {};                 ///< the stored NextREG bytes (scrolls, layer control, timex port alias, ...)
-    uint8_t border = 0;                   ///< port #FE bits 2:0
+    uint8_t border = 0;                   ///< port #FE bits 2:0 at the line's start
+    /// The border's changes along the line, x ascending (CPU writes of port #FE): the line is drawn once, its border filled in runs
+    const NextBorderChange* borderChanges = nullptr;
+    unsigned borderChangeCount = 0;
     uint8_t portFf = 0;                   ///< the Timex port (NR #69 bits 5:0 alias it)
     bool shadowScreen = false;            ///< the ULA reads bank 7 instead of 5 (#7FFD bit 3 / NR #69 bit 6)
     bool layer2Enable = false;            ///< port #123B bit 1 / NR #69 bit 7
@@ -91,7 +101,7 @@ private:
     static unsigned DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
                                uint8_t* spriteNumbers);
     static void UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line);
-    static bool UlaBorderPixel(const NextVideoInputs& in, Pixel& p);
+    static bool UlaBorderPixel(const NextVideoInputs& in, unsigned border, Pixel& p);
     static void LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixel* line);
     static bool SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers);

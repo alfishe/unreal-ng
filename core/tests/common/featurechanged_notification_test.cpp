@@ -48,7 +48,7 @@ TEST(FeatureChangedNotification_Test, HudFlagRegisteredWithCorrectMetadata)
     EmulatorTestHelper::CleanupEmulator(emu);
 }
 
-// The ESP32 JIT is on by default: the interpreter is the fallback a user switches to (POC 052)
+// The ESP32 JIT is on by default: the interpreter is the fallback a user switches to (POC 053)
 TEST(FeatureChangedNotification_Test, EspJitRegisteredOnByDefault)
 {
     Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);

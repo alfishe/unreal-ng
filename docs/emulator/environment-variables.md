@@ -271,6 +271,11 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `UNREAL_NEXB_TRACE` | frames | Prints the PC, SP, speed and the MMU slots every that many frames. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
 | `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/machines/next/cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 | `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
+| `UNREAL_PLUSD_SYSTEM_TAPE` | path to the Plus D System Tape v2a `.tzx` (unset: tests skip) | `PlusDSystemDisk_Test.ConfigWritesTheSystemDisk` runs `CONFIG` from the tape on a `48K-PLUSD` and writes the system disk ([`data/boot/plusd/README.md`](../../data/boot/plusd/README.md)). | `core/tests/emulator/slots/cards/plusd/plusdsystemdisk_test.cpp` |
+| `UNREAL_PLUSD_SYSTEM_OUT` | file path (the test scratch folder) | With `UNREAL_PLUSD_SYSTEM_TAPE`: where the written system disk goes. | `core/tests/emulator/slots/cards/plusd/plusdsystemdisk_test.cpp` |
+| `UNREAL_PLUSD_ONE` | path to an `.mgt` (unset: test skips) | `PlusDAutostart_Image.One`: the autostart of one image, for a closer look. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
+| `UNREAL_PLUSD_MODEL` | `48K` / `128K` (`48K`) | With `UNREAL_PLUSD_ONE`: the machine (the card in `edge.1`). | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
+| `UNREAL_PLUSD_BASIC` | `48` / `128` (the machine's own) | With `UNREAL_PLUSD_ONE`: the BASIC of the autostart's reset. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
 
 ## 6. Benchmarks and verification tools
 
@@ -349,6 +354,10 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `UNREAL_PACKAGE_VERSION` | `YYYYMMDD.HHMMSS` (required) | Version of the Linux AppImage (and the `VERSION` file of the Steam Deck bundle, `install/steamdeck/package.sh`); the release workflow sets it and also passes it to CMake. | `tools/package-appimage.sh:31`, `.github/workflows/release.yml:118` ([README](../../README.md)) |
+| `UNREAL_DEPLOY_BUILD_HOST` | an SSH target (none) | The x86_64 Linux host that builds the Steam Deck bundle; `--host` overrides it. | `tools/deploy/steamdeck/remote-build.sh` ([README](../../tools/deploy/steamdeck/README.md)) |
+| `UNREAL_DEPLOY_BUILD_DIR` | a folder on that host, relative to its home or absolute (none) | Your own checkout there (clone or worktree with submodules) that the bundle is built in; `--dir` overrides it. | `tools/deploy/steamdeck/remote-build.sh` |
+| `UNREAL_DEPLOY_DECK` | an SSH target (none) | The Steam Deck to install on; `--deck` / the second argument overrides it. | `tools/deploy/steamdeck/remote-build.sh`, `deploy.sh` |
+| `UNREAL_DEPLOY_SSH` | an ssh command (`ssh`) | The ssh the deploy tools run, and rsync's transport: `ssh -i <key>` when `~/.ssh/config` does not have the key. | `tools/deploy/steamdeck/remote-build.sh`, `deploy.sh` |
 | `CI_MIN_INTERVAL_MINUTES` | minutes (60; 0 = off) | GitHub repository variable: pushes to master build at most once per interval. | `.github/workflows/cmake-ci.yml:44` |
 | `BUILD_TYPE`, `QT_VERSION`, `MACOS_DEPLOYMENT_TARGET`, `OPENSSL_VERSION`, `OPENSSL_SHA256`, `PACKAGE_SYMBOLS` | Release, 6.9.3, 12.0, ... | Workflow-level settings of the CI and release builds (edited in the workflow, not set by hand). | `.github/workflows/cmake-ci.yml:26`, `release.yml:77` |
 | `REGISTRY`, `IMAGE_NAME` | `ghcr.io`, the repository | Where the Docker build image is pushed. | `.github/workflows/docker-build.yml:10` |

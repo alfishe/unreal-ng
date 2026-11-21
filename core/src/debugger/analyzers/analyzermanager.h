@@ -243,6 +243,9 @@ public:
     /// Dispatch frame end event to all active analyzers
     void dispatchFrameEnd();
 
+    /// The CPU stopped running for now (IAnalyzer::onRunStop): the end of a direct run, a park of the emulation loop
+    void dispatchRunStop();
+
     /// Dispatch breakpoint hit event to owning analyzers
     /// @param addr Breakpoint address
     /// @param bpId Breakpoint ID

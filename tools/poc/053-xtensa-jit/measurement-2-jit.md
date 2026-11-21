@@ -1,4 +1,4 @@
-# POC 052 - measurement 2: block JIT and region JIT (arm64)
+# POC 053 - measurement 2: block JIT and region JIT (arm64)
 
 Host: M3 Ultra (.20), release build, `TSL-VDAC4`, headless unreal-qt driven over WebAPI, muted. DOOM-VDAC4 1.1 demo
 loop (6000 warm-up frames, 600 timed, picture hash at the end); R-Type VDAC4 1.0 attract loop (8 pictures, one

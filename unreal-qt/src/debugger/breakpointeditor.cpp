@@ -286,6 +286,28 @@ void BreakpointEditor::setupUI()
     _countOnlyCheck = new QCheckBox("Count only (never stops)");
     _countOnlyCheck->setToolTip("Memory, port, event and chip register breakpoints: count the hits without stopping");
     mainLayout->addWidget(_countOnlyCheck);
+
+    // The per-hit record of a breakpoint that only counts (frame, T, PC, address, value of each hit; the list shows it
+    // under the breakpoint): how many hits it keeps and which ones
+    _hitLogRow = new QWidget();
+    QHBoxLayout* hitLogLayout = new QHBoxLayout(_hitLogRow);
+    hitLogLayout->setContentsMargins(20, 0, 0, 0);
+    hitLogLayout->addWidget(new QLabel("Record hits:"));
+    _hitLogSpin = new QSpinBox();
+    _hitLogSpin->setRange(0, static_cast<int>(BreakpointHitLog::kMaxCapacity));
+    _hitLogSpin->setValue(static_cast<int>(BreakpointHitLog::kDefaultCapacity));
+    _hitLogSpin->setSpecialValueText("none");
+    _hitLogSpin->setToolTip(QString("The hits recorded with their frame, T, PC, address and value (0: none, at most %1)")
+                                .arg(BreakpointHitLog::kMaxCapacity));
+    hitLogLayout->addWidget(_hitLogSpin);
+    hitLogLayout->addWidget(new QLabel("keep:"));
+    _hitLogKeepCombo = new QComboBox();
+    _hitLogKeepCombo->addItem("the first", static_cast<int>(BreakpointHitLogKeep::First));
+    _hitLogKeepCombo->addItem("the newest", static_cast<int>(BreakpointHitLogKeep::Last));
+    _hitLogKeepCombo->setToolTip("The first: later hits are only counted. The newest: older ones are overwritten");
+    hitLogLayout->addWidget(_hitLogKeepCombo);
+    hitLogLayout->addStretch();
+    mainLayout->addWidget(_hitLogRow);
     
     // Validation label
     _validationLabel = new QLabel();
@@ -317,6 +339,10 @@ void BreakpointEditor::setupUI()
         connect(check, &QCheckBox::toggled, this, &BreakpointEditor::validateInput);
     connect(_cancelButton, &QPushButton::clicked, 
             this, &QDialog::reject);
+    connect(_countOnlyCheck, &QCheckBox::toggled, this, &BreakpointEditor::updateHitLogRow);
+    connect(_countOnlyCheck, &QCheckBox::toggled, this, [this]() { checkCondition(); });
+    connect(_hitLogSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &BreakpointEditor::updateHitLogRow);
+    updateHitLogRow();
     
     // Set initial size
     resize(460, 380);
@@ -435,6 +461,13 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
     // Set active state
     _activeCheck->setChecked(bp->active);
     _countOnlyCheck->setChecked(bp->tapSink == BRK_COUNT_TAP);
+    // The record as it is: a counting one keeps what it was given (0: none); a stopping one shows the default
+    if (bp->tapSink == BRK_COUNT_TAP)
+    {
+        _hitLogSpin->setValue(static_cast<int>(bp->hitLogCapacity));
+        _hitLogKeepCombo->setCurrentIndex(_hitLogKeepCombo->findData(static_cast<int>(bp->hitLogKeep)));
+    }
+    updateHitLogRow();
     
     // Update UI based on type
     onTypeChanged(_typeCombo->currentIndex());
@@ -455,6 +488,7 @@ void BreakpointEditor::onTypeChanged(int index)
     // The kinds a tap watches (BreakpointManager::AddBreakpoint refuses the others)
     const bool countable = type == BRK_MEMORY || type == BRK_IO || type == BRK_EVENT || type == BRK_CHIPREG;
     _countOnlyCheck->setVisible(countable);
+    _hitLogRow->setVisible(countable);
     if (!countable)
         _countOnlyCheck->setChecked(false);
     const bool ranged = type == BRK_MEMORY || type == BRK_NEXTREG || type == BRK_COPPER;
@@ -569,8 +603,10 @@ bool BreakpointEditor::checkCondition()
     const QString text = _conditionEdit->text();
     if (type == BRK_KEYBOARD || text.trimmed().isEmpty())
     {
+        const bool counting = _countOnlyCheck && _countOnlyCheck->isChecked();
         _conditionStatus->setText(type == BRK_KEYBOARD ? QString()
-                                                       : "<span style='color:gray'>No condition: every hit stops.</span>");
+                                  : counting ? "<span style='color:gray'>No condition: every hit is counted.</span>"
+                                             : "<span style='color:gray'>No condition: every hit stops.</span>");
         _conditionEdit->setStyleSheet(QString());
         return true;
     }
@@ -612,6 +648,13 @@ bool BreakpointEditor::checkCondition()
     _conditionStatus->setText(html);
     _conditionEdit->setStyleSheet("QLineEdit { border: 1px solid #c00000; }");
     return false;
+}
+
+void BreakpointEditor::updateHitLogRow()
+{
+    const bool counting = _countOnlyCheck->isChecked();
+    _hitLogSpin->setEnabled(counting);
+    _hitLogKeepCombo->setEnabled(counting && _hitLogSpin->value() > 0);
 }
 
 uint8_t BreakpointEditor::selectedAccess(BreakpointTypeEnum type) const
@@ -756,6 +799,11 @@ void BreakpointEditor::onAccept()
     spec.note = _descriptor.note;
     spec.group = _descriptor.group;
     spec.stop = !_countOnlyCheck->isChecked();
+    if (!spec.stop)
+    {
+        spec.hitLog = static_cast<uint32_t>(_hitLogSpin->value());
+        spec.hitLogKeep = static_cast<BreakpointHitLogKeep>(_hitLogKeepCombo->currentData().toInt());
+    }
     if (type != BRK_KEYBOARD)
         spec.condition = _conditionEdit->text().trimmed().toStdString();
     std::string error;

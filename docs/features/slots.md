@@ -133,6 +133,24 @@ the card a joystick input call is accepted with the warning `no Kempston joystic
 by the plug command for this machine. The Kempston mouse needs no card: its standard decode is on every model
 (`[INPUT] Mouse=`).
 
+## The MGT +D interface
+
+The MGT +D (1987) is the edge card `plusd`: G+DOS in an 8 KB ROM, 8 KB of RAM, a WD1772 with two drives, a
+Centronics port and the snapshot button. The machines `48K-PLUSD` and `128K-PLUSD` are the 48K and 128K with the card in
+`edge.1` (the Sinclair family of the Qt and handheld menus); any other machine with an edge slot takes it the usual way
+(`slots plug edge.next plusd`).
+
+After a reset the card is paged out; an opcode fetch at `#0008`, `#003A`, `#0066` or `#028E`, or an `IN #E7`, pages its
+ROM in at `#0000-#1FFF` and its RAM at `#2000-#3FFF`; `OUT #E7` pages it out. Ports: the WD1772 at `#E3 #EB #F3 #FB`,
+the control latch at `#EF` (drive, side, density, printer strobe), the printer data at `#F7`. Media: `fdd.plusd1` and
+`fdd.plusd2` (aliases `plusd1`, `plusd2`), `.mgt` / 819 200-byte `.img` disks (80 tracks, 2 sides, 10 x 512). The NMI
+(the magic button on every surface) is the snapshot button: it reaches the card through its `#0066` trap.
+
+The disk autostart of a `.mgt` on these machines is the card's (`basic` 48 / 128 picks the BASIC of the reset); the
+state report `fdc` is the card's WD1772 with the autostart's progress; the history `plusd` records its FDC commands; TTD
+carries the card as `<slot>.plusd` (type 75); SZX carries it as the `PLSD` chunk (the Fuse layout). Recipe:
+[.recipe/machines/plusd.md](../../.recipe/machines/plusd.md).
+
 ## The General Sound personality
 
 The General Sound card comes in three personalities: `gs` (the classic card with its own Z80), `gs-lw` (a

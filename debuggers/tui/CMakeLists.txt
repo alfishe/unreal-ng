@@ -19,7 +19,22 @@ set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+# FTXUI defines WIN32_LEAN_AND_MEAN and NOMINMAX itself before <windows.h>: the root's copies (MSVC) would be
+# redefinitions (C4005), so the library's directory goes without them and this one gets back what it had
+get_directory_property(_tuiDefinitions COMPILE_DEFINITIONS)
+set(_tuiWindowsDefinitions)
+foreach(_definition WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(_definition IN_LIST _tuiDefinitions)
+        list(APPEND _tuiWindowsDefinitions -D${_definition})
+    endif()
+endforeach()
+if(_tuiWindowsDefinitions)
+    remove_definitions(${_tuiWindowsDefinitions})
+endif()
 add_subdirectory(lib/ftxui EXCLUDE_FROM_ALL)
+if(_tuiWindowsDefinitions)
+    add_definitions(${_tuiWindowsDefinitions})
+endif()
 
 option(UNREAL_TUI_SDL "Open the terminal debuggers' pixel window through SDL3 when SDL3 is found" ON)
 # The packages ship only the pixel-window builds: a package configure without SDL3 fails instead of shipping the

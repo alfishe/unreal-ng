@@ -943,6 +943,7 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size,
     p.UpdateUartRoute(false);  // the joystick connector's UART follows NR #0B, which the image holds
     p.SyncPiLine();            // and UART 1's pins NR #A0
     p.ApplySystemClock();      // CLK_28 is NR #11's
+    p.ArmDmaBusTurn(p._dma.Active() && p._dma.Mode() == 2);  // a burst block between machine cycles from the first instruction on
     if (p._screenNext)
         p._screenNext->RestartSpriteFrame();  // the next frame start is not the end of a frame the engine ran
     memory.Remap();  // the slot table, the windows and the contention flags follow the image

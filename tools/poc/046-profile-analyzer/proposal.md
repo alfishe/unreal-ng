@@ -25,7 +25,8 @@ plane), as built in feature [docs/inprogress/2026-11-05-profile-analyzer](../../
   attribution rules change.
 - `Settings::flowSource` 1 / 2 in the core are internal (no plane exposes them): the A/B variants K1o / K1m and the
   `FlowSourcesAgree` test, which proves the flow events give the same profile as decoding. Remove them if the test
-  is replaced by a recorded fixture.
+  is replaced by a recorded fixture. Done 2026-11-20: both decoders and the K1o / K1m variants are removed, the flow
+  events are the only source.
 
 ## Later (not needed to land)
 
