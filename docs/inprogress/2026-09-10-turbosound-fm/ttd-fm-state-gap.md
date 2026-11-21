@@ -1,5 +1,7 @@
 # TSFM TTD gap: FM synth state not captured (P5 never actually landed)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Update 2026-09-23 (later same day):** the core fix described below is now
 implemented (`soundchip_turbosoundfm.{h,cpp}`) and tested — see
 [Fix landed](#fix-landed-2026-09-23) at the end of this document for what

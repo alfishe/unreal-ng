@@ -1,5 +1,7 @@
 # Reference: a branched time-travel UI seen in another emulator
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 A 37-second screen recording (1920x1080, 2026-09-29) of an unnamed ZX Spectrum
 emulator with a Russian UI that already implements **branched history**: going
 back in time and doing something different keeps the old future as a second

@@ -1,5 +1,7 @@
 # DONE: TTD heap breakdown crash in the Qt toolbar tooltip (2026-10-03)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Landed on branch `qt-heapbreakdown-crash` (Qt part on master via 1de1b07bc): observers read `TimeTravelManager::GetPublishedSessionInfo()`
 (a snapshot the session-driving thread publishes) under a context lease; `StopRecording` parks the
 machine first; `SetHistoryLimit` from another thread defers eviction to the machine's thread.

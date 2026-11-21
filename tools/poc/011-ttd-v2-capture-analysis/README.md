@@ -1,5 +1,7 @@
 # 011 — TTD v2 Capture Analysis
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Research POC for TTD v2 format design decisions: page-granular capture, codec selection, indexing overhead, model scalability, peripheral serialization, and seek latencies.
 
 > **Retired 2026-10-30.** Its data and two benchmarks are v1's (`TimeTravelManager`, v1 session files), deleted in

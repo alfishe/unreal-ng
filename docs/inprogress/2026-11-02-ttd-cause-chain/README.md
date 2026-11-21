@@ -1,5 +1,7 @@
 # TTD cause chain: where a value came from
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Status 2026-11-02:** done on all six planes; measured against the old loop and accepted ([plan.md](plan.md#measurements)). Plan row [#112](../PLAN.md). The first item of the agent UX roadmap after TD-5
 (owner 2026-11-01: cause chain, then find-event, then explain-frame; each accepted only if WebAPI / MCP measurements
 prove it).

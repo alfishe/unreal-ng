@@ -1,5 +1,7 @@
 # TTD port journals: replay without the outside world, and "when did the program ..."
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 - **Date:** 2026-09-29
 - **Status:** built. First landed in v1, which was deleted on 2026-10-30 (TTD v2
   migration, Phase 6). The engine records the port journals as its bus journals

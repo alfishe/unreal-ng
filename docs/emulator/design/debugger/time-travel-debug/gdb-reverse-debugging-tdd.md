@@ -1,5 +1,7 @@
 # GDB Remote Serial Protocol with Reverse Debugging — Technical Design Document
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 | | |
 |---|---|
 | **Status** | Draft for review |

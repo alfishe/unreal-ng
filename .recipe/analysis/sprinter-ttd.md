@@ -1,5 +1,7 @@
 # Recipe: Time travel on the Sprinter Sp2000
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 TTD records the Sprinter like any other machine since phase S7 (before, `ttd/start` was refused:
 "declares TTD state id 25 but its port decoder supplied no serializer"). Everything in the general
 recipe [ttd-recording.md](ttd-recording.md) applies: start / stop, seek, step, dump / load, bookmarks.

@@ -1,5 +1,7 @@
 # 038 — ttd-replay-query-engine
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Feature: [docs/inprogress/2026-10-28-ttd-analysis-feedback](../../../docs/inprogress/2026-10-28-ttd-analysis-feedback/README.md)
 (phase 2). Phase 1 (one-call queries: coverage-scan lists, reverse-continue `all`, find `changes_only`, memory-at
 `cpu`) is on master since `c35d12fd8`.

@@ -645,8 +645,6 @@ struct Variant
     /// the core ProfileAnalyzer through profile::Execute (the final code), with these start options
     bool core = false;
     profile::Options coreStart;
-    /// profile::Settings::flowSource: 0 the CPU's flow events, 1 the previous opcode, 2 the byte from memory
-    uint8_t flowSource = 0;
 };
 
 std::vector<Variant> AllVariants()
@@ -679,8 +677,6 @@ std::vector<Variant> AllVariants()
     // the core analyzer (final A/B): cells only, + stack, + frames (the default), everything
     v.push_back({"K0-core-cells", true, {}, true, true, {{"stack", "false"}, {"frames", "false"}, {"reset", "true"}}});
     v.push_back({"K1-core-stack", true, {}, true, true, {{"stack", "true"}, {"frames", "false"}, {"beam", "false"}, {"reset", "true"}}});
-    v.push_back({"K1o-core-stack-opcode", true, {}, true, true, {{"stack", "true"}, {"frames", "false"}, {"beam", "false"}, {"reset", "true"}}, 1});
-    v.push_back({"K1m-core-stack-memory", true, {}, true, true, {{"stack", "true"}, {"frames", "false"}, {"beam", "false"}, {"reset", "true"}}, 2});
     v.push_back({"K2-core-default", true, {}, true, true, {{"stack", "true"}, {"frames", "true"}, {"beam", "false"}, {"reset", "true"}}});
     v.push_back({"K3-core-all", true, {}, true, true, {{"stack", "true"}, {"beam", "true"}, {"frames", "true"}, {"reset", "true"}}});
     return v;
@@ -764,18 +760,7 @@ RunResult RunOnce(Instance& s, const std::string& snapshot, const Variant& v, un
     AnalyzerManager* am = s.context->pDebugManager->GetAnalyzerManager();
     if (v.core)
     {
-        {
-            // start keeps the settings it does not name: the flow source is set beforehand
-            auto* analyzer = static_cast<ProfileAnalyzer*>(am->getAnalyzer(ProfileAnalyzer::kId));
-            profile::Settings settings = analyzer->ReadTotals().settings;
-            settings.flowSource = v.flowSource;
-            std::string error;
-            if (!analyzer->Configure(settings, error))
-            {
-                std::fprintf(stderr, "core configure: %s\n", error.c_str());
-                std::exit(2);
-            }
-        }
+        // K1o / K1m (the per-step decoders) are gone: the CPU flow events are the only source (2026-11-20)
         const profile::Reply started = profile::Execute(*s.emulator, "start", v.coreStart);
         if (!started.Ok())
         {

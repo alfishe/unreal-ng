@@ -1,5 +1,7 @@
 # 040 — ttd-inplace-replay-profile
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Feature: [docs/inprogress/2026-10-28-ttd-analysis-feedback](../../../docs/inprogress/2026-10-28-ttd-analysis-feedback/README.md)
 (before planning phase 2). Follows [POC 038](../038-ttd-replay-query-engine/README.md).
 

@@ -1,5 +1,7 @@
 # TTD branches: history that keeps every future
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Status: **done** (2026-11-16, closed by the owner): P0-P3 and P5-P8 landed; P4 (media) is deferred and not planned;
 what stays out is listed in [DONE.md](DONE.md). Use cases decided
 by the owner 2026-11-08. PLAN #76 (branch part), the TTD v2 migration's deferred Phase 5, Step 2b.
