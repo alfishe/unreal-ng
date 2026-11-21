@@ -381,6 +381,41 @@ constexpr Src kPlusDSources[] = { Src::FusePlusD, Src::MameMgt };
 
 // endregion
 
+// region <disciple (docs/inprogress/2026-11-15-mgt-plus-d/hardware-reference.md §9): MGT DISCiPLE, low-byte decode>
+
+// The FDC registers (A7 A6), the control latch / joystick, the network, the RAM / ROM swap, the paging port and the
+// printer data. #7B and #BB: the card acts on the cycle and leaves the data bus alone on a read
+constexpr PortClaim kDiscipleClaims[] = {
+    { .mask = 0x00FF, .match = 0x001B, .dir = Dir::InOut, .port = 0x001B },
+    { .mask = 0x00FF, .match = 0x005B, .dir = Dir::InOut, .port = 0x005B },
+    { .mask = 0x00FF, .match = 0x009B, .dir = Dir::InOut, .port = 0x009B },
+    { .mask = 0x00FF, .match = 0x00DB, .dir = Dir::InOut, .port = 0x00DB },
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::InOut, .port = 0x001F, .input = InputRole::KempstonJoystick },
+    { .mask = 0x00FF, .match = 0x003B, .dir = Dir::Out, .port = 0x003B },
+    { .mask = 0x00FF, .match = 0x007B, .dir = Dir::InOut, .port = 0x007B },
+    { .mask = 0x00FF, .match = 0x00BB, .dir = Dir::InOut, .port = 0x00BB },
+    { .mask = 0x00FF, .match = 0x00FB, .dir = Dir::Out, .port = 0x00FB },
+};
+
+constexpr FunctionUse kDiscipleFunctions[] = {
+    { .function = Function::DiskMgt },
+    { .function = Function::KempstonJoystick },
+};
+
+constexpr OptionValue kDiscipleInhibitValues[] = {
+    { "off", "released: the card pages on its traps" }, { "on", "pressed: the card pages only with latch bit 4 set" },
+};
+
+constexpr OptionDef kDiscipleOptions[] = {
+    { .key = Opt::Inhibit, .kind = OptionKind::Enum, .values = kDiscipleInhibitValues, .defaultBits = Bit(0),
+      .description = "the inhibit button: locks the interface out (GDOS can override it with latch bit 4)" },
+};
+
+constexpr const char* kDiscipleMedia[] = { "fdd.disciple1", "fdd.disciple2" };
+constexpr Src kDiscipleSources[] = { Src::FuseDisciple, Src::MameMgt };
+
+// endregion
+
 constexpr CardDef kCards[] = {
     { .id = "ay", .name = "machine's own AY (socket default)", .bus = BusKind::AySocket, .needs = kNone,
       .socketDefault = true, .portsNote = "host decode",
@@ -427,6 +462,10 @@ constexpr CardDef kCards[] = {
     { .id = "plusd", .name = "MGT +D disk interface", .bus = BusKind::SinclairEdge,
       .needs = BusSignal::RdRom | BusSignal::M1 | BusSignal::Nmi, .functions = kPlusDFunctions,
       .claims = kPlusDClaims, .media = kPlusDMedia, .sources = kPlusDSources },
+    { .id = "disciple", .name = "MGT DISCiPLE disk interface", .bus = BusKind::SinclairEdge,
+      .needs = BusSignal::RdRom | BusSignal::M1 | BusSignal::Nmi, .options = kDiscipleOptions,
+      .functions = kDiscipleFunctions, .claims = kDiscipleClaims, .media = kDiscipleMedia,
+      .sources = kDiscipleSources },
 };
 
 } // namespace

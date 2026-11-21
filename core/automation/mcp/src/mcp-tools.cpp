@@ -1107,7 +1107,8 @@ void RegisterLoadSoftware(ToolRegistry& registry)
         "same as the Qt UI's drag-and-drop autostart (ignored for other drives). Tapes: playback starts and "
         "LOAD \"\" is typed (a 128K menu is left for 128 BASIC first), as the media.open action; a paused machine "
         "runs for the typing and is paused again, so run_frames go on loading. Ignored for snapshots. An .mgt on "
-        "a machine with the MGT +D (48K-PLUSD, 128K-PLUSD) runs its plan (run, run+load, system-disk+load, mount): "
+        "a machine with an MGT card (+D: 48K-PLUSD, 128K-PLUSD; DISCiPLE: 48K-DISCIPLE, 128K-DISCIPLE) runs its "
+        "plan (run, run+load, system-disk+load, mount): "
         "the steps go on after the answer, their progress is inspect_state fdc -> autostart.";
     schema["properties"]["basic"]["type"] = "string";
     schema["properties"]["basic"]["enum"].append("48");

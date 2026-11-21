@@ -26,6 +26,9 @@ constexpr ttd::TTDDeviceType kKempstonTtdTypes[] = { ttd::TTDDeviceType::Kempsto
 /// The MGT +D: one blob, the card with its RAM, WD1772 and drives
 constexpr ttd::TTDDeviceType kPlusDTtdTypes[] = { ttd::TTDDeviceType::PlusD };
 
+/// The MGT DISCiPLE: one blob, as the +D's with the swap, the reset hold-off and the inhibit button
+constexpr ttd::TTDDeviceType kDiscipleTtdTypes[] = { ttd::TTDDeviceType::Disciple };
+
 /// One entry per card the slots build themselves (the others keep their legacy owners, slotmanager.h)
 constexpr CardType kCardTypes[] = {
     { MultiSoundCard::kCardId, &MultiSoundSlotCard::Create, kMultiSoundTtdTypes },
@@ -33,6 +36,7 @@ constexpr CardType kCardTypes[] = {
     { AmxMouseCard::kCardId, &AmxMouseCard::Create, kAmxMouseTtdTypes },
     { KempstonCard::kCardId, &KempstonCard::Create, kKempstonTtdTypes },
     { PlusDCard::kCardId, &PlusDCard::Create, kPlusDTtdTypes },
+    { PlusDCard::kDiscipleCardId, &PlusDCard::CreateDisciple, kDiscipleTtdTypes },
 };
 
 } // namespace

@@ -91,6 +91,7 @@ The first migration set (cards the emulator has today, plus the ZX-MultiSound). 
 | `zxnetusb` | ZXNETUSB | zxbus | IORQGE, /CSROM | Iorq | `net.zxnetusb` | `#FF/#AB` | yes | - |
 | `zx-wifi` | ZX-WiFi (izzx) | zxbus | IORQGE | Iorq | `serial.ef` if `#EF` build, `serial.ee` if `#EE` build | `#FF/#EF` (`#EF` build), `#FF/#EE` (`#EE` build) | yes | `port` = `ef` / `ee` (default `ef`) |
 | `plusd` | MGT +D disk interface | sinclair-edge | /RDROM, /M1, /NMI | Iorq | `disk.mgt` | `#FF/#E3`, `#FF/#EB`, `#FF/#F3`, `#FF/#FB`, `#FF/#EF` (write), `#FF/#E7`, `#FF/#F7` | no | - |
+| `disciple` | MGT DISCiPLE disk interface | sinclair-edge | /RDROM, /M1, /NMI | Iorq | `disk.mgt`, `kempston-joystick` | `#FF/#1B`, `#FF/#5B`, `#FF/#9B`, `#FF/#DB`, `#FF/#1F`, `#FF/#3B` (write), `#FF/#7B`, `#FF/#BB`, `#FF/#FB` (write) | no | `inhibit` = `off` / `on` (default `off`) |
 <!-- slots:generated:cards:end -->
 
 Notes on the generated table: `#FF/#B3` = mask / match; the conditions in brackets are the option values a claim or a
@@ -117,23 +118,24 @@ refused there whatever is installed (its column still shows what other cards mee
 for the machines without a decode of their own (section 4).
 
 <!-- slots:generated:card-x-card:begin -->
-| new \ installed | `ts` | `tsfm` | `gs` | `gs-lw` | `neogs` | `moonsound` | `covox-fb` | `soundrive` | `fuller-box` | `amx-mouse` | `kempston` | `multisound` | `zxnetusb` | `zx-wifi` | `plusd` |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **ts** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ | ✓ |
-| **tsfm** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ | ✓ |
-| **gs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ | ✓ |
-| **gs-lw** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ | ✓ |
-| **neogs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ | ✓ |
-| **moonsound** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **covox-fb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **D** if mode 2 or modes 1 + 2 (emulator decode) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **soundrive** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if mode 2 or modes 1 + 2 (emulator decode) | **D** | ✓ | ✓ | ✓ | **D** if `sd` | ✓ | ✓ | ✓ |
-| **fuller-box** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **P** | ✓ | **P** if A7-A5 only (zxsp) + `ym` | ✓ | ✓ | ✓ |
-| **amx-mouse** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **P** | **D** | **P** | **P** if A7-A5 (schematic) + `ym` | ✓ | ✓ | ✓ |
-| **kempston** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** |
-| **multisound** | **⊘** if `ym` | **⊘** if `ym` | **D** if `gs` | **D** if `gs` | **D** if `gs` | ✓ | ✓ | **D** if `sd` | **P** if `ym` + A7-A5 only (zxsp) | **P** if `ym` + A7-A5 (schematic) | **P** if `ym` | **D** | ✓ | ✓ | ✓ |
-| **zxnetusb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ |
-| **zx-wifi** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ |
-| **plusd** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** |
+| new \ installed | `ts` | `tsfm` | `gs` | `gs-lw` | `neogs` | `moonsound` | `covox-fb` | `soundrive` | `fuller-box` | `amx-mouse` | `kempston` | `multisound` | `zxnetusb` | `zx-wifi` | `plusd` | `disciple` |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **ts** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ | ✓ | ✓ |
+| **tsfm** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ | ✓ | ✓ |
+| **gs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ | ✓ | ✓ |
+| **gs-lw** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ | ✓ | ✓ |
+| **neogs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ | ✓ | ✓ |
+| **moonsound** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **covox-fb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **D** if mode 2 or modes 1 + 2 (emulator decode) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **soundrive** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if mode 2 or modes 1 + 2 (emulator decode) | **D** | ✓ | ✓ | ✓ | **D** if `sd` | ✓ | ✓ | ✓ | ✓ |
+| **fuller-box** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **P** | ✓ | **P** if A7-A5 only (zxsp) + `ym` | ✓ | ✓ | ✓ | **P** if A7-A5 only (zxsp) |
+| **amx-mouse** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **P** | **D** | **P** | **P** if A7-A5 (schematic) + `ym` | ✓ | ✓ | ✓ | **P** |
+| **kempston** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** |
+| **multisound** | **⊘** if `ym` | **⊘** if `ym` | **D** if `gs` | **D** if `gs` | **D** if `gs` | ✓ | ✓ | **D** if `sd` | **P** if `ym` + A7-A5 only (zxsp) | **P** if `ym` + A7-A5 (schematic) | **P** if `ym` | **D** | ✓ | ✓ | ✓ | ✓ |
+| **zxnetusb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ | ✓ |
+| **zx-wifi** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ |
+| **plusd** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **D** |
+| **disciple** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** | **X** |
 <!-- slots:generated:card-x-card:end -->
 
 ## 4. Card × machine
@@ -188,6 +190,7 @@ with identical columns are merged.
 | **zx-wifi** `#EF` build | A | A | ✓ | ✓ | ✓ | ✓ | A | **X** (`#EF` is the board's `com`) | **X** (`#EF` is the board's `zifi`) | A | A | **X** (`serial.ef` built in) | A | A |
 | **zx-wifi** `#EE` build | A | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | ✓ | A | A |
 | **plusd** | ✓ | A (needs /RDROM) | A | A | A | A | A | A | A | A | A | A | bus fight `#E3` with `divmmc`, bus fight `#EB` with `spi` | A |
+| **disciple** | ✓ | A (needs /RDROM) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | A | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | A |
 <!-- slots:generated:card-x-machine:end -->
 
 Notes the cells do not carry: the Pentagon has no Covox of its own (a Covox there is a card); a SounDrive mode-1 card

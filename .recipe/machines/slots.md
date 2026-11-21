@@ -153,7 +153,8 @@ on only outside DOS, MAME beta128.cpp). TTD carries it as `edge.1.kempston` (typ
 
 The machines `48K-PLUSD` / `128K-PLUSD` are the 48K / 128K with the edge card `plusd` in `edge.1`; another machine with
 an edge slot takes it by the plug (`slots plug edge.next plusd`, the same verbs as the Kempston above). The card brings
-the slots `fdd.plusd1` / `fdd.plusd2`; the autostart, the paging and the reports: [plusd.md](plusd.md).
+the slots `fdd.plusd1` / `fdd.plusd2`; the autostart, the paging and the reports: [plusd.md](plusd.md). The DISCiPLE is
+the edge card `disciple` (`48K-DISCIPLE` / `128K-DISCIPLE`; slots `fdd.disciple1` / `2`, option `inhibit`).
 
 ## The Sprinter's ISA slots (SL-8)
 
