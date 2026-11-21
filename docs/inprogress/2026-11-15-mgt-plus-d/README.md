@@ -1,6 +1,6 @@
 # MGT +D disk interface
 
-Created: 2026-11-15 · Status: **landed** (P0-P5; deferred: P0.6, P7 DISCiPLE) · PLAN #123
+Created: 2026-11-15 · Status: **landed** (P0-P5, P7 DISCiPLE; deferred: P0.6) · PLAN #123
 
 One more machine configuration: the emulator read MGT images (`unrealdisk::LoaderMGT`) but had no +D, the interface
 they were made for. This folder designs the +D (Miles Gordon
@@ -29,4 +29,4 @@ floppy controller with two drives, a printer port and a snapshot button, and the
 ## Not in scope
 
 A real printer emulation (the port is honest, bytes go to an optional file); a +D fast-disk path;
-DISCiPLE is a later phase P7 (owner decision D-4).
+DISCiPLE is phase P7 (owner decision D-4), done 2026-11-20: [hardware-reference.md §9](hardware-reference.md#9-disciple-p7).

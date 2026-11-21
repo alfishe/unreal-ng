@@ -250,11 +250,12 @@ TEST_F(EmulatorSaveDisk_Test, LoadDisk_ByExtension)
 
     EXPECT_FALSE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"))) << "not a disk";
 
-    // An MGT disk is a +D disk (owner decision D-3): without the card it is refused, never put into a Beta drive
+    // An MGT disk is a +D / DISCiPLE disk (owner decision D-3): without an MGT card it is refused, never put into a
+    // Beta drive
     for (const char* mgt : {"loaders/mgt/synthetic.mgt", "loaders/mgt/synthetic.img"})
     {
         std::string error;
         EXPECT_FALSE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath(mgt), 0, &error)) << mgt;
-        EXPECT_NE(error.find("no +D"), std::string::npos) << mgt << ": " << error;
+        EXPECT_NE(error.find("no MGT interface"), std::string::npos) << mgt << ": " << error;
     }
 }

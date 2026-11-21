@@ -1,4 +1,4 @@
-# Recipe: ZX-Spectrum 48K / 128K + MGT +D (G+DOS)
+# Recipe: ZX-Spectrum 48K / 128K + MGT +D (G+DOS) or DISCiPLE (GDOS 3)
 
 A Sinclair 48K or 128K with the MGT +D disk interface on its edge connector: G+DOS v1a, a WD1772 with two drives
 (`.mgt`, 800 KB), 8 KB of RAM and the snapshot button. The target for the MGT software of the late 1980s.
@@ -47,4 +47,28 @@ curl -s $B/emulator/$id/state/fdc | jq .autostart               # stage, steps [
 omitted = the machine's own BASIC (48 on a 48K, 128 BASIC on a 128K), `48` = 48 BASIC on any machine (works that need
 a 128K in 48K mode), `128` = 128 BASIC (refused on a 48K: `no 128 BASIC on a 48K: use 128K-PLUSD`).
 
-An `.mgt` on a machine without the card is refused (`no +D on this machine`), never mounted in a Beta drive.
+An `.mgt` on a machine without an MGT card is refused (`no MGT interface on this machine`), never mounted in a Beta
+drive.
+
+## DISCiPLE
+
+`48K-DISCIPLE` / `128K-DISCIPLE` (`edge.1 = disciple`) carry the +D's predecessor, the same card class on other ports
+([hardware-reference.md §9](../../docs/inprogress/2026-11-15-mgt-plus-d/hardware-reference.md#9-disciple-p7)):
+
+- GDOS 3 ROM (`data/rom/gdos.rom`); traps `#0001`, `#0008`, `#0066`, `#028E`; `IN #BB` pages in, `OUT #BB` out;
+  `OUT #7B` puts the RAM at `#0000` (`IN #7B` back); for 35 T after a reset no trap counts, so the machine's own
+  reset and the 128K menu run;
+- the WD1772 at `#1B #5B #9B #DB`, the control latch at `#1F` (drive 1 / 2, side, `/DDEN`, inhibit override,
+  printer strobe); `IN #1F` reads the Kempston joystick (bits 0-4);
+- drives `fdd.disciple1` / `fdd.disciple2` (aliases `disciple1`, `disciple2`); the slot option `inhibit=on`
+  (`[SLOTS] edge.1.inhibit = on`, MCP `slots_set` `"options":"inhibit=on"`) presses the inhibit button: no paging unless the latch's bit 4 lets it;
+- GDOS loads the first CODE file named `SYS*` from drive 1 on `RUN` (G+DOS disks' `+SYS` do not boot it). A disk
+  without one needs the system disk first: [data/boot/disciple/gdos-3d-system.mgt](../../data/boot/disciple/README.md)
+  (the autostart does this itself, the same plans as on the +D);
+- `state fdc` shows `WD1772 (MGT DISCiPLE)` with `memory_swapped`, `reset_hold`, `inhibit`, `single_density`;
+- `.z80` saves byte 83 = 0 (DISCiPLE, Epson); SZX has no DISCiPLE block: its card state is not in an `.szx`.
+
+```text
+emulator_manage {"action":"create","model":"48K-DISCIPLE"}
+load_software {"path":"/path/work.mgt","autostart":true}
+```

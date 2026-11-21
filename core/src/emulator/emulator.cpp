@@ -1244,7 +1244,7 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     const bool mgt = IsMgtDisk(path);
     if (drive != 0 && mgt)
     {
-        result.message = "autostart boots the +D's drive 1 (A) - insert into drive " +
+        result.message = "autostart boots the MGT card's drive 1 (A) - insert into drive " +
                          std::string(1, static_cast<char>('A' + drive)) + " without autostart instead";
         MLOGERROR("AutostartDisk: %s", result.message.c_str());
         return result;
@@ -1262,7 +1262,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     // every plane answers an error, not "mounted, not started"
     // (without the card the MGT refusal below names the models that have it)
     const bool is48K = _context->config.mem_model == MM_SPECTRUM48;
-    const bool plusdCard = mgt && PlusDCard::Find(_context) != nullptr;
+    const PlusDCard* mgtCard = mgt ? PlusDCard::Find(_context) : nullptr;
+    const bool plusdCard = mgtCard != nullptr;
     if (plusdCard && !basic.empty() && basic != "48" && basic != "128")
     {
         result.message = "BASIC '" + basic + "': 48 or 128";
@@ -1270,7 +1271,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     }
     if (plusdCard && basic == "128" && is48K)
     {
-        result.message = "no 128 BASIC on a 48K: use 128K-PLUSD";
+        result.message =
+            std::string("no 128 BASIC on a 48K: use ") + (mgtCard->IsDisciple() ? "128K-DISCIPLE" : "128K-PLUSD");
         return result;
     }
 
@@ -1318,8 +1320,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
         // The plan from the directory (nothing changes); a disk with nothing to start stays mounted, no reset
         request.plusd = true;
         request.workPath = FileHelper::AbsolutePath(path);
-        request.systemDisk = PlusDAutostart::FindSystemDisk();
-        request.plusdPlan = PlusDAutostart::MakePlan(*image, is48K, request.systemDisk);
+        request.systemDisk = PlusDAutostart::FindSystemDisk(plusd->IsDisciple());
+        request.plusdPlan = PlusDAutostart::MakePlan(*image, is48K, request.systemDisk, plusd->IsDisciple());
         request.plusdPlan.basic = !basic.empty() ? basic : (is48K ? "48" : "128");
         result.basic = request.plusdPlan.basic;
         result.plan = request.plusdPlan.kind;
@@ -1344,7 +1346,7 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
             MediaResult inserted;
             {
                 CpuHold hold(*this, "plusd system disk");
-                inserted = _context->pMediaManager->Insert(PlusDCard::kDriveSlotIds[0], source, options);
+                inserted = _context->pMediaManager->Insert(plusd->DriveSlotId(0), source, options);
             }
             if (!inserted.Ok())
             {
@@ -2967,14 +2969,16 @@ std::string Emulator::MgtDriveSlot(const std::string& path, uint8_t drive, std::
 {
     if (!IsMgtDisk(path))
         return {};
-    // An MGT disk is a +D (G+DOS) disk: a Beta 128 drive cannot run it (owner decision D-3: refuse, never switch the
-    // model)
-    if (PlusDCard::Find(_context) == nullptr)
-        return "no +D on this machine: an MGT disk needs the +D card (models 48K-PLUSD, 128K-PLUSD, or plusd in an edge "
-               "slot)";
+    // An MGT disk is a +D / DISCiPLE (G+DOS / GDOS) disk: a Beta 128 drive cannot run it (owner decision D-3:
+    // refuse, never switch the model)
+    const PlusDCard* card = PlusDCard::Find(_context);
+    if (card == nullptr)
+        return "no MGT interface on this machine: an MGT disk needs the +D or the DISCiPLE (models 48K-PLUSD, "
+               "128K-PLUSD, 48K-DISCIPLE, 128K-DISCIPLE, or plusd / disciple in an edge slot)";
     if (drive >= PlusDCard::kDrives)
-        return std::string("the +D has drives 1 and 2 (A, B): drive ") + static_cast<char>('A' + drive) + " is not one";
-    slotId = PlusDCard::kDriveSlotIds[drive];
+        return std::string("the ") + card->DisplayName() + " has drives 1 and 2 (A, B): drive " +
+               static_cast<char>('A' + drive) + " is not one";
+    slotId = card->DriveSlotId(drive);
     return {};
 }
 

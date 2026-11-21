@@ -5,7 +5,8 @@ Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18
 `.recipe/machines/plusd.md`. 2026-11-19: P5.2 (the `basic` param on every plane, the MCP `inspect_state fdc` text
 for the card). P5.1, P5.4 (overlay only while paged in, card FDCs stepped behind a sleep flag), P5.5 done, landed
 e4399ec70 (2026-11-19); G+DOS writes (P4.6) 9761657f2. Build checks are left to the GitHub CI / Release runs.
-Deferred: P0.6 (the PAL dump), P7 (DISCiPLE).
+2026-11-20: P7 DISCiPLE (the card `disciple` on the +D's code, `48K-DISCIPLE` / `128K-DISCIPLE`, the GDOS 3d system
+disk `data/boot/disciple/gdos-3d-system.mgt`). Deferred: P0.6 (the PAL dump).
 
 ## Phases
 
@@ -137,9 +138,16 @@ Deferred: P0.6 (the PAL dump), P7 (DISCiPLE).
   The TSFM in the AY socket of `48K-PLUSD` is the shipped 48K's `[SLOTS]` (a retrofitted AY interface), and
   `fdd.a`-`fdd.d` are the machine's Beta drives as on every 48K: neither comes from the card
 
-### P7 (later, D-4): DISCiPLE
-- [ ] P7.1 Card `disciple` on the same code: ports, traps `0001/0008/0066/028E`, inhibit, `/DDEN`, Kempston on `1F`
-- [ ] P7.2 GDOS 3d boot test
+### P7 (D-4, done 2026-11-20): DISCiPLE
+- [x] P7.1 Card `disciple` on the same code (`PlusDCard::Model::Disciple`): ports `1B/5B/9B/DB`, `1F` (latch, Kempston
+  bits 0-4), `7B` RAM / ROM swap, `BB` paging, `FB` printer, `3B` ignored; traps `0001/0008/0066/028E`; slot option
+  `inhibit`; `/DDEN` through `WD1793::setDensityLine`; the 35 T hold-off after `/RESET` (S-MAME `m_reset_delay`);
+  TTD device 76; `.z80` byte 83 = 0 / 1 loads and saves it; SZX has no DISCiPLE block; the autostart looks for `SYS*`
+  (`DiscipleCard_Test`, `PlusDAutostart_Plan.DiscipleLooksForSys`, `PlusDAutostart_Test.DiscipleBootsGdos3dThenTheWork`)
+- [x] P7.2 GDOS 3d boot test: CONFIG from the GDOS 3d tape writes `data/boot/disciple/gdos-3d-system.mgt`
+  (deterministic, README with the recipe); `DiscipleSystemDisk_Test.BootsGdos3d` / `BootsGdos3dOn128K`: RUN loads
+  `SYSTEM 3d`, `CAT 1` lists the disk on a 48K and from 128 BASIC (GDOS ends with the report `O.K. GDOS 3, 0:1`,
+  which the 128 editor clears on the next key)
 
 ## Open hardware items
 
@@ -151,7 +159,7 @@ H-1 ... H-8 in [hardware-reference.md](hardware-reference.md#open-items).
 - D-2 The system disk is written by the emulator from the Plus D System Tape v2a (`CONFIG` with default answers);
   S-DISK serves only as a comparison. P0.4 therefore runs after P2.
 - D-3 A `.mgt` on a machine without a +D is refused with a hint naming the presets; no automatic model switch.
-- D-4 DISCiPLE later: P7 is not part of this work.
+- D-4 DISCiPLE later: P7, done after the +D (2026-11-20).
 
 ## Other emulators checked
 

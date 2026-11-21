@@ -189,6 +189,7 @@ enum class Opt : uint8_t
     Rom,        ///< card ROM / firmware version
     Jp1,        ///< ZXM-MoonSound JP1 "PentEvo"
     Decode,     ///< port decode width (Covox, Fuller Box)
+    Inhibit,    ///< the DISCiPLE's inhibit button (off / on)
     Count
 };
 constexpr int kOptCount = static_cast<int>(Opt::Count);
