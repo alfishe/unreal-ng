@@ -246,6 +246,54 @@ TEST(FrameScaler_Test, PackedToNv12_BlackWhiteAndRed)
     EXPECT_EQ(uv[1], static_cast<uint8_t>(((112 * 191 - 94 * 63 - 18 * 63 + 128) >> 8) + 128));
 }
 
+TEST(FrameScaler_Test, PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth)
+{
+    // The NEON / SSE2 kernels take 16 pixels a step, the scalar formula the rest: every width up to three steps and
+    // a tail, random colors plus the extremes (the ranges where a lane could overflow or a clamp would matter)
+    auto clampByte = [](int v) { return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v)); };
+    for (uint32_t w = 2; w <= 70; w += 2)
+    {
+        const uint32_t h = 4;
+        std::vector<uint32_t> src = TestPicture(w, h);
+        const uint32_t extremes[] = {0xFF000000u, 0xFFFFFFFFu, 0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u, 0xFFFFFF00u};
+        for (uint32_t i = 0; i < w && i < 6; i++)
+            src[i] = extremes[i];  // row 0
+        for (uint32_t i = 0; i < w; i++)
+            src[static_cast<size_t>(w) * 3 + i] = (i & 1) ? 0xFFFFFFFFu : 0xFF000000u;  // row 3: black / white
+        const uint8_t* px = reinterpret_cast<const uint8_t*>(src.data());
+
+        // Padded rows on both sides: a stride is not the width
+        const size_t srcStride = static_cast<size_t>(w) * 4;
+        const size_t pitch = w + 7;
+        std::vector<uint8_t> yPlane(pitch * h, 0x77);
+        std::vector<uint8_t> uvPlane(pitch * h / 2, 0x77);
+        FrameScaler::PackedToNv12(px, srcStride, w, h, yPlane.data(), pitch, uvPlane.data(), pitch);
+
+        for (uint32_t y = 0; y < h; y++)
+            for (uint32_t x = 0; x < w; x++)
+            {
+                const uint8_t* p = px + y * srcStride + x * 4;
+                const uint8_t expected = clampByte(((66 * p[0] + 129 * p[1] + 25 * p[2] + 128) >> 8) + 16);
+                ASSERT_EQ(yPlane[y * pitch + x], expected) << "Y " << x << "," << y << " width " << w;
+            }
+        for (uint32_t y = 0; y < h; y += 2)
+            for (uint32_t x = 0; x < w; x += 2)
+            {
+                const uint8_t* a = px + y * srcStride + x * 4;
+                const uint8_t* b = a + srcStride;
+                int avg[3];
+                for (int c = 0; c < 3; c++)
+                    avg[c] = (a[c] + a[c + 4] + b[c] + b[c + 4]) / 4;
+                const uint8_t u = clampByte(((-38 * avg[0] - 74 * avg[1] + 112 * avg[2] + 128) >> 8) + 128);
+                const uint8_t v = clampByte(((112 * avg[0] - 94 * avg[1] - 18 * avg[2] + 128) >> 8) + 128);
+                ASSERT_EQ(uvPlane[y / 2 * pitch + x], u) << "U " << x << "," << y << " width " << w;
+                ASSERT_EQ(uvPlane[y / 2 * pitch + x + 1], v) << "V " << x << "," << y << " width " << w;
+            }
+        for (uint32_t y = 0; y < h; y++)
+            EXPECT_EQ(yPlane[y * pitch + w], 0x77) << "the padding is not written, width " << w;
+    }
+}
+
 TEST(FrameScaler_Test, ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte)
 {
     struct Case

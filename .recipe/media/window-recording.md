@@ -246,4 +246,9 @@ ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_fr
 - **Take control for the whole demo** (`POST /control/session`, MCP `control_execution take_control`) and release it
   after. Sessionless calls open an implicit session per client; another session holding control answers 409
   `held_by_other` to `record/frames`.
+- **`ffmpeg -i file.mp4 -f null -` warns "non monotonically increasing dts to muxer"** on some variable-rate files
+  (seen with NVENC / VA-API H.264, B-frames on): the file is fine. The frames sit on the machine's frame grid and the
+  file's dts rise strictly (`ffprobe -show_entries packet=dts`); the check re-encodes into a coarser time base (two
+  emulated frames per tick there), so two frames one emulated frame apart round to one tick. Check with
+  `ffmpeg -i file.mp4 -enc_time_base demux -f null -` (or `-c copy -f null -`): no warning.
 - **The file is the window's picture**: resize the window (or use `picture_height`) before starting, not during.

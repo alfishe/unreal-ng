@@ -47,10 +47,22 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
 
 ## TODO
 
-- SIMD for `PackedToNv12` (the 4K-to-4K videowall case is bound by it).
+- ~~SIMD for `PackedToNv12`; benchmark `FrameScaler` at 3840x2160 and decide on SIMD / threads~~ done 2026-11-20: NEON
+  (arm64) and SSE2 (x86-64) row kernels for luma, per-pixel chroma and the 2x2 chroma blocks, byte-identical to the
+  scalar formula (`PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth`). `core-benchmarks
+  --benchmark_filter=FrameScaler` (`core/benchmarks/emulator/recording/framescaler_benchmark.cpp`), CPU time per
+  3840x2160 NV12 frame, interleaved A/B:
 
-- Benchmark `FrameScaler` at 3840x2160 (A/B, quiet machine) and decide on SIMD / threads (`SIMD-CANDIDATE(frame scaler
-  row expand)` in the code).
+  | Source | M1 Ultra scalar | M1 Ultra NEON | i7-11850H scalar (gcc 15) | i7-11850H SSE2 |
+  |:--|--:|--:|--:|--:|
+  | 3840x2160 (1x, the videowall grab) | 13.96 ms | 2.24 ms | 15.4 ms | 5.6 ms |
+  | 1920x1080 (2x) | 6.23 ms | 2.33 ms | 7.5 ms | 3.4 ms |
+  | 960x540 (4x) | 2.37 ms | 1.07 ms | 2.4 ms | 1.26 ms |
+  | 352x288 (fit, 7.5x) | 2.95 ms | 2.66 ms | 3.2 ms | 2.9 ms |
+
+  No threads: a 4K frame is now near the memory bandwidth on arm64 and well under a frame's time on both. The RGBA
+  `ScaleInto` is 1-2 ms at 4K; its `SIMD-CANDIDATE(frame scaler row expand)` stays a candidate. The fit path (a column
+  gather per pixel) gains little and is not the videowall's.
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
