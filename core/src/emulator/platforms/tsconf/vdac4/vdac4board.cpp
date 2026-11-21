@@ -3,6 +3,8 @@
 #include "vdac4board.h"
 
 #include "common/filehelper.h"
+#include "common/processtempfolder.h"
+#include "emulator/config.h"
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
@@ -117,9 +119,16 @@ Vdac4Board::Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<
     _tang.SetEspWait([this]() { _runtime->WaitIdle(); });
 
     Vdac4Esp::Config espConfig;
-    espConfig.cacheDirectory = config.vdac4_esp_cache[0] != '\0'
-                                   ? std::filesystem::path(config.vdac4_esp_cache)
-                                   : std::filesystem::path(FileHelper::GetUserDataPath()) / "vdac4" / "zm";
+    // [VDAC4] EspCache, else the desktop app's folder that outlives it, else (tests, headless) an empty one of this
+    // board's own: then every run of a program starts from the same ESP flash, whatever ran before or beside it
+    if (config.vdac4_esp_cache[0] != '\0')
+        espConfig.cacheDirectory = FileHelper::ToFsPath(config.vdac4_esp_cache);
+    else if (!Config::DefaultVdac4EspCacheFolder().empty())
+        espConfig.cacheDirectory = FileHelper::ToFsPath(Config::DefaultVdac4EspCacheFolder());
+    else if (!(_ownCache = ProcessTempFolder::Make(kOwnCachePrefix)).empty())
+        espConfig.cacheDirectory = _ownCache;
+    else
+        espConfig.cacheDirectory = FileHelper::ToFsPath(FileHelper::GetUserDataPath()) / "vdac4" / "zm";
     espConfig.bootMs = config.vdac4_esp_boot_ms;
     // The ESP's clock never goes back. The machine's emulated time restarts at 0 on every machine reset
     // (Core::Reset clears t_states; an SPG / snapshot load resets too), while the board's ESP keeps running on
@@ -156,6 +165,8 @@ Vdac4Board::~Vdac4Board()
     _esp.reset();
     _runtime.reset();
     _ft.reset();
+    if (!_ownCache.empty())
+        FileHelper::DeleteFolder(FileHelper::FromFsPath(_ownCache));
     if (_audioAttached && _context && _context->pSoundManager)
         _context->pSoundManager->detachSlotCard(_audio.get());
 }
