@@ -207,7 +207,7 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
     `unknown`), `highFrom`, `stock_split` in JSON; `card_pc` / `card_label` from the table at the command write (no
     per-instruction probe); `UnknownCommands()` in the log; the generator with `gs105a.profile.json` and its check.
     Design §8A.9 "As built" (items 8-10).
-11. [ ] **Validation scenarios V-1 to V-6 (§8A.10).** NedoOS fixtures in `testdata/software/nedoos/` (README with the
+11. [x] **Validation scenarios V-1 to V-6 (§8A.10).** NedoOS fixtures in `testdata/software/nedoos/` (README with the
     revision), `gs_nedoos_scenarios_test.cpp` against golden logs; the `SSTAT.MCRDY` polling and host `IN (#0F)`
     accuracy checks.
     Progress (uncommitted): the test boots NedoOS on the ZX-Evo from a host folder (long tier); V-1 gstest passes on
@@ -257,7 +257,16 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
     Rabbit would: the AVR holds RTS off from its start, the flow-controlled ESP keeps "ready" / WIFI CONNECTED /
     WIFI GOT IP (38 bytes) until Moon Rabbit's init raises RTS after its FIFO reset, they flood the 16-byte FIFO while
     it sends `ATE0`, the OK is lost and `checkOkErr` waits for ever (it does not resync).
-    Left: the MCRDY and `IN (#0F)` checks.
+    MCRDY (`GSNedoOsGp_Test.V3GpWithMcrdyPollingPlaysAnMp3OnNeoGs`): GP rebuilt from source at d1d011f8 (byte for
+    byte the release) with the polling loop its TODO says fails in UnrealSpeccy (`in a,(SSTAT): and M_MCRDY: jr z`)
+    inside `noper`, padded to the delay's 19 bytes (`testdata/software/nedoos/gp-mcrdy/`: `gp.plr`, the patch; 8 bytes
+    differ), plays the MP3 to its end on the NeoGS: the decoder gets its SCI setup and the whole file.
+    `IN (#0F)` (`gs_hostport0f_test.cpp`): no card answers it (the NeoGS FPGA decodes only `#B3` / `#BB` / `#33`,
+    `fpga/current/zxbus/zxbus.v:217-223`), the value is the machine's and the same without a card, with NeoGS and with
+    the classic GS: `#FF` on the Pentagon, ZX-Evo (BaseConf, TS-Conf), ATM 2 / 2+, 128K (the floating bus in the
+    border), Scorpion; `#25` on the P2666 and `#84` on the Profi, both powering up in DOS, where `#0F` is the VG93's
+    status. The P2666 kernel's INSTSDD reads it so (DOS on, PC `#10D0`): its NeoGS test passes with or without a card,
+    and without one the `#F3` wait ends the probe.
 
 ### Phase 5 (U1, U1a, U2, B3; design §10) — the GUI skin
 

@@ -24,6 +24,7 @@
 #include <emulator/sound/chips/gs/generalsoundcard.h>
 #include <emulator/sound/chips/gs/gscommandlog.h>
 #include <emulator/sound/chips/neogs/soundchip_neogs.h>
+#include <emulator/sound/chips/neogs/vs10xx.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/state/statenodejson.h>
@@ -356,12 +357,13 @@ protected:
     fs::path _mod;
 
     /// GP with `media` as `name` (an 8.3 name: GP does not open a longer one from its command line) on `kind`
-    void BootGp(const fs::path& media, const std::string& name, GSTypeKind kind, unsigned gsRamKB)
+    void BootGp(const fs::path& media, const std::string& name, GSTypeKind kind, unsigned gsRamKB,
+                const fs::path& plr = {})
     {
         const fs::path root = TestPathHelper::FindProjectRoot();
         const fs::path bin = root / "testdata/machines/p2666/software/nedoos/sdcard/bin";
         _mod = media;
-        const fs::path card = Card({{"gp.com", bin / "gp.com"}, {"gp/gp.plr", bin / "gp/gp.plr"},
+        const fs::path card = Card({{"gp.com", bin / "gp.com"}, {"gp/gp.plr", plr.empty() ? bin / "gp/gp.plr" : plr},
                                     // Without gp/gp.ini GP opens its settings screen; the shipped defaults (ModDevice=0)
                                     {"gp/gp.ini", root / "testdata/software/nedoos/media/gp.ini"},
                                     {name, media}},
@@ -538,6 +540,50 @@ TEST_F(GSNedoOsGp_Test, V3GpPlaysAnMp3OnNeoGs)
         ADD_FAILURE() << "unexpected " << GSCommandLogAnomalyName(kind) << " x" << count << "\n"
                       << Golden(-1, 0, {0x01, 0x06});
     ExpectGolden("v3-gp-mp3", -1, 0, {0x01, 0x06});
+}
+
+/// §8A.10 accuracy check, SSTAT.MCRDY: GP's streamer waits after each VS10xx control (SCI) write with a fixed delay
+/// (`WDC` = `call noper`, 18 NOPs); its TODO says the MCRDY polling it replaced ("in a,(SSTAT): and M_MCRDY: jr z,$-4")
+/// works on real hardware but not in UnrealSpeccy. `testdata/software/nedoos/gp-mcrdy/gp.plr` is GP rebuilt from source
+/// at d1d011f8 with that loop inside `noper` (gscode-mcrdy.patch, padded to the delay's 19 bytes: 8 bytes differ from
+/// the release). It has to play the MP3 to its end as the release GP does (V-3): the decoder's setup goes through the
+/// loop, so a wrong MCRDY would hang the streamer on the card
+TEST_F(GSNedoOsGp_Test, V3GpWithMcrdyPollingPlaysAnMp3OnNeoGs)
+{
+    const fs::path root = TestPathHelper::FindProjectRoot();
+    ASSERT_NO_FATAL_FAILURE(BootGp(root / "testdata/sound/neogs/mp3/eyeache1-22k-mono-vbr-id3.mp3", "eyeache1.mp3",
+                                   GSTypeKind::NGS, 0, root / "testdata/software/nedoos/gp-mcrdy/gp.plr"));
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return Count(Kind::Command, 0x13) >= 2; }, 3000, 1);
+    ASSERT_GE(Count(Kind::Command, 0x13), 2) << Golden() << "\nscreen:\n" << Screen();
+    const uint64_t startFrame = _context->emulatorState.frame_counter;
+    const auto ended = [&] { return IndexOf(0x00, Count(Kind::Command, 0x00)) > IndexOf(0x13, 2); };
+    EmulatorTestHelper::RunUntil(_emulator.get(), ended, 3000, 1);
+    ASSERT_TRUE(ended()) << "the MCRDY streamer ends the play\n" << Golden(-1, 0, {0x01, 0x06}) << "\nscreen:\n"
+                         << Screen();
+    const uint64_t frames = _context->emulatorState.frame_counter - startFrame;
+
+    // The streamer that ran is the rebuilt one (its hash is not the profile's), started both times
+    const std::vector<GSUploadRecord> uploads = _log->Uploads();
+    ASSERT_EQ(uploads.size(), 2u);
+    for (const GSUploadRecord& u : uploads)
+    {
+        EXPECT_EQ(u.profile, nullptr) << u.profile->id;
+        EXPECT_TRUE(u.started);
+    }
+
+    // The decoder got its setup through the loop and the whole file, played in real time (the log has
+    // no stream block here: the host data stream is the profile's, so the decoder's counters say what went in)
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(_context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    const Vs10xxDecoder* decoder = card->mp3Decoder();
+    ASSERT_NE(decoder, nullptr);
+    EXPECT_GT(decoder->counters().controlWrites, 5u) << "the SCI writes the MCRDY loop waits on";
+    // The file, then part of the padding: the closing #00 resets the streamer with the ring's last bytes still in it
+    EXPECT_GT(decoder->bytesReceived(), fs::file_size(_mod)) << "the whole file";
+    EXPECT_EQ(decoder->counters().bytesDropped, 0u);
+    EXPECT_GT(decoder->framesDecoded(), 250u) << "8 s of 22 kHz MPEG-2 layer III (576 samples a frame)";
+    EXPECT_GT(frames, 400u);
 }
 
 /// V-4: ngsplay plays an S3M through the NeoTracker BIOS on the NeoGS. It uploads its loader (ngsldr.bin to #5100)
