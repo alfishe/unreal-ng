@@ -129,6 +129,7 @@ constexpr EnumInfo kOpts[] = {
     { "rom", "ROM / firmware version" },
     { "jp1", "jumper JP1" },
     { "decode", "port decode width" },
+    { "inhibit", "inhibit button" },
 };
 static_assert(sizeof(kOpts) / sizeof(kOpts[0]) == static_cast<std::size_t>(Opt::Count));
 
