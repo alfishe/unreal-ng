@@ -132,8 +132,8 @@ Not planned yet:
 - [x] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
   (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A): `NextMemory::SramTwin`, saved in the `NextSystemArea` blob
 - [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
-- [ ] The `NextState` golden: `testdata/slots/fitted-devices.txt` pins `62:<size>`, so every Next state change regenerates it; switch the
-  `next` block to presence only (`62:var`) or keep regenerating
+- [x] The `NextState` golden: `testdata/slots/fitted-devices.txt` pinned `62:<size>`, so every Next state change regenerated it; now
+  presence only (`62:var`, 2026-11-20), the layout guarded by the image version and `ttdnextstate_test.cpp` (design-ttd.md section 3)
 - [ ] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data
   file
 - [ ] SPED (the distribution's editor / assembler): blocked, no format documentation
