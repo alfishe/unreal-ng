@@ -77,8 +77,11 @@ public:
     /// A RETN completed: the DivMMC drops its automap and the button latch
     virtual void OnRetn() {}
     /// NR #02 bit 2 written 1 (by the CPU or the copper): the DRIVE button's NMI. True when the board took it (NR #06 bit 4 on, no
-    /// handler running); NR #02 bit 2 then reads 1 until it is written 0
+    /// handler running). NR #02 bit 2 reads 1 until it is written 0 whenever NmiAcceptsCause was true, taken or not
     virtual bool GenerateDriveNmi() { return false; }
+    /// zxnext.vhd nmi_accept_cause: no NMI is on its way (the NMI state machine idle or fetching). The NR #02 flags and the I/O trap
+    /// cause are taken only then
+    virtual bool NmiAcceptsCause() const { return true; }
     /// NR #02 bit 3 written 1: the M1 button's NMI (the Multiface; NextZXOS starts snapshots with it)
     virtual bool GenerateMultifaceNmi() { return false; }
 };

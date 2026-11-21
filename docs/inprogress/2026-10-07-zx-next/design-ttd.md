@@ -56,7 +56,9 @@ Layer 2 views, config mode; the slot table is rebuilt after a load), the video r
 copper (list, position, mode, clock, the held instruction), the DMA, the CTC, the interrupt controller, the I2C bus with the DS1307, the Multiface
 and DivMMC latches, the decoder's SD SPI and timing latches, the three AY chips with pan and mode bits and the four DACs, both SD cards' protocol
 state, the extended keys and both joystick pads. `NextSystemArea` is the 256 KB system area as plain bytes: the ROMs the firmware loads in config
-mode (pages 0-7) and the DivMMC RAM (pages 8-15). Measured (a program writing NextREGs, 9 checkpoints): 196 KB of history in all, i.e. the engine
+mode (pages 0-7) and the DivMMC RAM (pages 8-15), then (2026-11-20) the 24 KB SRAM side of banks 5 and 7 (`NextMemory::SramTwin`, pages
+`#0A`, `#0B`, `#0E`: what Layer 2 and NR `#04` reach under the ULA's block RAM; 280 KB in all, an older recording's 256 KB blob does not
+load). Measured (a program writing NextREGs, 9 checkpoints): 196 KB of history in all, i.e. the engine
 keeps an unchanged 4 KB piece once, so the 256 KB blob costs next to nothing per frame while it does not change. **Not in it:** the audio render
 clock (resyncs), the UARTs (not built), the media of the SD cards (the media rule).
 

@@ -34,15 +34,19 @@ private:
 };
 
 /// The system area (pages 0-15 of the SRAM, 256 KB): the ROMs (pages 0-7, which the firmware loads in config mode) and the DivMMC RAM (pages 8-15,
-/// where esxDOS and NextZXOS keep their work). It is not a RAM page of the page store, so it has its own blob, the plain bytes; the v2 engine
-/// keeps a state in pieces of 4 KB and stores only the pieces that changed, so a blob that hardly changes costs next to nothing per frame
+/// where esxDOS and NextZXOS keep their work), then the 24 KB SRAM side of banks 5 and 7 (NextMemory::SramTwin: what Layer 2 and the
+/// NR #04 mapping reach under the ULA's block RAM). Neither is a RAM page of the page store, so they have their own blob, the plain bytes;
+/// the v2 engine keeps a state in pieces of 4 KB and stores only the pieces that changed, so a blob that hardly changes costs next to
+/// nothing per frame
 class TTDNextSystemArea : public TTDSerializable
 {
 public:
     static constexpr unsigned kFirstPage = 0;
     static constexpr unsigned kPages = 16;       ///< NextMemory::kSystemAreaPages
     static constexpr unsigned kDivMmcRamPage = 8;  ///< NextMemory::DivMmcRamBank: SRAM #020000, pages 8-15
-    static constexpr size_t kBytes = kPages * 16384;
+    static constexpr size_t kAreaBytes = kPages * 16384;
+    static constexpr size_t kTwinBytes = 3 * 8192;  ///< NextMemory::kSramTwinBytes
+    static constexpr size_t kBytes = kAreaBytes + kTwinBytes;
 
     explicit TTDNextSystemArea(Memory& memory) : _memory(memory) {}
 
