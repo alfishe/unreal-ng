@@ -2,10 +2,15 @@
 #
 # Written by core/src/debugger/ttd/engine/ttdcontainer.cpp (the container) and
 # ttdsessionfile.cpp (the session in it); read by the same files and by the
-# analyzer (tools/verification/ttd-analyzer/src/ttdcontainer.py), which is the
-# machine-checked reader (tests/test_ttdcontainer.py against files the C++
-# writer produced, testdata/ttd/v2/). Design:
-# docs/inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md.
+# shared Python reader (tools/python/ttd/ttdlib/ttdcontainer.py, branches in
+# ttdlib/session.py), which is the machine-checked reader
+# (tools/verification/ttd-analyzer/tests/test_ttdcontainer.py against files
+# the C++ writer produced, testdata/ttd/v2/). This file itself is checked by
+# tools/verification/ttd-analyzer/scripts/check_ksy.py: the parser
+# kaitai-struct-compiler generates from it reads every fixture in testdata/ttd
+# and must agree with that reader and the C++ expectations. Design:
+# docs/inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md;
+# branches: docs/inprogress/2026-11-08-ttd-branches/storage.md.
 #
 # Schema 1 (v1's files) is not read any more: v1 and its schema went with
 # Phase 6 of the migration (2026-10-30); this file was engine/ttdsession.ksy
@@ -115,9 +120,16 @@ types:
         doc: |
           0 container (part ends), 1 pieces, 3 checkpoints, 5 events,
           6 configuration, 7 write journal, 13 bus reads, 14 bus writes,
-          15 bus vectors, 16 media (sector) reads; 0x0100-0x01FF frame-boundary
-          streams; 0x0200-0x02FF reserved (branches); 0x0300-0x03FF reserved (groups);
-          0x8000 + S the chunked twin of stream S (ancillary)
+          15 bus vectors, 16 media (sector) reads; 0x0100-0x013F frame-boundary
+          streams. The holder's streams (ancillary, opaque to the engine, written
+          whole with the last part): 8 coverage, 12 bookmarks, 17 controller facts,
+          18 branch state (payload_branch_state); 9-11 and 19-0xFF free for it.
+          Branches (ancillary, so a reader without them loads the trunk):
+          0x0200 the branch table (payload_branch_table), 0x0200 + S (0x0201-0x023F)
+          the twin of stream S for a branch's records (same layout, except the
+          pieces: payload_branch_pieces), 0x0240-0x027F the twins of the
+          frame-boundary streams; 0x0280-0x02FF reserved; 0x0300-0x03FF reserved
+          (groups); 0x8000 + S the chunked twin of stream S (ancillary)
       - id: layout_version
         type: u2
       - id: kind
@@ -384,6 +396,115 @@ types:
       - id: payload
         size: payload_size.value
 
+  payload_branch_pieces:
+    doc: |
+      Stream 0x0201 (a branch's pieces, TTD branches storage.md §3.3): as
+      stream 1, but a version may build on an ancestor's, so its base names
+      the line first. Versions are numbered per line from its first part (and
+      again at each part flagged as a file start)
+    seq:
+      - id: versions
+        type: branch_piece_version
+        repeat: eos
+
+  branch_piece_version:
+    seq:
+      - id: encoding
+        type: u1
+        doc: as piece_version
+      - id: depth
+        type: vlq
+      - id: base_line_plus_one
+        type: vlq
+        doc: the local id of the line holding the base + 1 (this line or an ancestor); 0 none
+      - id: base_number
+        type: vlq
+        if: base_line_plus_one.value != 0
+        doc: the base's number in that line
+      - id: content_crc
+        type: u4
+      - id: payload_size
+        type: vlq
+      - id: payload
+        size: payload_size.value
+
+  payload_branch_table:
+    doc: |
+      Stream 0x0200, in the first part of a branch (part_end.branch = the
+      branch): its creation. A session file holds create records only; the
+      folder index branches.tdx (a container of its own, stream 0x0200
+      "branch-index") also has source and delete records
+      (tools/python/ttd/ttdlib/folder.py)
+    seq:
+      - id: kind
+        type: u1
+        valid: 1
+        doc: 1 create
+      - id: line
+        type: vlq
+        doc: the branch's local id in the file (dense, the trunk 0)
+      - id: parent
+        type: vlq
+        doc: the parent's local id
+      - id: fork_frame
+        type: vlq
+      - id: fork_t
+        type: vlq
+        doc: T-state in the fork frame
+      - id: meta_size
+        type: vlq
+      - id: meta
+        size: meta_size.value
+        type: branch_record
+        if: meta_size.value > 0
+        doc: the controller's record of the branch (empty when the engine saved without a controller)
+
+  branch_record:
+    doc: The controller's branch record (WriteBranchRecord, ttdcontrollersessionfile.cpp)
+    seq:
+      - id: version
+        type: u1
+        valid: 1
+      - id: guid
+        size: 16
+      - id: name
+        type: str_vlq
+      - id: created_micros
+        type: u8
+        doc: host time, microseconds since 1970, UTC
+      - id: created_by
+        type: str_vlq
+      - id: run
+        type: str_vlq
+      - id: reason
+        type: str_vlq
+      - id: tag_count
+        type: vlq
+      - id: tags
+        type: str_vlq
+        repeat: expr
+        repeat-expr: tag_count.value
+      - id: note
+        type: str_vlq
+      - id: pinned
+        type: u1
+      - id: end_frame
+        type: vlq
+      - id: end_t
+        type: vlq
+
+  payload_branch_state:
+    doc: Stream 18 (holder, with branches only)
+    seq:
+      - id: version
+        type: u1
+        valid: 1
+      - id: active_line
+        type: vlq
+        doc: the local id of the branch active at save
+      - id: trunk
+        type: branch_record
+
   payload_checkpoints:
     doc: Stream 3
     seq:
@@ -649,10 +770,12 @@ types:
         size: size.value
 
   write_segment:
+    doc: A span (from, to] of globalT the journal covers (TTDJournalSegment)
     seq:
-      - id: from
+      - id: from_time
         type: u8
-      - id: to
+        doc: '`from` in C++; renamed: `from` is a keyword in Python and other targets'
+      - id: to_time
         type: u8
 
   # --- Basics ------------------------------------------------------------------

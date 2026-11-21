@@ -134,7 +134,7 @@ TTD files in other folders:
 | Hooks, journals, search | `timetravelhooks.*`, `ttdexternalevents.*`, `ttdinputjournal.*`, `ttdinputapply.*`, `ttdv1events.*` (input journal and events into the engine's log), `ttdwritejournal.*`, `ttdportjournal.*`, `ttdportsearch.*`, `ttdportdescribe.*`, `ttdportclassifier.h`, `ttdcoverageindex.*`, `ttdprobe.*` |
 | Device serializers | `ttdperipheralregistry.*`, `ttdmachineperipherals.*`, `ttdperipheralmask.h`, `ttdserializable.h`, chips at the top level (`ttdds12887`, `ttdpit8253`, `ttdppi8255`, `ttdusart8251`, `ttdwd1793context`); per platform in `atm/`, `gmx/`, `ide/`, `network/`, `next/`, `p2666/`, `plus3/`, `profi/`, `scorpion/`, `sprinter/`, `tsconf/` |
 | Benchmark harness | `bench/` (`ttdbench.*`, `ttdtimelinefixture.*`) |
-| File format | `ttd.ksy` (Kaitai, schema 2, `legacy_id` device table) |
+| File format | `ttd.ksy` (Kaitai, schema 2, `legacy_id` device table, branch and holder streams; checked against the fixtures by `tools/verification/ttd-analyzer/scripts/check_ksy.py`) |
 
 Outside it:
 
@@ -217,8 +217,6 @@ Open, by priority:
 | F8 | Port history flush and frame counter reset on snapshot load (next to TTD) | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | E3 | Frame counter in `/registers` (next to TTD; run answers done in `c3ab886b3`) | P3 | partly done | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | P1.S10 | Real-use sessions over days; quiet-machine A/B of C1d | - | open | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
-| P4.S6 | Kaitai-generated parser run against `ttd.ksy` (no compiler on the build host) | - | open (minor) | [v2 DONE, Phase 4](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-4--the-session-file) |
-| P7-info | `ttdtool info` shows no memory / disk tiers | - | open (minor) | [branches tools.md](../../../../inprogress/2026-11-08-ttd-branches/tools.md) |
 | RSI-cond | Conditions in reverse execution / read watchpoints via read coverage (blocker gone, re-check on v2) | - | open (re-check) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
 | RSI-models | Per-model TTD page sets from the configuration layer (`ResolveModelRamPages`) | - | open (re-check) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
 | RSI-wide | Prune wide (more than 16 KB) and page-wrapping ranges with the index | - | open (v1-era note) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
@@ -263,12 +261,12 @@ Not planned (owner decisions; do not propose again):
 
 Done since the index was collected: D3, the GS command log follows TTD moves (2026-11-20,
 [gs-debugger design §6.3](../../../../inprogress/2026-09-27-gs-debugger/design.md#63-the-command-log-f1-f1c-f3-f4-w1-w4),
-the generic part in [device-history.md](../device-history.md)).
+the generic part in [device-history.md](../device-history.md)). P4.S6, the Kaitai-generated parser run against `ttd.ksy` (2026-11-20: 38 fixtures, 0 disagree after four schema fixes; repeatable with `tools/verification/ttd-analyzer/scripts/check_ksy.py`, which skips without the compiler; [v2 DONE, Phase 4](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-4--the-session-file)).
 
 Checked and closed (stale notes; nothing left to do): branches on resume / edit in the past, a file continuing
 across a resume, branch operations in the UI (all done by TTD branches, ticked in the v2 DONE.md); the GS debugger's
 §8 heading (all landed); the 2026-07-19 index "Not started" rows (v1 history); "forks here" for eCat remote
-(`forks_here` is in the `branches` answer); PD-Q1 frame start vs end (answered by D13).
+(`forks_here` is in the `branches` answer); PD-Q1 frame start vs end (answered by D13); P7-info, `ttdtool info` without memory / disk tiers (2026-11-20: the tiers are runtime state since P3, no file records them; the live split is in `ttd status`, [branches tools.md](../../../../inprogress/2026-11-08-ttd-branches/tools.md)).
 
 ## Keeping this index current
 
