@@ -135,7 +135,10 @@ Not planned yet:
 - [x] ULANext full-ink paper / border is the NR #4A colour, not transparent (zxula.vhd 500-525; tbblue diff #11): an opaque ULA pixel, transparent only when NR #4A = NR #14; the paper of a non-solid mask too
 - [x] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
   (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A): `NextMemory::SramTwin`, saved in the `NextSystemArea` blob
-- [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
+- [x] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes (2026-11-20, 20
+  interleaved rounds + A/A: N2 cost the classic Debug frames +1.2 % (48K +2.5 %), N3b none; on master the out-of-line
+  `ReadDebugEffects` cost 2-5 %, now forced inline into `MemoryReadDebug`: Debug -2.9 %, Fast unchanged;
+  [ab-n2-n3c-2026-11-20.md](ab-n2-n3c-2026-11-20.md))
 - [x] The `NextState` golden: `testdata/slots/fitted-devices.txt` pinned `62:<size>`, so every Next state change regenerated it; now
   presence only (`62:var`, 2026-11-20), the layout guarded by the image version and `ttdnextstate_test.cpp` (design-ttd.md section 3)
 - [x] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data

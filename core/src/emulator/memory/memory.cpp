@@ -357,7 +357,8 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 /// The debug read's bookkeeping after the byte is fetched: access tracking, TTD coverage and probe, read
 /// breakpoints. physPage is the RAM page behind addr (kPhysPageNone for ROM). Shared with the derivatives that
 /// map memory their own way (NextMemory)
-void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage, uint8_t flip)
+__forceinline void Memory::ReadDebugEffectsInline(uint16_t addr, uint8_t result, bool isExecution,
+                                                  ttd::PhysPage physPage, uint8_t flip)
 {
     /// region <Memory access tracking>
     if (_memoryAccessTracker != nullptr)
@@ -425,6 +426,12 @@ void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, t
     /// endregion </Read breakpoint logic>
 }
 
+/// The out-of-line form for the derivatives (NextMemory)
+void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage, uint8_t flip)
+{
+    ReadDebugEffectsInline(addr, result, isExecution, physPage, flip);
+}
+
 // Implementation memory read method
 /// Used from: Z80::DbgMemIf
 /// \param addr 16-bit address in Z80 memory space
@@ -442,7 +449,9 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
 
     /// endregion </MemoryReadFast functionality>
 
-    ReadDebugEffects(addr, result, isExecution, TtdPageOfBank(static_cast<uint8_t>(addr >> 14)));
+    // Inlined: the call per debug read cost the classic machines 2-4 % of a debug frame
+    // (docs/inprogress/2026-10-07-zx-next/ab-n2-n3c-2026-11-20.md)
+    ReadDebugEffectsInline(addr, result, isExecution, TtdPageOfBank(static_cast<uint8_t>(addr >> 14)), 0);
 
     return result;
 }
