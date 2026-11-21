@@ -6,7 +6,7 @@ Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18
 for the card). P5.1, P5.4 (overlay only while paged in, card FDCs stepped behind a sleep flag), P5.5 done, landed
 e4399ec70 (2026-11-19); G+DOS writes (P4.6) 9761657f2. Build checks are left to the GitHub CI / Release runs.
 2026-11-20: P7 DISCiPLE (the card `disciple` on the +D's code, `48K-DISCIPLE` / `128K-DISCIPLE`, the GDOS 3d system
-disk `data/boot/disciple/gdos-3d-system.mgt`). Deferred: P0.6 (the PAL dump).
+disk `data/boot/disciple/gdos-3d-system.mgt`). P0.6 closed 2026-11-20: no chip to dump, no public dump; H-1, H-2, H-3, H-5 stay as decided.
 
 ## Phases
 
@@ -23,7 +23,9 @@ disk `data/boot/disciple/gdos-3d-system.mgt`). Deferred: P0.6 (the PAL dump).
 - [x] P0.5 Not needed: `plusdautostart_test.cpp` writes its work disks itself (`GdosDisk`: the system disk plus a
   BASIC `BORDER n` loop, or CODE only), one per plan. Was: fixture work disks into `testdata/machines/plusd/`; a
   128K-snapshot disk is written by the emulator (`SAVE` of a type 9 file via the snapshot button)
-- [ ] P0.6 PAL equations of `alice_pal20l8.ic4` if the dump can be found: settles H-1, H-2, H-3, H-5
+- [x] P0.6 PAL equations of `alice_pal20l8.ic4`: closed 2026-11-20 without a dump (the owner has no chip, none is
+  published); H-1, H-2, H-3, H-5 keep the answers in hardware-reference.md (Fuse traps, paged out after reset, full
+  low byte, MAME drive select), each a one-line change if a dump turns up
 
 ### P1: WD1772 variant and two controllers
 - [x] P1.1 `WdVariant`, constructor with ports / drives from the caller; register-level `ReadRegister` / `WriteRegister`.
