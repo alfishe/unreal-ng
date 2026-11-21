@@ -394,6 +394,21 @@ void TtdControls::frame_back()
     if (m_frame_back->isEnabled()) move("step-back", {}, tr("Frame Back"));
 }
 
+std::string TtdControls::run_back_condition(const std::vector<std::pair<unsigned int, std::string>> &breakpoints)
+{
+    std::string condition;
+    bool any = false;
+    for (const auto &[address, own] : breakpoints) {
+        std::string part = "PC == " + hex4(address).toStdString();
+        if (!own.empty()) {
+            part += " && (" + own + ")";
+            any = true;
+        }
+        condition += (condition.empty() ? "(" : " || (") + part + ")";
+    }
+    return any ? condition : std::string();
+}
+
 void TtdControls::run_back()
 {
     if (!m_shown || !m_live) return;
@@ -414,9 +429,15 @@ void TtdControls::run_back()
         if (inform) inform(tr("Run Back"), tr("Run Back stops at the breakpoints: there is none."), false);
         return;
     }
+    //Conditional breakpoints stop only where their condition holds, as they do running forward (and as the Qt Run
+    //Back passes them)
+    std::map<std::string, std::string> options{{"pcs", pcs.join(',').toStdString()}};
+    std::vector<std::pair<unsigned int, std::string>> conditions;
+    for (unsigned int a : addresses) conditions.emplace_back(a, cpu->breakpoint_condition(a));
+    if (std::string condition = run_back_condition(conditions); !condition.empty()) options["condition"] = condition;
     //Not found: the machine stays where it is and the answer says so (matched false)
     QJsonObject answer;
-    if (!move("reverse-continue", {{"pcs", pcs.join(',').toStdString()}}, tr("Run Back"), &answer)) return;
+    if (!move("reverse-continue", options, tr("Run Back"), &answer)) return;
     if (answer.value("matched").toBool())
         m_last_result = tr("Run Back: at the breakpoint %1").arg(hex4((unsigned int)answer.value("pc").toInteger()));
     else {

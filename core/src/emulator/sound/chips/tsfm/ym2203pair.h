@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "common/sound/filters/filter_decimator.h"
@@ -599,6 +600,70 @@ public:
     /// payload +15; fm_engine_base::save_restore). `chipsOffset` is where chip 0's payload sits in the owner's
     /// blob (the TSFM: after its 50-byte header; the pair's own blob: kStateChipsOffset). The ratio phase is a
     /// remainder, not a counter: no time field
+    /// One chip's payload as named fields (TTDSerializable::TTDDescribeFields) under `prefix` ("fm0."), at `base`:
+    /// the latch, the FM clock phase, timers and busy countdown (counters), ymfm's engine (fm_engine_base::save_restore:
+    /// the registers, status and IRQ state as data; the envelope counter, clock count, the last output, the channels'
+    /// feedback, every operator's phase and envelope position and the prepare scheduling as counters; ymfm's own SSG
+    /// and resampler, which the chip's AY replaces, as one counter block) and the SSG half (the AY layout, "ssg.")
+    static void TTDChipFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base)
+    {
+        using ttd::AddStateField;
+        constexpr uint8_t kCounter = ttd::kStateFieldCounter;
+        AddStateField(out, prefix, base, "address", 0, 1);
+        AddStateField(out, prefix, base, "clock_phase", 1, 4, kCounter);
+        AddStateField(out, prefix, base, "timer_a", 5, 4, kCounter);
+        AddStateField(out, prefix, base, "timer_b", 9, 4, kCounter);
+        AddStateField(out, prefix, base, "busy", 13, 4, kCounter);
+        AddStateField(out, prefix, base, "ymfm_size", 17, 2);
+        const uint32_t y = base + kChipYmfmOffset;
+        AddStateField(out, prefix, y, "ymfm.address", 0, 1);
+        AddStateField(out, prefix, y, "ymfm.last_output", 1, 4, kCounter);
+        AddStateField(out, prefix, y, "ymfm.env_counter", 5, 4, kCounter);
+        AddStateField(out, prefix, y, "ymfm.status", 9, 1);
+        AddStateField(out, prefix, y, "ymfm.clock_prescale", 10, 1);
+        AddStateField(out, prefix, y, "ymfm.irq_mask", 11, 1);
+        AddStateField(out, prefix, y, "ymfm.irq_state", 12, 1);
+        AddStateField(out, prefix, y, "ymfm.timer_running", 13, 2);
+        AddStateField(out, prefix, y, "ymfm.total_clocks", 15, 1, kCounter);
+        AddStateField(out, prefix, y, "ymfm.registers", 16, 256);
+        AddStateField(out, prefix, y, "ymfm.channel_feedback", 272, 3 * 6, kCounter);
+        static const char* const kOps[12][4] = {
+            {"ymfm.op[0].phase", "ymfm.op[0].envelope", "ymfm.op[0].key", "ymfm.op[0].keyon"},
+            {"ymfm.op[1].phase", "ymfm.op[1].envelope", "ymfm.op[1].key", "ymfm.op[1].keyon"},
+            {"ymfm.op[2].phase", "ymfm.op[2].envelope", "ymfm.op[2].key", "ymfm.op[2].keyon"},
+            {"ymfm.op[3].phase", "ymfm.op[3].envelope", "ymfm.op[3].key", "ymfm.op[3].keyon"},
+            {"ymfm.op[4].phase", "ymfm.op[4].envelope", "ymfm.op[4].key", "ymfm.op[4].keyon"},
+            {"ymfm.op[5].phase", "ymfm.op[5].envelope", "ymfm.op[5].key", "ymfm.op[5].keyon"},
+            {"ymfm.op[6].phase", "ymfm.op[6].envelope", "ymfm.op[6].key", "ymfm.op[6].keyon"},
+            {"ymfm.op[7].phase", "ymfm.op[7].envelope", "ymfm.op[7].key", "ymfm.op[7].keyon"},
+            {"ymfm.op[8].phase", "ymfm.op[8].envelope", "ymfm.op[8].key", "ymfm.op[8].keyon"},
+            {"ymfm.op[9].phase", "ymfm.op[9].envelope", "ymfm.op[9].key", "ymfm.op[9].keyon"},
+            {"ymfm.op[10].phase", "ymfm.op[10].envelope", "ymfm.op[10].key", "ymfm.op[10].keyon"},
+            {"ymfm.op[11].phase", "ymfm.op[11].envelope", "ymfm.op[11].key", "ymfm.op[11].keyon"},
+        };
+        for (uint32_t op = 0; op < 12; ++op)
+        {
+            const uint32_t at = 290 + op * 10;   // phase u32, attenuation u16, state u8, ssg inverted u8, key, keyon
+            AddStateField(out, prefix, y, kOps[op][0], at, 4, kCounter);
+            AddStateField(out, prefix, y, kOps[op][1], at + 4, 4, kCounter);   // attenuation, state, ssg inverted
+            AddStateField(out, prefix, y, kOps[op][2], at + 8, 1);
+            AddStateField(out, prefix, y, kOps[op][3], at + 9, 1);
+        }
+        AddStateField(out, prefix, y, "ymfm.prepare", 410, 12, kCounter);
+        AddStateField(out, prefix, y, "ymfm.ssg", 422, static_cast<uint32_t>(kYmfmStateSize) - 422, kCounter);
+        SoundChip_AY8910::TTDFields(out, prefix + "ssg.", y + static_cast<uint32_t>(kYmfmStateSize));
+    }
+    /// The timeline tail at `base` as named fields: the render cursor (a counter) and the pending SSG writes per chip
+    static void TTDTimelineFields(ttd::TTDStateFieldList& out, uint32_t base)
+    {
+        constexpr uint32_t kQueue = 1 + static_cast<uint32_t>(SsgWriteQueue::kCapacity) * (4 + 1 + 1);
+        ttd::AddStateField(out, "", base, "render_cursor", 0, 8, ttd::kStateFieldCounter);
+        ttd::AddStateField(out, "", base, "ssg_queue[0].count", 8, 1);
+        ttd::AddStateField(out, "", base, "ssg_queue[0].writes", 9, kQueue - 1);
+        ttd::AddStateField(out, "", base, "ssg_queue[1].count", 8 + kQueue, 1);
+        ttd::AddStateField(out, "", base, "ssg_queue[1].writes", 9 + kQueue, kQueue - 1);
+    }
+
     static void TTDTimeFields(std::vector<ttd::TTDTimeField>& out, uint16_t chipsOffset)
     {
         for (uint16_t chip = 0; chip < 2; ++chip)

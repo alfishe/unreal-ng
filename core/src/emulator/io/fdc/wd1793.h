@@ -1549,6 +1549,10 @@ public:
         d.timeFields = {{22, 8}, {30, 8}, {114, 8}};
         return d;
     }
+    /// The controller's layout as named fields (the table in wd1793.cpp) and the four drives under "fdd[n].";
+    /// its clocks, delays, index pulses and the motor countdown are counters. The +D card appends them at its offset
+    static void TTDFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base);
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override { TTDFields(out, "", 0); }
     /// endregion </TTDSerializable interface>
 };
 

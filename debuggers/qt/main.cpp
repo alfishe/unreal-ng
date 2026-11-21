@@ -1154,6 +1154,40 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         check(made != 0 && ttd->delete_branch(made), "ttd: delete the branch (switches to the trunk first)");
         ttd->call("branches", {}, &list);
         check(list.value("branches").toArray().size() < 2, "ttd: one line of history again");
+        // Run Back honours breakpoint conditions (set as another client sets them: eCat has no condition editor)
+        check(TtdControls::run_back_condition({{0x8000, ""}}).empty() &&
+                  TtdControls::run_back_condition({{0x8000, "A == 5"}, {0x9000, ""}}) ==
+                      "(PC == #8000 && (A == 5)) || (PC == #9000)",
+              "ttd: Run Back's condition from the breakpoints'");
+        if (past >= 6) {
+            ttd->call("seek", {{"frame", std::to_string(past - 6)}}, nullptr);
+            ttd->poll(true);
+            const unsigned int pc = cpu->get_pc();
+            const std::vector<unsigned int> kept = cpu->get_breakpoints();
+            cpu->clear_breakpoints();
+            cpu->add_breakpoint(pc);
+            std::string error;
+            const auto inform = ttd->inform;
+            ttd->inform = [](const QString &, const QString &, bool) {};   // the answer is read from last_result
+            if (UnrealMachineSetBreakpointCondition(m, pc, "FRAME > 100000000", error)) {
+                ttd->call("seek", {{"frame", std::to_string(past)}}, nullptr);
+                ttd->poll(true);
+                const uint64_t at = frame();
+                ttd->run_back();
+                check(frame() == at && ttd->last_result().contains("no breakpoint"),
+                      "ttd: Run Back with a condition that never holds: nothing moved");
+                UnrealMachineSetBreakpointCondition(m, pc, "FRAME >= 0", error);
+                ttd->run_back();
+                check(frame() < at && cpu->get_pc() == pc && ttd->last_result().contains("at the breakpoint"),
+                      "ttd: Run Back with a condition that holds: at the breakpoint");
+                if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+            } else {
+                printf("  %-52s %s (%s)\n", "ttd: Run Back with a condition", "skipped", error.c_str());
+            }
+            ttd->inform = inform;
+            cpu->clear_breakpoints();
+            for (unsigned int a : kept) cpu->add_breakpoint(a);
+        }
         if (gs != nullptr) {
             // In the history, a few frames in: the card's own positions
             ttd->call("seek", {{"frame", std::to_string(past)}}, nullptr);

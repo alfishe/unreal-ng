@@ -154,5 +154,13 @@ operations pay nothing extra.
 - Machine state for a frame target stays at the frame's start (checkpoint);
   only the picture is the frame's final one. Revisit if the debugger should
   show registers at the frame's end instead.
-- "Same T-state in the next frame" (the old frame-step behavior) is no longer
-  available; add it as an explicit debugger operation if needed.
+- "Same T-state in the next frame" (the old frame-step behavior): closed
+  2026-11-21 (PD-Q2) without a new operation, `seek` already does it in one call
+  on every plane with frame + 1 and the T wanted: CLI `ttd seek <F+1> <T>`, REST
+  `POST /api/v1/emulator/{id}/ttd/seek {"frame": F+1, "tinframe": T}` (a
+  WebSocket `call` of the same route), MCP `time_travel` `{"action": "seek",
+  "frame": F+1, "tinframe": T}`, Lua `ttd_seek(F+1, T)`, Python
+  `emu.ttd_seek(F+1, T)`. It lands on the first instruction boundary at or after
+  T; pass the T asked for again, not the `arrived_at` T, so the overshoot does not
+  grow as it did in the old frame step (§1). Test:
+  `TTDControl_Test.TheSameTStateInTheNextFrameIsOneSeek`.

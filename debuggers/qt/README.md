@@ -34,7 +34,7 @@ both route the group to a sound card's CPU when its tab is in front: Embedded ha
 |--------|-----|------|
 | Step Back | Shift+F7 | `step-instruction {dir: back}` |
 | Step Over Back | Shift+F8 | `reverse-step-over` |
-| Run Back | Shift+F9 | `reverse-continue {pcs}`: the main CPU's breakpoints |
+| Run Back | Shift+F9 | `reverse-continue {pcs, condition}`: the main CPU's breakpoints; a breakpoint's condition (set by another client: unreal-qt, WebAPI, MCP) joined in, so it stops only where the condition holds, as running forward |
 | Frame Back | - | `step-back` |
 | Branch Here / Continue Rec | - | `seek` to the end when needed, then `resume` |
 

@@ -1559,6 +1559,9 @@ local d = ttd_diff{from_frame = 1201, to_frame = 1204, sections = "cpu,memory"}
 --   memory = {changed = 2, pages = 1, ranges = { {region = "ram", page = 2, offset = 0x2000, address = 0xA000,
 --   length = 1, changed = 1, before = {3}, after = {6}, last_write = {frame = 1203, tinframe = 71, pc = 0x800C,
 --   address = 0xA000, text = "inc (hl)"}}, ... }, more = 0}, writer_searches = 2, ms = ... }
+-- With sections "devices": devices = {changed = { {name = "ay-socket.ts", bytes = 325, changed = 9, counters_only = false,
+--   fields = { {name = "ay0.R8", offset = 9, size = 1, changed = 1, before = 0, after = 15},
+--   {name = "ay0.tone_a.counter", ..., counter = true}, ... }}, ... }, same = 4, counters_only = 2}
 
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,

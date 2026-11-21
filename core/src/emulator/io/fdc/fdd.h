@@ -222,6 +222,10 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+    /// The 27-byte layout as named fields (fdd.cpp); the index signal, the motor countdown and the rotation are
+    /// counters. The controller appends them under "fdd[n]."
+    static void TTDFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base);
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override { TTDFields(out, "", 0); }
     /// endregion </TTDSerializable interface>
 
     /// region <Helper methods>

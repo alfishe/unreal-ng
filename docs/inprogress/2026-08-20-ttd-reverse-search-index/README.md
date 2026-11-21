@@ -401,8 +401,14 @@ the old 65 / 76 ms note (§8) still holds. Test:
   `NoHitLeavesTheMachineWhereItWas`,
   `TTD_ReverseContinueCondition_Test.BadConditionsAreRefused`, and the Qt
   `RunBackHonoursBreakpointConditions`.
-* Left: eCat Run Back (`debuggers/qt/ecat/dialogs/debugger/ttdcontrols.cpp`) does not
-  pass breakpoint conditions yet. GDB `bc` does not need them, because gdb checks
+* eCat Run Back (`debuggers/qt/ecat/dialogs/debugger/ttdcontrols.cpp`, RSI-cond-ecat,
+  2026-11-21) passes them too: each breakpoint address with its condition
+  (`CPU::breakpoint_condition`: the core's `BreakpointManager` on the embedded machine,
+  the REST breakpoint list's `condition` on a remote one) joined into one `condition`
+  (`(PC == #8000 && (A == 5)) || (PC == #9000)`, `TtdControls::run_back_condition`);
+  none with a condition sends the pcs alone, as before. Checked by
+  `unreal-debugger --self-check` (a condition that never holds: nothing moves; one that
+  holds: at the breakpoint). GDB `bc` does not need them, because gdb checks
   conditions itself.
 
 ### 5.4 RSI-models: per-model page sets (checked and closed)

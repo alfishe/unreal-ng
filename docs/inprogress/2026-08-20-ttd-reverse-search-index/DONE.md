@@ -20,8 +20,8 @@ The README §5 leftovers, with numbers and tests in [README §5](README.md#5-not
 - **RSI-bpset**: done. Reverse continue decodes a frame once for all its PCs. The rest (offset
   aliasing past a few PCs: 16 PCs 286 against 332 ms) is inherent to the index, not worth it.
 - **RSI-cond**: done. Read watchpoints from read coverage were already in place; `reverse-continue`
-  takes a `condition` on every plane, and the Qt Run Back passes breakpoint conditions. eCat Run
-  Back is a follow-up.
+  takes a `condition` on every plane, and the Qt Run Back passes breakpoint conditions; eCat Run
+  Back too since 2026-11-21 (RSI-cond-ecat).
 - **RSI-models**: checked and closed. The v1 blockers are gone. The lost warning for a page past the
   bound is back, as a counter, with a sweep over every creatable model.
 - **RSI-zone**: not worth it. The worst case it would remove is a full journal scan (2.88 M records

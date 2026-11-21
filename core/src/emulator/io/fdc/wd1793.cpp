@@ -4485,6 +4485,80 @@ size_t WD1793::TTDStateSize() const
     return kFdcSubsystemStateSize;
 }
 
+void WD1793::TTDFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base)
+{
+    using ttd::AddStateField;
+    constexpr uint8_t kCounter = ttd::kStateFieldCounter;
+    struct Field
+    {
+        const char* name;
+        uint32_t offset;
+        uint32_t size;
+        uint8_t flags;
+    };
+    static constexpr Field kFields[] = {
+        {"command", 0, 1, 0},
+        {"track", 1, 1, 0},
+        {"sector", 2, 1, 0},
+        {"data", 3, 1, 0},
+        {"status", 4, 1, 0},
+        {"beta128", 5, 1, 0},
+        {"beta128_status", 6, 1, 0},
+        {"ext_status", 7, 1, 0},
+        {"drive", 8, 1, 0},
+        {"side", 9, 1, 0},
+        {"last_command", 10, 1, 0},
+        {"last_command_value", 11, 1, 0},
+        {"state", 12, 1, 0},
+        {"state2", 13, 1, 0},
+        {"delay", 14, 8, kCounter},
+        {"time", 22, 8, kCounter},
+        {"last_time", 30, 8, kCounter},
+        {"diff_time", 38, 8, kCounter},
+        {"load_head", 46, 1, 0},
+        {"verify_seek", 47, 1, 0},
+        {"stepping_rate", 48, 1, 0},
+        {"step_direction_in", 49, 1, 0},
+        {"step_counter", 50, 8, 0},
+        {"head_loaded", 58, 1, 0},
+        {"sector_size", 59, 2, 0},
+        {"bytes_to_read", 61, 4, 0},
+        {"bytes_to_write", 65, 4, 0},
+        {"deleted_data_mark", 69, 1, 0},
+        {"buffer_index", 70, 8, 0},
+        {"crc", 78, 2, 0},
+        {"crc_start", 80, 8, 0},
+        {"index", 88, 1, kCounter},
+        {"prev_index", 89, 1, kCounter},
+        {"index_pulse_start", 90, 8, kCounter},
+        {"index_pulses", 98, 8, kCounter},
+        {"wait_index_pulses", 106, 8, 0},
+        {"motor_timeout", 114, 8, kCounter},
+        {"drq_served", 122, 1, 0},
+        {"lost_data", 123, 1, 0},
+        {"crc_error", 124, 1, 0},
+        {"record_not_found", 125, 1, 0},
+        {"write_fault", 126, 1, 0},
+        {"write_protect", 127, 1, 0},
+        {"seek_error", 128, 1, 0},
+        {"intrq", 129, 1, 0},
+        {"drq", 130, 1, 0},
+        {"interrupt_conditions", 131, 1, 0},
+        {"prev_ready", 132, 1, 0},
+        {"sleeping", 133, 1, 0},
+        {"wake_time", 134, 8, 0},
+        {"fifo_depth", 142, 1, 0},
+        {"clock_policy", 143, 1, 0},
+        {"fdc_clock", 144, 1, 0},
+        {"data_rate", 145, 1, 0},
+    };
+    for (const Field& f : kFields)
+        AddStateField(out, prefix, base, f.name, f.offset, f.size, f.flags);
+    static const char* const kDrives[4] = {"fdd[0].", "fdd[1].", "fdd[2].", "fdd[3]."};
+    for (uint32_t i = 0; i < 4; ++i)
+        FDD::TTDFields(out, prefix + kDrives[i], base + static_cast<uint32_t>(kControllerStateSize) + i * 27u);
+}
+
 void WD1793::TTDSaveState(uint8_t* dst) const
 {
     uint8_t* cur = dst;

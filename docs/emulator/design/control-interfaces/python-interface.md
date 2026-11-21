@@ -2013,6 +2013,8 @@ d = emu.ttd_diff(1201, to_frame=1204, sections='cpu,memory')
 #  'memory': {'changed': 2, 'pages': 1, 'ranges': [{'region': 'ram', 'page': 2, 'offset': 8192, 'address': 40960,
 #   'length': 1, 'before': [3], 'after': [6], 'last_write': {'frame': 1203, 'pc': 32780, 'text': 'inc (hl)', ...}}],
 #   'more': 0}, 'writer_searches': 2, 'ms': ...}
+# sections='devices': 'devices': {'changed': [{'name': 'ay', 'counters_only': False, 'fields': [{'name': 'ay0.R8',
+#  'before': 0, 'after': 15, ...}, {'name': 'ay0.tone_a.counter', 'counter': True, ...}], ...}], 'counters_only': 2}
 
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,

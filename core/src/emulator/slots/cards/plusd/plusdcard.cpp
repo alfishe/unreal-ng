@@ -90,6 +90,27 @@ public:
         d.timeFields = { { fdc + 22, 8 }, { fdc + 30, 8 }, { fdc + 114, 8 } };
         return d;
     }
+    /// The card's latches, its RAM, the WD1772 (the WD1793 layout under "fdc.") and the transfer context
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override
+    {
+        using ttd::AddStateField;
+        AddStateField(out, "", 0, "version", 0, 1);
+        AddStateField(out, "", 0, "paged", 1, 1);
+        AddStateField(out, "", 0, "control", 2, 1);
+        AddStateField(out, "", 0, "printer_data", 3, 1);
+        AddStateField(out, "", 0, "strobe", 4, 1);
+        AddStateField(out, "", 0, "strobe_first_edge", 5, 1);
+        AddStateField(out, "", 0, "printed_bytes", 6, 4);
+        AddStateField(out, "", 0, "last_printed", 10, 1);
+        AddStateField(out, "", 0, "no_drive_selected", 11, 1);
+        AddStateField(out, "", 0, "spin_up_done_at", 12, 8);
+        constexpr uint32_t ram = static_cast<uint32_t>(PlusDCard::kStateRamOffset);
+        constexpr uint32_t fdc = static_cast<uint32_t>(PlusDCard::kStateFdcOffset);
+        AddStateField(out, "", 0, "ram", ram, fdc - ram);
+        WD1793::TTDFields(out, "fdc.", fdc);
+        AddStateField(out, "", 0, "fdc.transfer_context", fdc + static_cast<uint32_t>(PlusDCard::kStateFdcSize),
+                      static_cast<uint32_t>(PlusDCard::kStateFdcContextSize));
+    }
 
 private:
     PlusDCard& _card;

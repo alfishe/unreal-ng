@@ -1,6 +1,7 @@
 # TTD diff of two moments: plan
 
-**Status 2026-11-03:** done on all six planes; measured; accepted.
+**Status 2026-11-03:** done on all six planes; measured; accepted. 2026-11-21: the devices section names the fields
+that changed and tells free-running counters apart ("Device fields").
 
 ## Steps
 
@@ -58,5 +59,31 @@ faster than the old loop.
 - Green Beret in play compared: the stack, the game variables (`#A13C` by `ld (#A13C),sp`), the screen pixels by
   `ldi`; the same ranges as `memory_diff` + `find_last`. Done.
 - One call against 18-74; 1.8-9.6x fewer bytes, 6.3-17.4x less MCP text, 2.9-47x faster. Accepted.
-- Known limit: a device with running counters (the AY's phases) shows as changed at almost any two moments; the
-  section lists which devices to look at, not what changed in them.
+- Known limit (closed 2026-11-21, "Device fields" below): a device with running counters (the AY's phases) showed
+  as changed at almost any two moments, and the section listed which devices to look at, not what changed in them.
+
+## Device fields (2026-11-21, the DM limit)
+
+The devices section names the fields that changed inside each device and tells counters apart
+([design.md](design.md#the-sections), the devices bullet):
+
+| # | Step | State |
+|---|------|-------|
+| F1 | `TTDSerializable::TTDDescribeFields` (name, offset, size, `kStateFieldCounter`): a device's blob as named fields, asked only by queries | Done |
+| F2 | Layouts: AY-3-8912 (`SoundChip_AY8910::TTDFields`), TurboSound (`ay0.` / `ay1.`, the SSG queues, the render phases), TSFM (`fm0.` / `fm1.`: the latch, timers, ymfm's registers, operators and counters, the SSG halves `fm0.ssg.`), WD1793 with its drives (`fdd[n].`), the +D card (`fdc.`), Covox | Done |
+| F3 | `TTDDiffDeviceFields`: generic over the layout; declared time fields are counters (one inside a larger field split out); bytes no field covers as `@offset` ranges; counters after the other fields, a device whose counters alone moved after the others; `limit` per device's fields | Done |
+| F4 | Reply: per device `described`, `counters_only`, `fields_changed`, `counters_changed`, `fields[] {name, offset, size, changed, counter, before, after}`, `more_fields`; `devices.counters_only`; the text one line per device (`ay0.R8 #00->#0F; counters: ...`, `only counters: ...`). All planes carry it (they pass the verb's reply); docs chain and OpenAPI updated | Done |
+
+Tests (`ttddiffmoments_test.cpp`):
+
+| # | What |
+|---|------|
+| D8 | The AY layout: R7 a field with both values, the tone and envelope counters after it, little endian; counters alone are `only counters`; the limit bounds the list, the counts stay whole |
+| D9 | The disk controller: track, status, a drive's track; the clock (a declared time field) and a drive's rotation as counters |
+| D10 | No layout: `@offset` ranges joined over small gaps, a time field a counter of its own; a time field inside a larger field split out (`engine+8`) |
+| D11 | A live Covox: a frame without writes moves only the idle countdowns; an OUT to `#FB` is `dac[n]` with its value |
+| D12 | A recording on a Pentagon (the socket's TurboSound or TSFM): the AY register the program wrote (`ay0.R8` / `fm0.ssg.R8 #00->#0F`) in the diff; later, with the program idle, every described device differs in counters at most, and those come last |
+| D13 | The layouts (AY, WD1793, TurboSound, TSFM, Covox) cover their blobs byte for byte; every declared time field is a counter field of its own |
+
+Other devices name no fields yet: their changes show as `@offset` ranges, their declared time fields as counters; a
+device gets named fields by overriding `TTDDescribeFields` (nothing in the diff changes).

@@ -3,7 +3,8 @@
 > TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
 
 **Status 2026-11-03:** done on all six planes, measured and accepted ([plan.md](plan.md)): 1 call instead of 18-74,
-6.3-17.4x less MCP text, any T inside a frame. The fourth item of the agent UX roadmap, after the cause chain
+6.3-17.4x less MCP text, any T inside a frame. 2026-11-21: the devices section names the fields that changed
+inside each device and lists free-running counters apart ([plan.md](plan.md#device-fields-2026-11-21-the-dm-limit)). The fourth item of the agent UX roadmap, after the cause chain
 ([2026-11-02-ttd-cause-chain](../2026-11-02-ttd-cause-chain/README.md)), find event
 ([2026-11-02-ttd-find-event](../2026-11-02-ttd-find-event/README.md)) and explain frame
 ([2026-11-02-ttd-explain-frame](../2026-11-02-ttd-explain-frame/README.md)). Accepted only if WebAPI / MCP

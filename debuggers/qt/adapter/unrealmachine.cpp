@@ -610,6 +610,20 @@ public:
         std::sort(r.begin(), r.end());
         return r;
     }
+    std::string breakpoint_condition(unsigned int address) override
+    {
+        // Several breakpoints at one address: it stops where any of them holds; one without a condition always
+        std::string condition;
+        BreakpointManager * bm = breakpoints();
+        if (bm == nullptr) return condition;
+        for (const auto &b : bm->GetAllBreakpoints()) {
+            const BreakpointDescriptor &d = *b.second;
+            if (!is_user_execution(d) || d.z80address != (address & 0xFFFF)) continue;
+            if (!d.condition) return {};
+            condition += (condition.empty() ? "(" : " || (") + d.condition->Canonical() + ")";
+        }
+        return condition;
+    }
     void add_run_to(unsigned int address)
     {
         BreakpointManager * bm = breakpoints();
@@ -1256,6 +1270,25 @@ uint64_t UnrealMachineFrames(ecatshim::Emulator * e)
 ecatshim::DisAsm * CreatePlainZ80DisAsm()
 {
     return new Z80DisAsm(nullptr, false);
+}
+
+bool UnrealMachineSetBreakpointCondition(ecatshim::Emulator * e, unsigned int address, const std::string &condition,
+                                         std::string &error)
+{
+    auto * m = dynamic_cast<UnrealMachine *>(e);
+    BreakpointManager * bm = m ? m->core()->GetBreakpointManager() : nullptr;
+    if (bm == nullptr) {
+        error = "no machine";
+        return false;
+    }
+    for (const auto &b : bm->GetAllBreakpoints()) {
+        const BreakpointDescriptor &d = *b.second;
+        if (d.type == BRK_MEMORY && (d.memoryType & BRK_MEM_EXECUTE) && !d.isRange && d.owner != kRunToOwner &&
+            d.z80address == (address & 0xFFFF))
+            return bm->SetBreakpointCondition(b.first, condition, error);
+    }
+    error = "no breakpoint there";
+    return false;
 }
 
 std::string UnrealMachineId(ecatshim::Emulator * e)

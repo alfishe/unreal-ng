@@ -1714,14 +1714,18 @@
             "lists what differs: the registers, the port latches and the 8K slot mapping, the RAM changed in ranges "
             "(the screen's pixels and attributes one range each, the rest per page with gaps of 16 bytes or less; "
             "ranges of 8 bytes or less with their bytes at both moments) with the last CPU write in between (the "
-            "write journal: time, PC, instruction), the screen and border, the devices whose state differs, and what "
+            "write journal: time, PC, instruction), the screen and border, the devices whose state differs with the "
+            "fields that changed inside each (named where the device describes its state, else byte ranges; free-running "
+            "counters such as tone phases and clocks flagged and listed after the rest, a device whose counters alone "
+            "moved said so and listed last), and what "
             "happened in between (frames, T, keys held and pressed, markers, a replay barrier). The machine goes back "
             "where it stood; a live recording pauses for browsing. Reply: from {frame, tinframe}, to, backwards, "
             "registers[] {name, before, after}, latches[], slots[] {address, before, after, before_other_half, "
             "after_other_half}, memory {changed, pages, ranges[] {region, page, offset, address, length, changed, "
             "before[], after[], last_write {frame, tinframe, pc, address, text}, no_cpu_write}, more}, screen {bytes, "
             "pixels_changed, attributes_changed, switched, border_before, border_after}, devices {changed[] {name, "
-            "bytes, changed}, more, same}, between {frames, t, keys_held[], keys[] {frame, tinframe, key, pressed}, "
+            "bytes, changed, described, counters_only, fields_changed, counters_changed, fields[] {name, offset, size, "
+            "changed, counter, before, after}, more_fields}, more, same, counters_only}, between {frames, t, keys_held[], keys[] {frame, tinframe, key, pressed}, "
             "more_keys, markers[], barrier}, writer_searches, ms, text (text=true).";
         op["parameters"][0]["name"] = "id";
         op["parameters"][0]["in"] = "path";

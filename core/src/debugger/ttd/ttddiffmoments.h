@@ -7,7 +7,8 @@
 /// The machine is replayed to each moment (any T inside a frame) and its whole state taken there: the CPU, the port
 /// latches, the slot mapping, every RAM byte and every registered device's state. The answer lists what differs: the
 /// registers, the latches and the mapping, the RAM changed in ranges per region with their values and the last write
-/// in between (the write journal), the screen and border, the devices, and what happened in between (time, keys,
+/// in between (the write journal), the screen and border, the devices with the fields that changed inside them
+/// (TTDSerializable::TTDDescribeFields; free-running counters apart), and what happened in between (time, keys,
 /// markers). TimeTravelController::QueryDiffMoments builds it and puts the machine back where it stood.
 
 #include <cstdint>
@@ -16,6 +17,7 @@
 
 #include "debugger/ttd/ttdcheckpoint.h"   // TTDTimePoint
 #include "debugger/ttd/ttdphyspage.h"
+#include "debugger/ttd/ttdserializable.h"   // TTDStateFieldList, TTDTimeField
 
 namespace ttd
 {
@@ -96,12 +98,38 @@ struct TTDDiffRange
     bool writerUnknown = false;        ///< searched, none found in between (a device, DMA, or a barrier stopped it)
 };
 
+/// A field of a device's state that differs (the device's TTDDescribeFields), or a range of bytes no field names
+struct TTDDiffField
+{
+    std::string name;                  ///< "R7", "fdd[0].track"; "@26" for bytes no field covers (offset 26)
+    uint32_t offset = 0;               ///< in the state
+    uint32_t size = 0;
+    uint32_t changed = 0;              ///< bytes that differ
+    bool counter = false;              ///< free-running (kStateFieldCounter or a declared time field)
+    bool hasValues = false;            ///< 8 bytes or less: the values at both moments (little endian)
+    uint64_t before = 0;
+    uint64_t after = 0;
+};
+
 struct TTDDiffDevice
 {
     std::string name;                  ///< the device's instance name ("ay-socket.ts")
     uint32_t bytes = 0;                ///< its state's size
     uint32_t changed = 0;              ///< bytes that differ
+    bool described = false;            ///< the device names its fields; else only time fields and byte ranges
+    std::vector<TTDDiffField> fields;  ///< what differs: the other fields first, then the counters (at most limit)
+    uint32_t moreFields = 0;
+    uint32_t fieldsChanged = 0;        ///< fields and byte ranges that differ, counters not included
+    uint32_t countersChanged = 0;      ///< counters that differ
+    bool CountersOnly() const { return fieldsChanged == 0 && countersChanged > 0; }
 };
+
+/// Which fields of one device's state differ between @p before and @p after: the layout's fields (@p layout, may be
+/// empty), the declared time fields as counters (a time field inside a larger field is a field of its own), the
+/// bytes no field covers as `@offset` ranges. At most @p limit fields listed, the rest counted in moreFields
+void TTDDiffDeviceFields(const TTDStateFieldList& layout, const std::vector<TTDTimeField>& timeFields,
+                         const std::vector<uint8_t>& before, const std::vector<uint8_t>& after, uint32_t limit,
+                         TTDDiffDevice& out);
 
 struct TTDDiffKey
 {
@@ -134,9 +162,10 @@ struct TTDDiffMomentsResult
     uint8_t borderBefore = 0;
     uint8_t borderAfter = 0;
 
-    std::vector<TTDDiffDevice> devices;
+    std::vector<TTDDiffDevice> devices;  ///< those with other changes first, then those whose counters alone moved
     uint32_t moreDevices = 0;
     uint32_t devicesSame = 0;
+    uint32_t devicesCountersOnly = 0;    ///< changed devices (listed or not) whose counters alone differ
 
     // between
     uint64_t frames = 0;

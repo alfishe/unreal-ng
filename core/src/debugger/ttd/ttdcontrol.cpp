@@ -5351,12 +5351,36 @@ TTDReply TTDControlBackend::DiffMoments(const TTDRequest& request)
             n["name"] = d.name;
             n["bytes"] = d.bytes;
             n["changed"] = d.changed;
+            n["described"] = d.described;
+            n["counters_only"] = d.CountersOnly();
+            n["fields_changed"] = d.fieldsChanged;
+            n["counters_changed"] = d.countersChanged;
+            StateNode fields = StateNode::Array();
+            for (const TTDDiffField& f : d.fields)
+            {
+                StateNode field = StateNode::Object();
+                field["name"] = f.name;
+                field["offset"] = f.offset;
+                field["size"] = f.size;
+                field["changed"] = f.changed;
+                if (f.counter)
+                    field["counter"] = true;
+                if (f.hasValues)
+                {
+                    field["before"] = f.before;
+                    field["after"] = f.after;
+                }
+                fields.push(field);
+            }
+            n["fields"] = fields;
+            n["more_fields"] = d.moreFields;
             list.push(n);
         }
         StateNode devices = StateNode::Object();
         devices["changed"] = list;
         devices["more"] = res.moreDevices;
         devices["same"] = res.devicesSame;
+        devices["counters_only"] = res.devicesCountersOnly;
         b["devices"] = devices;
     }
     if (q.sections & kDiffBetween)

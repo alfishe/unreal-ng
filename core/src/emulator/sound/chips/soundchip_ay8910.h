@@ -699,6 +699,10 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+    /// The 73-byte layout as named fields (the table in soundchip_ay8910.cpp); the generators' counters, outputs,
+    /// the noise LFSR and the envelope's position are counters. A board appends them under its prefix ("ay0.")
+    static void TTDFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base);
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override { TTDFields(out, "", 0); }
     /// endregion </TTDSerializable interface>
 };
 
