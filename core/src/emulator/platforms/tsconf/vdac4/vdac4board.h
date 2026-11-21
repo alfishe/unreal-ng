@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -30,9 +31,16 @@ namespace vdac4
 class EspXtensaRuntime;
 }
 
+struct CleanupStep;
+
 class Vdac4Board
 {
 public:
+    /// The ESP flash folders of boards with none configured (headless, tests): "<temp>/unreal-ng-vdac4-<pid>-<n>"
+    static constexpr const char* kOwnCachePrefix = "unreal-ng-vdac4-";
+    /// Start-up housekeeping: those folders whose process is gone (killed, crashed: no destructor removed them)
+    static CleanupStep OwnCacheCleanupStep();
+
     /// `nowNs`: the machine's emulated time; `catchUp`: brings the Tang's clock to the CPU before a LINK access
     Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<uint64_t()> nowNs,
                std::function<void()> catchUp);
@@ -92,6 +100,7 @@ private:
     std::unique_ptr<Vdac4FtWorker> _ft;  ///< the Tang's work for the ESP's jobs (vdac4ftworker.h)
     uint64_t _jobStamp = 0;              ///< the running ESP job's stamp (its thread)
     std::unique_ptr<Vdac4Esp> _esp;
+    std::filesystem::path _ownCache;  ///< the ESP flash folder made for this board (none configured): removed with it
     std::ofstream _logFile;
     mutable std::mutex _ringLock;  ///< the log and packet rings: written on the emulation thread, read by any
     std::deque<std::string> _recentLog;
