@@ -120,9 +120,14 @@ shown more than 1 ms early narrows it by 0.25 ms) and the window draws 2 ms befo
 | Intel, adaptive both ways | 79-91 of 2198 | 5.0-6.2 / 17-26 ms | 7.25-9.5 ms |
 | NVIDIA, adaptive both ways | 50-67 of 2198 | 6.2-7.3 / 17-18 ms | 6.5-9.25 ms |
 
-A 50 Hz frame on a 60 Hz screen waits up to a refresh for the first one after its time (p50 ~8 ms with no lateness),
-so the extra refresh is gone; the rest (2-4 % late) is mutter's deadline wandering by a few ms. A commit held to its
-time by the compositor (`VK_EXT_present_timing`, Mesa 26.1; .238 has 26.0.8) would remove that too. GL on Wayland has
+The adaptive lead still left one frame in twelve on the wrong refresh on a scroll (Across the Edge): Mesa 26.0 in
+FIFO puts its own commit timer (the last screen time plus a refresh, less 0.5 ms) and FIFO barrier on each present,
+and mutter showed 104 of 534 a refresh after that time, 7 two (WAYLAND_DEBUG), whenever the present went. Now on
+Wayland: MAILBOX (no timer, no barrier), the present just after the refresh before the frame's own (the grid from the
+last screen time, `WaylandPresentAt`), one per refresh so none is replaced; and the window takes the GPU the display
+hangs on (`boot_vga`: NVIDIA's frames, copied to the Intel the compositor runs on, came a refresh or two late one in
+ten even so). Across the Edge, guest-advanced, Intel, 20 s: 5 of 978 off the beat (was ~8 %), 3.4 % late.
+GL on Wayland has
 no native presenter (no screen times) to compare with. The refresh estimate: the screen's rate (QScreen)
 refined by the steps between screen times near 1-3 refreshes (the shortest step alone read 71-329 Hz at 60 Hz:
 present_wait wakes jitter).

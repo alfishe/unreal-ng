@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -126,6 +127,32 @@ struct Frame
     size_t nextPool = 0;  ///< the descriptor pool sets come from
 };
 
+/// A program's compiled shaders and what reflection found in them (CreateProgram), kept by their sources: a pass
+/// created again (the screen rebuilt, a preset reloaded, a test's own passes) does not run glslang again
+struct CompiledProgram
+{
+    struct UniformInfo
+    {
+        std::string name;
+        uint32_t offset = 0;
+        uint32_t stride = 0;
+        int count = 1;
+        bool isFloat = false;
+    };
+    struct SamplerInfo
+    {
+        std::string name;
+        uint32_t binding = 0;
+        int glType = 0;
+    };
+    std::vector<uint32_t> spirv[2];
+    uint32_t blockSize = 0;
+    std::vector<UniformInfo> uniforms;
+    std::vector<SamplerInfo> samplers;
+};
+/// The compiled programs kept: beyond it the cache starts again (a long session through many presets)
+constexpr size_t kCompiledProgramsMax = 512;
+
 class VkTexture;
 class VkProgram;
 }  // namespace
@@ -149,6 +176,8 @@ struct VulkanDevice::Impl
     HostBuffer readback;
     std::map<std::tuple<int, int, int, int>, VkSampler> samplers;
     std::unique_ptr<VkTexture> dummyFloat, dummyUint, dummyInt;
+    std::unordered_map<std::string, CompiledProgram> compiled;  ///< by the sources (vertex, a 0 byte, fragment)
+    VkPipelineCache pipelineCache = VK_NULL_HANDLE;              ///< every pipeline's (the driver's compiles)
 
     // Timestamps (CreateTimestamps): a query reads only once the submission that wrote it finished
     uint32_t timestampBits = 0;  ///< the queue family's timestampValidBits (0: none)
@@ -428,7 +457,7 @@ VkPipeline VkProgram::Pipeline(VkFormat format, Blend blend)
     info.pDynamicState = &dynamic;
     info.layout = layout;
     VkPipeline pipeline = VK_NULL_HANDLE;
-    if (!impl->Check(vkCreateGraphicsPipelines(impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline),
+    if (!impl->Check(vkCreateGraphicsPipelines(impl->device, impl->pipelineCache, 1, &info, nullptr, &pipeline),
                      "vkCreateGraphicsPipelines"))
         return VK_NULL_HANDLE;
     pipelines[{format, blend}] = pipeline;
@@ -811,6 +840,41 @@ VkInstance VulkanDevice::CreateInstance(bool surfaces, std::string& error)
     return instance;
 }
 
+namespace
+{
+/// Linux: the GPU the firmware brought the display up on (`boot_vga` of its PCI device), through VK_EXT_pci_bus_info.
+/// Elsewhere, or not told: false
+bool DrivesDisplay(VkPhysicalDevice gpu)
+{
+#ifdef __linux__
+    uint32_t count = 0;
+    vkEnumerateDeviceExtensionProperties(gpu, nullptr, &count, nullptr);
+    std::vector<VkExtensionProperties> extensions(count);
+    vkEnumerateDeviceExtensionProperties(gpu, nullptr, &count, extensions.data());
+    const bool pci = std::any_of(extensions.begin(), extensions.end(), [](const VkExtensionProperties& e) {
+        return std::strcmp(e.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0;
+    });
+    if (!pci)
+        return false;
+    VkPhysicalDevicePCIBusInfoPropertiesEXT bus{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT};
+    VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &bus};
+    vkGetPhysicalDeviceProperties2(gpu, &properties);
+    char path[96];
+    std::snprintf(path, sizeof(path), "/sys/bus/pci/devices/%04x:%02x:%02x.%x/boot_vga", bus.pciDomain, bus.pciBus,
+                  bus.pciDevice, bus.pciFunction);
+    std::FILE* file = std::fopen(path, "r");
+    if (!file)
+        return false;
+    const int flag = std::fgetc(file);
+    std::fclose(file);
+    return flag == '1';
+#else
+    (void)gpu;
+    return false;
+#endif
+}
+}  // namespace
+
 std::unique_ptr<VulkanDevice> VulkanDevice::Create(const Setup& setup, std::string& error)
 {
     std::unique_ptr<VulkanDevice> d(new VulkanDevice());
@@ -869,6 +933,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::Create(const Setup& setup, std::stri
             int score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? 3
                               : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2
                                                                                        : 1;
+            // A window: the GPU the display hangs on before the faster one (a hybrid laptop's discrete GPU hands each
+            // frame over to the integrated one the compositor runs on: .238's NVIDIA showed one frame in ten a refresh
+            // or two late on Wayland, its Intel almost none; GL draws on that GPU too)
+            if (setup.surface && DrivesDisplay(gpu))
+                score += 5;
             const bool named = !preferred.empty() && lower(p.deviceName).find(preferred) != std::string::npos;
             score += named ? 10 : 0;
             if (score > bestScore)
@@ -974,6 +1043,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::Create(const Setup& setup, std::stri
         impl.extensions.emplace_back(e);
     vkGetPhysicalDeviceProperties(d->_gpu, &impl.properties);
     vkGetPhysicalDeviceMemoryProperties(d->_gpu, &impl.memory);
+    // In memory only: the driver keeps its own on disk (NVIDIA, Mesa); this one spares a pipeline compiled again
+    const VkPipelineCacheCreateInfo cacheInfo{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    if (vkCreatePipelineCache(d->_device, &cacheInfo, nullptr, &impl.pipelineCache) != VK_SUCCESS)
+        impl.pipelineCache = VK_NULL_HANDLE;  // pipelines made without it
     {
         uint32_t familyCount = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(d->_gpu, &familyCount, nullptr);
@@ -1055,6 +1128,8 @@ VulkanDevice::~VulkanDevice()
         }
         impl.DestroyHostBuffer(impl.quad);
         impl.DestroyHostBuffer(impl.readback);
+        if (impl.pipelineCache)
+            vkDestroyPipelineCache(_device, impl.pipelineCache, nullptr);
         vkDestroyDevice(_device, nullptr);
     }
     if (_ownInstance && _instance)
@@ -1314,46 +1389,66 @@ std::unique_ptr<Program> VulkanDevice::CreateProgram(const std::string& vertex, 
         return nullptr;
     }
     Impl& impl = *_impl;
-    std::vector<uint32_t> spirv[2];
-    glslang::TProgram linked;
-    std::vector<std::unique_ptr<glslang::TShader>> shaders;
-    if (!CompileProgram(vertex, fragment, spirv, linked, shaders, log))
-        return nullptr;
+    std::string key = vertex;
+    key += '\0';
+    key += fragment;
+    auto found = impl.compiled.find(key);
+    if (found == impl.compiled.end())
+    {
+        CompiledProgram compiled;
+        glslang::TProgram linked;
+        std::vector<std::unique_ptr<glslang::TShader>> shaders;
+        if (!CompileProgram(vertex, fragment, compiled.spirv, linked, shaders, log))
+            return nullptr;
+        // The uniform block (set 1, binding 0) and the samplers (set 0, their bindings)
+        for (int i = 0; i < linked.getNumUniformBlocks(); ++i)
+            compiled.blockSize = std::max(compiled.blockSize, static_cast<uint32_t>(linked.getUniformBlock(i).size));
+        for (int i = 0; i < linked.getNumUniformVariables(); ++i)
+        {
+            const glslang::TObjectReflection& u = linked.getUniform(i);
+            const int type = u.glDefineType;
+            if (u.index >= 0 && u.offset >= 0)
+                compiled.uniforms.push_back({VkProgram::Key(u.name.c_str()), static_cast<uint32_t>(u.offset),
+                                             type == kGlFloatMat4 ? 64u : 16u,  // std140 arrays
+                                             std::max(1, u.size),
+                                             type == kGlFloat || (type >= 0x8B50 && type <= 0x8B52) ||
+                                                 type == kGlFloatMat4 || (type >= 0x8B5A && type <= 0x8B5C)});
+            else if (u.getBinding() >= 0)
+                compiled.samplers.push_back(
+                    {VkProgram::Key(u.name.c_str()), static_cast<uint32_t>(u.getBinding()), type});
+        }
+        if (impl.compiled.size() >= kCompiledProgramsMax)
+            impl.compiled.clear();
+        found = impl.compiled.emplace(std::move(key), std::move(compiled)).first;
+    }
+    const CompiledProgram& compiled = found->second;
+    const std::vector<uint32_t>(&spirv)[2] = compiled.spirv;
 
     auto p = std::make_unique<VkProgram>(&impl);
-    // The uniform block (set 1, binding 0) and the samplers (set 0, their bindings)
-    uint32_t blockSize = 0;
-    for (int i = 0; i < linked.getNumUniformBlocks(); ++i)
-        blockSize = std::max(blockSize, static_cast<uint32_t>(linked.getUniformBlock(i).size));
+    const uint32_t blockSize = compiled.blockSize;
     std::vector<VkDescriptorSetLayoutBinding> samplerBindings;
-    for (int i = 0; i < linked.getNumUniformVariables(); ++i)
+    for (const CompiledProgram::UniformInfo& u : compiled.uniforms)
     {
-        const glslang::TObjectReflection& u = linked.getUniform(i);
-        if (u.index >= 0 && u.offset >= 0)
-        {
-            Uniform entry;
-            entry.offset = static_cast<uint32_t>(u.offset);
-            entry.count = std::max(1, u.size);
-            entry.stride = u.glDefineType == kGlFloatMat4 ? 64 : 16;  // std140 arrays
-            const int type = u.glDefineType;
-            entry.isFloat = type == kGlFloat || (type >= 0x8B50 && type <= 0x8B52) || type == kGlFloatMat4 ||
-                            (type >= 0x8B5A && type <= 0x8B5C);
-            p->uniforms[VkProgram::Key(u.name.c_str())] = entry;
-        }
-        else if (u.getBinding() >= 0)
-        {
-            SamplerSlot slot;
-            slot.binding = static_cast<uint32_t>(u.getBinding());
-            slot.glType = u.glDefineType;
-            p->samplerIndex[VkProgram::Key(u.name.c_str())] = p->samplers.size();
-            p->samplers.push_back(slot);
-            VkDescriptorSetLayoutBinding b{};
-            b.binding = slot.binding;
-            b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            b.descriptorCount = 1;
-            b.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-            samplerBindings.push_back(b);
-        }
+        Uniform entry;
+        entry.offset = u.offset;
+        entry.count = u.count;
+        entry.stride = u.stride;
+        entry.isFloat = u.isFloat;
+        p->uniforms[u.name] = entry;
+    }
+    for (const CompiledProgram::SamplerInfo& u : compiled.samplers)
+    {
+        SamplerSlot slot;
+        slot.binding = u.binding;
+        slot.glType = u.glType;
+        p->samplerIndex[u.name] = p->samplers.size();
+        p->samplers.push_back(slot);
+        VkDescriptorSetLayoutBinding b{};
+        b.binding = slot.binding;
+        b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b.descriptorCount = 1;
+        b.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        samplerBindings.push_back(b);
     }
     p->data.assign(std::max<uint32_t>(blockSize, 16), 0);
 
