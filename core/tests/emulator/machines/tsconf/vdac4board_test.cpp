@@ -14,6 +14,7 @@
 #include <string>
 
 #include "common/cleanupmanager.h"
+#include "common/processtempfolder.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4board.h"
@@ -67,7 +68,7 @@ TEST(Vdac4Board_Test, CleanupRemovesOnlyFoldersOfGoneProcesses)
 
     std::atomic<bool> stop{false};
     CleanupContext context(stop);
-    Vdac4Board::OwnCacheCleanupStep().run(context);
+    ProcessTempFolder::OrphanedFoldersCleanupStep("test", Vdac4Board::kOwnCachePrefix).run(context);
 
     EXPECT_FALSE(fs::exists(gone));
     EXPECT_TRUE(fs::exists(alive));

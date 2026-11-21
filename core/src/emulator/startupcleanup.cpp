@@ -2,13 +2,14 @@
 
 #include "common/cleanupmanager.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
-#include "emulator/platforms/tsconf/vdac4/vdac4board.h"
+#include "common/processtempfolder.h"
 
 void StartStartupCleanup()
 {
     CleanupManager& manager = CleanupManager::Instance();
     manager.AddStep(ttd::CrashedRecordingsCleanupStep());
-    manager.AddStep(Vdac4Board::OwnCacheCleanupStep());
+    // The ESP flash of headless VDAC4 boards (Vdac4Board::kOwnCachePrefix) left by killed processes
+    manager.AddStep(ProcessTempFolder::OrphanedFoldersCleanupStep("vdac4-esp-flash", "unreal-ng-vdac4-"));
     manager.RunAsync();
 }
 

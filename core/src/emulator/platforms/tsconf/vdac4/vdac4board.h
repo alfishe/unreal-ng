@@ -31,15 +31,12 @@ namespace vdac4
 class EspXtensaRuntime;
 }
 
-struct CleanupStep;
-
 class Vdac4Board
 {
 public:
     /// The ESP flash folders of boards with none configured (headless, tests): "<temp>/unreal-ng-vdac4-<pid>-<n>"
+    /// (ProcessTempFolder; the start-up cleanup removes those of gone processes, startupcleanup.cpp)
     static constexpr const char* kOwnCachePrefix = "unreal-ng-vdac4-";
-    /// Start-up housekeeping: those folders whose process is gone (killed, crashed: no destructor removed them)
-    static CleanupStep OwnCacheCleanupStep();
 
     /// `nowNs`: the machine's emulated time; `catchUp`: brings the Tang's clock to the CPU before a LINK access
     Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<uint64_t()> nowNs,

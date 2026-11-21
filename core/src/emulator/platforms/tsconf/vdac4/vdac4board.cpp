@@ -2,10 +2,9 @@
 
 #include "vdac4board.h"
 
-#include "common/cleanupmanager.h"
 #include "common/filehelper.h"
+#include "common/processtempfolder.h"
 #include "emulator/config.h"
-#include "platform/processinfo.h"
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
@@ -16,7 +15,6 @@
 #include "vdac4ftworker.h"
 #include "vdac4tang.h"
 
-#include <atomic>
 #include <cstdlib>
 #include <cstring>
 
@@ -62,60 +60,6 @@ private:
 
     Vdac4Board& _board;
 };
-
-namespace
-{
-/// An empty folder of its own in the system's temporary folder: "unreal-ng-vdac4-<pid>-<n>". The process id lets
-/// the start-up cleanup remove what a killed process left (Vdac4OwnCacheCleanupStep)
-std::filesystem::path MakeOwnCache()
-{
-    static std::atomic<uint32_t> counter{0};
-    std::error_code ec;
-    const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
-    if (ec)
-        return {};
-    const std::string prefix = std::string(Vdac4Board::kOwnCachePrefix) + std::to_string(platform::CurrentProcessId()) + "-";
-    for (int attempt = 0; attempt < 100; ++attempt)
-    {
-        const std::filesystem::path folder = temp / (prefix + std::to_string(counter++));
-        if (std::filesystem::create_directories(folder, ec))
-            return folder;
-    }
-    return {};  // no temporary folder to be had
-}
-}  // namespace
-
-CleanupStep Vdac4Board::OwnCacheCleanupStep()
-{
-    CleanupStep step;
-    step.name = "vdac4-esp-flash";
-    step.interval = std::chrono::hours(24);
-    step.run = [](CleanupContext& context) {
-        std::error_code ec;
-        const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
-        if (ec)
-            return;
-        const std::string prefix = kOwnCachePrefix;
-        for (std::filesystem::directory_iterator it(temp, std::filesystem::directory_options::skip_permission_denied, ec),
-             end;
-             !ec && it != end && !context.StopRequested(); it.increment(ec))
-        {
-            const std::string name = FileHelper::FromFsPath(it->path().filename());
-            if (name.rfind(prefix, 0) != 0)
-                continue;
-            const uint32_t owner = static_cast<uint32_t>(std::strtoul(name.c_str() + prefix.size(), nullptr, 10));
-            if (owner == 0 || platform::IsProcessAlive(owner))
-                continue;  // not one of ours, or its board may still run
-            std::string error;
-            const std::string folder = FileHelper::FromFsPath(it->path());
-            if (FileHelper::DeleteFolder(folder, &error))
-                context.Removed(folder);
-            else
-                context.Failed(folder, error.empty() ? "not deleted" : error);
-        }
-    };
-    return step;
-}
 
 Vdac4Board::Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<uint64_t()> nowNs,
                        std::function<void()> catchUp)
@@ -181,7 +125,7 @@ Vdac4Board::Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<
         espConfig.cacheDirectory = FileHelper::ToFsPath(config.vdac4_esp_cache);
     else if (!Config::DefaultVdac4EspCacheFolder().empty())
         espConfig.cacheDirectory = FileHelper::ToFsPath(Config::DefaultVdac4EspCacheFolder());
-    else if (!(_ownCache = MakeOwnCache()).empty())
+    else if (!(_ownCache = ProcessTempFolder::Make(kOwnCachePrefix)).empty())
         espConfig.cacheDirectory = _ownCache;
     else
         espConfig.cacheDirectory = FileHelper::ToFsPath(FileHelper::GetUserDataPath()) / "vdac4" / "zm";
