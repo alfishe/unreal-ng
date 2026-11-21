@@ -105,6 +105,7 @@
 // defined in the emulator headers; here we only need pointer types.)
 class EmulatorContext;
 class Memory;
+class PortDecoder;
 struct Z80State;
 struct EmulatorState;
 namespace ttd { class TTDDirtyTracker; class TimeTravelEngine; }
@@ -429,9 +430,11 @@ private:
     /// bound to it; nothing of the current session changes
     /// The load from any byte source (a file, memory)
     bool DeserializeSessionFrom(const ITTDByteSource& source, std::string& err);
+    /// @p bind false: read the file alone, nothing checked against or bound to a machine (a file's timeline, read
+    /// by a controller of its own with no machine, QueryTimelineInFile)
     std::unique_ptr<TimeTravelEngine> LoadEngineSession(const ITTDByteSource& source, TTDSessionFacts& facts,
                                                         std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks,
-                                                        std::string& err);
+                                                        std::string& err, bool bind = true);
     /// Make @p loaded the session: the side table, the controller's journals and indexes from it
     /// A loaded file's branches (TTD branches P2): per branch line its record, coverage and bookmarks, the
     /// session's branch state; LoadEngineSession fills it, CommitLoadedSession builds the tree from it
@@ -443,6 +446,16 @@ private:
         std::vector<uint8_t> state;
     };
     LoadedBranches _loadedBranches;
+    /// What a timeline is read against: the port map, the frame rate, the model (QueryTimeline: this machine's;
+    /// QueryTimelineInFile: the recorded model's). @p portsMissing: why there is no port map (`missing` names it)
+    struct TimelineMachine
+    {
+        const PortDecoder* ports = nullptr;
+        double fps = 50.0;
+        MEM_MODEL model = MM_PENTAGON;
+        std::string portsMissing;
+    };
+    TTDTimelineResult QueryTimelineOn(const TTDTimelineOptions& options, const TimelineMachine& machine) const;
     /// The loaded file's branches into the tree and their controller lines, each built by @p buildLine on its
     /// own lineage; the saved active branch becomes the active one
     void CommitLoadedBranches(const std::function<void(const std::vector<uint8_t>&)>& buildLine);
@@ -1441,6 +1454,15 @@ public:
     /// the facts the session holds, and the phases they make. Reads only what the recording stores (no replay);
     /// a fact it cannot give is named in `missing`
     TTDTimelineResult QueryTimeline(const TTDTimelineOptions& options) const;
+
+    /// @brief The timeline of a .ttd file on disk without loading it (TD-5 file): the file is read into a session
+    /// of its own, held by a controller with no machine, exactly as a load builds it, and the same query runs there
+    /// - so the answer is the one `timeline` gives after loading the file. This instance's session and machine are
+    /// not touched. @p branch (an id, a GUID or a name; empty: the branch the file saved as active) picks the line.
+    /// The port map and the frame rate are this instance's when it is of the recorded model; another model leaves
+    /// `ports` in `missing` (the file does not hold its port map) and counts 50 frames a second
+    TTDTimelineResult QueryTimelineInFile(const std::string& path, const TTDTimelineOptions& options,
+                                          const std::string& branch = {}) const;
 
     /// @brief The cause chain (docs/inprogress/2026-11-02-ttd-cause-chain): where the value of a memory byte or a
     /// register at a moment came from, as a tree of links back to constants, port reads and the session's initial

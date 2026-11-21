@@ -1973,6 +1973,8 @@ attrs = emu.ttd_screen_at(150, which='shadow', format='attributes', encoding='he
 #                  'changed_during_frame': False, 'flips': []}
 
 timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buckets, limit, bucket_size, ports
+saved = emu.ttd_timeline(file='/path/run.ttd', branch='1')   # a file (or a recording's folder), not loaded:
+# the answer a load would give, plus 'file', 'branch', 'model'
 # {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],
 #   'keys': ['A'], 'busiest_frame': ..., ...}, ...], 'events': [...], 'missing': [{'fact': 'writes', ...}], ...}
 

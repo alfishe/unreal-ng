@@ -1392,7 +1392,10 @@
             "recording stores, no replay; facts the session cannot give are listed in missing[] with the reason. "
             "Reply: from_frame, to_frame, bucket_size, bucket_count, truncated, fps, devices[] {name, tags}, phases[] "
             "{frame_start, frame_end, tags[], facts..., devices[], busiest_frame}, buckets[] (buckets=true), events[] "
-            "{frame, tinframe, kind, text}, missing[] {fact, reason}, cost {frames, port_records, ms}.";
+            "{frame, tinframe, kind, text}, missing[] {fact, reason}, cost {frames, port_records, ms}. With file: "
+            "the timeline of a .ttd file or a recording's folder on the emulator's machine, read without loading it "
+            "(this session and machine untouched, no park; the answer a load would give), plus file, branch (the line "
+            "read) and model (the recorded one); on an instance of another model missing[] names ports.";
         op["parameters"][0]["name"] = "id";
         op["parameters"][0]["in"] = "path";
         op["parameters"][0]["required"] = true;
@@ -1402,6 +1405,8 @@
             const char* type;
             const char* description;
         } query[] = {
+            {"file", "string", "A .ttd file or a recording's folder to read instead of the session (not loaded)"},
+            {"branch", "string", "With file: the line to read, an id, a GUID or a name (default: the file's active one)"},
             {"from_frame", "integer", "First frame (default: the oldest held)"},
             {"to_frame", "integer", "Last frame, inclusive (default: the last complete frame)"},
             {"bucket_size", "integer", "Frames per overview bucket (default: the window over limit buckets)"},

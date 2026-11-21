@@ -6566,7 +6566,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "busiest frame to seek to; one call instead of a loop of coverage_summary / port_events / memory_diff; reads "
         "what the session stores, no replay; facts it cannot give are listed as missing; from_frame, to_frame, "
         "buckets=true adds an overview of limit buckets (default 20; bucket_size sets their size), ports=false skips the "
-        "per-device port counts, min_phase_ms the shortest phase, default 200). "
+        "per-device port counts, min_phase_ms the shortest phase, default 200; file reads a .ttd file or a recording's "
+        "folder without loading it - the answer a load would give - and branch picks its line). "
         "'find_event' (when did it happen: one call instead of memory_at / coverage_scan / seek loops; find = mem "
         "(addr, cond changed | increased | decreased | equals | becomes | differs | bit_set | bit_clear with value / "
         "bit, size 1 or 2, exact=true follows every CPU write), screen (cond change with min_changed % of the picture, "
@@ -6677,7 +6678,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["branch"]["type"] = "string";
     schema["properties"]["branch"]["description"] =
         "branch_info / branch_switch / branch_update / branch_delete: the branch - its id (0 = the trunk), its GUID or "
-        "its name; branch_create: fork on this branch (at frame / tinframe on it, default its end)";
+        "its name; branch_create: fork on this branch (at frame / tinframe on it, default its end); timeline with "
+        "file: the file's branch to read (default the one it saved as active)";
     schema["properties"]["to"]["type"] = "string";
     schema["properties"]["to"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* to : {"previous", "next_sibling", "prev_sibling"})
@@ -7008,8 +7010,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "and watched bytes (default true)";
     schema["properties"]["file"]["type"] = "string";
     schema["properties"]["file"]["description"] =
-        "port_events: a .ttd file on the emulator's machine to search instead of the current session - it is not "
-        "loaded, the session is untouched (works while recording)";
+        "port_events / timeline: a .ttd file on the emulator's machine (timeline: or a recording's folder) to read "
+        "instead of the current session - it is not loaded, the session is untouched (works while recording)";
     schema["properties"]["pc_from"]["type"] = "string";
     schema["properties"]["pc_from"]["description"] = "find_last: only accesses made by code with PC >= pc_from";
     schema["properties"]["pc_to"]["type"] = "string";
@@ -8575,6 +8577,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     for (const char* field : {"buckets", "ports"})
                         if (args.isMember(field))
                             query += std::string(field) + "=" + (args[field].asBool() ? "true" : "false") + "&";
+                    if (args["file"].isString() && !args["file"].asString().empty())
+                        query += "file=" + UrlEncodeSegment(args["file"].asString()) + "&";
+                    if (args["branch"].isIntegral() && !args["branch"].isBool())
+                        query += "branch=" + std::to_string(args["branch"].asUInt64()) + "&";
+                    else if (args["branch"].isString() && !args["branch"].asString().empty())
+                        query += "branch=" + UrlEncodeSegment(args["branch"].asString()) + "&";
                     query.pop_back();
                     caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
                         if (status != 200)
@@ -8585,6 +8593,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         // Every phase in the text: an agent may read only this
                         const Json::Value& devices = body["devices"];
                         std::ostringstream out;
+                        if (body.isMember("file"))
+                            out << "File " << body["file"].asString() << " (" << body["model"].asString() << ", branch "
+                                << body["branch"].asUInt64() << "), not loaded. ";
                         out << "Timeline " << body["from_frame"].asUInt64() << ".." << body["to_frame"].asUInt64() << " ("
                             << body["to_frame"].asUInt64() - body["from_frame"].asUInt64() + 1 << " frames";
                         if (body["bucket_count"].asUInt64())
@@ -8618,6 +8629,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                 else if (d.isMember("region"))
                                     out << "; " << d["region"].asString() << " changed " << d["frames"].asUInt64()
                                         << " fr";
+                                else if (d.isMember("state"))
+                                    out << "; " << d["state"].asString() << " state " << d["frames"].asUInt64()
+                                        << " fr";
                                 else if (d["device"].asUInt() < devices.size())
                                     out << "; " << devices[d["device"].asUInt()]["name"].asString() << " in "
                                         << d["in"].asUInt64() << " out " << d["out"].asUInt64();
@@ -8626,6 +8640,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         for (const Json::Value& e : body["events"])
                             out << "\nevent " << e["frame"].asUInt64() << " " << e["kind"].asString() << " "
                                 << e["text"].asString();
+                        if (body["states_every_frame"].size() > 0)
+                        {
+                            out << "\nstate changed in every frame:";
+                            for (const Json::Value& name : body["states_every_frame"])
+                                out << " " << name.asString();
+                        }
                         for (const Json::Value& m : body["missing"])
                             out << "\nmissing " << m["fact"].asString() << ": " << m["reason"].asString();
                         done(ToolResult::Ok(out.str(), std::move(body)));

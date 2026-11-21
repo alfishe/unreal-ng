@@ -121,7 +121,13 @@ table and the cost breakdown are in [design.md §6](design.md#6-costs).
 
 Progress: all steps done. Step 4: the screen layouts of every video family (`screendisplayedmemory_test.cpp`,
 `ttdtimeline_screen_test.cpp`), the tape rule (`ttdtimeline_tape_test.cpp`), the host-read media slots and the device
-memory regions (the Sprinter IDE sectors and video RAM in `ttdsprinter_test.cpp`; the device-state blobs left out).
+memory regions (the Sprinter IDE sectors and video RAM in `ttdsprinter_test.cpp`; the device-state blobs added
+2026-11-21, design §1).
+
+Follow-ups (2026-11-21): TD-5 file, the timeline of a `.ttd` file or folder without loading it (option `file`,
+`branch`; design §8, `ttdtimeline_file_test.cpp`), done; TD-5 blobs, the device state blobs per phase and bucket and
+the baseline checkpoints counted by content (design §1, `ttdtimeline_test.cpp` `DeviceStatesInTheirFrames`,
+`ttdtimeline_baseline_test.cpp`), done.
 Step 6: B3 above. Step 7 (2026-11-01, ee52875b2): clang zero warnings, full core-tests green; gcc 14.2 (CI image,
 docker on .20) zero warnings, 10,537 passed, 0 failed; MSVC 2019 and MinGW zero warnings, full core-tests 0 failed;
 the live MCP scripts 30/30 (`test_ws_surface` slow consumer made load proof: it keeps asking while it waits).

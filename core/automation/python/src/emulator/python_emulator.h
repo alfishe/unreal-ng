@@ -7441,13 +7441,18 @@ namespace PythonBindings
                 py::arg("bucket_size") = 0, py::arg("limit") = 100)
 
             .def("ttd_timeline", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj, uint64_t bucketSize,
-                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs) -> py::object {
+                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs, py::object fileObj,
+                                    py::object branchObj) -> py::object {
                 std::map<std::string, std::string> options{
                     {"from_frame", std::to_string(fromFrame)}, {"bucket_size", std::to_string(bucketSize)},
                     {"limit", std::to_string(limit)},          {"buckets", buckets ? "true" : "false"},
                     {"ports", ports ? "true" : "false"},       {"min_phase_ms", std::to_string(minPhaseMs)}};
                 if (!toFrameObj.is_none())
                     options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                if (!fileObj.is_none())
+                    options["file"] = TtdOptionTextPy(fileObj);
+                if (!branchObj.is_none())
+                    options["branch"] = TtdOptionTextPy(branchObj);
                 const ttd::TTDReply reply = TtdRunPy(self, "timeline", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
                     throw py::value_error(reply.message);
@@ -7456,9 +7461,11 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 return StateNodeToPy(value);
             }, "The recording cut into phases of the same activity (tape, disk, input, net, sound, screen, burst, halt, "
-               "paging), each with its facts; from what the session holds, no replay",
+               "paging), each with its facts; from what the session holds, no replay. file: a .ttd file (or a "
+               "recording's folder) read without loading it, branch: a line of that file (id, GUID or name)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("bucket_size") = 0,
-                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200);
+                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200,
+                py::arg("file") = py::none(), py::arg("branch") = py::none());
 
         emulatorClass.def("ttd_cause_chain", [](Emulator& self, py::object target, py::object frameObj,
                                                 py::object tinObj, py::object pageObj, unsigned depth,

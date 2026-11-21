@@ -218,8 +218,8 @@ Open, by priority:
 | E3 | Frame counter in `/registers` (next to TTD; run answers done in `c3ab886b3`) | P3 | partly done | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | P1.S10 | Real-use sessions over days; quiet-machine A/B of C1d | - | open | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | RSI-cond-ecat | eCat Run Back passes breakpoint conditions to `reverse-continue` (`condition`; the Qt Run Back does) | - | open | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
-| TD-5 file | Timeline of a `.ttd` file without loading it | - | open | [timeline design §8](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#8-not-in-scope) |
-| TD-5 blobs | Device-state blobs in the timeline's memory regions | - | open (remark) | [timeline plan](../../../../inprogress/2026-10-31-ttd-timeline-summary/plan.md) |
+| TD-5 file | Timeline of a `.ttd` file without loading it (option `file`, `branch`) | - | done 2026-11-21 | [timeline design §8](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#8-a-ttd-file-without-loading-it) |
+| TD-5 blobs | Device-state blobs in the timeline (`state` entries, `states_every_frame`) | - | done 2026-11-21 | [timeline design §1](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#1-what-the-recording-already-holds) |
 | DM limit | Diff of two moments: name the fields that changed inside a device | - | open (known limit) | [diff plan](../../../../inprogress/2026-11-03-ttd-diff-moments/plan.md#acceptance) |
 | PD-Q2 | "Same T-state in the next frame" as an explicit operation | - | idea, only if asked | [positioning design §7](../../../../inprogress/2026-09-28-ttd-positioning-and-display/design.md#7-open-questions) |
 | R5 | RZX and TTD interop (player state blob, TTD while playing, import, export) | low | open | [rzx TODO](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) |

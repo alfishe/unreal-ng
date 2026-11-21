@@ -6974,8 +6974,9 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-summary", options)));
         });
 
-        // ttd_timeline{from_frame=, to_frame=, bucket_size=, limit=, buckets=, ports=, min_phase_ms=}: the recording cut
-        // into phases of the same activity, from what the session holds (no replay)
+        // ttd_timeline{from_frame=, to_frame=, bucket_size=, limit=, buckets=, ports=, min_phase_ms=, file=, branch=}:
+        // the recording cut into phases of the same activity, from what the session holds (no replay); file= a .ttd
+        // file (or a recording's folder) read without loading it, branch= a line of that file
         lua.set_function("ttd_timeline", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
             std::map<std::string, std::string> options;
             if (argsTable)

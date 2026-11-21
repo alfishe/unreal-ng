@@ -1513,6 +1513,7 @@ local attrs = ttd_screen_at{frame = 150, which = "shadow", format = "attributes"
 --                flips = {} }
 
 local timeline = ttd_timeline{min_phase_ms = 500}   -- also from_frame, to_frame, buckets, limit, bucket_size, ports
+local saved = ttd_timeline{file = "/path/run.ttd", branch = "1"}   -- a file or a recording's folder, not loaded
 -- { from_frame = ..., to_frame = ..., phases = { {frame_start = ..., frame_end = ...,
 --   tags = {"halt", "input"}, executed = ..., keys = {"A"}, busiest_frame = ..., ...}, ... },
 --   events = {...}, missing = { {fact = "writes", reason = "the write journal is off"} }, ... }

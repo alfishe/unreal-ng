@@ -79,6 +79,9 @@ struct TTDTimelineBucket
     /// Per TTDTimelineResult::regions: the frames whose checkpoint found the region changed (a card's own CPU or DMA,
     /// a video RAM, a font: memory, so no clock field moves it)
     std::vector<uint32_t> regionFrames;
+    /// Per TTDTimelineResult::states: the frames whose checkpoint found the device's state blob changed (its
+    /// registers, latches and the clocks it does not declare as time fields)
+    std::vector<uint32_t> stateFrames;
     // Write journal (when on)
     uint64_t writes = 0;
     // Markers in the bucket
@@ -159,6 +162,13 @@ struct TTDTimelineResult
     std::vector<TTDTimelineDevice> devices;
     std::vector<TTDTimelineDevice> media;
     std::vector<TTDTimelineDevice> regions;   ///< the session's device memory regions (all but machine RAM)
+    std::vector<TTDTimelineDevice> states;    ///< the session's device state blobs (`device.<instance>`)
+    /// Per states: the blob changed in every frame of the window (a running clock, a counter, or a device busy all
+    /// along): it tells nothing about when, so the ranges leave it out and the reply names it once
+    std::vector<bool> stateEveryFrame;
+    // A file's timeline (QueryTimelineInFile): the branch read and the model that recorded the file
+    uint32_t branch = 0;
+    std::string model;
     // What the call cost
     uint64_t portRecords = 0;
     uint64_t elapsedNs = 0;
