@@ -4,6 +4,19 @@
 #include <cstdint>
 #include <cstring>
 
+#if defined(__ARM_NEON) || defined(_M_ARM64)
+#include <arm_neon.h>
+#define FRAMESCALER_NEON 1
+#define FRAMESCALER_SSE2 0
+#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define FRAMESCALER_NEON 0
+#define FRAMESCALER_SSE2 1
+#else
+#define FRAMESCALER_NEON 0
+#define FRAMESCALER_SSE2 0
+#endif
+
 namespace FrameScaler
 {
 Layout ComputeLayout(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH)
@@ -256,44 +269,204 @@ inline void ChromaOf(int r, int g, int b, uint8_t& u, uint8_t& v)
 }
 }  // namespace
 
-// Not-aliased pointers let the compiler vectorize the converters (an uint8_t* may alias anything)
+// Not-aliased pointers let the compiler vectorize the scalar tails (an uint8_t* may alias anything)
 #if defined(_MSC_VER)
 #define FRAMESCALER_RESTRICT __restrict
 #else
 #define FRAMESCALER_RESTRICT __restrict__
 #endif
 
-/// SIMD-CANDIDATE(RGBA -> NV12): the 4K-to-4K case (the videowall grab) is bound by this scalar conversion, ~13 ms per
-/// frame on an arm64 laptop; an SSE / NEON de-interleave + fixed-point multiply would cover every machine
+// The row kernels in NEON (arm64) / SSE2 (every x86-64), the scalar formulas for the tails and other targets. Integer
+// arithmetic only, the same operations as LumaOf / ChromaOf: the output is byte-identical on every machine. The ranges
+// make the clamps unnecessary: luma is 16..235, chroma 16..240, and every sum fits 16 bits (luma unsigned up to 56228,
+// chroma signed within +-28688)
+namespace
+{
+/// Y of `count` packed R,G,B,A pixels
+void LumaRow(const uint8_t* FRAMESCALER_RESTRICT rgba, uint32_t count, uint8_t* FRAMESCALER_RESTRICT out)
+{
+    uint32_t x = 0;
+#if FRAMESCALER_NEON
+    for (; x + 16 <= count; x += 16)
+    {
+        const uint8x16x4_t p = vld4q_u8(rgba + static_cast<size_t>(x) * 4);
+        uint16x8_t lo = vmull_u8(vget_low_u8(p.val[0]), vdup_n_u8(66));
+        lo = vmlal_u8(lo, vget_low_u8(p.val[1]), vdup_n_u8(129));
+        lo = vmlal_u8(lo, vget_low_u8(p.val[2]), vdup_n_u8(25));
+        uint16x8_t hi = vmull_u8(vget_high_u8(p.val[0]), vdup_n_u8(66));
+        hi = vmlal_u8(hi, vget_high_u8(p.val[1]), vdup_n_u8(129));
+        hi = vmlal_u8(hi, vget_high_u8(p.val[2]), vdup_n_u8(25));
+        // (sum + 128) >> 8: the rounding narrow
+        const uint8x16_t y = vcombine_u8(vrshrn_n_u16(lo, 8), vrshrn_n_u16(hi, 8));
+        vst1q_u8(out + x, vaddq_u8(y, vdupq_n_u8(16)));
+    }
+#elif FRAMESCALER_SSE2
+    const __m128i low = _mm_set1_epi32(0x00FF00FF);
+    const __m128i coefRB = _mm_set1_epi32((25 << 16) | 66);  // per pixel: R in the low half, B in the high half
+    const __m128i coefGA = _mm_set1_epi32(129);              // G low, A high (x 0)
+    const __m128i half = _mm_set1_epi32(128);
+    auto luma4 = [&](const uint8_t* p) {
+        const __m128i px = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+        const __m128i rb = _mm_and_si128(px, low);
+        const __m128i ga = _mm_srli_epi16(px, 8);
+        const __m128i sum = _mm_add_epi32(_mm_madd_epi16(rb, coefRB), _mm_madd_epi16(ga, coefGA));
+        return _mm_srli_epi32(_mm_add_epi32(sum, half), 8);
+    };
+    for (; x + 16 <= count; x += 16)
+    {
+        const uint8_t* p = rgba + static_cast<size_t>(x) * 4;
+        const __m128i a = _mm_packs_epi32(luma4(p), luma4(p + 16));
+        const __m128i b = _mm_packs_epi32(luma4(p + 32), luma4(p + 48));
+        const __m128i y = _mm_add_epi8(_mm_packus_epi16(a, b), _mm_set1_epi8(16));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + x), y);
+    }
+#endif
+    for (; x < count; x++)
+        out[x] = LumaOf(rgba[x * 4], rgba[x * 4 + 1], rgba[x * 4 + 2]);
+}
+
+/// U and V of each of `count` pixels (into two arrays)
+void ChromaRow(const uint8_t* FRAMESCALER_RESTRICT rgba, uint32_t count, uint8_t* FRAMESCALER_RESTRICT u,
+               uint8_t* FRAMESCALER_RESTRICT v)
+{
+    uint32_t x = 0;
+#if FRAMESCALER_NEON
+    auto chroma8 = [](uint16x8_t r16, uint16x8_t g16, uint16x8_t b16, uint8x8_t& uOut, uint8x8_t& vOut) {
+        const int16x8_t r = vreinterpretq_s16_u16(r16);
+        const int16x8_t g = vreinterpretq_s16_u16(g16);
+        const int16x8_t b = vreinterpretq_s16_u16(b16);
+        int16x8_t cu = vmulq_n_s16(b, 112);
+        cu = vmlaq_n_s16(cu, r, -38);
+        cu = vmlaq_n_s16(cu, g, -74);
+        int16x8_t cv = vmulq_n_s16(r, 112);
+        cv = vmlaq_n_s16(cv, g, -94);
+        cv = vmlaq_n_s16(cv, b, -18);
+        const int16x8_t half = vdupq_n_s16(128);
+        cu = vaddq_s16(vshrq_n_s16(vaddq_s16(cu, half), 8), half);
+        cv = vaddq_s16(vshrq_n_s16(vaddq_s16(cv, half), 8), half);
+        uOut = vmovn_u16(vreinterpretq_u16_s16(cu));
+        vOut = vmovn_u16(vreinterpretq_u16_s16(cv));
+    };
+    for (; x + 16 <= count; x += 16)
+    {
+        const uint8x16x4_t p = vld4q_u8(rgba + static_cast<size_t>(x) * 4);
+        uint8x8_t u0, v0, u1, v1;
+        chroma8(vmovl_u8(vget_low_u8(p.val[0])), vmovl_u8(vget_low_u8(p.val[1])), vmovl_u8(vget_low_u8(p.val[2])), u0,
+                v0);
+        chroma8(vmovl_u8(vget_high_u8(p.val[0])), vmovl_u8(vget_high_u8(p.val[1])),
+                vmovl_u8(vget_high_u8(p.val[2])), u1, v1);
+        vst1q_u8(u + x, vcombine_u8(u0, u1));
+        vst1q_u8(v + x, vcombine_u8(v0, v1));
+    }
+#elif FRAMESCALER_SSE2
+    const __m128i low = _mm_set1_epi32(0x00FF00FF);
+    const __m128i coefURB = _mm_set1_epi32(static_cast<int>((112u << 16) | static_cast<uint16_t>(-38)));
+    const __m128i coefUGA = _mm_set1_epi32(static_cast<uint16_t>(-74));
+    const __m128i coefVRB = _mm_set1_epi32(static_cast<int>((static_cast<uint32_t>(static_cast<uint16_t>(-18)) << 16) | 112u));
+    const __m128i coefVGA = _mm_set1_epi32(static_cast<uint16_t>(-94));
+    const __m128i half = _mm_set1_epi32(128);
+    auto chroma4 = [&](const uint8_t* p, __m128i& cu, __m128i& cv) {
+        const __m128i px = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+        const __m128i rb = _mm_and_si128(px, low);
+        const __m128i ga = _mm_srli_epi16(px, 8);
+        cu = _mm_add_epi32(_mm_madd_epi16(rb, coefURB), _mm_madd_epi16(ga, coefUGA));
+        cv = _mm_add_epi32(_mm_madd_epi16(rb, coefVRB), _mm_madd_epi16(ga, coefVGA));
+        cu = _mm_add_epi32(_mm_srai_epi32(_mm_add_epi32(cu, half), 8), half);
+        cv = _mm_add_epi32(_mm_srai_epi32(_mm_add_epi32(cv, half), 8), half);
+    };
+    for (; x + 16 <= count; x += 16)
+    {
+        const uint8_t* p = rgba + static_cast<size_t>(x) * 4;
+        __m128i u0, v0, u1, v1, u2, v2, u3, v3;
+        chroma4(p, u0, v0);
+        chroma4(p + 16, u1, v1);
+        chroma4(p + 32, u2, v2);
+        chroma4(p + 48, u3, v3);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(u + x),
+                         _mm_packus_epi16(_mm_packs_epi32(u0, u1), _mm_packs_epi32(u2, u3)));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(v + x),
+                         _mm_packus_epi16(_mm_packs_epi32(v0, v1), _mm_packs_epi32(v2, v3)));
+    }
+#endif
+    for (; x < count; x++)
+        ChromaOf(rgba[x * 4], rgba[x * 4 + 1], rgba[x * 4 + 2], u[x], v[x]);
+}
+
+/// The interleaved U,V row of NV12 from two pixel rows: one pair per 2x2 block, of the block's average color
+/// (`width` even)
+void ChromaBlockRow(const uint8_t* FRAMESCALER_RESTRICT row0, const uint8_t* FRAMESCALER_RESTRICT row1, uint32_t width,
+                    uint8_t* FRAMESCALER_RESTRICT out)
+{
+    uint32_t x = 0;
+#if FRAMESCALER_NEON
+    for (; x + 16 <= width; x += 16)
+    {
+        const uint8x16x4_t a = vld4q_u8(row0 + static_cast<size_t>(x) * 4);
+        const uint8x16x4_t b = vld4q_u8(row1 + static_cast<size_t>(x) * 4);
+        // The four pixels of a block summed (at most 1020), / 4
+        const int16x8_t r = vreinterpretq_s16_u16(vshrq_n_u16(vpadalq_u8(vpaddlq_u8(a.val[0]), b.val[0]), 2));
+        const int16x8_t g = vreinterpretq_s16_u16(vshrq_n_u16(vpadalq_u8(vpaddlq_u8(a.val[1]), b.val[1]), 2));
+        const int16x8_t bl = vreinterpretq_s16_u16(vshrq_n_u16(vpadalq_u8(vpaddlq_u8(a.val[2]), b.val[2]), 2));
+        int16x8_t cu = vmulq_n_s16(bl, 112);
+        cu = vmlaq_n_s16(cu, r, -38);
+        cu = vmlaq_n_s16(cu, g, -74);
+        int16x8_t cv = vmulq_n_s16(r, 112);
+        cv = vmlaq_n_s16(cv, g, -94);
+        cv = vmlaq_n_s16(cv, bl, -18);
+        const int16x8_t half = vdupq_n_s16(128);
+        cu = vaddq_s16(vshrq_n_s16(vaddq_s16(cu, half), 8), half);
+        cv = vaddq_s16(vshrq_n_s16(vaddq_s16(cv, half), 8), half);
+        uint8x8x2_t uv;
+        uv.val[0] = vmovn_u16(vreinterpretq_u16_s16(cu));
+        uv.val[1] = vmovn_u16(vreinterpretq_u16_s16(cv));
+        vst2_u8(out + x, uv);
+    }
+#elif FRAMESCALER_SSE2
+    const __m128i low = _mm_set1_epi32(0x00FF00FF);
+    // 16-bit lanes of a block's (R, B) twice: U = -38 R + 112 B in the first dword, V = 112 R - 18 B in the second
+    const __m128i coefRB = _mm_set_epi16(-18, 112, 112, -38, -18, 112, 112, -38);
+    const __m128i coefGA = _mm_set_epi16(0, -94, 0, -74, 0, -94, 0, -74);
+    const __m128i half = _mm_set1_epi32(128);
+    // Two blocks (4 pixels of each row) -> U0, V0, U1, V1 as dwords
+    auto blocks2 = [&](const uint8_t* p0, const uint8_t* p1) {
+        const __m128i a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p0));
+        const __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p1));
+        __m128i rb = _mm_add_epi16(_mm_and_si128(a, low), _mm_and_si128(b, low));
+        __m128i ga = _mm_add_epi16(_mm_srli_epi16(a, 8), _mm_srli_epi16(b, 8));
+        rb = _mm_add_epi16(rb, _mm_srli_epi64(rb, 32));  // the left pixel + the right one, in the low dword
+        ga = _mm_add_epi16(ga, _mm_srli_epi64(ga, 32));
+        rb = _mm_shuffle_epi32(_mm_srli_epi16(rb, 2), _MM_SHUFFLE(2, 2, 0, 0));
+        ga = _mm_shuffle_epi32(_mm_srli_epi16(ga, 2), _MM_SHUFFLE(2, 2, 0, 0));
+        const __m128i sum = _mm_add_epi32(_mm_madd_epi16(rb, coefRB), _mm_madd_epi16(ga, coefGA));
+        return _mm_add_epi32(_mm_srai_epi32(_mm_add_epi32(sum, half), 8), half);
+    };
+    for (; x + 16 <= width; x += 16)
+    {
+        const uint8_t* p0 = row0 + static_cast<size_t>(x) * 4;
+        const uint8_t* p1 = row1 + static_cast<size_t>(x) * 4;
+        const __m128i a = _mm_packs_epi32(blocks2(p0, p1), blocks2(p0 + 16, p1 + 16));
+        const __m128i b = _mm_packs_epi32(blocks2(p0 + 32, p1 + 32), blocks2(p0 + 48, p1 + 48));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + x), _mm_packus_epi16(a, b));
+    }
+#endif
+    for (; x < width; x += 2)
+    {
+        const int r = (row0[x * 4] + row0[x * 4 + 4] + row1[x * 4] + row1[x * 4 + 4]) / 4;
+        const int g = (row0[x * 4 + 1] + row0[x * 4 + 5] + row1[x * 4 + 1] + row1[x * 4 + 5]) / 4;
+        const int b = (row0[x * 4 + 2] + row0[x * 4 + 6] + row1[x * 4 + 2] + row1[x * 4 + 6]) / 4;
+        ChromaOf(r, g, b, out[x], out[x + 1]);
+    }
+}
+}  // namespace
+
 void PackedToNv12(const uint8_t* rgba, size_t srcStride, uint32_t w, uint32_t h, uint8_t* yDst, size_t yStride,
                   uint8_t* uvDst, size_t uvStride)
 {
     for (uint32_t y = 0; y < h; y++)
-    {
-        const uint8_t* FRAMESCALER_RESTRICT row = rgba + static_cast<size_t>(y) * srcStride;
-        uint8_t* FRAMESCALER_RESTRICT out = yDst + static_cast<size_t>(y) * yStride;
-        for (uint32_t x = 0; x < w; x++)
-        {
-            const int r = row[x * 4];
-            const int g = row[x * 4 + 1];
-            const int b = row[x * 4 + 2];
-            out[x] = ClampByte(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
-        }
-    }
+        LumaRow(rgba + static_cast<size_t>(y) * srcStride, w, yDst + static_cast<size_t>(y) * yStride);
     for (uint32_t y = 0; y < h; y += 2)
-    {
-        const uint8_t* FRAMESCALER_RESTRICT row0 = rgba + static_cast<size_t>(y) * srcStride;
-        const uint8_t* FRAMESCALER_RESTRICT row1 = rgba + static_cast<size_t>(y + 1) * srcStride;
-        uint8_t* FRAMESCALER_RESTRICT out = uvDst + static_cast<size_t>(y / 2) * uvStride;
-        for (uint32_t x = 0; x < w; x += 2)
-        {
-            const int r = (row0[x * 4] + row0[x * 4 + 4] + row1[x * 4] + row1[x * 4 + 4]) / 4;
-            const int g = (row0[x * 4 + 1] + row0[x * 4 + 5] + row1[x * 4 + 1] + row1[x * 4 + 5]) / 4;
-            const int b = (row0[x * 4 + 2] + row0[x * 4 + 6] + row1[x * 4 + 2] + row1[x * 4 + 6]) / 4;
-            out[x] = ClampByte(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
-            out[x + 1] = ClampByte(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
-        }
-    }
+        ChromaBlockRow(rgba + static_cast<size_t>(y) * srcStride, rgba + static_cast<size_t>(y + 1) * srcStride, w,
+                       uvDst + static_cast<size_t>(y / 2) * uvStride);
 }
 
 namespace
@@ -343,8 +516,7 @@ bool ScaleIntoNv12Fit(const uint8_t* src, uint32_t srcW, uint32_t srcH, const La
         }
         previousRow = sy;
         const uint8_t* row = src + static_cast<size_t>(sy) * srcW * 4;
-        for (uint32_t x = 0; x < srcW; x++)
-            lumaRow[x] = LumaOf(row[x * 4], row[x * 4 + 1], row[x * 4 + 2]);
+        LumaRow(row, srcW, lumaRow.data());
         std::memset(out, 16, picX0);
         uint8_t* d = out + picX0;
         for (uint32_t x = 0; x < layout.width; x++)
@@ -388,9 +560,7 @@ bool ScaleIntoNv12Fit(const uint8_t* src, uint32_t srcW, uint32_t srcH, const La
         const bool pureRow = r0 == r1 && r0 >= 0;
         if (pureRow)
         {
-            const uint8_t* srcRow = src + static_cast<size_t>(r0) * srcW * 4;
-            for (uint32_t x = 0; x < srcW; x++)
-                ChromaOf(srcRow[x * 4], srcRow[x * 4 + 1], srcRow[x * 4 + 2], chromaU[x], chromaV[x]);
+            ChromaRow(src + static_cast<size_t>(r0) * srcW * 4, srcW, chromaU.data(), chromaV.data());
         }
 
         for (uint32_t cx = 0; cx < chromaW; cx++)
@@ -505,13 +675,11 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
             if (k == 1)
             {
                 // One output pixel per source pixel: convert straight into the target row
-                for (uint32_t x = 0; x < srcW; x++)
-                    d[x] = LumaOf(row[x * 4], row[x * 4 + 1], row[x * 4 + 2]);
+                LumaRow(row, srcW, d);
             }
             else
             {
-                for (uint32_t x = 0; x < srcW; x++)
-                    lumaRow[x] = LumaOf(row[x * 4], row[x * 4 + 1], row[x * 4 + 2]);
+                LumaRow(row, srcW, lumaRow.data());
                 ExpandBytes(lumaRow.data(), srcW, k, d);
             }
             std::memset(out + picX1, 16, dstW - picX1);
@@ -564,9 +732,7 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
         const bool pureRow = r0 == r1 && r0 >= 0;
         if (pureRow)
         {
-            const uint8_t* srcRow = src + static_cast<size_t>(r0) * srcW * 4;
-            for (uint32_t x = 0; x < srcW; x++)
-                ChromaOf(srcRow[x * 4], srcRow[x * 4 + 1], srcRow[x * 4 + 2], chromaU[x], chromaV[x]);
+            ChromaRow(src + static_cast<size_t>(r0) * srcW * 4, srcW, chromaU.data(), chromaV.data());
         }
 
         // Even factor and the picture on even coordinates: every 2x2 block is inside one source pixel, so the row is
