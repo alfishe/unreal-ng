@@ -79,7 +79,11 @@ Not planned yet:
 
 - [ ] NR #8F memory mapping modes (Pentagon 512 / 1024 paging through #EFF7): stored only
 - [ ] SPI flash on port #E7 (config mode, 16 MB, a `[NEXT] FlashFile=`): the select is decoded and ignored
-- [ ] The generic `DivMmcPaging` as a `divmmc` slot card (machine reset, TTD blob, the +2A/+3 ROM-3-only automap); the Next has its own
+- [x] The generic `DivMmcPaging` as a `divmmc` slot card (2026-11-21): the edge card `divmmc` on the 48K / 128K / +2A / +3
+  (UnoDOS 3 shipped, esxDOS by the user's file), the CPLD's two-stage automap latch, reset = /RESET (the map stays, a hard reset
+  clears it), TTD device `DivMmc` 77 + region `divmmc.ram`, `live` state in the slot report. The board has no ROM-3 condition
+  (`divmmc.vhd`): the +2A/+3 ROM-3-only rule is the option `automap=rom3`; divide-divmmc-esxdos.md section 9, `DivMmcCard_Test`. The
+  Next keeps its own
 - [x] Border colour changes of the CPU (#FE) inside a line (2026-11-20): `ScreenNext::SetBorderColor` queues the place where the new
   colour reaches the output and the line is drawn once with its border in runs (2000 changes a frame: +3.3 %), by the rule POC 028 scenario 54 measured on the RTL (17 clocks after the CPU clock's falling edge, the
   next 8-pixel cell; the Pentagon timing at once); design-video-timing.md section 6a, `NextBorder*_Test`. The outer border around

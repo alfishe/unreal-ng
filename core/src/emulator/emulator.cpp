@@ -44,6 +44,7 @@
 #include "emulator/notifications.h"
 #include "emulator/slots/cards/plusd/plusdautostart.h"
 #include "emulator/slots/cards/plusd/plusdcard.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/tstaterunbudget.h"
@@ -1556,6 +1557,12 @@ void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
     {
         _context->pPortDecoder->PowerCycle();
     }
+    // A power cycle reaches the slot cards too: the state only their power-on circuit clears (the DivMMC's #E3)
+    if (hardReset && _context && _context->pSlotManager)
+    {
+        for (const std::unique_ptr<ICard>& card : _context->pSlotManager->Cards())
+            card->PowerCycle();
+    }
 
     // The interrupted frame is abandoned: frame 0 starts at the reset state
     RestartFrame();
@@ -2507,6 +2514,12 @@ bool Emulator::LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& s
     request.loaded = (*request.load)(request.error, planned);
     if (plusd && request.loaded)
         plusd->EndSnapshotLoad();
+    // Every other card that maps memory leaves the program the machine the snapshot describes (the DivMMC unmapped)
+    if (request.loaded && _context->pSlotManager)
+    {
+        for (const std::unique_ptr<ICard>& card : _context->pSlotManager->Cards())
+            card->AfterSnapshotLoad();
+    }
     // A model whose window shows another page than #7FFD names puts the state's bank there (the Pentagon 2.666, D-3)
     if (request.loaded && _context->pPortDecoder)
         _context->pPortDecoder->FinishSpectrum128State();

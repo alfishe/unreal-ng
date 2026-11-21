@@ -156,6 +156,29 @@ an edge slot takes it by the plug (`slots plug edge.next plusd`, the same verbs 
 the slots `fdd.plusd1` / `fdd.plusd2`; the autostart, the paging and the reports: [plusd.md](plusd.md). The DISCiPLE is
 the edge card `disciple` (`48K-DISCIPLE` / `128K-DISCIPLE`; slots `fdd.disciple1` / `2`, option `inhibit`).
 
+## The DivMMC on a 48K / 128K / +2A / +3 (edge card)
+
+The edge card `divmmc` (Mario Prato's DivMMC: 8K EEPROM, 128K RAM paged at `#0000-#3FFF` through `#E3`, the automap
+trap, two SD sockets on `#E7` / `#EB`) fits every machine with a Sinclair edge whose decoder leaves the Z80's M1 hook
+free (48K, 128K, +2, +2A / +3; not ATM3, Sprinter, TS-Conf: they hold it; the Next has its own DivMMC). Options:
+`rom=unodos` (UnoDOS 3, shipped as `data/rom/divmmc/unodos3.rom`, default) or `rom=esxdos` (put your `ESXMMC.BIN` in
+`data/rom/divmmc/esxmmc.bin`), `automap=on` (the board as built: any ROM), `off` (the EEPROM jumper), `rom3` (an
+emulator option: on a +2A / +3 the entries count only with ROM 3 paged, the Next's rule).
+
+```bash
+# Plug it, then put a folder (or an image) in the first socket and reset
+slots plug edge.1 divmmc rom=unodos
+media insert divmmc testdata/storage/divmmc/unodos/card
+reset
+```
+
+The card brings the media slots `sd.divmmc0` (aliases `divmmc`, `divmmc0`) and `sd.divmmc1` (`divmmc1`). The slot
+report's entry carries `live`: firmware, `automap_mode`, `control_register`, `conmem`, `mapram`, `bank`, `automapped`,
+`map_condition`, `mapped`, `selected_card` and `sd_cards[]` (present, initialized, SDHC, blocks read / written). A reset
+keeps `#E3` and MAPRAM (the CPLD has no reset on them), a hard reset clears them. Time travel records the latches, the
+SPI state and the 128K RAM (device `DivMmc`, region `divmmc.ram`). Rules:
+[divide-divmmc-esxdos.md](../../docs/inprogress/2026-09-28-storage-controllers-survey/divide-divmmc-esxdos.md).
+
 ## The Sprinter's ISA slots (SL-8)
 
 The ISA slots are the board's own: their cards come from `[ISA] SlotN` (or the create option `"sprinter"`), and the

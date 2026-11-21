@@ -38,6 +38,8 @@ constexpr FunctionInfo kFunctions[] = {
     { "amx-mouse", "AMX mouse (Z80 PIO, IM 2 per mickey; buttons `#DF`)", "`#1F`, `#3F`, `#5F`, `#7F`, `#DF`" },
     { "disk.mgt", "MGT disk interface (+D: WD1772, 8K ROM + 8K RAM paged over `#0000-#3FFF`)",
       "`#E3 #EB #F3 #FB` (FDC), `#EF` control, `#E7` page in / out, `#F7` printer" },
+    { "sd.divmmc", "DivMMC SD interface (8K EEPROM + 128K RAM paged over `#0000-#3FFF`, automap, two SD cards)",
+      "`#E3` control, `#E7` card select, `#EB` SPI data" },
 };
 static_assert(sizeof(kFunctions) / sizeof(kFunctions[0]) == static_cast<std::size_t>(Function::Count));
 
@@ -130,6 +132,7 @@ constexpr EnumInfo kOpts[] = {
     { "jp1", "jumper JP1" },
     { "decode", "port decode width" },
     { "inhibit", "inhibit button" },
+    { "automap", "automatic paging on the ROM entry points" },
 };
 static_assert(sizeof(kOpts) / sizeof(kOpts[0]) == static_cast<std::size_t>(Opt::Count));
 

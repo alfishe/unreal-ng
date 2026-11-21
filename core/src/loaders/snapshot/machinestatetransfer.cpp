@@ -741,6 +741,7 @@ namespace
             case TTDDeviceType::AtaChannel:
             case TTDDeviceType::CdDrive:
             case TTDDeviceType::EvoSdCard:
+            case TTDDeviceType::DivMmc:  // the card's blob holds its SD cards' protocol state
                 return Binding::Storage;
             default:
                 return IsPortable(id) ? Binding::Portable : Binding::Machine;

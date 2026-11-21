@@ -416,6 +416,43 @@ constexpr Src kDiscipleSources[] = { Src::FuseDisciple, Src::MameMgt };
 
 // endregion
 
+// region <divmmc (docs/inprogress/2026-10-07-zx-next/research-divmmc-original-rtl.md): Mario Prato's DivMMC, low byte>
+
+// #E3 control and #E7 card select are decoded with /WR only (a read leaves the data bus alone); #EB is the SPI data
+// port both ways. The ROM override is the edge's /ROMCS on the 48K / 128K / +2; on the +2A / +3, which have no /ROMCS,
+// the board's jumper J3 drives /ROM1OE and /ROM2OE instead (DivMMC_2013_schematic.pdf: Q4 / Q5, "Spectrum +2A, +3
+// Jumper"), so the card needs no /RDROM of the bus: it fits every Sinclair edge
+constexpr PortClaim kDivMmcClaims[] = {
+    { .mask = 0x00FF, .match = 0x00E3, .dir = Dir::Out, .port = 0x00E3 },
+    { .mask = 0x00FF, .match = 0x00E7, .dir = Dir::Out, .port = 0x00E7 },
+    { .mask = 0x00FF, .match = 0x00EB, .dir = Dir::InOut, .port = 0x00EB },
+};
+
+constexpr FunctionUse kDivMmcFunctions[] = {
+    { .function = Function::SdDivmmc },
+};
+
+constexpr OptionValue kDivMmcRomValues[] = {
+    { "unodos", "UnoDOS 3 (rom/divmmc/unodos3.rom, shipped)" },
+    { "esxdos", "esxDOS (rom/divmmc/esxmmc.bin, the user's ESXMMC.BIN)" },
+};
+constexpr OptionValue kDivMmcAutomapValues[] = {
+    { "on", "the board: every entry point maps the firmware in, in any ROM" },
+    { "off", "the EEPROM jumper set: nothing maps unless MAPRAM is set" },
+    { "rom3", "emulator option, the Next's rule: the entry points count only with the 48K BASIC ROM paged" },
+};
+constexpr OptionDef kDivMmcOptions[] = {
+    { .key = Opt::Rom, .kind = OptionKind::Enum, .values = kDivMmcRomValues, .defaultBits = Bit(0),
+      .description = "the firmware in the EEPROM" },
+    { .key = Opt::Automap, .kind = OptionKind::Enum, .values = kDivMmcAutomapValues, .defaultBits = Bit(0),
+      .description = "the automap" },
+};
+
+constexpr const char* kDivMmcMedia[] = { "sd.divmmc0", "sd.divmmc1" };
+constexpr Src kDivMmcSources[] = { Src::MpratoDivMmc, Src::RepoDivMmcRtl, Src::RepoDivMmcSurvey };
+
+// endregion
+
 constexpr CardDef kCards[] = {
     { .id = "ay", .name = "machine's own AY (socket default)", .bus = BusKind::AySocket, .needs = kNone,
       .socketDefault = true, .portsNote = "host decode",
@@ -466,6 +503,9 @@ constexpr CardDef kCards[] = {
       .needs = BusSignal::RdRom | BusSignal::M1 | BusSignal::Nmi, .options = kDiscipleOptions,
       .functions = kDiscipleFunctions, .claims = kDiscipleClaims, .media = kDiscipleMedia,
       .sources = kDiscipleSources },
+    { .id = "divmmc", .name = "DivMMC SD interface", .bus = BusKind::SinclairEdge,
+      .needs = BusSignal::M1 | BusSignal::Nmi, .options = kDivMmcOptions, .functions = kDivMmcFunctions,
+      .claims = kDivMmcClaims, .media = kDivMmcMedia, .sources = kDivMmcSources },
 };
 
 } // namespace

@@ -1,6 +1,7 @@
 #include "card.h"
 
 #include "emulator/slots/cards/amx/amxmousecard.h"
+#include "emulator/slots/cards/divmmc/divmmccard.h"
 #include "emulator/slots/cards/fuller/fullerboxcard.h"
 #include "emulator/slots/cards/kempston/kempstoncard.h"
 #include "emulator/slots/cards/multisound/multisoundslotcard.h"
@@ -29,6 +30,9 @@ constexpr ttd::TTDDeviceType kPlusDTtdTypes[] = { ttd::TTDDeviceType::PlusD };
 /// The MGT DISCiPLE: one blob, as the +D's with the swap, the reset hold-off and the inhibit button
 constexpr ttd::TTDDeviceType kDiscipleTtdTypes[] = { ttd::TTDDeviceType::Disciple };
 
+/// The DivMMC: one blob, the board's latches and its two SD cards' protocol state; its RAM as an engine region
+constexpr ttd::TTDDeviceType kDivMmcTtdTypes[] = { ttd::TTDDeviceType::DivMmc };
+
 /// One entry per card the slots build themselves (the others keep their legacy owners, slotmanager.h)
 constexpr CardType kCardTypes[] = {
     { MultiSoundCard::kCardId, &MultiSoundSlotCard::Create, kMultiSoundTtdTypes },
@@ -37,6 +41,7 @@ constexpr CardType kCardTypes[] = {
     { KempstonCard::kCardId, &KempstonCard::Create, kKempstonTtdTypes },
     { PlusDCard::kCardId, &PlusDCard::Create, kPlusDTtdTypes },
     { PlusDCard::kDiscipleCardId, &PlusDCard::CreateDisciple, kDiscipleTtdTypes },
+    { DivMmcCard::kCardId, &DivMmcCard::Create, kDivMmcTtdTypes },
 };
 
 } // namespace

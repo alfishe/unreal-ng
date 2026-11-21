@@ -145,6 +145,12 @@ constexpr SourceRef kSources[] = {
       "https://sourceforge.net/p/fuse-emulator/fuse/ci/master/tree/peripherals/disk/disciple.c" },
     { Src::MameMgt, "MAME spectrum/mgt.cpp (+D / DISCiPLE)",
       "https://github.com/mamedev/mame/blob/master/src/devices/bus/spectrum/mgt.cpp" },
+    { Src::MpratoDivMmc, "Mario Prato, DivMMC (2013): CPLD source divmmc.vhd and schematic",
+      "https://github.com/mprato/DivMMC" },
+    { Src::RepoDivMmcRtl, "unreal-ng: the original DivMMC RTL against the Next core",
+      "docs/inprogress/2026-10-07-zx-next/research-divmmc-original-rtl.md" },
+    { Src::RepoDivMmcSurvey, "unreal-ng: DivIDE, DivMMC and esxDOS survey",
+      "docs/inprogress/2026-09-28-storage-controllers-survey/divide-divmmc-esxdos.md" },
 
     { Src::RepoSlotsResearchMachines, "unreal-ng: ZX-bus slots research, machines",
       "docs/inprogress/2026-10-03-zx-bus-slots/research-machines.md" },
