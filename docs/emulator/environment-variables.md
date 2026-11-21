@@ -63,6 +63,9 @@ automation servers live inside it).
 | `UNREAL_ZRCP_PORT` | 1-65535 (10000) | Port of the ZEsarUX-compatible remote control server (ZRCP). Used when the caller does not pass a port. | `core/automation/zesarux/src/automation-zesarux.cpp:33`, name in `core/automation/zesarux/include/automation-zesarux.h:48` |
 | `UNREAL_SYMBOL_BUNDLES` | `0` = off, anything else = on (on) | Turns off the symbol bundles: the labels of known ROMs (`data/symbols/manifest.json`, shipped as `symbols/` next to `rom/`) that each new instance and each ROM reload imports as sets of origin `bundle`. | `core/src/emulator/emulator.cpp:3752` |
 | `UNREAL_AUDIO_DIAG` | set / unset (off) | Temporary diagnostics: prints frame timing lateness and audio buffer fill to stderr about every 5 seconds. | `core/src/emulator/mainloop.cpp:92` |
+| `UNREAL_XTENSA_JIT` | `0` / `1` (unset: the `esp_jit` feature, default on) | TS-Conf + VDAC4: the ESP32 code through the JIT (`1`) or the interpreter (`0`), over the `esp_jit` feature; for A/B measurements. | `core/src/emulator/platforms/tsconf/vdac4/vdac4board.cpp` |
+| `UNREAL_XTENSA_JIT_HOT` | entries (default `8`) | Entries of a block before the JIT compiles a region from it. | `core/src/3rdparty/unreal-xtensa/xtensa-jit.inc` |
+| `UNREAL_XTENSA_JIT_STATS` | set | Prints the JIT's counters (native share, regions, refused entries) to stderr every 100000 runs. | `core/src/3rdparty/unreal-xtensa/xtensa-cpu.cpp` |
 | `UNREAL_VDAC4_ESP_THREAD` | `0` / `1` (unset: `[VDAC4] EspThread`, default `1`) | TS-Conf + VDAC4: the ESP app's jobs on a worker thread (`1`) or on the emulation thread (`0`). The machine behaves the same either way ([design §7.5](../inprogress/2026-11-15-tsconf-vdac4/design.md#75-quantum-model-implemented-jobs)); for A/B measurements. | `core/src/emulator/platforms/tsconf/vdac4/vdac4board.cpp:102` |
 | `UNREAL_VDAC4_FT_THREAD` | `0` / `1` (unset: `[VDAC4] FtThread`, default `0`) | TS-Conf + VDAC4: the Tang / FT812 work the ESP app's jobs hand over on a thread of its own (`1`) or on the job's thread (`0`). Same behaviour either way. | `core/src/emulator/platforms/tsconf/vdac4/vdac4board.cpp:107` |
 | `UNREAL_VDAC4_FT_DRAW_THREAD` | `0` / `1` (unset: `[VDAC4] FtDrawThread`, default `1`) | TS-Conf + VDAC4: the FT812's drawing on the library's renderer thread (`1`, `EveSetAsyncDrawing`) or where the FT812 runs (`0`). The same picture, line costs and metrics either way; off while a bus capture is written and in a TTD replay. For A/B runs of one build. |
@@ -268,6 +271,11 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `UNREAL_NEXB_TRACE` | frames | Prints the PC, SP, speed and the MMU slots every that many frames. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
 | `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/machines/next/cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 | `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
+| `UNREAL_PLUSD_SYSTEM_TAPE` | path to the Plus D System Tape v2a `.tzx` (unset: tests skip) | `PlusDSystemDisk_Test.ConfigWritesTheSystemDisk` runs `CONFIG` from the tape on a `48K-PLUSD` and writes the system disk ([`data/boot/plusd/README.md`](../../data/boot/plusd/README.md)). | `core/tests/emulator/slots/cards/plusd/plusdsystemdisk_test.cpp` |
+| `UNREAL_PLUSD_SYSTEM_OUT` | file path (the test scratch folder) | With `UNREAL_PLUSD_SYSTEM_TAPE`: where the written system disk goes. | `core/tests/emulator/slots/cards/plusd/plusdsystemdisk_test.cpp` |
+| `UNREAL_PLUSD_ONE` | path to an `.mgt` (unset: test skips) | `PlusDAutostart_Image.One`: the autostart of one image, for a closer look. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
+| `UNREAL_PLUSD_MODEL` | `48K` / `128K` (`48K`) | With `UNREAL_PLUSD_ONE`: the machine (the card in `edge.1`). | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
+| `UNREAL_PLUSD_BASIC` | `48` / `128` (the machine's own) | With `UNREAL_PLUSD_ONE`: the BASIC of the autostart's reset. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
 
 ## 6. Benchmarks and verification tools
 

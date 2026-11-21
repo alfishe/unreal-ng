@@ -51,7 +51,8 @@ protected:
 
     /// Loads @p code at kOrg, @p init at kDst, @p sub at kSub, records @p frames frames (@p perFrame runs before each)
     void Record(const std::vector<uint8_t>& code, unsigned frames, const std::vector<uint8_t>& init = {0x00},
-                const std::function<void(unsigned)>& perFrame = nullptr, const std::vector<uint8_t>& sub = {0xC9})
+                const std::function<void(unsigned)>& perFrame = nullptr, const std::vector<uint8_t>& sub = {0xC9},
+                const std::vector<std::pair<uint16_t, std::vector<uint8_t>>>& extra = {})
     {
         _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-find-event", "PENTAGON",
                                                                             LoggerLevel::LogNone);
@@ -69,6 +70,9 @@ protected:
             memory->DirectWriteToZ80Memory(static_cast<uint16_t>(kOrg + i), code[i]);
         for (size_t i = 0; i < sub.size(); ++i)
             memory->DirectWriteToZ80Memory(static_cast<uint16_t>(kSub + i), sub[i]);
+        for (const auto& [at, bytes] : extra)
+            for (size_t i = 0; i < bytes.size(); ++i)
+                memory->DirectWriteToZ80Memory(static_cast<uint16_t>(at + i), bytes[i]);
         for (uint16_t a = 0x4000; a < 0x5B00; ++a)
             memory->DirectWriteToZ80Memory(a, 0x00);   // a known picture: all zero
         for (size_t i = 0; i < init.size(); ++i)
@@ -572,4 +576,84 @@ TEST_F(TTDFindEvent_Test, T12_WindowAndLimits)
     EXPECT_EQ(cond, ttd::TTDFindEventCond::BitSet);
     EXPECT_FALSE(ttd::TTDFindEventCondByName("nope", cond));
     EXPECT_NE(ttd::TTDFindEventText(q, two).find("2 hits"), std::string::npos) << ttd::TTDFindEventText(q, two);
+}
+
+namespace
+{
+// F6 (docs/inprogress/2026-11-12-re-api-efficiency/analysis.md): #9000 (page 2, offset #1000) runs every frame, #D000
+// (page 0, the same offset #1000) only from the frame the counter reaches 4:
+// ei; loop: halt; ld hl,#A000; inc (hl); call #9000; ld a,(hl); cp 4; call nc,#D000; jr loop
+const std::vector<uint8_t> kSameOffset = {0xFB, 0x76, 0x21, 0x00, 0xA0, 0x34, 0xCD, 0x00, 0x90,
+                                          0x7E, 0xFE, 0x04, 0xD4, 0x00, 0xD0, 0x18, 0xF0};
+constexpr uint16_t kLate = 0xD000;
+}  // namespace
+
+/// T13 (F6): the coverage index keys page offsets, so without a page every frame where #9000 ran is a candidate for
+/// #D000. Such a frame is replayed and left out: no hit without its instruction (the old sentinel at `fN+0`), no real
+/// hit lost behind the candidates, and `more` / next_from_frame only from a confirmed hit
+TEST_F(TTDFindEvent_Test, T13_ExecIndexCandidatesThatDidNotRun)
+{
+    Record(Im2(kSameOffset), 10, {0x00}, nullptr, {0xC9}, {{kLate, {0xC9}}});
+    const ttd::TTDFindEventResult four = Mem(ttd::TTDFindEventCond::Becomes, 4);
+    ASSERT_EQ(four.hits.size(), 1u) << HitsText(four);
+    const uint64_t firstRun = four.hits[0].time.frame;
+
+    ttd::TTDFindEventQuery q;
+    q.kind = ttd::TTDFindEventKind::Exec;
+    q.address = q.addressTo = kLate;
+    q.limit = ttd::TTDFindEventQuery::kMaxLimit;   // above the count: every run
+    const ttd::TTDFindEventResult all = Ask(q);
+    ASSERT_TRUE(all.error.empty()) << all.error;
+    for (const std::string& m : all.missing)
+        EXPECT_EQ(m.find("coverage"), std::string::npos) << "the index path is the one under test: " << m;
+    ASSERT_GE(all.hits.size(), 3u) << HitsText(all);
+    EXPECT_FALSE(all.more) << HitsText(all);
+    EXPECT_GT(all.indexRejected, 0u) << "the frames before the counter reached 4 are the index's candidates";
+    for (size_t k = 0; k < all.hits.size(); ++k)
+    {
+        const ttd::TTDFindEventHit& h = all.hits[k];
+        EXPECT_TRUE(h.hasPc) << HitsText(all);
+        EXPECT_EQ(h.pc, kLate) << HitsText(all);
+        EXPECT_GT(h.time.tInFrame, 0u) << HitsText(all);
+        EXPECT_NE(h.text.find("ret"), std::string::npos) << HitsText(all);
+        EXPECT_EQ(h.time.frame, firstRun + k) << "a run every frame from the first: " << HitsText(all);
+    }
+    // The answer says how many candidates did not run it
+    EXPECT_NE(ttd::TTDFindEventText(q, all).find("did not run it"), std::string::npos) << ttd::TTDFindEventText(q, all);
+
+    // Limits 1 and 2: the same first hits, more with the next confirmed run's frame
+    for (uint32_t limit : {1u, 2u})
+    {
+        q.limit = limit;
+        const ttd::TTDFindEventResult some = Ask(q);
+        ASSERT_EQ(some.hits.size(), limit) << HitsText(some);
+        for (uint32_t k = 0; k < limit; ++k)
+        {
+            EXPECT_EQ(some.hits[k].time.frame, all.hits[k].time.frame) << HitsText(some);
+            EXPECT_EQ(some.hits[k].time.tInFrame, all.hits[k].time.tInFrame) << HitsText(some);
+            EXPECT_FALSE(some.hits[k].text.empty()) << HitsText(some);
+        }
+        EXPECT_TRUE(some.more);
+        EXPECT_EQ(some.nextFromFrame, all.hits[limit].time.frame);
+    }
+
+    // Last order: the newest runs, each confirmed
+    q.last = true;
+    q.limit = 2;
+    const ttd::TTDFindEventResult last = Ask(q);
+    ASSERT_EQ(last.hits.size(), 2u) << HitsText(last);
+    EXPECT_EQ(last.hits[0].time.frame, all.hits.back().time.frame);
+    EXPECT_EQ(last.hits[1].time.frame, all.hits[all.hits.size() - 2].time.frame);
+    EXPECT_TRUE(last.more);
+    EXPECT_EQ(last.nextToFrame, all.hits[all.hits.size() - 3].time.frame);
+
+    // A replay budget smaller than the candidates before the first run: no hit invented, the answer says where to go on
+    q.last = false;
+    q.limit = 1;
+    q.maxFrames = 1;
+    const ttd::TTDFindEventResult cut = Ask(q);
+    EXPECT_TRUE(cut.hits.empty()) << HitsText(cut);
+    EXPECT_TRUE(cut.more);
+    EXPECT_LT(cut.nextFromFrame, firstRun);
+    EXPECT_FALSE(cut.missing.empty());
 }

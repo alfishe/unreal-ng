@@ -1531,6 +1531,26 @@ public:
     /// before the card's count now, replaying at most @p maxFrames frames backwards; none: the machine stays and the
     /// answer says so (NoHit, NoBreakpoints)
     ttd::TTDCardMoveResult ReverseContinueCard(DebugCpuId cpu, uint64_t maxFrames = kCardReverseMaxFrames);
+    /// The card's step over back (the debuggers' Shift+F8 on a card's tab), as ReverseStepOver on the main CPU: one
+    /// card instruction back, but when that instruction is a return (RET, RET cc taken, RETI, RETN) that lifted the
+    /// card's stack to where it is now, back past the whole routine to the newest card instruction at this stack level
+    /// before it (the CALL / RST that entered it, or the instruction an interrupt came after). Found by replaying
+    /// frames backwards with the card's SP at each boundary, at most kCardReverseMaxFrames; out of reach the card
+    /// stays on the return (callOutOfReach)
+    ttd::TTDCardMoveResult ReverseStepOverCard(DebugCpuId cpu);
+    /// The card's step over or step out (@p over false) through the recorded past (the debuggers' F8 / Ctrl+F8 on a
+    /// card's tab in the past): the step a live card step (RunControl::CardStep) would take from where the card
+    /// stands, found by replaying forward with the card's registers at each boundary (GSCardTarget::ScanStep). The
+    /// card's own stopping breakpoints end it first, as live. A step that does not end in the history goes to the
+    /// history's end (historyEnd: the next step runs on live); at the end already: AtEnd, nothing moved
+    ttd::TTDCardMoveResult StepCardForward(DebugCpuId cpu, bool over);
+    /// The card's run to the cursor through the recorded past (the debuggers' F4 on a card's tab in the past): the
+    /// first card instruction at @p address after the one the card stands at (the instruction at the card's PC runs
+    /// first, as a live run to the cursor, RunControl::CardStep "to"), found by replaying forward from the card's
+    /// position (GSCardTarget::ScanStep To), at most @p maxFrames frames. The card's stopping breakpoints end it
+    /// first, as live (stoppedByBreakpoint). Not reached in the history, or in the frames searched (truncated): NoHit,
+    /// nothing moved and the live machine untouched; at the history's end already: AtEnd (the run is a live one)
+    ttd::TTDCardMoveResult RunCardToCursor(DebugCpuId cpu, uint16_t address, uint64_t maxFrames = kCardReverseMaxFrames);
     /// Every card CPU's readout for a poll from another thread (the position and status verbs): the card position as
     /// its move published it, the other cards where they stand (read as CurrentPosition reads the main CPU, never
     /// parking the machine)
@@ -1632,6 +1652,30 @@ public:
     /// windows' mapping. Replays there silently and puts the machine back exactly where it stood (like a frame
     /// cache build). Fails on a replay barrier before the point, or a point outside the history.
     TTDCpuView ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length);
+
+    /// @brief Memory over many frames in one walk (memory-series, PLAN #122 S1): each range as at the start of each
+    /// asked frame, the same bytes memory-at reads there (frame, tinframe 0). The checkpoints are walked forward
+    /// once: a piece's version follows the recorded changes, and a piece is decoded only when its version changed.
+    /// CPU ranges read the mapped pages from the store where the checkpoint holds the CPU's windows; elsewhere (a
+    /// session loaded from a file, the Next's 8K slots) the checkpoint is restored and read through the mapping,
+    /// and the machine is put back exactly where it stood. Frames outside the history are refused.
+    TTDSeriesResult ReadMemorySeries(const TTDSeriesQuery& query);
+    /// Whether ReadMemorySeries will restore checkpoints for @p query (CPU ranges over checkpoints without stored
+    /// windows): the caller parks a running machine first. False on any doubt the series refuses anyway
+    bool MemorySeriesRestores(const TTDSeriesQuery& query);
+
+    /// The sample points per frame ReadScreenAt looks for a change of the shown screen at
+    static constexpr uint32_t kScreenAtSamples = 312;
+    /// @brief One past frame's picture and screens (screen-at, PLAN #122 V2): its final picture (equal to what a
+    /// live machine showed when the frame ended), the screen shown at its start and end and where inside it the
+    /// shown screen changed, and the normal / shadow screen bytes at its end. Replays the frame silently and puts the
+    /// machine back exactly where it stood (its picture included). The frame must have ended inside the history.
+    TTDScreenAtResult ReadScreenAt(uint64_t frame);
+
+    /// @brief Where the CPU stood at the checkpoint of @p frame (the frame's start): {frame, the T-states past the
+    /// boundary the instruction that crossed it ran into the frame}, in TTD units. False when no checkpoint starts
+    /// that frame on the active lineage
+    bool CheckpointMoment(uint64_t frame, TTDTimePoint& at);
 
     /// @brief ReverseContinue with bounds, a page filter and the all mode.
     ///
@@ -1827,6 +1871,10 @@ private:
     /// the capture mapped, their pages decoded, the machine untouched. False where only a replay can tell (no
     /// window map, a window outside the stored regions and ROM, a point past the checkpoint)
     bool ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view);
+    /// A memory series' frames made concrete: the history's bounds for fromStart / toEnd, @p first / @p last the
+    /// active lineage's first and last checkpoint frames. False with @p error when there is no history or a frame
+    /// asked lies outside it
+    bool ResolveSeriesQuery(TTDSeriesQuery& query, uint64_t& first, uint64_t& last, std::string& error);
 
 
     /// @brief Internal seek implementation without the Recording-state guard.
@@ -1850,7 +1898,20 @@ private:
     /// The move itself (SeekToCardInstruction's body, inside an operation)
     void CardSeekInternal(DebugCpuId cpu, uint64_t instruction, uint64_t hint, ttd::TTDCardMoveResult& result);
     /// The card's count where the machine stands, the card run up to the main CPU's moment when no card position
-    bool CardCountNow(DebugCpuId cpu, uint64_t& count);
+    bool CardCountNow(DebugCpuId cpu, uint64_t& count, uint16_t* sp = nullptr);
+    /// A forward card move through the past found by a replay scan (StepCardForward, RunCardToCursor)
+    enum class CardForward : uint8_t
+    {
+        Over,
+        Out,
+        To,
+    };
+    ttd::TTDCardMoveResult CardForwardScan(DebugCpuId cpu, CardForward kind, uint16_t address, uint64_t maxFrames);
+    /// SeekToCardInstruction's body. @p backToHistory: a move back (a step back, a step over back) from a card that
+    /// stands past the history's end (it stepped on live, unrecorded, D-3) lands at the history's newest card
+    /// instruction when @p instruction is past it too (historyEnd), as the main CPU's step back from there lands on
+    /// the last recorded instruction
+    ttd::TTDCardMoveResult SeekCardImpl(DebugCpuId cpu, uint64_t instruction, bool backToHistory);
     /// Before the machine runs: the card's state as the main boundary's seek left it, the card position dropped
     void LeaveCardStand();
     /// A RestoreLiveState put the card's blob back without its regions: the card position's copy again

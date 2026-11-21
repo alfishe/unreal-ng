@@ -489,6 +489,17 @@ void AnalyzerManager::dispatchFrameEnd()
     }
 }
 
+void AnalyzerManager::dispatchRunStop()
+{
+    if (!_enabled)
+        return;
+
+    for (const auto& id : _activeAnalyzers)
+    {
+        _analyzers.at(id)->onRunStop();
+    }
+}
+
 void AnalyzerManager::OnTap(const BreakpointTapHit& hit)
 {
     Z80* cpu = _context != nullptr && _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;

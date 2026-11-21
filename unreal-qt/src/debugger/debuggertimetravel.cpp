@@ -213,15 +213,16 @@ void DebuggerTimeTravel::refresh()
     // (the card may have run in it); the core answers at the card's first position (at_start)
     const QString card = QString::fromLatin1(DebugCpuName(front));
     _stepBack->setEnabled(!locked && (onCard || !atStart));
-    _stepOverBack->setEnabled(!locked && !atStart && !onCard);
+    _stepOverBack->setEnabled(!locked && (onCard || !atStart));
     _frameBack->setEnabled(!locked && !atStart);
     // The card's breakpoints of any kind count for the card (the core refuses when none is active)
     _runBack->setEnabled(!locked && (onCard || !pcs.empty()));
     if (onCard)
     {
         _stepBack->setToolTip(tr("Step Back: one %1 instruction back in the recorded history (Shift+F7)").arg(card));
-        _stepOverBack->setToolTip(tr("Step Over Back: the main CPU's only (the card steps back by instructions) "
-                                     "(Shift+F8)"));
+        _stepOverBack->setToolTip(tr("Step Over Back: one %1 instruction back; back over a whole card routine when "
+                                     "that instruction is its return (Shift+F8)")
+                                      .arg(card));
         _runBack->setToolTip(tr("Run Back: back to the previous hit of a %1 breakpoint (Shift+F9)").arg(card));
     }
     else
@@ -291,7 +292,7 @@ bool DebuggerTimeTravel::move(const std::string& verb, std::map<std::string, std
 }
 
 bool DebuggerTimeTravel::cardMove(DebugCpuId card, const std::string& verb, std::map<std::string, std::string> options,
-                                  const QString& title)
+                                  const QString& title, bool* atEnd)
 {
     const QString name = QString::fromLatin1(DebugCpuName(card));
     options["cpu"] = DebugCpuName(card);
@@ -318,6 +319,12 @@ bool DebuggerTimeTravel::cardMove(DebugCpuId card, const std::string& verb, std:
     }
     // An answer that moved nothing (at_start, at_end, no_hit): the machine stays where it was
     const StateNode* reached = reply.body.find("reached");
+    const StateNode* status = reply.body.find("status");
+    if ((!reached || !reached->b) && atEnd && status && status->s == "at_end")
+    {
+        *atEnd = true;
+        return false;
+    }
     if (!reached || !reached->b)
     {
         _lastResult = title + QStringLiteral(": ") + (said.isEmpty() ? tr("nothing moved") : said);
@@ -336,15 +343,26 @@ bool DebuggerTimeTravel::cardMove(DebugCpuId card, const std::string& verb, std:
                       .arg(from ? static_cast<qulonglong>(from->i) : 0);
     if (const StateNode* hit = reply.body.find("breakpoint"))
         if (const StateNode* address = hit->find("address"))
-            _lastResult = tr("Run Back: %1 at the breakpoint %2 (instruction %3)")
-                              .arg(name, Hex(static_cast<uint16_t>(address->i)))
+            _lastResult = tr("%1: %2 at the breakpoint %3 (instruction %4)")
+                              .arg(title, name, Hex(static_cast<uint16_t>(address->i)))
                               .arg(at);
+    if (const StateNode* over = reply.body.find("over_call"); over && over->b)
+        if (const StateNode* skipped = reply.body.find("skipped"))
+            _lastResult += tr(", back over a routine of %1 instruction(s)").arg(static_cast<qulonglong>(skipped->i));
+    if (const StateNode* reach = reply.body.find("call_out_of_reach"); reach && reach->b)
+        _lastResult += tr(", on the return: the routine's start is out of reach");
+    if (const StateNode* end = reply.body.find("history_end"); end && end->b)
+        _lastResult += reply.body.find("kind")
+                           ? tr(", the step did not end in the history: at its end (the next step runs live)")
+                           : tr(", from past the history (stepped on live): at its end");
+    else if (const StateNode* cut = reply.body.find("truncated"); cut && cut->b && reply.body.find("kind"))
+        _lastResult += tr(", the step did not end in the frames searched (step again to go on)");
     emit moved();
     refresh();
     return true;
 }
 
-bool DebuggerTimeTravel::stepForward()
+bool DebuggerTimeTravel::stepForward(const std::string& kind, uint16_t address)
 {
     const DebugCpuId front = cpu();
     if (!IsCardCpu(front) || !_emulator)
@@ -358,8 +376,19 @@ bool DebuggerTimeTravel::stepForward()
         if (ttd::TTDSessionRef(context)->GetPublishedSessionInfo().state != ttd::TTDSessionState::Detached)
             return false;
     }
-    cardMove(front, "step-instruction", {{"dir", "forward"}}, tr("Step"));
-    return true;
+    // At the history's end the card steps on live, unrecorded (D-3, as the main CPU's steps): the window's own step
+    std::map<std::string, std::string> options{{"dir", "forward"}};
+    if (kind != "in")
+        options["kind"] = kind;
+    if (kind == "to")
+        options["pc"] = std::to_string(address);
+    const QString title = kind == "over" ? tr("Step Over")
+                          : kind == "out" ? tr("Step Out")
+                          : kind == "to"  ? tr("Run to Cursor")
+                                          : tr("Step");
+    bool atEnd = false;
+    cardMove(front, "step-instruction", options, title, &atEnd);
+    return !atEnd;
 }
 
 void DebuggerTimeTravel::stepBack()
@@ -372,8 +401,12 @@ void DebuggerTimeTravel::stepBack()
 
 void DebuggerTimeTravel::stepOverBack()
 {
-    if (IsCardCpu(cpu()))
-        return;  // the core has no card step over back
+    // The card's: one card instruction back, or back past a whole card routine when that instruction is its return
+    if (const DebugCpuId front = cpu(); IsCardCpu(front))
+    {
+        cardMove(front, "reverse-step-over", {}, tr("Step Over Back"));
+        return;
+    }
     move("reverse-step-over", {}, tr("Step Over Back"));
 }
 

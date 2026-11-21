@@ -75,3 +75,13 @@ a small core change with a unit test: a fake provider that becomes ready late. I
   pays it every frame.
 - **The frame-path cost in stepped mode with the keyboard** (21 fps): profile it. It limits every exact
   recording.
+
+## 5. Since then (2026-11-19)
+
+- **Linux has GPU encoders in the window recorder.** NVENC 4:4:4 (Turing and later) and VA-API (HEVC 4:4:4 in the
+  low-power encoder) keep up at 4K: the two-stage option matters less there, for hosts without either.
+- **Open:**
+  - the stepped mode under Xvfb on Linux stalls ("recorded nothing within 10 s") at the same frame each run, GPU
+    window or software screen; real time records;
+  - QSV refused the recorder's VFR stream on Linux ("Current frame rate is unsupported"); Windows still offers it
+    and is not checked.

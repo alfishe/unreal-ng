@@ -18,8 +18,10 @@ class NextCopper;
 /// timing - contention, the interrupt, the frame length - is the ZX family of NR #03 (Screen::GetTimingDescriptor), so
 /// the 256-line visible window starts 32 lines above the paper.
 ///
-/// Per-line, not per-pixel: a change inside a line shows from the next one (the copper and line effects of N7 act on
-/// line boundaries anyway). Border stripes of a loader are the border colour at the moment of each line's end.
+/// A line is drawn in segments: a copper MOVE and a CPU write of the border colour (port #FE) split it where their effect reaches the
+/// output (PictureLatencyOf, BorderEffectHalfPixel). Border writes do not cut the drawing: they queue their place and the line is drawn
+/// once, its border in runs (a beeper loop writes #FE every few dozen T-states); the layer record keeps a segment per run.
+/// The outer border around the grid takes the colour of each line's start and end.
 class ScreenNext : public Screen
 {
 public:
@@ -37,6 +39,8 @@ public:
     void RenderFrameBatch() override;
     void RenderOnlyMainScreen() override;
     void FillBorderWithColor(uint8_t color) override;
+    /// A CPU write of port #FE: the pixels before the new colour reaches the output are drawn with the old one first
+    void SetBorderColor(uint8_t color) override;
     /// The layers' memory in the 16K banks (bank B = pieces 4B..4B+3): the ULA (bank 5 or 7, by its Timex mode), LoRes
     /// (bank 5), Layer 2 (NR #12, 3 to 5 banks by NR #70), the tilemap (NR #6E / #6F, bank 5 or the 8K of bank 7).
     /// Sprite patterns and the palettes live in the Next state, not counted
@@ -78,6 +82,13 @@ public:
     /// The machine's state was replaced (a state load): the passes before now are what the state holds, the frame is the loaded one's
     void RestartSpriteFrame();
 
+    /// Where a CPU write of the border colour (port #FE) shows (zxnext.vhd 3600: port_fe_border takes port_fe_reg on the CPU clock's
+    /// falling edge; zxula.vhd 420-450: the ULA takes the border colour at the load of each 8-pixel cell, every 14 MHz clock in the
+    /// Pentagon timing; POC 028 scenario 54 measured 17 clocks from port_fe_border to the output and the cell grid). `clocks`: 28 MHz
+    /// clocks of the write (the IORQ T-state of the OUT) from the line's first paper pixel; `cpuHalfClock`: the CPU clock's half period
+    /// in 28 MHz clocks (4 at 3.5 MHz). Returns the first image sub-pixel (14 MHz, 0 = the grid's left edge, paper at 64) in the new colour
+    static int64_t BorderEffectHalfPixel(int64_t clocks, bool pentagon, unsigned cpuHalfClock = 4);
+
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
     uint32_t GridFirstT() const;  ///< the T-state where the grid's line 0 starts
@@ -106,6 +117,25 @@ private:
     /// Draw the pixels before (line, x): the lines before `line` whole, `line` up to x
     void RenderUpTo(unsigned line, unsigned halfPixel);  // the line's 14 MHz pixels of the image (640 a line) before `halfPixel`
     void UpdateCopperGeometry();
+    /// The border colour of the pixels being drawn: port #FE's as the ULA has it (the decoder stores the new value before the screen
+    /// hears of the write, so the drawing keeps its own)
+    uint8_t _border = 0;
+    /// The border writes the drawing has not reached yet, at their image position (line * 640 + sub-pixel), ascending
+    struct PendingBorder
+    {
+        uint32_t at = 0;
+        uint8_t colour = 0;
+    };
+    static constexpr unsigned kPendingBorders = 64;
+    PendingBorder _pendingBorder[kPendingBorders] = {};
+    unsigned _pendingBorderHead = 0, _pendingBorderCount = 0;
+    /// The image position where a CPU write of the border colour now shows; false when the drawing does not follow the beam (no
+    /// ScreenHQ, turbo, before the first line) or the beam is past the grid (drawn up to its end first)
+    bool BorderWritePosition(uint32_t& at);
+    void QueueBorder(uint8_t border);
+    /// Take the queued writes up to `at` (inclusive) into `_border`
+    void TakeBordersUpTo(uint32_t at);
+    void ClearPendingBorders() { _pendingBorderHead = _pendingBorderCount = 0; }
     mutable uint64_t _copperB = 0, _copperFrame7 = 0;                    ///< CopperClock = ((2 t + B) mod frame7) * 4, cached per raster
     mutable uint32_t _copperKey[4] = {};
     bool FramebufferReady() const;

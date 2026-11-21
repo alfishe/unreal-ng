@@ -61,12 +61,12 @@ bool ChangesMachine(const std::string& method, const std::string& subpath)
 
 bool CliCommandChangesMachine(const std::string& command, const std::vector<std::string>& args)
 {
-    static const std::array<std::string_view, 51> kAlways = {
+    static const std::array<std::string_view, 50> kAlways = {
         "reset", "nmi", "mni", "switch", "resume", "step", "stepin", "steps", "stepover", "stepout", "skip_until",
         "run_until",
         "run_tstates", "run_to_scanline", "run_scanlines", "run_to_pixel", "run_to_interrupt", "run_frame",
         "run_frames", "run_ncycles", "out", "romflash", "open", "assemble",
-        "bp", "break", "breakpoint", "wp", "bport", "bnextreg", "bbeam", "bmagic", "bcopper", "bphits", "bpclear",
+        "bp", "break", "breakpoint", "wp", "bport", "bnextreg", "bbeam", "bmagic", "bcopper", "bpclear",
         "bpgroup", "bpon", "bpoff", "bptoggle", "bkey", "bpnote", "bpcond",
         "key", "keyboard", "mouse", "joystick", "debugmode", "model", "rzx", "zxpoly", "start"};
     for (std::string_view always : kAlways)
@@ -74,6 +74,8 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
             return !(command == "rzx" && (args.empty() || args[0] == "status" || args[0] == "help")) &&
                    !(command == "model" && (args.empty() || args[0] == "help")) &&
                    !(command == "debugmode" && args.empty()) && !(command == "zxpoly" && args.empty());
+    if (command == "bphits")  // `bphits <id>` reads a breakpoint's hits; `bphits reset` sets them back
+        return !args.empty() && args[0] == "reset";
     if (args.empty())
         return false;
     const std::string& verb = args[0];

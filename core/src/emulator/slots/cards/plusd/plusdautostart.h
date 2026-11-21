@@ -4,7 +4,7 @@
 /// @brief The MGT +D disk autostart (docs/inprogress/2026-11-15-mgt-plus-d/autostart.md §3): what to start is chosen
 /// from the disk's G+DOS directory, then a user's steps are replayed on the emulation thread.
 ///
-/// Most +D disks carry no DOS (216 of the corpus' 243): G+DOS was already in the +D's RAM. So the plan is one of
+/// Most +D disks carry no DOS: G+DOS was already in the +D's RAM. So the plan is one of
 ///  - `run`: the disk has `+SYS*` and `AUTO*`: reset, `RUN` (the ROM loads both);
 ///  - `run+load`: `+SYS*`, no `AUTO*`: reset, `RUN`, wait for the DOS, the start command;
 ///  - `system-disk+load`: no `+SYS*`: the emulator's system disk (boot/plusd/gdos-2a-system.mgt) in drive 1,

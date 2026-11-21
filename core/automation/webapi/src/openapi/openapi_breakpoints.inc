@@ -121,6 +121,40 @@
     paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["responses"]["200"]["description"] = "Counters reset";
     paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["responses"]["404"]["description"] = "No such breakpoint";
 
+    // The per-hit record of a breakpoint that only counts (PLAN #122 V4): monitoring::Call breakpoint_hits
+    {
+        Json::Value& get = paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/hits"]["get"];
+        get["summary"] = "A breakpoint's hits: the counts and the per-hit record";
+        get["description"] =
+            "hit_count (and match_count with a condition) of any breakpoint; for one that only counts (stop false) "
+            "its per-hit record: log {capacity, keep (first / last), total (hits offered since the last reset), "
+            "stored, dropped (after the first capacity, or overwritten), oldest (the oldest record index held)} and "
+            "hits [{index, hit (the hit's number: hit_count after it; a hit policy records only the hits it passes), "
+            "frame, t (the main CPU: T in the frame; a card CPU: its time since the frame's start in its unit), pc "
+            "(the instruction: execute the one about to run, an access the one doing it), address (the address, "
+            "port, event kind or chip register), value (an OUT's, an event's or a chip write's byte), kind (exec, "
+            "read, write, port_in, port_out, event, machine_event, chipreg), cpu_time (a card CPU: its own clock)}], "
+            "first_index, more, next_from. log is null for a breakpoint that stops or keeps no record. Read "
+            "without pausing the machine; POST .../breakpoints/hits/reset empties the record with the count.";
+        get["tags"].append("Debug Commands");
+        const char* names[] = {"id", "bp_id", "cpu", "from", "limit"};
+        const char* where[] = {"path", "path", "query", "query", "query"};
+        const char* what[] = {"The emulator", "The breakpoint's id", "main (default), gs or ms",
+                              "The first record index to return (default 0; below the oldest held: the oldest)",
+                              "Hits at most (1..10000, default 100)"};
+        for (int i = 0; i < 5; ++i)
+        {
+            get["parameters"][i]["name"] = names[i];
+            get["parameters"][i]["in"] = where[i];
+            get["parameters"][i]["required"] = i < 2;
+            get["parameters"][i]["description"] = what[i];
+            get["parameters"][i]["schema"]["type"] = i < 3 ? "string" : "integer";
+        }
+        get["responses"]["200"]["description"] = "The counts and the record";
+        get["responses"]["400"]["description"] = "A bad cpu, from or limit";
+        get["responses"]["404"]["description"] = "No such breakpoint";
+    }
+
     // Breakpoints by selection (BreakpointSelection), groups and notes (debug tools: use cases D4.5)
     paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["summary"] = "Whether a selection of breakpoints is on";
     paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["description"] =

@@ -11,6 +11,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointcondition.h"
+#include "debugger/breakpoints/breakpointhitlog.h"
 #include "debugger/breakpoints/chipregister.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -187,6 +188,11 @@ struct BreakpointDescriptor
         "interactive";  // Owner: "interactive" for user/CLI, or "analyzer_manager" if set by analyzer manager
     std::string note;   // Annotation for the breakpoint
     std::string group = "default";  // Group name for organizing breakpoints
+    // A breakpoint that only counts (BRK_COUNT_TAP): the hits its per-hit record keeps (0: none; tapCookie then names
+    // its slot in the manager, BreakpointManager::GetHitLog) and which ones. Cold: the record is written by the
+    // manager's count sink, never by the walk
+    uint32_t hitLogCapacity = 0;
+    BreakpointHitLogKeep hitLogKeep = BreakpointHitLogKeep::First;
     // The condition's failure (`condition` above), last: cold, kept off the lines the walk reads
     char conditionError[120] = {};
 };
@@ -340,6 +346,12 @@ struct BreakpointSpec
     uint32_t tapCookie = 0;
     // False: the breakpoint only counts its hits and never stops (BRK_COUNT_TAP); the kinds a tap watches
     bool stop = true;
+    // stop false only: the hits its per-hit record keeps (frame, T, PC, address, value; PLAN #122 V4), 0 for none,
+    // at most BreakpointHitLog::kMaxCapacity; kHitLogDefault: BreakpointHitLog::kDefaultCapacity for a breakpoint that
+    // only counts, none for one that stops. hitLogKeep: the first ones or the newest
+    static constexpr uint32_t kHitLogDefault = 0xFFFF'FFFF;
+    uint32_t hitLog = kHitLogDefault;
+    BreakpointHitLogKeep hitLogKeep = BreakpointHitLogKeep::First;
     // Physical only: the offset in the page when it is not `address` & #3FFF (an 8K bank of the Next is half a
     // 16K page; `address` stays the CPU address, so the slot). 0xFFFF: address & #3FFF
     uint16_t pageOffset = 0xFFFF;
@@ -417,8 +429,30 @@ protected:
     bool _execPassArmed = false;
     uint16_t _execPassAddress = 0;
 
-    // The tap sinks by id (RegisterTapSink; 0 is BRK_NO_TAP) and what their armed taps need of the machine
+    // The tap sinks by id (RegisterTapSink; 0 is BRK_NO_TAP) and what their armed taps need of the machine.
+    // BRK_COUNT_TAP is the manager's own count sink: it writes the per-hit record of a breakpoint that only counts.
+    // Its slot holds the sink only while a record still takes hits (_countSinkWanting): a breakpoint that only counts
+    // with no record, or whose record of the first N is full, calls nothing, as before the records (RefreshCountSink)
     std::array<IBreakpointTapSink*, 256> _tapSinks{};
+    class CountSink final : public IBreakpointTapSink
+    {
+    public:
+        explicit CountSink(BreakpointManager& manager) : _manager(manager) {}
+        void OnTap(const BreakpointTapHit& hit) override { _manager.RecordCountHit(hit); }
+
+    private:
+        BreakpointManager& _manager;
+    };
+    CountSink _countSink{*this};
+    uint32_t _countSinkWanting = 0;   ///< records still taking hits; written with the CPU held or by the emulation thread
+    // The per-hit records of the breakpoints that only count, by slot (the descriptor's tapCookie - 1): created and
+    // freed with the CPU held, written by the emulation thread (RecordCountHit), read under _mutex (GetHitLog)
+    struct HitLogSlot
+    {
+        std::unique_ptr<BreakpointHitLog> log;
+        const BreakpointDescriptor* descriptor = nullptr;
+    };
+    std::vector<HitLogSlot> _hitLogs;
     BreakpointTapDemand _tapDemand;
     uint8_t* _replace = nullptr;  // the byte of the read being resolved that a tap may replace (BreakpointTapHit::replace)
     uint8_t _replaySink = BRK_NO_TAP;  // SetReplayTapSink
@@ -599,9 +633,27 @@ public:
     /// the labels it names, the access operands its trigger supplies, a dry evaluation on the current state
     BreakpointConditionPtr CompileCondition(BreakpointTypeEnum type, uint8_t access, const std::string& text,
                                             BreakpointConditionDialect dialect, std::string& error) const;
-    /// Hit and match counters back to 0: one breakpoint (false for an unknown id) or all
+    /// Hit and match counters back to 0, and the per-hit records emptied: one breakpoint (false for an unknown id) or all
     bool ResetHitCount(uint16_t breakpointID);
     void ResetAllHitCounts();
+    /// A breakpoint's hits as a reader sees them now, without holding the CPU (PLAN #122 V4): the counts and, for a
+    /// breakpoint that only counts and keeps a record, up to `limit` hits from record index `from` on
+    struct HitLogInfo
+    {
+        bool found = false;
+        bool countOnly = false;     ///< stop false (BRK_COUNT_TAP)
+        bool hasCondition = false;
+        uint32_t hitCount = 0;
+        uint32_t matchCount = 0;    ///< every match (with a condition; else hitCount)
+        bool hasLog = false;        ///< it keeps a per-hit record (view below)
+        BreakpointHitLog::View view;
+    };
+    HitLogInfo GetHitLog(uint16_t breakpointID, uint64_t from = 0, uint32_t limit = 100) const;
+    /// "first" / "last" (ParseHitLogKeep reverses it)
+    static const char* HitLogKeepName(BreakpointHitLogKeep keep);
+    static bool ParseHitLogKeep(const std::string& text, BreakpointHitLogKeep& keep);
+    /// The hit kind's name in the record: exec, read, write, port_in, port_out, event, machine_event, chipreg
+    static const char* HitKindName(uint8_t kind);
     /// The execution breakpoint at `address` lets the next instruction start there through without a hit or
     /// a count (stepping on from where the emulator stopped); DisarmExecPass ends it
     void ArmExecPass(uint16_t address)
@@ -928,6 +980,12 @@ protected:
     std::vector<uint16_t> TakeChangedIds();
     /// The fields a surface shows for one breakpoint, as one comparable string
     static std::string PublishedFields(const BreakpointDescriptor& breakpoint);
+    /// The count sink's hit (emulation thread): the moment and the place into the breakpoint's per-hit record
+    void RecordCountHit(const BreakpointTapHit& hit);
+    /// The per-hit record of a breakpoint that only counts goes with it (the caller holds what a change holds)
+    void ReleaseHitLog(const BreakpointDescriptor& descriptor);
+    /// The count sink's slot from the records that still take hits (the caller holds what a change holds)
+    void RefreshCountSink();
 
     // endregion </Helper methods>
 };

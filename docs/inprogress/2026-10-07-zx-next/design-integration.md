@@ -82,7 +82,7 @@ state, the model is.
 | `NEXTREG` | `NextRegs::Write(reg, value, source = cpu)`; the write may rebuild the slot table or change the CPU speed in the middle of the instruction, so the adapter re-reads the clock and speed after the callback |
 | Interrupts | the CPU's `IInterruptSource` is the IM2 chain object; `RETI` / `RETN` reach it through the library's observer hook (section 12 of the research note) |
 | NMI | the host's NMI state machine (three sources, first come first served) pulses the library's NMI line; the stackless mode is set by NR `#C0` bit 3 |
-| DMA | a separate bus master in the machine step: while it holds the bus the engine is not stepped; it gets the bus back between M-cycles of the host model's choosing (first version: between instructions, refined when the DMA tests of ZXSpectrumNextTests require it) |
+| DMA | a separate bus master in the machine step: while it holds the bus the engine is not stepped; it gets the bus back between M-cycles of the host model's choosing (first version: between instructions; since 2026-11-19 the burst mode and the enable's first byte at the T80's machine-cycle ends through the contention hook, POC 036 `dmaprescb`) |
 | M1 hook | `PortDecoderNext::OnM1` for the DivMMC automap and Multiface entry points, as `OnMachineM1` is used elsewhere; the automap decision uses the **previous** M1 with the instant / delayed rules of [esxdos-and-sd.md](esxdos-and-sd.md) |
 
 ## 5. What lives where

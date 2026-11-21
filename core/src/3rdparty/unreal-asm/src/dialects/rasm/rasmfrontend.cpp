@@ -291,7 +291,7 @@ private:
     std::map<int, std::vector<std::string>> fileLines;
     int lastCommentFile = -1;
     int lastCommentLine = -1;
-    std::map<std::tuple<int, int, int>, std::vector<size_t>> at;   // (bank, zone, $) -> labels
+    std::map<std::tuple<int, int, int>, std::vector<size_t>> labelsAt; // (bank, zone, $) -> labels
 
     void Report(const std::string& what)
     {
@@ -365,7 +365,7 @@ private:
             used.insert(unique);
             names[i] = unique;
             if (!l.crunched)
-                at[{l.bank, l.orgzone, static_cast<int>(l.value)}].push_back(i);
+                labelsAt[{l.bank, l.orgzone, static_cast<int>(l.value)}].push_back(i);
         }
     }
 
@@ -802,8 +802,8 @@ private:
             std::string label;
             if (p == t.outputStart)
             {
-                const auto lit = at.find({t.bank, t.orgzone, t.codeStart});
-                if (lit != at.end())
+                const auto lit = labelsAt.find({t.bank, t.orgzone, t.codeStart});
+                if (lit != labelsAt.end())
                 {
                     // a label on the line of the statement goes on it; one on a line of its own (or a second one) on a
                     // line of its own, numbered as the source defines it

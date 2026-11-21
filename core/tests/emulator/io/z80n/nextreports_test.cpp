@@ -70,7 +70,7 @@ TEST_F(NextReports_Test, DmaPowerOnState)
     EXPECT_EQ(P(r, "burst"), "continuous");
     EXPECT_EQ(P(r, "read_mask"), "0x7F");
     EXPECT_EQ(P(r, "read_seq"), "0");
-    EXPECT_EQ(P(r, "direction"), "a_to_b");
+    EXPECT_EQ(P(r, "direction"), "b_to_a") << "R0_dir_AtoB_s has no initial value: INIT 0 (NextDmaPowerOn_Test)";
     EXPECT_EQ(P(r, "holds_bus"), "off");
     EXPECT_EQ(P(r, "interrupt_enables.nr_cc"), "0x00");
 }

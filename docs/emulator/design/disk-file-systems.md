@@ -10,7 +10,7 @@ the unreal-asm tools and `zxdisk` link it, none of them needs the emulator's cor
 
 | Layer | Where (`unrealdisk/`) | What |
 |---|---|---|
-| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mb01fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M and Profi CP/M over a byte reader and writer, MB-02 and MB-01 over a 1024-byte sector reader and writer, MDOS over a 512-byte sector reader and writer, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
+| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mb01fs.h`, `mdosfs.h`, `gdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M and Profi CP/M over a byte reader and writer, MB-02 and MB-01 over a 1024-byte sector reader and writer, MDOS over a 512-byte sector reader and writer, G+DOS (MGT +D) on the floppy's sectors, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
 | Block devices | `blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | a disk as 512-byte sectors (core: `IBlockDevice`), a partition window, a floppy of uniform 512-byte sectors (FAT on a Sprinter DSS or MS-DOS floppy; writable when asked) |
 | Code pages | `unicode.h` | CP866 / CP1251 names to UTF-8 (FAT short names, iS-DOS) |
 | One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` / `SetAttributes` / `SetTime` / `SetLabel` by volume and path |
@@ -33,7 +33,7 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
-| Floppy | Profi CP/M (1024-byte sectors, the directory from byte 0, else Klug CP/M's from cylinder 2; see [Profi CP/M layout](#profi-cpm-layout); it ends the probe); ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); MB-01 (the boot sector anywhere on track 0, side 0, the FAT; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `mb01`, `isdos` |
+| Floppy | Profi CP/M (1024-byte sectors, the directory from byte 0, else Klug CP/M's from cylinder 2; see [Profi CP/M layout](#profi-cpm-layout); it ends the probe); ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); G+DOS (two sides, every used entry of the directory on cylinders 0-3 with a G+DOS type, see [G+DOS layout](#gdos-layout); skipped when FAT matched; it ends the probe); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); MB-01 (the boot sector anywhere on track 0, side 0, the FAT; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `gdos`, `plus3`, `mb02`, `mb01`, `isdos` |
 | Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them, last a directory at the start of a track outside the other volumes (see [ATM CP/M layout](#atm-cpm-layout)); Profi CP/M: the partitions of the table after the `ProfiHDD` header at cylinder 1 (see [Profi CP/M layout](#profi-cpm-layout)), over a FAT volume too; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from its first sector that starts with `SDOS`: the first sector of a file of any FAT volume, wherever it lies (an `.md3` file, slot files copied onto a FAT16 card), or another sector of the first 4096 (an `.md3` written to the disk whole); looked for after iS-DOS; BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; ProfROM MFS: the subpartitions of each primary MBR partition of type #53 (see [ProfROM MFS layout](#profrom-mfs-layout)); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary of the image's geometry and in the 1008 sectors (a cylinder of 16 heads of 63) after the end of every volume found, a device found adding its own end (the HDD driver places the devices one after the other, a cylinder of the geometry it was told apart); outside the other volumes | `fat`, `p1`..`p4`, `cpm-<cylinder>` (ATM and Profi CP/M), `mdos-<slot>`, `mb02-<n>`, `mfs-<n>`, `mfs-<n>-<m>`, `isdos`, `isdos-<cylinder>`, `isdos-lba<sector>` (off the image's cylinders) |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
@@ -295,6 +295,28 @@ its length (no variables), any other type's #8000 as a tape header's CODE. Delet
 and frees the chain. The 4-bit filler at the end of each FAT sector stays. A slot is written when the device takes
 writes and its info byte 36 is not `1` (MDOS3's write protection).
 
+## G+DOS layout
+
+The MGT +D's G+DOS 2a (and the DISCiPLE's GDOS) on an 80-cylinder, two-sided disk of 10 x 512-byte sectors (ids
+1-10; `.mgt` cylinder-major, `.img` side-major: [MGT image](../../file-formats/disk-images/mgt.md),
+`loader_mgt.h`). `gdosfs.h`; checked on the emulator's system disk `data/boot/plusd/gdos-2a-system.mgt`.
+
+- **Directory**: cylinders 0-3 of side 0, 80 entries of 256 bytes, two to a sector (entry `n`: cylinder `n / 20`,
+  sector `n % 20 / 2 + 1`, half `n % 2`). Byte 0 the type (bits 0-5: 0 free, 1 BASIC, 2 number array, 3 character
+  array, 4 CODE, 5 48K snapshot, 6 Microdrive, 7 SCREEN$, 8 special, 9 128K snapshot, 10 opentype, 11 execute; bit 6
+  hidden, bit 7 protected), 1-10 the name (blank padded), 11-12 the sectors used (high byte first), 13 the first
+  track (bit 7 side 1), 14 the first sector, 15-209 the sector map, 211-219 for the tape types the 9-byte tape header
+  (type, length, start, param, autostart line), 220-241 a 48K snapshot's registers.
+- **Sector map**: 195 bytes, one bit a data sector, least significant bit first: track 4 sector 1 is bit 0, side 0's
+  cylinders 4-79 first, then side 1's 0-79 (bit `(track - 4) * 10 + sector - 1`, a side 1 track counted from 80).
+  Free = no entry's map has the bit; G+DOS takes the first free bits in that order.
+- **Data**: a chain of sectors, 510 data bytes each, then the next track and sector (0, 0 the last). A tape type's
+  data starts with the same 9-byte header as the entry; `Read` cuts it off.
+- **Write** (`put`): the name's entry is reused (an older file replaced unless protected), else the first free one;
+  the sectors are the first free in map order; the entry is cleared, then type, name, count, first sector, map bits
+  and the tape header are set. **Delete** (`rm`): byte 0 to 0, as `ERASE` (the map goes with the entry). **Rename**
+  (`mv`): the name bytes. **Attributes**: bits 6 and 7 of byte 0. No directories, times or disk name.
+
 ## Surfaces
 
 | Surface | Volumes | Directory | File | Write | Delete, rename, mkdir | Attributes, time, label |
@@ -338,6 +360,10 @@ disk or card image is changed in place, or copied to `-o` first and the copy cha
   or 3 (CODE, the default, its body at `start`), `start` param 1, `param2` param 2 as on +3DOS. Arrays are refused:
   their body address is not known.
 - **MDOS**: `NAME.T`, the type from the name's letter (`P`, `B`, `N`, `C`); `start` param 1, `param2` param 2.
+- **G+DOS**: `NAME` (1-10 printable ASCII characters), as G+DOS `SAVE` writes it: `basicType` 0 a program (type 1,
+  start PROG 23755, `start` the autostart line, `param2` default its length), 1 / 2 an array, 3 CODE (type 4, the
+  default; `start` the load address, param #FFFF); the 9-byte tape header in the entry and before the data, the
+  first free sectors in map order. A protected file is not written over or deleted.
 - **FAT12 / 16 / 32**: any path of an existing directory, a long name with its 8.3 alias; the clusters checked
   against the free space first, the date and time from the host's wall clock.
 
@@ -400,6 +426,7 @@ UTC seconds of the DOS wall clock (the media verbs' `time` takes `YYYY-MM-DD HH:
 | MB-02 | none | none (the byte is the `attributes` field) | 2-second steps, the entry's #01 time and #03 date; a directory's in its header | the disk name at #26 of the boot sector (10 characters, blanks after it) |
 | MB-01 | none | none (the byte is the `attributes` field) | 2-second steps, the entry's 1 time and 3 date; a directory's in its slot of the directory list | the disk name at 4 of the boot sector (10 characters, blanks after it) |
 | MDOS | `HSPARWED`: hidden, system, protected, archive, read, write, execute, delete (entry +20, bit 7 to bit 0; a file without `D` is not deleted or written over) | `HSPARWED` | none | the disk name at 192 (10 bytes, zeroes after it); an MDOS3 slot's name in its info sector (32 characters, blanks after it) |
+| G+DOS | `HP`: hidden, protected (bits 6, 7 of the type byte; a protected file is not deleted or written over) | `HP` | none | none |
 | +3DOS | `RSA`: bit 7 of the type bytes t1', t2', t3' (read only, system, archive) | `RSA` | none | none |
 | TR-DOS | none | | none | the disk title, 8 printable ASCII characters at +#F5 of the info sector |
 

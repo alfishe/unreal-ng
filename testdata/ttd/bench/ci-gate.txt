@@ -11,6 +11,7 @@
 # 48K/idle and PENTAGON/game bm7_file rows updated 2026-11-15 (Z80 Q latch per instruction class, qregister.h): the checkpoints carry the corrected Q, the compressed file moved by 3 / 5 bytes; no other row changed.
 # bm7_file rows updated 2026-11-17 (F3, chunked streams): the header declares the chunked twins of the write journal and the holder streams (stream 0x8000 + S, "chunked-<name>"), 102 bytes more in every file; no other row changed.
 # ATM3/idle, PENTAGON/idle and PENTAGON/game rows updated 2026-11-17 (card-positions, gs-debugger design §8): the NeoGS blob (id 12) carries the card CPU's instruction count, which advances every frame: the device-blob, bm3_ram_payload and NeoGS bm9 rows grow by ~6 bytes per frame, the file by ~5 (first NeoGS blob +13 / +14 bytes); no other row moved beyond its tolerance.
+# 48K/idle, PENTAGON/idle and PENTAGON/game bm7_file rows updated 2026-11-19 (re-api-efficiency F2, split-independent RunNFrames): the bench runs one RunNFrames(1) per frame; each call used to drop the overshoot of its last instruction, so the live end drifted a few T-states per frame into the next frame, and the saved file's tail (the part of the frame after the last capture) was that much longer. Now every call ends a few T past the boundary: 1 / 4 / 18 bytes less; no other row changed.
 48K/idle bm2_work_compress_calls_opf 1.033333 0
 48K/idle bm2_work_compress_input_bpf 4232.533333 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -32,8 +33,8 @@
 48K/idle bm3_write_journal_bpf 719.750000 25
 48K/idle bm4_resident_bpf 70138.183333 25
 48K/idle bm4_resident_bytes 4208291.000000 25
-48K/idle bm7_file_bpf 258.350000 0
-48K/idle bm7_file_bytes 15501.000000 0
+48K/idle bm7_file_bpf 258.333333 0
+48K/idle bm7_file_bytes 15500.000000 0
 48K/idle bm9_device.ay-socket.tsfm_bpf 99.383333 0
 48K/idle bm9_device.ay-socket.tsfm_bytes 2108.000000 0
 48K/idle bm9_device.ay-socket.tsfm_first_bytes 289.000000 0
@@ -230,8 +231,8 @@ PENTAGON/game bm3_total_bpf 80760.800000 25
 PENTAGON/game bm3_write_journal_bpf 5902.616667 25
 PENTAGON/game bm4_resident_bpf 104389.133333 25
 PENTAGON/game bm4_resident_bytes 6263348.000000 25
-PENTAGON/game bm7_file_bpf 6755.066667 0
-PENTAGON/game bm7_file_bytes 405304.000000 0
+PENTAGON/game bm7_file_bpf 6754.766667 0
+PENTAGON/game bm7_file_bytes 405286.000000 0
 PENTAGON/game bm9_device.atachannel_bpf 0.700000 0
 PENTAGON/game bm9_device.atachannel_bytes 4256.000000 0
 PENTAGON/game bm9_device.atachannel_first_bytes 42.000000 0
@@ -319,8 +320,8 @@ PENTAGON/idle bm3_total_bpf 56486.816667 25
 PENTAGON/idle bm3_write_journal_bpf 421.216667 25
 PENTAGON/idle bm4_resident_bpf 77564.866667 25
 PENTAGON/idle bm4_resident_bytes 4653892.000000 25
-PENTAGON/idle bm7_file_bpf 983.800000 0
-PENTAGON/idle bm7_file_bytes 59028.000000 0
+PENTAGON/idle bm7_file_bpf 983.733333 0
+PENTAGON/idle bm7_file_bytes 59024.000000 0
 PENTAGON/idle bm9_device.atachannel_bpf 0.700000 0
 PENTAGON/idle bm9_device.atachannel_bytes 4256.000000 0
 PENTAGON/idle bm9_device.atachannel_first_bytes 42.000000 0

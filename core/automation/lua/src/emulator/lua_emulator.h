@@ -664,8 +664,9 @@ protected:
     }
 
     /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
-    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=, stop=} (stop = false: it only counts,
-    /// bp_hits reads the count). The breakpoint id; -1 and the reason when refused
+    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=, stop=, hit_log=, hit_log_keep=}
+    /// (stop = false: it only counts, bp_hits reads the count, bp_hit_log the per-hit record of hit_log hits, default
+    /// 1000, 0 none; hit_log_keep "first" or "last"). The breakpoint id; -1 and the reason when refused
     std::tuple<int, sol::optional<std::string>> AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access,
                                                                     uint16_t address,
                                                                     const sol::optional<sol::object>& options)
@@ -694,6 +695,15 @@ protected:
             slotOnly = t.get<sol::optional<bool>>("slot_only").value_or(false);
             mask = t.get<sol::optional<int32_t>>("mask").value_or(-1);
             spec.stop = t.get<sol::optional<bool>>("stop").value_or(true);
+            if (auto log = t.get<sol::optional<int64_t>>("hit_log"))
+            {
+                if (*log < 0 || *log > BreakpointHitLog::kMaxCapacity)
+                    return {-1, "hit_log must be 0.." + std::to_string(BreakpointHitLog::kMaxCapacity)};
+                spec.hitLog = static_cast<uint32_t>(*log);
+            }
+            if (auto keep = t.get<sol::optional<std::string>>("hit_log_keep"))
+                if (!BreakpointManager::ParseHitLogKeep(*keep, spec.hitLogKeep))
+                    return {-1, std::string("hit_log_keep must be 'first' or 'last'")};
             hits = t.get<sol::optional<std::string>>("hits").value_or("");
             if (hits.empty())
                 if (auto n = t.get<sol::optional<int64_t>>("hits"))
@@ -3016,10 +3026,15 @@ public:
             effectiveEmulator()->RunFrame(skipBP.value_or(true));
         });
 
-        lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
+        // run_frames(n [, skip_breakpoints = true]) -> {count, frames_run, tstates_run, frame, t, stop, message}: on the
+        // direct-run timeline (split-independent: 30 + 70 == 100), any count
+        lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
-            effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
+            Emulator& emulator = *effectiveEmulator();
+            const Emulator::DirectRunResult r = emulator.RunNFrames(count, skipBP.value_or(true));
+            return StateNodeToLua(ts, execution::RunOutcomeNode(
+                                          emulator, execution::RunOutcomeOf("frames", count, r.frames, r.tstates, r.reached)));
         });
 
         // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until{text = "PRESS", max_frames = 500}
@@ -3059,10 +3074,15 @@ public:
         });
 
         // Atomic stepping methods
-        lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
+        // run_tstates(n [, skip_breakpoints = true]) -> the run_frames answer; on the same timeline (slices end where
+        // one run ends)
+        lua.set_function("run_tstates", [this](uint64_t count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
-            effectiveEmulator()->RunTStates(count, skipBP.value_or(true));
+            Emulator& emulator = *effectiveEmulator();
+            const Emulator::DirectRunResult r = emulator.RunTStates(count, skipBP.value_or(true), /*onTimeline=*/true);
+            return StateNodeToLua(ts, execution::RunOutcomeNode(
+                                          emulator, execution::RunOutcomeOf("tstates", count, r.frames, r.tstates, r.reached)));
         });
 
         lua.set_function("run_to_scanline", [this](unsigned scanline, sol::optional<bool> skipBP) {
@@ -4326,9 +4346,9 @@ public:
             return std::make_tuple(sol::make_object(ts, id), sol::make_object(ts, sol::lua_nil));
         });
 
-        lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id) -> bool {
-            if (!effectiveEmulator()) return false;
-            BreakpointManager* bpm = effectiveEmulator()->GetBreakpointManager();
+        // bp_reset_hits([id][, cpu]): hit counters back to 0 and per-hit records emptied (one breakpoint, or all)
+        lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id, sol::optional<std::string> cpu) -> bool {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             if (!bpm) return false;
             if (id)
                 return bpm->ResetHitCount(*id);
@@ -4348,6 +4368,25 @@ public:
                 args["instance"] = emulator->GetId();
             args["cpu"] = cpu.value_or("");
             return StateNodeToLua(s, monitoring::Call("breakpoint_groups", args).body);
+        });
+
+        // bp_hit_log(id[, {cpu=, from=, limit=}]) -> {ok, instance, cpu, id, stop, hit_count, log, hits = {{index, hit,
+        // frame, t, pc, address, value, kind, cpu_time}}, first_index, more, next_from}: as GET .../breakpoints/{bp}/hits;
+        // a refusal: ok = false, error, message
+        lua.set_function("bp_hit_log", [this](sol::this_state s, int64_t id, sol::optional<sol::table> opts) {
+            StateNode args = StateNode::Object();
+            if (Emulator* emulator = effectiveEmulator())
+                args["instance"] = emulator->GetId();
+            args["id"] = std::to_string(id);
+            if (opts)
+            {
+                args["cpu"] = opts->get_or<std::string>("cpu", "");
+                if (auto from = opts->get<sol::optional<int64_t>>("from"))
+                    args["from"] = std::to_string(*from);
+                if (auto limit = opts->get<sol::optional<int64_t>>("limit"))
+                    args["limit"] = std::to_string(*limit);
+            }
+            return StateNodeToLua(s, monitoring::Call("breakpoint_hits", args).body);
         });
 
         lua.set_function("bp_list", [this](sol::optional<std::string> cpu) -> std::string {
@@ -6813,6 +6852,32 @@ public:
                                                                                 {"count", std::to_string(count)}})));
         });
 
+        // ttd_card_reverse_step_over(cpu): the card's step over back: one card instruction back, or past a whole card
+        // routine to its CALL / RST when that instruction is its return (over_call, skipped in the reply)
+        lua.set_function("ttd_card_reverse_step_over", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("reverse-step-over", {{"cpu", cpu}})));
+        });
+
+        // ttd_card_step_over(cpu) / ttd_card_step_out(cpu): the card's step over / step out through the history (its
+        // breakpoints end it first; history_end: not ended in the history, the card at its end)
+        lua.set_function("ttd_card_step_over", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu}, {"kind", "over"}})));
+        });
+        lua.set_function("ttd_card_step_out", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu}, {"kind", "out"}})));
+        });
+
+        // ttd_card_run_to_cursor(cpu, pc [, max_frames]): the card's run to the cursor through the history (its next
+        // instruction at pc, its breakpoints first; not reached: reached false, status no_hit, nothing moved)
+        lua.set_function("ttd_card_run_to_cursor", [this](sol::this_state ts, const std::string& cpu, uint32_t pc,
+                                                          sol::optional<uint64_t> maxFrames) -> sol::object {
+            std::map<std::string, std::string> options{
+                {"cpu", cpu}, {"dir", "forward"}, {"kind", "to"}, {"pc", std::to_string(pc)}};
+            if (maxFrames)
+                options["max_frames"] = std::to_string(*maxFrames);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", options)));
+        });
+
         // ttd_card_reverse_continue(cpu [, max_frames]): back to the card's previous breakpoint hit
         lua.set_function("ttd_card_reverse_continue", [this](sol::this_state ts, const std::string& cpu,
                                                              sol::optional<uint64_t> maxFrames) -> sol::object {
@@ -7016,6 +7081,56 @@ public:
                 return StateNodeToLua(ts, TtdScriptValue(TtdRun(verb, options)));
             });
         }
+
+        // Reads of the past without seeking (PLAN #122 S1, V2):
+        // ttd_memory_series{ranges = "0x5B00:32, ram7:0x1800:768" | {"0x5B00:32", {space = "ram", page = 7,
+        //                   offset = 0x1800, length = 768}}, from_frame = F1, to_frame = F2, step = 1,
+        //                   frames = {F, ...}, changes_only = true, format = "hex", limit = 1000, max_bytes = N}
+        // ttd_screen_at{frame = F, which = "shown" | "normal" | "shadow", format = "png" | "bitmap" | "attributes" |
+        //               "raw", area = "full" | "screen", encoding = "base64" | "hex"}
+        lua.set_function("ttd_memory_series", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+            {
+                const std::string name = key.as<std::string>();
+                if (name != "ranges" || value.get_type() != sol::type::table)
+                {
+                    options[name] = TtdOptionText(value);
+                    continue;
+                }
+                // A list of ranges: strings as they are, tables as "space:offset:length" (page N: space ramN)
+                const sol::table list = value.as<sol::table>();
+                std::string text;
+                for (size_t i = 1; i <= list.size(); ++i)
+                {
+                    const sol::object item = list[i];
+                    std::string one = TtdOptionText(item);
+                    if (item.get_type() == sol::type::table)
+                    {
+                        const sol::table r = item.as<sol::table>();
+                        const sol::object page = r["page"];
+                        const sol::object space = r["space"];
+                        const sol::object address = r["address"];
+                        const sol::object offset = r["offset"];
+                        const sol::object length = r["length"];
+                        const std::string where = page.valid()    ? "ram" + TtdOptionText(page)
+                                                  : space.valid() ? TtdOptionText(space)
+                                                                  : std::string("cpu");
+                        one = where + ":" + TtdOptionText(address.valid() ? address : offset) + ":" +
+                              TtdOptionText(length);
+                    }
+                    text += (text.empty() ? "" : ",") + one;
+                }
+                options[name] = text;
+            }
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("memory-series", options)));
+        });
+        lua.set_function("ttd_screen_at", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("screen-at", options)));
+        });
 
         // ====================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI:

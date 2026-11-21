@@ -113,6 +113,15 @@ public:
     void BindDma();
     /// im2_dma_delay at the CPU's clock now (NextInterruptSource::DmaDelayAt, the NMI holds of DivMMC and Multiface)
     bool DmaDelayNow();
+    /// The DMA between the CPU's machine cycles (IMachineCycleEndTurn, the T80 grants BUSRQ at the end of any M-cycle): the first byte
+    /// after an enable at the end of the next instruction's M1, a burst's next byte when its prescaler wait is over. Asked only while
+    /// one of the two can come (ArmDmaBusTurn)
+    void DmaAtMachineCycleEnd(bool m1Next);
+    /// Ask at every machine-cycle end while the DMA runs in the burst mode or waits for the M1 after its enable, not otherwise
+    void ArmDmaBusTurn(bool on);
+    /// The first CPU T at which the armed turn can move a byte (Z80NEngine::SetMachineCycleEndTurnNotBefore): the burst wait's end
+    /// in this frame's CPU T, 0 (every machine-cycle end asked) whenever that is not known
+    void UpdateDmaTurnNotBefore();
     uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
 
@@ -393,6 +402,14 @@ private:
     history::DeviceHistory<NextDmaRecord> _dmaHistory{ "dma", "blocks the DMA finishes", 1024 };
     history::DeviceHistory<NextUartRecord> _uartHistory{ "uart", "bytes the UARTs send and receive", 4096 };
     bool _dmaRequestLate = false;  // the enable came in this instruction: the bus goes over after the next one's M1
+    struct DmaBusTurn final : IMachineCycleEndTurn
+    {
+        explicit DmaBusTurn(PortDecoder_Next& o) : owner(o) {}
+        void AtMachineCycleEnd(bool m1Next) override { owner.DmaAtMachineCycleEnd(m1Next); }
+        PortDecoder_Next& owner;
+    } _dmaBusTurn{ *this };
+    bool _dmaBusTurnArmed = false;
+    uint8_t _dmaAfterM1 = 0;  // the enable's first byte: 2 = waits for the next instruction's M1, 1 = for that M1's end
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);
     /// The DAC channels (bit 0 = A ... bit 3 = D) a port's low byte writes, by the enables of NR #84

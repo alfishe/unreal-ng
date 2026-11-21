@@ -19,4 +19,9 @@ package tbh is
    signal t_p303b_we : std_logic := '0';
    signal t_p_dat   : std_logic_vector(7 downto 0) := (others => '0');
    signal p_dbg   : std_logic_vector(15 downto 0);
+   -- a port #FE write (port_fe_reg, as the CPU's strobe loads it) and the Pentagon timing of the ULA
+   signal t_fe_we   : std_logic := '0';
+   signal t_fe_val  : std_logic_vector(4 downto 0) := (others => '0');
+   signal t_pent    : std_logic := '0';
+   signal p_cpu_clk : std_logic;
 end package;
