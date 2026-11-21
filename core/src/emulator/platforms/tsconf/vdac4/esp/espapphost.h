@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -91,6 +92,8 @@ public:
 
     /// Run the ESP up to `nowUs` (emulated microseconds since power-on)
     void Advance(uint64_t nowUs);
+    /// The app's code translated to host code (the JIT) or interpreted, from the next instruction run on; any thread
+    void SetJit(bool on) { _cpu->SetJit(on); }
     uint64_t NowUs() const { return _nowUs; }
 
     /// region <The firmware's app commands (ModuleApp)>
@@ -253,6 +256,25 @@ private:
     uint64_t _nowUs = 0;
     uint64_t _sliceUsedCycles = 0;  ///< cycles the running core used in this slice (millis inside a slice)
     uint64_t _instructions = 0;
+#ifdef UNREAL_XTENSA_PROFILE
+    // POC 053: where the ESP's host time goes; dumped every emulated second (UNREAL_XTENSA_PROFILE=<prefix>)
+    struct Profile
+    {
+        uint64_t budget[2] = {};      ///< cycles offered per core
+        uint64_t used[2] = {};        ///< cycles run per core (instructions + window handlers)
+        uint64_t runs = 0;            ///< Cpu::Run calls
+        uint64_t runNs = 0;           ///< host time inside Cpu::Run
+        uint64_t trapNs = 0;          ///< host time in HandleTrap
+        uint64_t switchNs = 0;        ///< LoadState / SaveState
+        uint64_t advanceNs = 0;       ///< host time in Advance
+        uint64_t pcmNs = 0;
+        std::map<uint32_t, std::pair<uint64_t, uint64_t>> traps;  ///< trap PC: count, host ns
+    };
+    Profile _profile;
+    uint64_t _profileNextUs = 0;
+    int _profileCore = 0;
+    void DumpProfile();
+#endif
     uint64_t _readySerial = 0;
     uint32_t _nextTaskId = 1;
     std::vector<std::unique_ptr<Task>> _tasks;

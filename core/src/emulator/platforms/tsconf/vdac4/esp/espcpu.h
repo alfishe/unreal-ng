@@ -46,6 +46,12 @@ public:
     virtual void InvalidateCode(uint32_t address, uint32_t size) = 0;
 
     virtual Result Run(uint64_t maxInstructions) = 0;
+    /// Translated code (the JIT) or the interpreter, from the next Run on; any thread
+    virtual void SetJit(bool /*on*/) {}
+#ifdef UNREAL_XTENSA_PROFILE
+    /// POC 053: the interpreter's per-block profile to `path`
+    virtual void DumpProfile(const char* /*path*/) {}
+#endif
 
     /// At a trap: argument word `index` as the callee sees it (windowed ABI, stack words past the sixth)
     virtual uint32_t Arg(int index) = 0;

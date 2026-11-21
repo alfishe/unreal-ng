@@ -77,6 +77,8 @@ private:
     class TangLink;
     void Log(const std::string& line);
     void Publish();
+    /// The esp_jit feature (or UNREAL_XTENSA_JIT) to the ESP runtime when it changed; main thread
+    void ApplyJitFeature();
 
     EmulatorContext* _context;
     Vdac4Tang& _tang;
@@ -85,6 +87,7 @@ private:
     std::unique_ptr<TangLink> _link;
     std::unique_ptr<Vdac4Audio> _audio;
     bool _audioAttached = false;
+    int _jit = -1; ///< what ApplyJitFeature last set: -1 nothing yet
     std::unique_ptr<vdac4::EspXtensaRuntime> _runtime;
     std::unique_ptr<Vdac4FtWorker> _ft;  ///< the Tang's work for the ESP's jobs (vdac4ftworker.h)
     uint64_t _jobStamp = 0;              ///< the running ESP job's stamp (its thread)
