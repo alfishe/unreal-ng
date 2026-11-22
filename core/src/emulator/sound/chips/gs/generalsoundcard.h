@@ -515,6 +515,14 @@ public:
     virtual double cardUnitsPerSecond() const { return 0.0; }
     /// The card CPU's clock now (classic GS 12 MHz, the MultiSound's 16 MHz, NeoGS by GSCFG0); 0 without a CPU
     virtual uint32_t cardCpuClockHz() const { return 0; }
+    /// `units` of card time (cardTime, cardFrameTime) as CPU cycles at the clock now: `c 119,985` (gs-debugger A4); 0
+    /// without a CPU
+    int64_t cardCycles(int64_t units) const
+    {
+        const uint32_t hz = cardCpuClockHz();
+        const double perSecond = cardUnitsPerSecond();
+        return hz != 0 && perSecond > 0.0 ? static_cast<int64_t>(static_cast<double>(units) * hz / perSecond) : 0;
+    }
     /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
     /// same instruction of the frame
     virtual int64_t cardFrameTime() const { return 0; }

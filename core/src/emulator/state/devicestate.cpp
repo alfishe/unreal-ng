@@ -903,12 +903,10 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
         cpu["af"] = int(gs->getCPUReg(GSCpuRegister::AF));
         cpu["halted"] = gs->isCPUHalted();
         // The card's cycle in the ZX frame (gs-debugger A4: `c 119,985`), in CPU cycles at its clock now
-        const uint32_t hz = gs->cardCpuClockHz();
-        const double units = gs->cardUnitsPerSecond();
-        if (hz != 0 && units > 0.0)
+        if (const uint32_t hz = gs->cardCpuClockHz(); hz != 0 && gs->cardUnitsPerSecond() > 0.0)
         {
             cpu["clock_hz"] = static_cast<int64_t>(hz);
-            cpu["frame_cycle"] = static_cast<int64_t>(static_cast<double>(gs->cardFrameTime()) * hz / units);
+            cpu["frame_cycle"] = gs->cardCycles(gs->cardFrameTime());
         }
     }
     ret["cpu"] = cpu;

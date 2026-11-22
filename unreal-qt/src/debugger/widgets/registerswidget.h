@@ -32,8 +32,16 @@ public:
 
     void setZ80State(Z80State* state);
     /// The CPU the registers are (the window's processor tab): a card's are edited through its debug target
-    /// (CpuView::SetRegister), its ISR read in its own memory, and it has no T counter of the frame
-    void setCpu(DebugCpuId cpu) { m_cpu = cpu; }
+    /// (CpuView::SetRegister), its ISR read in its own memory, its T field its cycle in the frame
+    void setCpu(DebugCpuId cpu)
+    {
+        if (cpu != m_cpu)
+        {
+            m_cardCycleShown = -1;  // another CPU: nothing to count from
+            m_cardCycleDelta = 0;
+        }
+        m_cpu = cpu;
+    }
     DebugCpuId cpu() const { return m_cpu; }
     /// The 16-bit value cells a double click follows into the memory view, for the pane cursor
     std::vector<QWidget*> cursorCells() const;
@@ -98,6 +106,10 @@ private:
     void buildInterruptAndFlagCells();
     /// Where an INT would go now: 0038 in IM0 / IM1 (RST #38: the bus floats to FF), the word at I:FF in IM2
     uint16_t isrAddress() const;
+    /// The T field of a card's CPU: its cycle in the frame and the cycles since the value shown before
+    void showCardCycle();
+    int64_t m_cardCycleShown = -1;  ///< the card's total cycles last shown (-1: none yet)
+    int64_t m_cardCycleDelta = 0;
     std::array<QClickableLabel*, 8> m_flagCells{};  // bit 7 (S) first
     std::array<QClickableLabel*, 2> m_iffCells{};
     QClickableLabel* m_isrCell = nullptr;
