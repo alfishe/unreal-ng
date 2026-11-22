@@ -13,6 +13,7 @@
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QMenu;
 #include <QTreeWidget>
 #include <QWidget>
 
@@ -59,26 +60,49 @@ private:
     QString row_key(int row) const;
 };
 
-//The breakpoints of a processor. A double click shows one in the listing,
-//Delete removes it
-class BreakpointsView : public QListWidget
+//An address of code of a processor with its instruction, as that processor's listing writes them
+typedef std::function<QString(CPU *, unsigned int)> CpuCodeFormatter;
+
+//The breakpoints of every processor (not in ecat: ecat lists the one in front), a row each with its CPU (main, gs,
+//ms): the execution ones, then the event ones (a card's event or protocol step, a machine's event) with their
+//on / off box. A double click shows an execution one in its listing, Delete removes the row's
+class BreakpointsView : public QTreeWidget
 {
     Q_OBJECT
 public:
-    explicit BreakpointsView(QWidget *parent);
-    void refresh(CPU * cpu, const CodeFormatter &fmt);
+    BreakpointsView(Emulator * e, QWidget *parent);
+    void refresh(const CpuCodeFormatter &fmt);
+    //The rows again with the last formatter (after a change made elsewhere)
+    void relist();
 
 signals:
-    void activated(unsigned int address);
-    void remove(unsigned int address);
+    void activated(CPU * cpu, unsigned int address);
+    void remove(CPU * cpu, unsigned int address);
+    //An event breakpoint added, removed or switched here
+    void changed();
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
-    CPU * m_cpu = nullptr;
+    Emulator * e;
+    CpuCodeFormatter m_fmt;
+    bool m_filling = false;
+
+    CPU * row_cpu(QTreeWidgetItem * item) const;
+    void remove_row(QTreeWidgetItem * item);
 };
+
+//The CPU's name in the breakpoint list: main, gs, ms
+QString breakpoint_cpu_name(CPU * cpu);
+//An event breakpoint kind in plain words ("the card takes a command"), the core's name when unknown
+QString event_kind_label(const std::string &kind);
+//The kinds the machine's processors take, grouped as the card debugger's editor has them (Card; Protocol, card
+//side; Protocol, host side; Machine), each in plain words. Picked, it asks for the event's byte (any, a value, a
+//value and a mask) and adds the breakpoint to its processor; @p added after it was. Nothing when no processor
+//takes any
+void add_event_breakpoint_actions(QMenu * menu, Emulator * e, QWidget * from, const std::function<void()> &added);
 
 //What happened, the newest last and in view: where the processor's PC has been, or one device's records (a
 //controller's commands, a chip's register writes) chosen above the list, each device's apart. A device records

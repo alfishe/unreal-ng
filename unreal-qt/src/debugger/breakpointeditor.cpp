@@ -2,8 +2,12 @@
 
 #include <algorithm>
 
+#include "breakpointstopline.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/remotecontrolguard.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "debugger/debuggercpu.h"
+#include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -14,6 +18,18 @@
 #include <QRegularExpressionValidator>
 #include <QFontDatabase>
 #include <QInputDialog>
+#include <QSignalBlocker>
+#include <QStandardItemModel>
+
+namespace
+{
+QString Capitalized(QString text)
+{
+    if (!text.isEmpty())
+        text[0] = text[0].toUpper();
+    return text;
+}
+}  // namespace
 
 BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, QWidget* parent)
     : QDialog(parent), _emulator(emulator), _mode(mode), _breakpointId(BRK_INVALID)
@@ -29,7 +45,7 @@ BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode
     _descriptor.group = "default";
     
     // Update UI with defaults
-    _typeCombo->setCurrentIndex(0); // Memory
+    selectType(BRK_MEMORY);
     _readCheck->setChecked(false);
     _writeCheck->setChecked(false);
     _executeCheck->setChecked(true);
@@ -41,11 +57,12 @@ BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode
     _addressEdit->setEnabled(true);
     
     // Set initial state based on type
-    onTypeChanged(0);
+    onTypeChanged(_typeCombo->currentIndex());
 }
 
-BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, uint16_t breakpointId, QWidget* parent)
-    : QDialog(parent), _emulator(emulator), _mode(mode), _breakpointId(breakpointId)
+BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, uint16_t breakpointId, QWidget* parent,
+                                   DebugCpuId cpu)
+    : QDialog(parent), _emulator(emulator), _mode(mode), _breakpointId(breakpointId), _editCpu(cpu)
 {
     setWindowTitle(_mode == Add ? "Add Breakpoint" : "Edit Breakpoint");
     setupUI();
@@ -60,12 +77,138 @@ BreakpointEditor::~BreakpointEditor()
 
 void BreakpointEditor::addNextTypes()
 {
-    if (_typeCombo->count() > BRK_NEXTREG)
+    if (_typeCombo->findData(static_cast<int>(BRK_NEXTREG)) >= 0)
         return;
-    _typeCombo->addItem("NextREG (ZX Next)");
-    _typeCombo->addItem("Beam (ZX Next)");
-    _typeCombo->addItem("Copper (ZX Next)");
-    _typeCombo->addItem("Magic opcode (ZX Next)");
+    _typeCombo->addItem("NextREG (ZX Next)", static_cast<int>(BRK_NEXTREG));
+    _typeCombo->addItem("Beam (ZX Next)", static_cast<int>(BRK_BEAM));
+    _typeCombo->addItem("Copper (ZX Next)", static_cast<int>(BRK_COPPER));
+    _typeCombo->addItem("Magic opcode (ZX Next)", static_cast<int>(BRK_MAGIC));
+}
+
+void BreakpointEditor::addEventKind(GSCardEvent kind)
+{
+    _eventCombo->addItem("  " + Capitalized(EventBreakpointWords(kind, 0, 0)), static_cast<int>(kind));
+    _eventCombo->setItemData(_eventCombo->count() - 1, QString::fromLatin1(GSCardEventName(kind)), Qt::ToolTipRole);
+}
+
+void BreakpointEditor::addEventKinds()
+{
+    using E = GSCardEvent;
+    const EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: the dialog holds the shared_ptr
+    const MEM_MODEL model = context ? context->config.mem_model : MM_SPECTRUM48;
+    const bool card = _cpus.size() > 1;
+    std::vector<E> cardKinds;
+    if (card)
+    {
+        cardKinds = {E::Int, E::Nmi, E::Reset, E::PageSwitch, E::DacFetch};
+        if (_ngsFitted)
+            cardKinds.insert(cardKinds.end(), {E::ClockChange, E::ConfigWrite, E::DmaStart, E::DmaDone});
+    }
+    std::vector<E> cardSide;
+    std::vector<E> hostSide;
+    if (card)
+    {
+        cardSide = {E::CardCommandRead, E::CardDataRead, E::CardReplyWrite};
+        hostSide = {E::HostCommandWrite, E::HostDataWrite, E::HostReplyRead};
+    }
+    // The machine's: the ones its model tells, then every model's
+    std::vector<E> machine;
+    if (model == MM_NEXT)
+        machine = {E::CpuInt, E::CpuReti, E::CpuNmi, E::CpuRetn, E::MachineReset, E::DivMmcMap, E::DivMmcUnmap,
+                   E::EsxDosCall, E::ZxnDmaStart, E::ZxnDmaDone};
+    else if (model == MM_TSL)
+        machine = {E::CpuInt, E::TsDmaStart, E::TsDmaDone};
+    else if (model == MM_SPRINTER)
+        machine = {E::CpuInt, E::CpuReti, E::PldRead, E::PldWrite, E::PldEvent};
+    machine.insert(machine.end(), {E::IntAccept, E::IntReturn, E::FdcCommand, E::FdcDone});
+
+    QStandardItemModel* items = qobject_cast<QStandardItemModel*>(_eventCombo->model());
+    const auto addGroup = [&](const QString& title, const std::vector<E>& kinds) {
+        if (kinds.empty())
+            return;
+        _eventCombo->addItem(title, -1);
+        if (QStandardItem* item = items ? items->item(_eventCombo->count() - 1) : nullptr)
+        {
+            item->setFlags(item->flags() & ~(Qt::ItemIsSelectable | Qt::ItemIsEnabled));
+            QFont font = item->font();
+            font.setBold(true);
+            item->setFont(font);
+        }
+        for (const E kind : kinds)
+            addEventKind(kind);
+    };
+    addGroup("Card", cardKinds);
+    addGroup("Protocol, card side", cardSide);
+    addGroup("Protocol, host side", hostSide);
+    addGroup("Machine", machine);
+    // The first kind, not a title
+    for (int i = 0; i < _eventCombo->count(); ++i)
+        if (_eventCombo->itemData(i).toInt() >= 0)
+        {
+            _eventCombo->setCurrentIndex(i);
+            break;
+        }
+}
+
+BreakpointTypeEnum BreakpointEditor::selectedType() const
+{
+    return static_cast<BreakpointTypeEnum>(_typeCombo->currentData().toInt());
+}
+
+void BreakpointEditor::selectType(BreakpointTypeEnum type)
+{
+    // A ZX Next kind made elsewhere still edits as itself
+    if (_typeCombo->findData(static_cast<int>(type)) < 0 && type >= BRK_NEXTREG && type <= BRK_MAGIC)
+        addNextTypes();
+    const int index = _typeCombo->findData(static_cast<int>(type));
+    _typeCombo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+GSCardEvent BreakpointEditor::selectedEvent() const
+{
+    const int kind = _eventCombo->currentData().toInt();
+    return kind >= 0 && kind < static_cast<int>(GSCardEvent::Count) ? static_cast<GSCardEvent>(kind) : GSCardEvent::Count;
+}
+
+DebugCpuId BreakpointEditor::selectedCpu() const
+{
+    const BreakpointTypeEnum type = selectedType();
+    if (type == BRK_EVENT)
+    {
+        const GSCardEvent kind = selectedEvent();
+        if (kind == GSCardEvent::Count || GSCardEventIsHostSide(kind))
+            return DebugCpuId::Main;
+    }
+    else if (type != BRK_MEMORY && type != BRK_IO)
+        return DebugCpuId::Main;
+    return _cpuCombo->count() > 0 ? static_cast<DebugCpuId>(_cpuCombo->currentData().toInt()) : DebugCpuId::Main;
+}
+
+BreakpointManager* BreakpointEditor::managerOf(DebugCpuId cpu) const
+{
+    DebugManager* debug = _emulator ? _emulator->GetDebugManager() : nullptr;
+    return debug ? debug->GetBreakpointsManager(cpu) : nullptr;
+}
+
+void BreakpointEditor::updateCpuRow()
+{
+    const BreakpointTypeEnum type = selectedType();
+    const bool cardEvent = type == BRK_EVENT && selectedEvent() != GSCardEvent::Count &&
+                           !GSCardEventIsHostSide(selectedEvent());
+    const bool anyCpu = type == BRK_MEMORY || type == BRK_IO;
+    _cpuRow->setVisible(_cpus.size() > 1 && (anyCpu || cardEvent));
+    // A card's event is a card CPU's: the main CPU is not offered for it
+    QStandardItemModel* items = qobject_cast<QStandardItemModel*>(_cpuCombo->model());
+    if (QStandardItem* main = items && _cpuCombo->count() > 0 ? items->item(0) : nullptr)
+        main->setEnabled(!cardEvent);
+    const QSignalBlocker blocker(_cpuCombo);
+    if (cardEvent && _cpuCombo->currentIndex() <= 0 && _cpuCombo->count() > 1)
+        _cpuCombo->setCurrentIndex(1);
+    else if (!anyCpu && !cardEvent)
+        _cpuCombo->setCurrentIndex(0);
+    if (type == BRK_IO)
+        _addressEdit->setPlaceholderText(IsCardCpu(selectedCpu()) ? "the card's ports #00..#0B, e.g. 0x01 (the command)"
+                                                                  : "e.g. 0xFE, 0x7FFD; with a mask every port that matches");
 }
 
 void BreakpointEditor::setupUI()
@@ -76,17 +219,61 @@ void BreakpointEditor::setupUI()
     QHBoxLayout* typeLayout = new QHBoxLayout();
     QLabel* typeLabel = new QLabel("Type:");
     _typeCombo = new QComboBox();
-    // In BreakpointTypeEnum order: the index is the type. The ZX Next kinds (the tail) only on a ZX Next
-    _typeCombo->addItem("Memory");
-    _typeCombo->addItem("Port");
-    _typeCombo->addItem("Keyboard");
-    const EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: the dialog holds the shared_ptr
+    // The item data is the type. Events on every machine (the CPU's own, a card's when fitted); the ZX Next kinds
+    // only on a ZX Next
+    _typeCombo->addItem("Memory", static_cast<int>(BRK_MEMORY));
+    _typeCombo->addItem("Port", static_cast<int>(BRK_IO));
+    _typeCombo->addItem("Keyboard", static_cast<int>(BRK_KEYBOARD));
+    _typeCombo->addItem("Event", static_cast<int>(BRK_EVENT));
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: the dialog holds the shared_ptr
     if (context && context->config.mem_model == MM_NEXT)
         addNextTypes();
     
     typeLayout->addWidget(typeLabel);
     typeLayout->addWidget(_typeCombo);
     mainLayout->addLayout(typeLayout);
+
+    // Whose breakpoint: the main CPU or a card's (shown only with a card fitted)
+    _cpus = debuggercpu::Fitted(context);
+    _cpuRow = new QWidget();
+    QHBoxLayout* cpuLayout = new QHBoxLayout(_cpuRow);
+    cpuLayout->setContentsMargins(0, 0, 0, 0);
+    cpuLayout->addWidget(new QLabel("CPU:"));
+    _cpuCombo = new QComboBox();
+    _cpuCombo->setToolTip("The CPU whose memory, ports or events it watches");
+    for (const DebugCpuId cpu : _cpus)
+    {
+        _cpuCombo->addItem(debuggercpu::Title(context, cpu), static_cast<int>(cpu));
+        GeneralSoundCard* card = debuggercpu::Card(context, cpu);
+        _ngsFitted = _ngsFitted || (card && card->implementation() == GSCardImplementation::NGS);
+    }
+    cpuLayout->addWidget(_cpuCombo);
+    cpuLayout->addStretch();
+    mainLayout->addWidget(_cpuRow);
+
+    // Event: the kind, grouped, and an optional value filter
+    QRegularExpression eventByteRegex("^(0x[0-9A-Fa-f]{1,2}|\\$[0-9A-Fa-f]{1,2}|#[0-9A-Fa-f]{1,2}|[0-9]{1,3})$");
+    _eventBox = new QGroupBox("Event");
+    QGridLayout* eventLayout = new QGridLayout();
+    _eventCombo = new QComboBox();
+    _eventCombo->setToolTip("What happens: on the card, in the protocol between the host and the card, on the machine");
+    addEventKinds();
+    eventLayout->addWidget(new QLabel("When:"), 0, 0);
+    eventLayout->addWidget(_eventCombo, 0, 1, 1, 3);
+    eventLayout->addWidget(new QLabel("Value:"), 1, 0);
+    _eventValueEdit = new QLineEdit();
+    _eventValueEdit->setPlaceholderText("any");
+    _eventValueEdit->setToolTip("Stop only on this byte (the command, the data byte, the page...), e.g. #30");
+    _eventValueEdit->setValidator(new QRegularExpressionValidator(eventByteRegex, this));
+    eventLayout->addWidget(_eventValueEdit, 1, 1);
+    eventLayout->addWidget(new QLabel("Mask:"), 1, 2);
+    _eventMaskEdit = new QLineEdit();
+    _eventMaskEdit->setPlaceholderText("0xFF");
+    _eventMaskEdit->setToolTip("Compare only these bits of the byte");
+    _eventMaskEdit->setValidator(new QRegularExpressionValidator(eventByteRegex, this));
+    eventLayout->addWidget(_eventMaskEdit, 1, 3);
+    _eventBox->setLayout(eventLayout);
+    mainLayout->addWidget(_eventBox);
     
     // Address input
     QHBoxLayout* addressLayout = new QHBoxLayout();
@@ -333,6 +520,16 @@ void BreakpointEditor::setupUI()
             this, &BreakpointEditor::onAddressChanged);
     connect(_okButton, &QPushButton::clicked, 
             this, &BreakpointEditor::onAccept);
+    connect(_eventCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+        updateCpuRow();
+        validateInput();
+    });
+    connect(_cpuCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+        updateCpuRow();
+        validateInput();
+    });
+    connect(_eventValueEdit, &QLineEdit::textChanged, this, &BreakpointEditor::validateInput);
+    connect(_eventMaskEdit, &QLineEdit::textChanged, this, &BreakpointEditor::validateInput);
     connect(_conditionEdit, &QLineEdit::textChanged, this, &BreakpointEditor::validateInput);
     for (QCheckBox* check : {_readCheck, _writeCheck, _executeCheck, _inCheck, _outCheck, _keyPressCheck, _keyReleaseCheck,
                              _nrReadCheck, _nrWriteCheck, _doorNextRegCheck, _doorPortCheck, _doorCopperCheck})
@@ -353,14 +550,17 @@ void BreakpointEditor::populateGroupComboBox()
     _groupCombo->clear();
     _groupCombo->addItem("default");
     
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-    if (bpManager)
+    // Every CPU's groups (a group may hold the main CPU's breakpoints and a card's)
+    for (const DebugCpuId cpu : _cpus.empty() ? std::vector<DebugCpuId>{DebugCpuId::Main} : _cpus)
     {
-        std::vector<std::string> groups = bpManager->GetBreakpointGroups();
-        for (const auto& group : groups)
+        BreakpointManager* bpManager = managerOf(cpu);
+        if (!bpManager)
+            continue;
+        for (const auto& group : bpManager->GetBreakpointGroups())
         {
-            if (group != "default") // Already added
-                _groupCombo->addItem(QString::fromStdString(group));
+            const QString name = QString::fromStdString(group);
+            if (_groupCombo->findText(name) < 0) // "default" already added
+                _groupCombo->addItem(name);
         }
     }
     
@@ -369,7 +569,7 @@ void BreakpointEditor::populateGroupComboBox()
 
 void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
 {
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = managerOf(_editCpu);
     if (!bpManager)
         return;
         
@@ -380,9 +580,10 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
     _descriptor = *bp;
     
     // Set type (a ZX Next kind made elsewhere still edits as itself)
-    if (bp->type >= _typeCombo->count())
-        addNextTypes();
-    _typeCombo->setCurrentIndex(static_cast<int>(bp->type));
+    selectType(bp->type);
+    const int cpuIndex = _cpuCombo->findData(static_cast<int>(_editCpu));
+    if (cpuIndex >= 0)
+        _cpuCombo->setCurrentIndex(cpuIndex);
     
     // Set address
     _addressEdit->setText(QString("0x%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper());
@@ -443,6 +644,18 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
         const int index = _magicCombo->findData(static_cast<int>(bp->z80address));
         _magicCombo->setCurrentIndex(index >= 0 ? index : 0);
     }
+    else if (bp->type == BRK_EVENT && bp->z80address < static_cast<uint16_t>(GSCardEvent::Count))
+    {
+        // A kind the list does not offer now (the card gone, another model's) still edits as itself
+        if (_eventCombo->findData(static_cast<int>(bp->z80address)) < 0)
+            addEventKind(static_cast<GSCardEvent>(bp->z80address));
+        _eventCombo->setCurrentIndex(_eventCombo->findData(static_cast<int>(bp->z80address)));
+        _eventValueEdit->setText(bp->nrMask != 0 ? "#" + QString("%1").arg(bp->nrValue, 2, 16, QChar('0')).toUpper() : QString());
+        _eventMaskEdit->setText(bp->nrMask != 0 && bp->nrMask != 0xFF
+                                    ? "#" + QString("%1").arg(bp->nrMask, 2, 16, QChar('0')).toUpper()
+                                    : QString());
+        _addressEdit->clear();
+    }
     
     // Set group
     int groupIndex = _groupCombo->findText(QString::fromStdString(bp->group));
@@ -476,13 +689,15 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
 void BreakpointEditor::onTypeChanged(int index)
 {
     // Only the fields of the selected kind show
-    const BreakpointTypeEnum type = static_cast<BreakpointTypeEnum>(index);
+    Q_UNUSED(index);
+    const BreakpointTypeEnum type = selectedType();
     _memoryAccessBox->setVisible(type == BRK_MEMORY);
     _portAccessBox->setVisible(type == BRK_IO);
     _keyboardBox->setVisible(type == BRK_KEYBOARD);
     _nextRegBox->setVisible(type == BRK_NEXTREG);
     _beamBox->setVisible(type == BRK_BEAM);
     _magicBox->setVisible(type == BRK_MAGIC);
+    _eventBox->setVisible(type == BRK_EVENT);
     _pageRow->setVisible(type == BRK_MEMORY);
     _conditionRow->setVisible(type != BRK_KEYBOARD);
     // The kinds a tap watches (BreakpointManager::AddBreakpoint refuses the others)
@@ -494,8 +709,8 @@ void BreakpointEditor::onTypeChanged(int index)
     const bool ranged = type == BRK_MEMORY || type == BRK_NEXTREG || type == BRK_COPPER;
     _endLabel->setVisible(ranged);
     _endEdit->setVisible(ranged);
-    _addressLabel->setVisible(type != BRK_MAGIC);
-    _addressEdit->setVisible(type != BRK_MAGIC);
+    _addressLabel->setVisible(type != BRK_MAGIC && type != BRK_EVENT);
+    _addressEdit->setVisible(type != BRK_MAGIC && type != BRK_EVENT);
     switch (type)
     {
         case BRK_IO:
@@ -523,6 +738,7 @@ void BreakpointEditor::onTypeChanged(int index)
             _addressEdit->setPlaceholderText("Enter address (e.g., 0x1234, $1234, #1234, 4660)");
             break;
     }
+    updateCpuRow();
 
     validateInput();
 }
@@ -531,12 +747,28 @@ void BreakpointEditor::validateInput()
 {
     bool isValid = true;
     QString errorMessage;
-    const BreakpointTypeEnum type = static_cast<BreakpointTypeEnum>(_typeCombo->currentIndex());
+    const BreakpointTypeEnum type = selectedType();
 
-    // The magic opcode is the breakpoint: no address
+    // The magic opcode is the breakpoint, an event its kind: no address
     uint16_t address;
-    if (type != BRK_MAGIC && !(type == BRK_KEYBOARD ? keyAddress(_addressEdit->text(), address)
-                                                    : validateAddress(_addressEdit->text(), address)))
+    if (type == BRK_EVENT)
+    {
+        if (selectedEvent() == GSCardEvent::Count)
+        {
+            isValid = false;
+            errorMessage = "Pick what happens.";
+        }
+        else if ((!_eventValueEdit->text().isEmpty() && !_eventValueEdit->hasAcceptableInput()) ||
+                 (!_eventMaskEdit->text().isEmpty() && !_eventMaskEdit->hasAcceptableInput()) ||
+                 (validateAddress(_eventValueEdit->text(), address) && address > 0xFF) ||
+                 (validateAddress(_eventMaskEdit->text(), address) && address > 0xFF))
+        {
+            isValid = false;
+            errorMessage = "The value and the mask are bytes (0..255).";
+        }
+    }
+    else if (type != BRK_MAGIC && !(type == BRK_KEYBOARD ? keyAddress(_addressEdit->text(), address)
+                                                         : validateAddress(_addressEdit->text(), address)))
     {
         isValid = false;
         // Nothing typed yet is not a mistake: OK waits for it, no reproach
@@ -599,7 +831,7 @@ QString BreakpointEditor::SplitConditionError(const QString& error, int& column)
 
 bool BreakpointEditor::checkCondition()
 {
-    const BreakpointTypeEnum type = static_cast<BreakpointTypeEnum>(_typeCombo->currentIndex());
+    const BreakpointTypeEnum type = selectedType();
     const QString text = _conditionEdit->text();
     if (type == BRK_KEYBOARD || text.trimmed().isEmpty())
     {
@@ -610,7 +842,7 @@ bool BreakpointEditor::checkCondition()
         _conditionEdit->setStyleSheet(QString());
         return true;
     }
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = managerOf(selectedCpu());
     if (!bpManager)
         return true;
     std::string error;
@@ -679,6 +911,9 @@ uint8_t BreakpointEditor::selectedAccess(BreakpointTypeEnum type) const
             if (_nrReadCheck->isChecked()) access |= BRK_IO_IN;
             if (_nrWriteCheck->isChecked()) access |= BRK_IO_OUT;
             break;
+        case BRK_EVENT:
+            access = 0;  // as the other surfaces add them
+            break;
         default:
             access = BRK_IO_OUT;  // beam, copper, magic: as the other surfaces add them
             break;
@@ -746,18 +981,21 @@ void BreakpointEditor::onAccept()
     if (!_okButton->isEnabled())
         return;
         
-    const BreakpointTypeEnum type = static_cast<BreakpointTypeEnum>(_typeCombo->currentIndex());
+    const BreakpointTypeEnum type = selectedType();
 
-    // Parse address (the magic opcode is its own address)
+    // Parse address (the magic opcode is its own address, an event's kind is)
     uint16_t address = 0;
     if (type == BRK_MAGIC)
         address = static_cast<uint16_t>(_magicCombo->currentData().toInt());
+    else if (type == BRK_EVENT)
+        address = static_cast<uint16_t>(selectedEvent());
     else if (!(type == BRK_KEYBOARD ? keyAddress(_addressEdit->text(), address)
                                     : validateAddress(_addressEdit->text(), address)))
         return;
         
-    // Get breakpoint manager
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    // The manager of the CPU it watches: a card's events, memory and ports on the card's
+    const DebugCpuId cpu = selectedCpu();
+    BreakpointManager* bpManager = managerOf(cpu);
     if (!bpManager)
         return;
         
@@ -866,6 +1104,16 @@ void BreakpointEditor::onAccept()
             spec.nrMask = static_cast<uint8_t>(value);
         }
     }
+    if (type == BRK_EVENT)
+    {
+        if (validateAddress(_eventValueEdit->text().trimmed(), value))
+        {
+            spec.nrValue = static_cast<uint8_t>(value);
+            spec.nrMask = 0xFF;
+        }
+        if (validateAddress(_eventMaskEdit->text().trimmed(), value))
+            spec.nrMask = static_cast<uint8_t>(value);
+    }
     if (type == BRK_BEAM && !_hcEdit->text().trimmed().isEmpty())
     {
         if (!validateAddress(_hcEdit->text(), value) || value > BRK_BEAM_MAX_HC)
@@ -889,8 +1137,9 @@ void BreakpointEditor::onAccept()
         QMessageBox::warning(this, "Error", QString::fromStdString(error));
         return;
     }
-    if (_mode != Add && newId != _breakpointId)
-        bpManager->RemoveBreakpointByID(_breakpointId);
+    if (_mode != Add && (newId != _breakpointId || cpu != _editCpu))
+        if (BreakpointManager* old = managerOf(_editCpu))
+            old->RemoveBreakpointByID(_breakpointId);
     if (!_descriptor.active)
         bpManager->DeactivateBreakpoint(newId);
     else

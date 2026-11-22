@@ -482,6 +482,12 @@ public:
     }
     std::vector<unsigned int> get_breakpoints() override;
     std::string breakpoint_condition(unsigned int address) override;
+    std::vector<std::string> event_kinds() override { return m_event_kinds; }
+    std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override;
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override;
+    bool remove_event_breakpoint(unsigned int id) override;
+    bool enable_event_breakpoint(unsigned int id, bool on) override;
+    void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
     std::vector<ecatshim::AddressWindow> get_windows() override;
     void set_pages(ecatshim::AddressableDevice * ram, ecatshim::AddressableDevice * rom, const ZxPaging &paging)
     {
@@ -495,6 +501,7 @@ private:
     ecatshim::AddressableDevice * m_ram = nullptr;
     ecatshim::AddressableDevice * m_rom = nullptr;
     ZxPaging m_paging;
+    std::vector<std::string> m_event_kinds;
 };
 
 // A sound card's Z80: the General Sound's ("gs") or the GS of a MultiSound card ("ms"). Its registers, windows and
@@ -527,6 +534,12 @@ public:
         for (unsigned int a : get_breakpoints()) remove_breakpoint(a);
     }
     std::vector<unsigned int> get_breakpoints() override;
+    std::vector<std::string> event_kinds() override { return m_event_kinds; }
+    std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override;
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override;
+    bool remove_event_breakpoint(unsigned int id) override;
+    bool enable_event_breakpoint(unsigned int id, bool on) override;
+    void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
     std::vector<ecatshim::AddressWindow> get_windows() override;
 
     // The card's RAM and ROM (flash on the NeoGS) as paged memories, when the machine lists them
@@ -543,6 +556,7 @@ private:
     RemoteMachine * m_m;
     QString m_cpu;
     QString m_history;
+    std::vector<std::string> m_event_kinds;
     ecatshim::AddressableDevice * m_ram = nullptr;
     ecatshim::AddressableDevice * m_rom = nullptr;
     bool m_flash = false;
@@ -623,16 +637,20 @@ public:
         auto rom = std::make_shared<RemotePages>(this, "rom", std::max(1u, rom_pages));
         m_mapper = std::make_shared<RemoteMapper>(this, ram.get(), rom.get());
         m_cpu->mm = m_mapper.get();
-        const ZxPaging paging = ZxModelPaging(m_http.json("GET", m_base + "/state/paging").value("model").toString().toStdString());
+        const std::string model = m_http.json("GET", m_base + "/state/paging").value("model").toString().toStdString();
+        const ZxPaging paging = ZxModelPaging(model);
         m_cpu->set_pages(ram.get(), rom.get(), paging);
+        m_cpu->set_event_kinds(ZxMainEventKinds(model, !m_cards.empty()));
         ram->set_paging(paging);
         m_dm.add(ram);
         m_dm.add(rom);
 
         const QJsonArray regions = m_http.json("GET", m_base + "/memory/regions").value("regions").toArray();
+        bool neogs = false;
         for (const QJsonValue &v : regions) {
             const QJsonObject r = v.toObject();
             const QString n = r.value("name").toString();
+            neogs = neogs || n.startsWith("neogs.");
             const QString kind = n.mid(n.lastIndexOf('.') + 1);
             const unsigned int size = (unsigned int)r.value("size").toDouble();
             const bool writable = r.value("writable").toBool();
@@ -654,6 +672,8 @@ public:
             else
                 m_dm.add(std::make_shared<RemoteRegion<ecatshim::AddressableDevice>>(this, n, size, writable, desc));
         }
+
+        for (const auto &c : m_cards) c->set_event_kinds(ZxCardEventKinds(c->cpu() == "gs" && neogs));
 
         // The reports this machine has, as the device catalog lists them (its cards are fixed: a slot change makes a
         // new machine, another id)
@@ -890,9 +910,20 @@ public:
             l.generation = m_snap.generation;
             l.dirty = false;
             l.list.clear();
+            l.events.clear();
             const QJsonArray list = m_http.json("GET", m_base + "/breakpoints?cpu=" + cpu).value("breakpoints").toArray();
             for (const QJsonValue &v : list) {
                 const QJsonObject b = v.toObject();
+                if (b.value("type").toString() == "event") {
+                    ecatshim::EventBreakpoint x;
+                    x.id = (unsigned int)b.value("id").toInt();
+                    x.kind = b.value("event").toString().toStdString();
+                    x.value = (unsigned int)b.value("value").toInt();
+                    x.mask = (unsigned int)b.value("value_mask").toInt();
+                    x.enabled = b.value("active").toBool(true);
+                    l.events.push_back(x);
+                    continue;
+                }
                 if (b.value("type").toString() != "memory" || !b.value("execute").toBool() || b.contains("address_end"))
                     continue;
                 l.list.push_back(Breakpoint{b.value("id").toInt(), (unsigned int)b.value("address").toInt(),
@@ -905,6 +936,47 @@ public:
     void breakpoints_changed()
     {
         for (auto &l : m_bps) l.second.dirty = true;
+    }
+    // The event breakpoints of a CPU (main, gs, ms), read with its execution ones
+    std::vector<ecatshim::EventBreakpoint> event_breakpoints(const QString &cpu)
+    {
+        breakpoints(cpu);
+        return m_bps[cpu].events;
+    }
+    bool add_event_breakpoint(const QString &cpu, const std::string &kind, unsigned int value, unsigned int mask,
+                              std::string &error)
+    {
+        if (value > 0xFF || mask > 0xFF) {
+            error = "the value and the mask are bytes (0..255)";
+            return false;
+        }
+        QJsonObject body{{"type", "event"}, {"event", QString::fromStdString(kind)}, {"cpu", cpu}};
+        if (mask != 0) {
+            body["value"] = (int)(value & mask);
+            body["value_mask"] = (int)mask;
+        }
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/breakpoints", body, &status);
+        breakpoints_changed();
+        if (status == 200 || status == 201) return true;
+        error = r.value("message").toString().toStdString();
+        if (error.empty()) error = "the emulator did not add it (HTTP " + std::to_string(status) + ")";
+        return false;
+    }
+    bool remove_event_breakpoint(const QString &cpu, unsigned int id)
+    {
+        int status = 0;
+        m_http.json("DELETE", m_base + "/breakpoints/" + QString::number(id) + "?cpu=" + cpu, QJsonObject(), &status);
+        breakpoints_changed();
+        return status == 200;
+    }
+    bool enable_event_breakpoint(const QString &cpu, unsigned int id, bool on)
+    {
+        int status = 0;
+        m_http.json("PUT", m_base + "/breakpoints/" + QString::number(id) + (on ? "/enable" : "/disable") + "?cpu=" + cpu,
+                    QJsonObject(), &status);
+        breakpoints_changed();
+        return status == 200;
     }
     RemoteCardZ80 * card(const QString &cpu) const
     {
@@ -1086,6 +1158,7 @@ private:
     std::vector<std::shared_ptr<RemoteCardZ80>> m_cards;
     struct BreakpointList {
         std::vector<Breakpoint> list;
+        std::vector<ecatshim::EventBreakpoint> events;
         uint64_t generation = 0;
         bool dirty = true;
     };
@@ -1553,6 +1626,46 @@ std::vector<unsigned int> RemoteZ80::get_breakpoints()
         if (!b.run_to && std::find(r.begin(), r.end(), b.address) == r.end()) r.push_back(b.address);
     std::sort(r.begin(), r.end());
     return r;
+}
+
+std::vector<ecatshim::EventBreakpoint> RemoteZ80::get_event_breakpoints()
+{
+    return m_m->event_breakpoints("main");
+}
+
+bool RemoteZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+{
+    return m_m->add_event_breakpoint("main", kind, value, mask, error);
+}
+
+bool RemoteZ80::remove_event_breakpoint(unsigned int id)
+{
+    return m_m->remove_event_breakpoint("main", id);
+}
+
+bool RemoteZ80::enable_event_breakpoint(unsigned int id, bool on)
+{
+    return m_m->enable_event_breakpoint("main", id, on);
+}
+
+std::vector<ecatshim::EventBreakpoint> RemoteCardZ80::get_event_breakpoints()
+{
+    return m_m->event_breakpoints(m_cpu);
+}
+
+bool RemoteCardZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+{
+    return m_m->add_event_breakpoint(m_cpu, kind, value, mask, error);
+}
+
+bool RemoteCardZ80::remove_event_breakpoint(unsigned int id)
+{
+    return m_m->remove_event_breakpoint(m_cpu, id);
+}
+
+bool RemoteCardZ80::enable_event_breakpoint(unsigned int id, bool on)
+{
+    return m_m->enable_event_breakpoint(m_cpu, id, on);
 }
 
 QString RemoteCardZ80::route(const QString &path) const

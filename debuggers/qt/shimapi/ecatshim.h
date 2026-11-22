@@ -137,6 +137,17 @@ public:
     virtual std::string page_role(unsigned int) { return std::string(); }
 };
 
+// Not in ecat: an event breakpoint of a processor (the core's BRK_EVENT): a sound card's event or protocol step, a
+// machine's event, by the core's name of the kind (gsdebughooks.h GSCardEventName: "card_command", "host_command",
+// "int_accept"). The card's side is the card CPU's, the host's side and the machine's are the main CPU's
+struct EventBreakpoint {
+    unsigned int id = 0;        // the breakpoint's id among its CPU's breakpoints
+    std::string kind;
+    unsigned int value = 0;     // the event's byte, compared where mask has bits
+    unsigned int mask = 0;      // 0: any value
+    bool enabled = true;
+};
+
 // Not in ecat: one window of a processor's address space and the page mapped there now
 struct AddressWindow {
     unsigned int start = 0;
@@ -189,6 +200,22 @@ public:
     // reverse-continue takes it; empty: it stops there whatever holds (no condition, or one of them has none)
     virtual std::string breakpoint_condition(unsigned int) { return {}; }
     virtual bool has_temp_break() const { return false; }
+
+    // Not in ecat: event breakpoints (EventBreakpoint). The kinds this CPU's breakpoints take on this machine, in the
+    // core's names (none: it has no event breakpoints)
+    virtual std::vector<std::string> event_kinds() { return {}; }
+    virtual std::vector<EventBreakpoint> get_event_breakpoints() { return {}; }
+    // False with the reason in @p error (a kind of another CPU, a value out of range)
+    virtual bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+    {
+        (void)kind;
+        (void)value;
+        (void)mask;
+        error = "this processor has no event breakpoints";
+        return false;
+    }
+    virtual bool remove_event_breakpoint(unsigned int id) { (void)id; return false; }
+    virtual bool enable_event_breakpoint(unsigned int id, bool on) { (void)id; (void)on; return false; }
 
     // Not in ecat: the windows of the address space in order, empty when it is not paged
     virtual std::vector<AddressWindow> get_windows() { return {}; }

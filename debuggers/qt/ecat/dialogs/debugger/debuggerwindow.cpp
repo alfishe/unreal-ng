@@ -18,6 +18,7 @@
 #include <QPixmap>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QSplitter>
 #include <QTabWidget>
@@ -138,7 +139,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
 
     m_side_tabs = new QTabWidget(m_split_bottom);
     m_stack = new StackView(current_cpu(), m_side_tabs);
-    m_breakpoints = new BreakpointsView(m_side_tabs);
+    m_breakpoints = new BreakpointsView(e, m_side_tabs);
     m_history = new HistoryView(e, m_side_tabs);
     m_devices = new DevicesView(e, m_side_tabs);
     m_side_tabs->addTab(m_stack, tr("Stack"));
@@ -200,11 +201,14 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         m_stack->refresh();
     });
 
-    connect(m_breakpoints, &BreakpointsView::activated, this, show_code);
+    //A breakpoint of any processor: its tab, its listing
+    connect(m_breakpoints, &BreakpointsView::activated, router, &AddressRouter::show_code);
     connect(m_history, &HistoryView::activated, this, show_code);
     connect(m_stack, &StackView::activated, this, show_code);
-    connect(m_breakpoints, &BreakpointsView::remove, this, [this](unsigned int address) {
-        if (CpuPane * p = pane()) p->code->toggle_breakpoint(address);
+    connect(m_breakpoints, &BreakpointsView::remove, router, &AddressRouter::toggle_breakpoint);
+    connect(m_breakpoints, &BreakpointsView::changed, this, [this]() {
+        refresh_side();
+        update_cursor();
     });
     connect(m_history, &HistoryView::toggle_breakpoint, this, [this](unsigned int address) {
         if (CpuPane * p = pane()) p->code->toggle_breakpoint(address);
@@ -306,6 +310,13 @@ QString DebuggerWindow::code_text(unsigned int address)
     CpuPane * p = pane();
     if (p == nullptr) return QString();
     return p->code->describe(address);
+}
+
+QString DebuggerWindow::code_text(CPU * cpu, unsigned int address)
+{
+    for (CpuPane &p : m_panes)
+        if (p.cpu == cpu) return p.code->describe(address);
+    return QString();
 }
 
 //A toolbar icon whose off state reads as off: gray, half seen (the platform's own barely pales a coloured one)
@@ -454,19 +465,36 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_bp_clear = tb->addAction(tool_icon(":/icons/cancel"), tr("Remove all breakpoints"));
     connect(m_bp_clear, &QAction::triggered, this, [this]() {
         CPU * c = current_cpu();
-        if (c == nullptr || c->get_breakpoints().empty()) return;
+        if (c == nullptr || (c->get_breakpoints().empty() && c->get_event_breakpoints().empty())) return;
         if (QMessageBox::question(this, tr("Breakpoints"),
                 tr("Remove all breakpoints of %1?").arg(QString::fromStdString(c->name)),
                 QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
             return;
         e->invoke([c]() {
             c->clear_breakpoints();
+            for (const EventBreakpoint &b : c->get_event_breakpoints()) c->remove_event_breakpoint(b.id);
             if (c->m_debug == DEBUG_BRAKES && !c->has_temp_break()) c->m_debug = DEBUG_OFF;
         });
         refresh_side();
         if (CpuPane * p = pane()) p->code->viewport()->update();
         update_cursor();
     });
+    //Not in ecat: event breakpoints (a card's event or protocol step, a machine's event; gui-card-debugger A4, A6
+    //S5), the kinds of every processor in one menu
+    m_bp_events = new QToolButton(tb);
+    m_bp_events->setText(tr("Events"));
+    m_bp_events->setToolTip(tr("Add an event breakpoint: the card takes a command, the host sends one, ..."));
+    m_bp_events->setPopupMode(QToolButton::InstantPopup);
+    QMenu * events = new QMenu(m_bp_events);
+    m_bp_events->setMenu(events);
+    connect(events, &QMenu::aboutToShow, this, [this, events]() {
+        events->clear();
+        add_event_breakpoint_actions(events, e, this, [this]() {
+            refresh_side();
+            update_cursor();
+        });
+    });
+    tb->addWidget(m_bp_events);
     tb->addSeparator();
 
     m_state = new QLabel(tb);
@@ -662,7 +690,7 @@ void DebuggerWindow::update_actions()
     if (running)
         for (CPU * c : e->dm->get_cpus()) {
             if (c->m_debug == DEBUG_BRAKES) watching = true;
-            if (!c->get_breakpoints().empty()) any_breakpoints = true;
+            if (!c->get_breakpoints().empty() || !c->get_event_breakpoints().empty()) any_breakpoints = true;
         }
 
     m_run->setEnabled(held || (running && !watching && any_breakpoints));
@@ -681,7 +709,11 @@ void DebuggerWindow::update_actions()
     m_bp_add->setEnabled(live && !on);
     m_bp_remove->setEnabled(on);
     m_bp_toggle->setEnabled(live);
-    m_bp_clear->setEnabled(live && !p->cpu->get_breakpoints().empty());
+    m_bp_clear->setEnabled(live && (!p->cpu->get_breakpoints().empty() || !p->cpu->get_event_breakpoints().empty()));
+    bool kinds = false;
+    if (live)
+        for (CPU * c : e->dm->get_cpus()) kinds = kinds || !c->event_kinds().empty();
+    m_bp_events->setEnabled(kinds);
     if (m_ttd != nullptr) m_ttd->set_live(live);
 }
 
@@ -733,7 +765,7 @@ void DebuggerWindow::refresh_side()
     QWidget * side = m_side_tabs->currentWidget();
     auto fmt = [this](unsigned int a) { return code_text(a); };
     if (side == m_stack) m_stack->refresh();
-    m_breakpoints->refresh(c, fmt);
+    m_breakpoints->refresh([this](CPU * cpu, unsigned int a) { return code_text(cpu, a); });
     if (side == m_history) m_history->refresh(c, fmt);
     if (side == m_devices) m_devices->refresh();
     update_next_tabs();

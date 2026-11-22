@@ -624,6 +624,63 @@ public:
         }
         return condition;
     }
+    std::vector<std::string> event_kinds() override { return m_event_kinds; }
+    std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override
+    {
+        std::vector<ecatshim::EventBreakpoint> r;
+        BreakpointManager * bm = breakpoints();
+        if (bm == nullptr) return r;
+        for (const auto &b : bm->GetAllBreakpoints()) {
+            const BreakpointDescriptor &d = *b.second;
+            if (d.type != BRK_EVENT || !BreakpointManager::IsUserBreakpoint(d)) continue;
+            ecatshim::EventBreakpoint x;
+            x.id = b.first;
+            x.kind = GSCardEventName(static_cast<GSCardEvent>(d.z80address));
+            x.value = d.nrValue & d.nrMask;
+            x.mask = d.nrMask;
+            x.enabled = d.active;
+            r.push_back(x);
+        }
+        return r;
+    }
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override
+    {
+        BreakpointManager * bm = breakpoints();
+        GSCardEvent k = GSCardEvent::Count;
+        if (bm == nullptr) {
+            error = "this processor has no breakpoints now";
+            return false;
+        }
+        if (!ParseGSCardEvent(kind.c_str(), k)) {
+            error = "unknown event kind: " + kind;
+            return false;
+        }
+        if (value > 0xFF || mask > 0xFF) {
+            error = "the value and the mask are bytes (0..255)";
+            return false;
+        }
+        // The core's checks say which CPU a kind belongs to
+        BreakpointSpec spec;
+        spec.type = BRK_EVENT;
+        spec.access = 0;
+        spec.address = static_cast<uint16_t>(k);
+        spec.nrValue = (uint8_t)value;
+        spec.nrMask = (uint8_t)mask;
+        return bm->AddBreakpoint(spec, error) != BRK_INVALID;
+    }
+    bool remove_event_breakpoint(unsigned int id) override
+    {
+        BreakpointManager * bm = breakpoints();
+        return bm != nullptr && is_event(bm, id) && bm->RemoveBreakpointByID((uint16_t)id);
+    }
+    bool enable_event_breakpoint(unsigned int id, bool on) override
+    {
+        BreakpointManager * bm = breakpoints();
+        if (bm == nullptr || !is_event(bm, id)) return false;
+        return on ? bm->ActivateBreakpoint((uint16_t)id) : bm->DeactivateBreakpoint((uint16_t)id);
+    }
+    void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
+
     void add_run_to(unsigned int address)
     {
         BreakpointManager * bm = breakpoints();
@@ -650,7 +707,13 @@ public:
 
 protected:
     ::Emulator * m_emu;
+    std::vector<std::string> m_event_kinds;
 
+    static bool is_event(BreakpointManager * bm, unsigned int id)
+    {
+        const BreakpointSnapshot d = id <= 0xFFFF ? bm->GetBreakpointById((uint16_t)id) : nullptr;
+        return d && d->type == BRK_EVENT;
+    }
     static bool is_user_execution(const BreakpointDescriptor &d)
     {
         return d.type == BRK_MEMORY && (d.memoryType & BRK_MEM_EXECUTE) && !d.hidden && !d.isRange &&
@@ -935,6 +998,8 @@ public:
         m_main->mm = m_mapper.get();
         const ZxPaging paging = ZxModelPaging(Config::GetModelFullName(ctx->config.mem_model));
         m_main->set_pages(ram.get(), rom.get(), paging);
+        m_main->set_event_kinds(ZxMainEventKinds(Config::GetModelFullName(ctx->config.mem_model), !m_cards.empty()));
+        for (const auto &c : m_cards) c->set_event_kinds(ZxCardEventKinds(c->region_prefix() == "neogs"));
         ram->set_paging(paging);
         m_dm.add(ram);
         m_dm.add(rom);

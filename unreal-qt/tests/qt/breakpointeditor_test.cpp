@@ -136,14 +136,14 @@ TEST_F(BreakpointEditor_Test, TheZxNextKindsAreOfferedOnlyOnAZxNext)
                     items << combo->itemText(i);
         return items;
     };
-    EXPECT_EQ(types(_emulator), QStringList({"Memory", "Port", "Keyboard"}));
+    EXPECT_EQ(types(_emulator), QStringList({"Memory", "Port", "Keyboard", "Event"}));
 
     std::shared_ptr<Emulator> next =
         EmulatorManager::GetInstance()->CreateEmulatorWithModel("breakpoint-editor-next", "NEXT", LoggerLevel::LogError);
     ASSERT_NE(next, nullptr);
     const QStringList nextTypes = types(next);
     EmulatorManager::GetInstance()->RemoveEmulator(next->GetUUID());
-    EXPECT_EQ(nextTypes.size(), 7);
+    EXPECT_EQ(nextTypes.size(), 8);
     EXPECT_TRUE(nextTypes.contains("Magic opcode (ZX Next)"));
 }
 

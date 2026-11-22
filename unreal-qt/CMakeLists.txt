@@ -813,6 +813,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointdialog.h"
         # The debugger's stop line: the breakpoint the machine stopped at, in words
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
+        # The card's breakpoints: event kinds, the card CPU's manager, the list's CPU column (gs-debugger TODO P5.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointcardevents_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.h"
         # The Embedded debugger's time controls and branch drop-down (TTD branches debuggers.md §4)

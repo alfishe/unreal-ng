@@ -16,6 +16,7 @@ class QLabel;
 class QLineEdit;
 class QSplitter;
 class QToolBar;
+class QToolButton;
 class QTabWidget;
 class QTimer;
 class BankStrip;
@@ -149,6 +150,7 @@ private:
     QAction * m_bp_remove;
     QAction * m_bp_toggle;
     QAction * m_bp_clear;
+    QToolButton * m_bp_events;
     TtdControls * m_ttd = nullptr;
     unsigned int m_serial;
     bool m_paused;
@@ -165,6 +167,8 @@ private:
 
     CpuPane * pane();
     QString code_text(unsigned int address);
+    //In the listing of that processor
+    QString code_text(CPU * cpu, unsigned int address);
     void build_toolbar(QWidget * host);
     //Every view read again; a stop also brings PC into view
     void refresh_all(bool stopped);

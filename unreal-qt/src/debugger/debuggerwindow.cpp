@@ -1491,6 +1491,7 @@ void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
     if (BreakpointManager::IsUserBreakpoint(*breakpoint) && !breakpoint->hidden)
     {
         _stopBreakpointId = breakpointID;
+        _stopBreakpointCpu = hitCpu;
         _stopBanner->setText(BreakpointStopLine(*breakpoint, hit));
         _stopBanner->setVisible(true);
     }
@@ -1526,12 +1527,13 @@ void DebuggerWindow::onStopBannerLink(const QString& link)
         return;
     if (link == "edit" && _stopBreakpointId != BRK_INVALID)
     {
-        if (!_emulator->GetBreakpointManager()->GetBreakpointById(_stopBreakpointId))
+        BreakpointManager* manager = _emulator->GetDebugManager()->GetBreakpointsManager(_stopBreakpointCpu);
+        if (!manager || !manager->GetBreakpointById(_stopBreakpointId))
         {
             clearStopBanner();  // removed meanwhile
             return;
         }
-        BreakpointEditor editor(_emulator, BreakpointEditor::Edit, _stopBreakpointId, this);
+        BreakpointEditor editor(_emulator, BreakpointEditor::Edit, _stopBreakpointId, this, _stopBreakpointCpu);
         editor.exec();
         updateState();
     }

@@ -22,6 +22,19 @@ and is adapted freely.
 The views and the adapter never share a translation unit: ecat's Emulator / CPU / Memory (namespace `ecatshim`) and
 the core's classes of the same names would clash.
 
+## Breakpoints
+
+The Breakpoints tab lists every processor's breakpoints, a row each with its CPU (`main`, `gs`, `ms`): the
+execution ones (F2 at the cursor), then the event ones with an on / off box. The toolbar's **Events** menu (and the
+tab's context menu) adds an event breakpoint ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A4 `W.bp kinds`, A6 S5), its kinds in plain words in four groups: **Card** (the card takes an interrupt, an NMI, is
+reset, switches a page, fetches a DAC sample; the NeoGS's clock, DMA and GSCFG0) and **Protocol, card side** (the
+card takes a command, a data byte, writes its reply) on the card's CPU, only with a card; **Protocol, host side** (the
+host sends a command, a data byte, reads the reply) and **Machine** (the interrupts, the WD1793; the Next's, TS-Conf's
+and the Sprinter's own events) on the main CPU. Each asks for the event's byte: empty for any, `#0F`, or `#80/#E0`
+(value / mask). They are the core's `BRK_EVENT` breakpoints (`CPU::add_event_breakpoint` and its kin in the shim;
+over the WebAPI `POST /breakpoints {"type": "event", "event", "value", "value_mask", "cpu"}`).
+
 ## Time travel
 
 > TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)

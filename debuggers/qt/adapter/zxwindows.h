@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <string>
+#include <vector>
 
 struct ZxPaging {
     bool switchable[4] = {false, false, false, false};
@@ -53,4 +54,31 @@ inline std::string ZxRomPageNote(const std::string &title)
     std::string note = "unknown ROM";
     if (open != std::string::npos && close != std::string::npos) note += ' ' + title.substr(open + 1, std::min<size_t>(8, close - open - 1));
     return close == std::string::npos ? note : note + title.substr(close + 1);
+}
+
+// The event breakpoint kinds (the core's names, gsdebughooks.h GSCardEventName) a machine's main CPU takes: the host's
+// side of a sound card's mailbox when the machine has a card, then the events its model tells (the port decoders of
+// the Next, TS-Conf and the Sprinter; every WD1793 and every Z80 the rest)
+inline std::vector<std::string> ZxMainEventKinds(const std::string &full_name, bool card)
+{
+    auto has = [&full_name](const char * s) { return full_name.find(s) != std::string::npos; };
+    std::vector<std::string> r;
+    if (card) r = {"host_command", "host_data", "host_reply"};
+    if (has("Next"))
+        r.insert(r.end(), {"cpu_int", "cpu_reti", "cpu_nmi", "cpu_retn", "machine_reset", "divmmc_map", "divmmc_unmap",
+                           "esxdos_call", "zxndma_start", "zxndma_done"});
+    else if (has("TS-Conf") || has("TS-Config"))
+        r.insert(r.end(), {"cpu_int", "tsdma_start", "tsdma_done"});
+    else if (has("Sprinter"))
+        r.insert(r.end(), {"cpu_int", "cpu_reti", "pld_read", "pld_write", "pld_event"});
+    r.insert(r.end(), {"int_accept", "int_return", "fdc_command", "fdc_done"});
+    return r;
+}
+
+// A sound card CPU's: the card's side of the mailbox and its hardware; the NeoGS's clock, DMA and GSCFG0 on a NeoGS
+inline std::vector<std::string> ZxCardEventKinds(bool neogs)
+{
+    std::vector<std::string> r = {"int", "nmi", "reset", "page", "card_command", "card_data", "card_reply", "dac_fetch"};
+    if (neogs) r.insert(r.end(), {"clock_change", "dma_start", "dma_done", "gscfg0"});
+    return r;
 }

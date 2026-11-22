@@ -194,14 +194,14 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
 7. [ ] **F4 extensions.** `reply_read_without_poll`, `data_before_command`, `command_while_busy`,
    `card_reply_stall`, `stale_reply_drain`, `upload_over_running_code`, `command_rejected_in_state`; the handshake
    (M6) suppresses legal firmware-specific ones; the same flags on LW (W4).
-   Done (uncommitted): the host status-read hook on LLE / LW / NeoGS; handshake `ack`, `barrier`, `strobe`,
+   Done (landed d770c9b67): the host status-read hook on LLE / LW / NeoGS; handshake `ack`, `barrier`, `strobe`,
    `replyWait`, `exit`; profile `modes`, `unsolicitedReplies`; design §6.3. Left: an A/B of the status-read hook
    (P2), batched with the next .20 run.
-8. [ ] **Profiles for uploaded code (M5).** The `#14` upload hashed as it arrives, `#13` pushes the matching
+8. [x] **Profiles for uploaded code (M5).** The `#14` upload hashed as it arrives, `#13` pushes the matching
    profile, a card reset pops to the ROM's, the decoder asks the stack top-down; an unknown upload logged with its
    address, length and digest. Profiles: GP `gscode.bin`, the kernel's `ngssd.bin`, NeoTracker `ngsldr` / `ngsdrv`
    / `neopg2`.
-   Done (uncommitted): `GSCommandLog::Uploads()` (also `uploads` in the protocol state), the profile stack with
+   Done (landed d770c9b67, 2026-11-21; uploads and the stack follow TTD since): `GSCommandLog::Uploads()` (also `uploads` in the protocol state), the profile stack with
    `extends`, upload matches that cover a prefix (the kernel's padded 768 bytes), five NedoOS profiles in
    `data/symbols/gs/profiles/`, the blobs in `testdata/software/nedoos/card-code/`. The `#1E` sector transfer with its
    `#BB` strobes (M12): the profile transfer `sectors` (design §6.3), done with V-5.
@@ -306,8 +306,17 @@ what an agent reads):
     (`c119985 Δ12`, GeneralSoundCard::cardCycles).
   - [ ] Left: the S3 strip on top of the main registers (now in the card line), eCat's Δ (its register pane has no
     T at all), a live card line while the machine runs.
-- [ ] **P5.3 Breakpoints (A4 B1-B4, A6 S5).** The event kinds (INT, NMI, card reset, page switch) and the protocol
+- [x] **P5.3 Breakpoints (A4 B1-B4, A6 S5).** The event kinds (INT, NMI, card reset, page switch) and the protocol
   kinds on the card side and the host side in both editors; card breakpoints listed with a CPU column.
+  Done 2026-11-22. Embedded: the editor's Event kind (grouped Card / Protocol, card side / Protocol, host side /
+  Machine, plain words, value / mask) and a CPU row for memory and port kinds; the list shows every CPU's
+  breakpoints with a CPU column and filter; event hits in plain words in the stop banner, its Edit on the stopping
+  CPU (test `breakpointcardevents_test.cpp`). eCat: the shim's event breakpoints per CPU (in process and over the
+  WebAPI), the breakpoint list as a tree with a CPU column, an Events menu (`--self-check` "event bp", also run
+  with `--connect`).
+  Left: the hit's own byte in the banner (the stop carries no value: `BreakpointTriggeredPayload` /
+  `Emulator::BreakpointStop` would need it; now the filter's value is named); eCat's CPU filter;
+  `unreal-debugger --no-gs` still has the Pentagon config's NeoGS.
 - [ ] **P5.4 Run control (A4 S5/S7, A6 S6).** Step main / step other, Run to: card cycle, main T, next card
   interrupt, next host command; the card CPU by its shortcut.
 - [ ] **P5.5 NeoGS and the rest of the slot (B3, A10).** NeoGS DMA, SD · MP3 · Flash tabs; the LW player inspector;

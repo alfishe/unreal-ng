@@ -13,8 +13,11 @@
 #include <QLabel>
 #include <QSpinBox>
 #include <QValidator>
+#include <vector>
 #include "emulator/emulator.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/targets/debugcpuid.h"
+#include "emulator/sound/chips/gs/gsdebughooks.h"
 
 class BreakpointEditor : public QDialog
 {
@@ -23,7 +26,9 @@ public:
     enum Mode { Add, Edit };
     
     explicit BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, QWidget* parent = nullptr);
-    explicit BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, uint16_t breakpointId, QWidget* parent = nullptr);
+    /// Edits breakpoint `breakpointId` of `cpu`'s breakpoints (a card CPU's are its own manager's)
+    explicit BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, uint16_t breakpointId, QWidget* parent = nullptr,
+                              DebugCpuId cpu = DebugCpuId::Main);
     ~BreakpointEditor();
     
     BreakpointDescriptor getBreakpointDescriptor() const;
@@ -41,6 +46,21 @@ private slots:
 private:
     void setupUI();
     void addNextTypes();  // the ZX Next kinds into the type list (once)
+    /// The event kinds this machine tells, grouped: the card's (a card fitted), the protocol's card and host sides,
+    /// the machine's (by model)
+    void addEventKinds();
+    /// An event kind into the list (an edited breakpoint's kind the list does not offer: at the end)
+    void addEventKind(GSCardEvent kind);
+    /// The kind in the type list's item data
+    BreakpointTypeEnum selectedType() const;
+    void selectType(BreakpointTypeEnum type);
+    /// The selected event kind; Count when a group's title or nothing is selected
+    GSCardEvent selectedEvent() const;
+    /// The CPU whose breakpoints get it: an event's by its side, a memory or port breakpoint's by the CPU choice
+    DebugCpuId selectedCpu() const;
+    BreakpointManager* managerOf(DebugCpuId cpu) const;
+    /// The CPU choice follows the kind: memory and ports on any CPU fitted, a card event on a card's, the rest main's
+    void updateCpuRow();
     void populateGroupComboBox();
     void loadBreakpointData(uint16_t breakpointId);
     bool keyAddress(const QString& text, uint16_t& address);
@@ -57,8 +77,17 @@ private:
     Mode _mode;
     uint16_t _breakpointId;
     BreakpointDescriptor _descriptor;
+    DebugCpuId _editCpu = DebugCpuId::Main;  ///< Edit: whose breakpoint it is
+    std::vector<DebugCpuId> _cpus;           ///< the CPUs fitted (main first)
+    bool _ngsFitted = false;                 ///< a NeoGS among them: its own events are offered
     
     QComboBox* _typeCombo;
+    QWidget* _cpuRow;             // a card fitted: whose breakpoint (memory, ports, card events)
+    QComboBox* _cpuCombo;         // item data: the DebugCpuId
+    QGroupBox* _eventBox;
+    QComboBox* _eventCombo;       // item data: the GSCardEvent, -1 a group's title
+    QLineEdit* _eventValueEdit;   // optional: stop only on this byte
+    QLineEdit* _eventMaskEdit;    // optional: compare only these bits
     QLabel* _addressLabel;      // "Address:", "Port:", "Register:", "Line:", "List index:", "Key:"
     QLineEdit* _addressEdit;
     QLabel* _endLabel;

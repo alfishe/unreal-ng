@@ -1053,6 +1053,65 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         }
     }
 
+    // Event breakpoints (gs-debugger P5.3): the card's side on the card CPU, the host's side on the main CPU, added
+    // through the shim, listed with their CPU (in the breakpoint list too), switched off, removed
+    {
+        auto has_kind = [](ecatshim::CPU * c, const char * kind) {
+            const std::vector<std::string> kinds = c->event_kinds();
+            return std::find(kinds.begin(), kinds.end(), kind) != kinds.end();
+        };
+        auto find_event = [](ecatshim::CPU * c, const char * kind, ecatshim::EventBreakpoint &out) {
+            for (const ecatshim::EventBreakpoint &b : c->get_event_breakpoints())
+                if (b.kind == kind) {
+                    out = b;
+                    return true;
+                }
+            return false;
+        };
+        BreakpointsView * list = window->findChild<BreakpointsView *>();
+        auto listed = [list](const char * cpu_name, const char * kind) {
+            if (list == nullptr) return false;
+            list->relist();
+            for (int i = 0; i < list->topLevelItemCount(); i++) {
+                const QTreeWidgetItem * item = list->topLevelItem(i);
+                if (item->text(0) == cpu_name && item->text(1).startsWith(QString(kind) + "  ")) return true;
+            }
+            return false;
+        };
+        check(has_kind(cpu, "int_accept"), "event kinds: the machine's on main");
+        if (gs == nullptr) {
+            check(!has_kind(cpu, "host_command"), "event kinds: no host side without a card");
+        } else {
+            check(has_kind(gs, "card_command") && !has_kind(gs, "host_command") && has_kind(cpu, "host_command") &&
+                      !has_kind(cpu, "card_command"),
+                  "event kinds: card side on gs, host side on main");
+            std::string card_error, host_error, wrong_error;
+            const bool card_added = gs->add_event_breakpoint("card_command", 0x0F, 0xFF, card_error);
+            const bool host_added = cpu->add_event_breakpoint("host_command", 0, 0, host_error);
+            check(card_added && host_added, "event bp: card_command on gs, host_command on main");
+            if (!card_added || !host_added)
+                printf("  (card: %s; host: %s)\n", card_error.c_str(), host_error.c_str());
+            check(!cpu->add_event_breakpoint("card_command", 0, 0, wrong_error) && !wrong_error.empty(),
+                  "event bp: a card kind on main refused, said");
+            ecatshim::EventBreakpoint cb, hb;
+            const bool card_found = find_event(gs, "card_command", cb), host_found = find_event(cpu, "host_command", hb);
+            check(card_found && cb.value == 0x0F && cb.mask == 0xFF && cb.enabled && host_found && hb.mask == 0 &&
+                      hb.enabled && !find_event(cpu, "card_command", cb) && !find_event(gs, "host_command", hb),
+                  "event bp: each listed by its own CPU, value kept");
+            find_event(gs, "card_command", cb);
+            find_event(cpu, "host_command", hb);
+            check(listed("gs", "card_command") && listed("main", "host_command"),
+                  "event bp: the breakpoint list's rows say gs / main");
+            ecatshim::EventBreakpoint off;
+            check(gs->enable_event_breakpoint(cb.id, false) && find_event(gs, "card_command", off) && !off.enabled,
+                  "event bp: switched off");
+            const bool removed = gs->remove_event_breakpoint(cb.id) && cpu->remove_event_breakpoint(hb.id);
+            check(removed && !find_event(gs, "card_command", off) && !find_event(cpu, "host_command", off) &&
+                      !listed("gs", "card_command") && !listed("main", "host_command"),
+                  "event bp: removed, gone from the list");
+        }
+    }
+
     window_check(window, cpu, check);
 
     // The window's scale: the views' font and their rows follow it, the keys step it, 100 % gives every size back

@@ -327,6 +327,7 @@ private:
     QLabel* _cardStrip = nullptr;
     void updateCardStrip();
     uint16_t _stopBreakpointId = BRK_INVALID;
+    DebugCpuId _stopBreakpointCpu = DebugCpuId::Main;  // whose breakpoint the stop line names (its manager)
     uint64_t _breakpointObserver = 0;  // NC_EXECUTION_BREAKPOINT, filtered by the machine's id
     uint64_t _markupObserver = 0;      // NC_READOUTS_CHANGED of the markup, filtered by the machine's id
     QLabel* _markupLegend = nullptr;   // under the memory view: the kinds it colours
