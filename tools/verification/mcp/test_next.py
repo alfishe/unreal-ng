@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ZX Spectrum Next: the NMI / interrupt / reset report (inspect_state next_nmi), the NMI trigger (invoke_api), and the NextREG, beam and
-copper-instruction breakpoints (control_execution bp_add / bp_list). The values are asserted by the core tests; this checks what only the
+copper-instruction breakpoints (control_execution bp_add / bp_list), the zxnDDMA part of next_dma. The values are asserted by the core tests; this checks what only the
 live MCP shows: the aspect text, the parameters, the type names and the refusals."""
 
 import json
@@ -65,6 +65,27 @@ def test_next_breakpoint_types(s):
         r = s.call('control_execution', dict(bad, action='bp_add'), ok=False)
         expect(r.is_error, 'refused: ' + json.dumps(bad), r.text)
     s.call('control_execution', {'action': 'bp_clear'})
+
+
+
+def test_dma_aspect_shows_the_zxnddma_state(s):
+    # the plain NEXT (core 3.02.03) has no zxnDDMA line; NEXT-DDMA on the KS2 board shows the flags, the 22-bit addresses, the 2D block
+    # and the SRAM range of Issue 4 (2 MB: bit 21 dropped)
+    s.fresh_machine('NEXT')
+    r = s.call('inspect_state', {'aspects': ['next_dma']})
+    expect('[next_dma] zxn mode' in r.text and 'zxnDDMA' not in r.text, 'core 3.02.03: no zxnDDMA line', r.text)
+    s.fresh_machine('NEXT-DDMA')
+    # A #0C0000 -> B #064000, physical + 2D + transparent #E3, 16 x 8, strides 16 / 256, loaded (no enable: nothing moves)
+    for b in (0x7D, 0x00, 0x00, 0x00, 0x01, 0x14, 0x10, 0xAD, 0x00, 0x40, 0xD7, 0x0C, 0xDB, 0x06, 0xDF, 0x07, 0xE3, 16, 0, 0xE7, 8, 0,
+              0xEB, 16, 0, 0xEF, 0x00, 0x01, 0xF3, 0xE3, 0xCF):
+        s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/ports/out', 'body': {'port': '0x6B', 'value': '0x%02X' % b}})
+    r = s.call('inspect_state', {'aspects': ['next_dma']})
+    expect('[next_dma] zxnDDMA physical+two_d+transparent, src 0x0C0000 dst 0x064000, 2D 16x8 at row 0 column 0, strides 16/256, '
+           'transparent 0xE3, SRAM 0x000000-0x1FFFFF (issue4)' in r.text, 'the zxnDDMA line', r.text)
+    api = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/next/dma'})
+    ddma = (api.structured or {}).get('body', {}).get('ddma', {})
+    expect(ddma.get('ext_a') == '0x0C' and ddma.get('sram', {}).get('range') == '0x000000-0x1FFFFF', 'the REST report has the ddma part',
+           json.dumps(api.structured))
 
 
 if __name__ == '__main__':

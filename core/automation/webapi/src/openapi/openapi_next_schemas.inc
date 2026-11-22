@@ -31,13 +31,19 @@
               {"counter", "integer", "bytes moved"},
               {"src", "string", "source address now, hex"},
               {"dst", "string", "destination address now, hex"},
-              {"src_kind", "string", "what the 8K slot of src is (memory ports)"},
-              {"dst_kind", "string", "what the 8K slot of dst is (memory ports): rom = a write into ROM"},
+              {"src_kind", "string", "what the 8K slot of src is (memory ports); zxnDDMA physical mode: what the SRAM address is "
+                                     "(system area | ram | ram (sram side) | not fitted)"},
+              {"dst_kind", "string", "what the 8K slot of dst is (memory ports): rom = a write into ROM; physical mode as src_kind"},
               {"holds_bus", "boolean", "the DMA holds the CPU"},
               {"read_mask", "string", "WR6 read mask, hex"},
               {"read_seq", "integer", "index of the value the next read returns"},
               {"status", "string", "the status byte a read returns when read_seq is 0, hex"},
-              {"interrupt_enables", "object", "nr_cc, nr_cd, nr_ce"}});
+              {"interrupt_enables", "object", "nr_cc, nr_cd, nr_ce"},
+              {"zxnddma", "boolean", "the core has the zxnDDMA blitter commands (core 3.03.00, the variant NEXT-DDMA)"},
+              {"ddma", "object", "only with zxnddma: physical, two_d, transparent, fill, layer2_xy, hidden (the #DF flags), ext_a / ext_b "
+                                 "(#D7 / #DB, hex), src / dst (the 22-bit working addresses, hex), row_length, rows, stride_a, stride_b, "
+                                 "row, column (the 2D block and the position of the next byte), transparent_value, fill_value (hex), "
+                                 "layer2 {x, y}, sram {board, bytes, range} (what the board's physical addresses reach)"}});
         fill("NextVideoReport", "The Next video layers (DeviceState::NextVideo)",
              {{"available", "boolean", "false on a machine that is not a Next"},
               {"layer_order", "object", "value (NR #15 bits 4:2), name (SLU LSU SUL LUS USL ULS blend)"},

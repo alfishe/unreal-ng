@@ -22,3 +22,7 @@ bool NextBoardIssueFromName(const std::string& name, NextBoardIssue& issue);
 const char* NextBoardIssueName(NextBoardIssue issue);
 /// "Issue 2 (KS1)", ... for reports
 const char* NextBoardIssueTitle(NextBoardIssue issue);
+/// The SRAM the board's address lines reach, what the zxnDDMA's physical addresses ({extended bits 5:0, address}, 22 bits) wrap in
+/// (zxnddma.gde 2.5 and 2.9 note 5, core 3.03.00): Issue 5 4 MB (#000000-#3FFFFF), Issue 4 2 MB (#000000-#1FFFFF, bit 21 dropped),
+/// Issue 2 1 MB (#000000-#0FFFFF) or 2 MB with the expansion (a machine with more than 1024K, `ramKb`). An address above it wraps
+uint32_t NextSramBytes(NextBoardIssue issue, unsigned ramKb);

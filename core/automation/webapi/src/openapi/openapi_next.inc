@@ -22,7 +22,10 @@
              "waiting / end_of_block, burst (continuous | burst | byte), prescaler, auto_restart, ce_wait, ports a and b (address, type "
              "memory | io, step inc | dec | fixed, timing), direction, block_length, counter, src / dst with the kind of the 8K slot they hit "
              "now (src_kind, dst_kind: a transfer into ROM shows here), holds_bus, wait_until_28, dma_delay, the read mask / sequence and "
-             "the status byte the next read returns, and the NR #CC-#CE interrupt enables. Reading it does NOT advance the read sequence.",
+             "the status byte the next read returns, and the NR #CC-#CE interrupt enables. With the zxnDDMA core (zxnddma true, the variant "
+             "NEXT-DDMA) the ddma part: the #DF flags, the 22-bit addresses, the 2D block and its position, the transparent and fill values, "
+             "the Layer 2 X,Y and the SRAM range of the board (Issue 5 4 MB, Issue 4 2 MB, Issue 2 1 MB or 2 MB with the expansion). "
+             "Reading it does NOT advance the read sequence.",
              "NextDmaReport", {}},
             {"/api/v1/emulator/{id}/state/next/video", "Get the Next video layers",
              "Layer order (NR #15), ULA (standard | screen1 | hicolour | hires by port #FF, scroll, clip, ULANext), LoRes, Layer 2 (resolution, "

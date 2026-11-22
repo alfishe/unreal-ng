@@ -2929,7 +2929,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'next_uart' = the two UARTs (ESP and Pi): prescaler / baud, frame, RTS, the Rx and Tx FIFOs, the status byte as a read gives it, "
         "the byte counters, the NR #C6 interrupt enables and requests and what is on the line (ComPort= / ComPort2=); "
         "'next_dma' = the DMA as programmed (mode zxn / z80, ports A / B, direction, burst, prescaler, counters, status byte; reading does not "
-        "step its read sequence), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
+        "step its read sequence; with the zxnDDMA core the 'ddma' part: #DF flags, 22-bit addresses, 2D block, transparent / fill, "
+        "Layer 2 X,Y, the board's SRAM range), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
         "position, 'next_palette' = the 9-bit palettes (nr_palette = '0'-'7' | name | 'all', default the selected one; nr_range = '16-31'), "
         "'next_ports' = the internal port enable word NR #82-#85 and, with nr_port = '6B' (nr_access = 'r' | 'w'), which device answers it, "
         "'next_nextreg' = one NextREG (nr_reg = '07') with its decoded bits or all (nr_changed = true: only the ones that differ from their "
@@ -4440,11 +4441,34 @@ void RegisterInspectState(ToolRegistry& registry)
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();
                                 else if (aspect == "next_dma")
+                                {
                                     out << "\n[next_dma] " << value["mode"].asString() << " mode, " << (value["enabled"].asBool() ? "enabled" : "idle")
                                         << ", " << value["direction"].asString() << ", A " << value["a"]["address"].asString() << " ("
                                         << value["a"]["type"].asString() << ") B " << value["b"]["address"].asString() << " (" << value["b"]["type"].asString()
                                         << "), " << value["burst"].asString() << ", counter " << value["counter"].asInt() << "/" << value["block_length"].asInt()
                                         << ", status " << value["status"].asString();
+                                    if (value.isMember("ddma"))
+                                    {
+                                        // zxnDDMA (core 3.03): the #DF flags that are on, the 22-bit working addresses, the 2D block, the SRAM range
+                                        const Json::Value& d = value["ddma"];
+                                        std::string flags;
+                                        for (const char* f : {"physical", "two_d", "transparent", "fill", "layer2_xy", "hidden"})
+                                            if (d[f].asBool())
+                                                flags += (flags.empty() ? "" : "+") + std::string(f);
+                                        out << "\n[next_dma] zxnDDMA " << (flags.empty() ? std::string("no flags") : flags) << ", src " << d["src"].asString()
+                                            << " dst " << d["dst"].asString();
+                                        if (d["two_d"].asBool())
+                                            out << ", 2D " << d["row_length"].asInt() << "x" << d["rows"].asInt() << " at row " << d["row"].asInt()
+                                                << " column " << d["column"].asInt() << ", strides " << d["stride_a"].asInt() << "/" << d["stride_b"].asInt();
+                                        if (d["transparent"].asBool())
+                                            out << ", transparent " << d["transparent_value"].asString();
+                                        if (d["fill"].asBool())
+                                            out << ", fill " << d["fill_value"].asString();
+                                        if (d["layer2_xy"].asBool())
+                                            out << ", Layer 2 X " << d["layer2"]["x"].asInt() << " Y " << d["layer2"]["y"].asInt();
+                                        out << ", SRAM " << d["sram"]["range"].asString() << " (" << d["sram"]["board"].asString() << ")";
+                                    }
+                                }
                                 else if (aspect == "next_video")
                                     out << "\n[next_video] order " << value["layer_order"]["name"].asString() << ", ULA " << value["ula"]["mode"].asString()
                                         << (value["ula"]["enabled"].asBool() ? "" : " (off)") << ", Layer 2 "
