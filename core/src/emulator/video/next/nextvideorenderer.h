@@ -16,18 +16,31 @@
 #include "emulator/io/z80n/nextvideoregs.h"
 #include "emulator/video/next/nextlayerframe.h"
 
+/// A border colour change inside a line: from sub-pixel x (0..639) on the border is `colour` (ScreenNext::SetBorderColor)
+struct NextBorderChange
+{
+    uint16_t x = 0;
+    uint8_t colour = 0;
+};
+
 struct NextVideoInputs
 {
     /// RAM as the video logic sees it: 16K page p (the numbering of the Layer 2 banks, NR #12) at ram + p * 16K
     const uint8_t* ram = nullptr;
     uint16_t ramPages = 0;
+    /// The SRAM side of 8K pages #0A, #0B, #0E (NextMemory::SramTwin): what Layer 2 fetches there instead of the ULA's block RAM at
+    /// `ram`. Null: one memory for both
+    const uint8_t* sramTwin = nullptr;
     const NextVideoRegs* regs = nullptr;  ///< palettes, clip windows
     NextSprites* sprites = nullptr;       ///< the output stage's, and the engine's when `spriteLine` is null
     /// The line buffer the sprite engine filled for this row in machine time (ScreenNext, which posts its flags); null: run the engine on
     /// `sprites` as it is and set its collision / overtime flags at once
     const NextSprites::LineBuffer* spriteLine = nullptr;
     uint8_t nr[256] = {};                 ///< the stored NextREG bytes (scrolls, layer control, timex port alias, ...)
-    uint8_t border = 0;                   ///< port #FE bits 2:0
+    uint8_t border = 0;                   ///< port #FE bits 2:0 at the line's start
+    /// The border's changes along the line, x ascending (CPU writes of port #FE): the line is drawn once, its border filled in runs
+    const NextBorderChange* borderChanges = nullptr;
+    unsigned borderChangeCount = 0;
     uint8_t portFf = 0;                   ///< the Timex port (NR #69 bits 5:0 alias it)
     bool shadowScreen = false;            ///< the ULA reads bank 7 instead of 5 (#7FFD bit 3 / NR #69 bit 6)
     bool layer2Enable = false;            ///< port #123B bit 1 / NR #69 bit 7
@@ -88,24 +101,28 @@ private:
         kAboveTilemap = 2,
         kAboveSprites = 4
     };
-    static unsigned DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
+    /// The ULA is off (NR #68 bit 7) but blend source 00 of the layer orders 110 / 111 still mixes its pixels: they are drawn apart
+    static bool UlaMixApart(const NextVideoInputs& in);
+    /// `ulaMix` (UlaMixApart only, otherwise nullptr): the row the hidden ULA is drawn into for the blend
+    static unsigned DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* ulaMix, Pixel* layer2, Pixel* tiles, Pixel* sprites,
                                uint8_t* spriteNumbers);
     static void UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line);
-    static bool UlaBorderPixel(const NextVideoInputs& in, Pixel& p);
+    static void UlaBorderPixel(const NextVideoInputs& in, unsigned border, Pixel& p);
     static void LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixel* line);
     static bool SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers);
+    /// `ulaMix`: the ULA pixels blend source 00 mixes (`ula` itself unless UlaMixApart)
     template <bool kRecord>
-    static void ComposeLine(const NextVideoInputs& in, unsigned above, const Pixel* ula, const Pixel* layer2, const Pixel* tiles,
-                            const Pixel* sprites, const uint8_t* spriteNumbers, uint32_t* out);
+    static void ComposeLine(const NextVideoInputs& in, unsigned above, const Pixel* ula, const Pixel* ulaMix, const Pixel* layer2,
+                            const Pixel* tiles, const Pixel* sprites, const uint8_t* spriteNumbers, uint32_t* out);
     /// A line where only the ULA layer has pixels, in a plain layer order without the stencil: the ULA pixel or the fallback colour
     template <bool kRecord>
     static void ComposeUlaOnly(const NextVideoInputs& in, const Pixel* ula, uint32_t* out);
     /// The compositor's loop for one layer order (NR #15 bits 4:2): the order is the same for the whole line, so each instance has it
     /// folded in
     template <bool kRecord, unsigned kOrder>
-    static void ComposeOrder(const NextVideoInputs& in, const Pixel* ula, const Pixel* layer2, const Pixel* tiles, const Pixel* sprites,
-                             const uint8_t* spriteNumbers, uint32_t* out);
+    static void ComposeOrder(const NextVideoInputs& in, const Pixel* ula, const Pixel* ulaMix, const Pixel* layer2, const Pixel* tiles,
+                             const Pixel* sprites, const uint8_t* spriteNumbers, uint32_t* out);
     static bool TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static bool Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line);
 };

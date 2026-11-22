@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -12,6 +14,7 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdcardbench.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/state/statenodejson.h"
@@ -602,6 +605,76 @@ TEST(GSCommandLog_Test, AnUploadStartedByJumpSelectsItsProfile)
         << StateNodeToJsonText(node);
 }
 
+/// The uploads and the profile stack follow time travel (D3): a move back shows the blocks up to the machine's frame
+/// and the decoder's profile there; a replay of the frames does not record a block twice, also one that a frame start
+/// cut in two; a live run from the past drops the blocks of the line it left. The follower called as the controller
+/// calls it (Restored at the checkpoint, the replay with the hooks, Landed)
+TEST(GSCommandLog_Test, UploadsAndTheProfileStackFollowTimeTravel)
+{
+    LwCard card;
+    card.start();
+    std::vector<uint8_t> sd = CardCode("ngssd.bin");
+    ASSERT_EQ(sd.size(), 686u);
+    sd.resize(768, 0x55);
+    const auto send = [&](size_t from, size_t to) {
+        for (size_t i = from; i < to; i++)
+            card.chip->portDeviceOutMethod(kData, sd[i]);
+    };
+    const auto begin = [&] {
+        card.chip->portDeviceOutMethod(kData, 0x00);  // 768: length low, high 3, at #5B00
+        card.chip->portDeviceOutMethod(kCommand, 0x14);
+        for (uint8_t b : {uint8_t(0x03), uint8_t(0x00), uint8_t(0x5B)})
+            card.chip->portDeviceOutMethod(kData, b);
+    };
+    const auto moveTo = [&](uint64_t frame) {
+        card.ctx.emulatorState.frame_counter = frame;
+        card.log.Restored();
+    };
+
+    card.frame();  // 1: the block begins
+    begin();
+    send(0, 300);
+    card.frame();  // 2: a frame start cuts it (a mark mid-block)
+    send(300, sd.size());
+    Jump(card, 0x5B00);
+    card.frame();  // 3
+    ASSERT_STREQ(card.log.Profile()->id, "nedoos-ngssd");
+    ASSERT_EQ(card.log.Uploads().size(), 1u);
+    const std::string digest = card.log.Uploads()[0].sha256;
+    const size_t logged = card.entries().size();
+
+    moveTo(0);
+    card.log.Landed(nullptr);
+    EXPECT_TRUE(card.log.Uploads().empty()) << "frame 0: no block yet";
+    EXPECT_EQ(card.log.Profile(), nullptr);
+
+    moveTo(3);
+    card.log.Landed(nullptr);
+    ASSERT_EQ(card.log.Uploads().size(), 1u);
+    EXPECT_TRUE(card.log.Uploads()[0].started);
+    EXPECT_STREQ(card.log.Profile()->id, "nedoos-ngssd") << "the decoder's profile at frame 3";
+
+    // Back into the block: the checkpoint of frame 2, the rest replayed
+    moveTo(2);
+    card.ctx.ttdReplayActive = true;
+    send(300, sd.size());
+    Jump(card, 0x5B00);
+    card.ctx.ttdReplayActive = false;
+    card.log.Landed(nullptr);
+    ASSERT_EQ(card.log.Uploads().size(), 1u) << "the replayed block is the one the list holds";
+    EXPECT_EQ(card.log.Uploads()[0].sha256, digest) << "the bytes before the cut came back";
+    EXPECT_STREQ(card.log.Profile()->id, "nedoos-ngssd");
+    EXPECT_EQ(card.entries().size(), logged) << "a replay logs nothing";
+
+    // A live run from frame 0 is a new line: the block of the left line goes
+    moveTo(0);
+    card.log.Landed(nullptr);
+    card.chip->portDeviceOutMethod(kCommand, 0x23);
+    moveTo(3);
+    card.log.Landed(nullptr);
+    EXPECT_TRUE(card.log.Uploads().empty()) << card.dump();
+}
+
 /// GP's streamer: its #00 jumps back to the ROM (handshake exit), its replies wait to be read
 TEST(GSCommandLog_Test, GpStreamerExitsToTheRom)
 {
@@ -667,3 +740,241 @@ TEST(GSCommandLog_Test, TheTestModeTakesTestNumbers)
         if (e.command == 0x0B)
             EXPECT_EQ(e.Text(), "card took #0B (test selection)");
 }
+
+/// region <Time travel (D3)>
+
+namespace
+{
+
+/// The host talks to the card all the time (interrupts off): a pre byte, #2F, its post byte, #23 and its reply, a
+/// delay after each command
+void WriteTalker(ttdtest::Bench& b)
+{
+    static const uint8_t program[] = {
+        0xF3,              // 7FFF DI
+        0x06, 0x00,        // 8000 LD B,0
+        0x04,              // 8002 INC B
+        0x78,              // 8003 LD A,B
+        0xD3, 0xB3,        // 8004 OUT (#B3),A    the pre byte
+        0x3E, 0x2F,        // 8006 LD A,#2F
+        0xD3, 0xBB,        // 8008 OUT (#BB),A    Set current track
+        0x0E, 0x40,        // 800A LD C,#40
+        0x0D,              // 800C DEC C
+        0x20, 0xFD,        // 800D JR NZ,#800C
+        0x78,              // 800F LD A,B
+        0xD3, 0xB3,        // 8010 OUT (#B3),A    its post byte
+        0x3E, 0x23,        // 8012 LD A,#23
+        0xD3, 0xBB,        // 8014 OUT (#BB),A    Get number of RAM pages
+        0x0E, 0x40,        // 8016 LD C,#40
+        0x0D,              // 8018 DEC C
+        0x20, 0xFD,        // 8019 JR NZ,#8018
+        0xDB, 0xB3,        // 801B IN A,(#B3)     its reply
+        0x18, 0xE3,        // 801D JR #8002
+    };
+    Z80* z80 = b.z80();
+    for (size_t i = 0; i < sizeof(program); i++)
+        z80->DirectWrite(static_cast<uint16_t>(0x7FFF + i), program[i]);
+    z80->pc = 0x7FFF;
+}
+
+/// The machine with the classic card talking, its command log on (@p limit: the ring's size, 0 the default; -1 off)
+bool BuildTalking(ttdtest::Bench& b, int limit)
+{
+    if (!ttdtest::Build(b, ttdtest::Card::GS))
+        return false;
+    WriteTalker(b);
+    b.emulator->RunNFrames(1);
+    GSCommandLog* log = b.context->pSoundManager->gsCommandLog();
+    if (!log)
+    {
+        ADD_FAILURE() << "no command log";
+        return false;
+    }
+    if (limit >= 0)
+    {
+        std::string error;
+        if (!log->History().Configure({.mode = history::Mode::Ring, .limit = static_cast<size_t>(limit)}, error))
+        {
+            ADD_FAILURE() << error;
+            return false;
+        }
+    }
+    return true;
+}
+
+struct Moment
+{
+    uint64_t frame = 0;
+    uint32_t t = 0;
+};
+
+Moment MachineNow(ttdtest::Bench& b)
+{
+    return {b.context->emulatorState.frame_counter, b.z80()->t};
+}
+
+/// The entries not after @p m
+std::vector<GSCommandLogEntry> UpTo(const std::vector<GSCommandLogEntry>& all, const Moment& m)
+{
+    std::vector<GSCommandLogEntry> out;
+    for (const GSCommandLogEntry& e : all)
+        if (e.frame < m.frame || (e.frame == m.frame && e.mainT <= m.t))
+            out.push_back(e);
+    return out;
+}
+
+void ExpectSameEntries(const std::vector<GSCommandLogEntry>& actual, const std::vector<GSCommandLogEntry>& expected,
+                       const std::string& what)
+{
+    EXPECT_EQ(actual.size(), expected.size()) << what;
+    const size_t n = std::min(actual.size(), expected.size());
+    for (size_t i = 0; i < n; i++)
+        if (std::memcmp(&actual[i], &expected[i], sizeof(GSCommandLogEntry)) != 0)
+        {
+            ADD_FAILURE() << what << ": entry " << i << " differs: " << actual[i].Text() << " (frame "
+                          << actual[i].frame << " t " << actual[i].mainT << ") vs " << expected[i].Text() << " (frame "
+                          << expected[i].frame << " t " << expected[i].mainT << ")";
+            return;
+        }
+}
+
+/// The first #2F of frame @p frame: a seek to it lands after the command, its post byte still due
+const GSCommandLogEntry* SetTrackIn(const std::vector<GSCommandLogEntry>& all, uint64_t frame)
+{
+    for (const GSCommandLogEntry& e : all)
+        if (e.frame == frame && e.kind == GSCommandLogKind::Command && e.command == 0x2F &&
+            !(e.flags & GSCommandLogFlags::kAutomation))
+            return &e;
+    return nullptr;
+}
+
+ttd::TTDTimePoint TargetOf(ttdtest::Bench& b, const GSCommandLogEntry& e)
+{
+    return {e.frame, b.context->emulatorState.TtdTInFrame(e.mainT)};
+}
+
+/// From where the machine stands to @p end on the same path: the T-states between
+void RunTo(ttdtest::Bench& b, const Moment& end)
+{
+    const Moment now = MachineNow(b);
+    const uint64_t frame = b.context->emulatorState.BaseToCpuT(b.context->config.frame);
+    const uint64_t distance = (end.frame - now.frame) * frame + end.t - now.t;
+    b.emulator->RunTStates(distance);
+}
+
+}  // namespace
+
+/// A seek back holds the entries after the target back; seeks forward within the history bring them back, nothing
+/// twice or missing; the decoder stands where the machine stands (#2F's post byte due)
+TEST(GSCommandLog_Test, TtdSeekBackCutsAndSeekForwardRestores)
+{
+    ttdtest::Bench b;
+    ASSERT_TRUE(BuildTalking(b, 0));
+    GSCommandLog& log = *b.context->pSoundManager->gsCommandLog();
+    ttdtest::Record(b, 5);
+    const Moment end = MachineNow(b);
+    const ttd::TTDTimePoint endPoint = b.ttd->CurrentPosition();
+    const std::vector<GSCommandLogEntry> straight = log.History().Snapshot();
+    ASSERT_GT(straight.size(), 100u);
+
+    const GSCommandLogEntry* back = SetTrackIn(straight, straight.front().frame + 2);
+    ASSERT_NE(back, nullptr);
+    ASSERT_TRUE(b.ttd->SeekTo(TargetOf(b, *back)));
+    const Moment there = MachineNow(b);
+    const std::vector<GSCommandLogEntry> cut = log.History().Snapshot();
+    ExpectSameEntries(cut, UpTo(straight, there), "after the seek back");
+    EXPECT_LT(cut.size(), straight.size());
+    EXPECT_EQ(log.History().Held(), straight.size() - cut.size());
+    if (log.Profile())
+    {
+        const GSProtocolState state = log.State();
+        EXPECT_EQ(state.command, 0x2F);
+        EXPECT_LT(state.paramsReceived, state.paramsExpected) << state.Text();
+    }
+
+    const GSCommandLogEntry* forward = SetTrackIn(straight, back->frame + 1);
+    ASSERT_NE(forward, nullptr);
+    ASSERT_TRUE(b.ttd->SeekTo(TargetOf(b, *forward)));
+    ExpectSameEntries(log.History().Snapshot(), UpTo(straight, MachineNow(b)), "after a seek forward");
+
+    ASSERT_TRUE(b.ttd->StepBackFrame());
+    ExpectSameEntries(log.History().Snapshot(), UpTo(straight, MachineNow(b)), "after a frame step back");
+
+    ASSERT_TRUE(b.ttd->SeekTo(endPoint));
+    ASSERT_EQ(MachineNow(b).frame, end.frame);
+    ExpectSameEntries(log.History().Snapshot(), straight, "back at the end");
+    EXPECT_EQ(log.History().Held(), 0u);
+    EXPECT_EQ(log.History().GetStats().written, straight.size());
+}
+
+/// After a seek back, the run forward from there (a resume: a new branch) logs what a straight run logged, also in a
+/// ring that wrapped; a switch back to the trunk keeps the past the two lines share
+TEST(GSCommandLog_Test, TtdRunAfterSeekBackLogsAsAStraightRun)
+{
+    for (const int limit : {0, 256})
+    {
+        SCOPED_TRACE(limit ? "a ring of 256" : "the default ring");
+        ttdtest::Bench b;
+        ASSERT_TRUE(BuildTalking(b, limit));
+        GSCommandLog& log = *b.context->pSoundManager->gsCommandLog();
+        ttdtest::Record(b, 5);
+        const Moment end = MachineNow(b);
+        const std::vector<GSCommandLogEntry> straight = log.History().Snapshot();
+        const history::Stats straightStats = log.History().GetStats();
+        if (limit)
+            ASSERT_GT(straightStats.dropped, 0u) << "the ring wrapped";
+
+        // The wrapped ring holds less than a frame: the seek goes back to a #2F in its older half
+        const GSCommandLogEntry* back = nullptr;
+        if (limit)
+        {
+            for (size_t i = straight.size() / 4; i < straight.size() && !back; i++)
+                if (straight[i].kind == GSCommandLogKind::Command && straight[i].command == 0x2F)
+                    back = &straight[i];
+        }
+        else
+            back = SetTrackIn(straight, straight.back().frame - 2);
+        ASSERT_NE(back, nullptr);
+        ASSERT_TRUE(b.ttd->SeekTo(TargetOf(b, *back)));
+        const Moment there = MachineNow(b);
+        const ttd::TTDTimePoint fork = b.ttd->CurrentPosition();
+        ASSERT_TRUE(b.ttd->ResumeRecordingFrom(fork));
+        RunTo(b, end);
+        ASSERT_EQ(MachineNow(b).frame, end.frame);
+        ASSERT_EQ(MachineNow(b).t, end.t);
+        b.ttd->StopRecording();
+
+        ExpectSameEntries(log.History().Snapshot(), straight, "the run forward");
+        const history::Stats stats = log.History().GetStats();
+        EXPECT_EQ(stats.written, straightStats.written);
+        EXPECT_EQ(stats.dropped, straightStats.dropped);
+        EXPECT_EQ(log.History().Held(), 0u);
+
+        if (limit)
+            continue;
+        // The trunk's end: its entries after the fork are not this log's any more, the shared past stays
+        std::string error;
+        ASSERT_TRUE(b.ttd->SwitchBranch(0, std::nullopt, error)) << error;
+        ExpectSameEntries(log.History().Snapshot(), UpTo(straight, there), "the trunk after the switch");
+        EXPECT_EQ(log.History().Held(), 0u);
+    }
+}
+
+/// With the log off, time travel finds nothing to cut: no entries, no marks, nothing held
+TEST(GSCommandLog_Test, TtdSeekWithTheLogOff)
+{
+    ttdtest::Bench b;
+    ASSERT_TRUE(BuildTalking(b, -1));
+    GSCommandLog& log = *b.context->pSoundManager->gsCommandLog();
+    ttdtest::Record(b, 3);
+    const Moment end = MachineNow(b);
+    ASSERT_TRUE(b.ttd->SeekTo({end.frame - 1, 1000}));
+    ASSERT_TRUE(b.ttd->ResumeRecordingFrom(b.ttd->CurrentPosition()));
+    b.emulator->RunNFrames(1);
+    b.ttd->StopRecording();
+    EXPECT_TRUE(log.History().Snapshot().empty());
+    EXPECT_EQ(log.History().Held(), 0u);
+    EXPECT_EQ(log.Marks(), 0u);
+}
+
+/// endregion </Time travel (D3)>

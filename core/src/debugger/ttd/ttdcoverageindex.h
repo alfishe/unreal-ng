@@ -94,6 +94,24 @@ inline TTDCoverageKey MakeCoverageKey(PhysPage physPage, uint16_t z80Address)
     return (CoveragePageField(physPage) << 14) | (static_cast<TTDCoverageKey>(z80Address) & 0x3FFFu);
 }
 
+/// @brief The in-page offsets a query may match, and its page when it names one.
+///
+/// Built once per query and tested against each frame's set with one decode, however many addresses or offset
+/// intervals the query has: a range that wraps a 16 KB boundary is two intervals, a range of 16 KB or more is every
+/// offset, a reverse breakpoint set is one offset per PC. 2 KB of bits, one test per key of the frame.
+struct TTDCoverageOffsetSet
+{
+    static constexpr size_t kWords = 0x4000 / 64;
+    uint64_t bits[kWords] = {};
+    bool hasPage = false;    ///< Only keys of this page match
+    uint32_t pageField = 0;  ///< CoveragePageField of that page (valid iff hasPage)
+
+    /// Offsets @p low..@p high inclusive, both in 0..0x3FFF, low <= high
+    void AddRange(uint16_t low, uint16_t high);
+    bool Contains(uint32_t offset) const { return ((bits[(offset >> 6) & (kWords - 1)] >> (offset & 63)) & 1u) != 0; }
+    bool Empty() const;
+};
+
 /// @brief Per-frame coverage sets for one session.
 ///
 /// Lifecycle mirrors the timeline: Record*() during the frame, SealFrame() at
@@ -224,6 +242,11 @@ public:
     bool FrameMayContain(TTDCoverageKind kind, uint64_t frame,
                          uint16_t offsetLow, uint16_t offsetHigh,
                          bool hasPage, PhysPage page) const;
+
+    /// @brief Could @p frame contain an access at an offset of @p set (and its page, if it names one)?
+    ///
+    /// The same conservative answer as the interval form, for any number of offsets with one decode of the frame.
+    bool FrameMayContain(TTDCoverageKind kind, uint64_t frame, const TTDCoverageOffsetSet& set) const;
 
     /// @brief Was @p frame within the range this index observed?
     ///
@@ -381,6 +404,10 @@ private:
 
     /// Locate the block holding @p frame. Returns UINT32_MAX when none does.
     uint32_t FindBlockForFrame(size_t kindIdx, uint64_t frame) const;
+
+    /// The sealed keys of @p frame (in _decodeScratch), or null when the index cannot prove anything about it:
+    /// not watched, a hole, or a block that does not decompress
+    const std::vector<TTDCoverageKey>* DecodeWatchedFrame(TTDCoverageKind kind, uint64_t frame) const;
 
     /// Decode one frame's key set out of the materialised block cache.
     void DecodeFrameFromCache(uint32_t frameIndexInBlock,

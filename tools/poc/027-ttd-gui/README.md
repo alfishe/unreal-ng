@@ -1,5 +1,7 @@
 # 027 — ttd-gui
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Charter reconstructed on 2026-10-10 from the code and the git history (pre-guideline POC).
 
 History: added as `tools/poc/02-ttd-gui/` in `d4b5789a3` (2026-08-04), renamed to `010-ttd-gui` in

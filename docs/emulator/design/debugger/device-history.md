@@ -34,6 +34,15 @@ bit, so the processor pays nothing while it is off.
 
 Nothing is recorded while TTD replays silently (a seek re-executes what the history already holds).
 
+A history may follow time travel (`history::ITimeFollower`, registered in the machine's registry with
+`AddFollower`); the GS command log does (gs-debugger design §6.3, D3). The controller tells the followers when a
+checkpoint is restored (`TimeRestored`, any restore), when a move ends where the machine stands (`TimeLanded`, from
+`PresentPosition` and `SwitchBranch`, with the moment two lines part for a switch to another line), and saves and
+loads their derived state around a query (`SaveLiveState` / `RestoreLiveState`). Two generic cuts serve them:
+`Rewind(after)` holds the newest records after the moment back (not kept, not counted) and keeps held ones again once
+the machine is past them; `Truncate(after, dropHeld)` drops the records of a line the machine left. A record kept
+again is not streamed twice; the stream file is never cut. Histories that do not follow keep everything they saw.
+
 A configuration starts afresh: the records, the counts and the stream file (opened again, truncated). Fields a request
 leaves out keep their value.
 
@@ -42,6 +51,7 @@ leaves out keep their value.
 | Device | What | Starts as | Record |
 |--------|------|-----------|--------|
 | `beta128` | WD1793 commands | ring of 64 | `start` / `end` / `duration` (T-states of the chip's clock), `frame`, `pc`, `command`, `name`, `track`, `sector`, `data` (when written), `drive`, `side`, `done`, `status` (at the end). A force interrupt ends at once; the command it cut short stays `done: false` |
+| `plusd` (the MGT +D card) | WD1772 commands | ring of 64 | the same as `beta128` |
 
 | the AY ports' owner: `ay` (built-in, the Next too), `ay-socket` or `zxbus.N` (a TurboSound / TSFM card shadowing it) | AY register writes | off | `frame`, `tacts`, `pc`, `port` (#FFFD select, #BFFD data), `chip` (0-1; the Next's three AYs 0-2), `type` (`select` / `switch` / `write`), `reg`, `reg_name`, `value`. One history per machine whatever device takes the AY ports (the TurboSound pair, the TSFM, the Next's NextAudio); the AY log analyzer (`/ay/log`, `aylog_*`) is its face: activation turns it to a ring of the analyzer's capacity, deactivation off |
 

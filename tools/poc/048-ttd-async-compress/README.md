@@ -1,5 +1,7 @@
 # 048 — ttd-async-compress
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Does moving the TTD piece store's zstd compression off the emulation thread pay for itself, or does the handoff
 (copy, queue, wake-up, waiting on a version not yet packed) eat the gain? Feature: TTD recording cost
 (`docs/inprogress/2026-09-25-ttd-v2-migration`, the recording-cost item after `7bcd0d0bc`).

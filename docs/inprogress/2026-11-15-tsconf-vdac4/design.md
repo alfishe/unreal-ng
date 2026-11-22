@@ -91,7 +91,9 @@ Out of scope, first round:
 - ini, section `[VDAC4]`:
   - `RomImage`: ROM fonts, shared with `[VDAC2]` by default;
   - `RamG`: `2M` (default), `3M`. This is the power-on value; the ESP and apps switch it through `FT_CFG`;
-  - `EspCache`: module cache directory, default `<instance data>/vdac4/zm`;
+  - `EspCache`: the ESP's LittleFS (module cache, `path.cfg`). Default: in the desktop app `~/.unreal-ng/vdac4/zm`,
+    which outlives the app like the board's flash; headless instances and tests get an empty folder of their own per
+    board, removed with it, so every run of a program starts from the same flash;
   - `EspMhz`: 240;
   - `EspThread`: 1 = the ESP app's jobs on a worker thread, 0 = on the emulation thread (§7.5);
   - `FtThread`: 1 = the Tang / FT812 work of those jobs on a thread of its own, 0 (default) = on the job's thread;

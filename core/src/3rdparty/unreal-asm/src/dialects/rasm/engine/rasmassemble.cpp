@@ -339,7 +339,7 @@ void Engine::NewMemorySpace()
         LZCLOSE();
     }
     lastbank = activebank;
-    mem.emplace_back(65536, 0);
+    mem.emplace_back(size_t{65536}, uint8_t{0});
     memsize.push_back(65536);
     activebank = static_cast<int>(mem.size()) - 1;
     maxptr = memsize[static_cast<size_t>(activebank)];

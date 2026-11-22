@@ -10,8 +10,8 @@ Sources:
 | S-MAME | MAME `src/devices/bus/spectrum/mgt.cpp` (TwistedTom; +D and DISCiPLE, written with PAL dumps) | `/Volumes/TB4-4Tb/Projects/emulators/github/mame` (0.289) |
 | S-FUSE | Fuse `peripherals/disk/plusd.c`, `wd_fdc.c`, `z80/z80_ops.c`; libspectrum `szx.c` | `~/Projects/GitHub/fuse-emulator-svn` |
 | S-ROM | G+DOS v1a ROM, `data/rom/gdos-pd.rom` (8192 bytes, SHA-1 `6b841dc5797ef7eb219ad455cd1e434ca3b9d30d`, equal to MAME `plusd_g.rom` and Fuse `plusd.rom`) | repository |
-| S-TAPE | Plus D System Tape v2a (MGT 1988), TOSEC | catalog pool `6b8b89ca...tzx`, `939e4c15...tzx` |
-| S-DISK | `plusd_gdos_clean_dsdd.mgt` (clean G+DOS 2a system disk) | catalog pool `87a3c8ae...mgt`, from `ZX-Spectrum-FD-Images-main/mgt_plus_d/` |
+| S-TAPE | Plus D System Tape v2a (MGT 1988) | TOSEC |
+| S-DISK | `plusd_gdos_clean_dsdd.mgt` (clean G+DOS 2a system disk) | `ZX-Spectrum-FD-Images-main/mgt_plus_d/` |
 | S-WD | WD177X-00 data sheet (Western Digital) and Gahris' programming notes (1995) | `docs/WD1793/datasheeets/WD177X-00/` |
 | S-WIKI | MGT filesystem, faqwiki.zxnet.co.uk | <https://faqwiki.zxnet.co.uk/wiki/MGT_filesystem> |
 
@@ -120,10 +120,10 @@ MAME takes drive 1 (H-5).
 | Item | Value | Source |
 |---|---|---|
 | Geometry | 80 cylinders x 2 sides x 10 sectors x 512 bytes = 819 200 bytes (also 40 cyl / 1 side variants) | S-WIKI, `loader_mgt.h` |
-| Sector ids | 1 ... 10; side 1 tracks are numbered with bit 7 set in the file chains | S-WIKI, catalog `disk-images.md` |
-| Directory | cylinders 0-3 of side 0, 80 entries of 256 bytes, 2 per sector | S-WIKI, checked on 281 images |
+| Sector ids | 1 ... 10; side 1 tracks are numbered with bit 7 set in the file chains | S-WIKI |
+| Directory | cylinders 0-3 of side 0, 80 entries of 256 bytes, 2 per sector | S-WIKI |
 | Entry | 0: type (bits 0-5; 0 = free), 1-10: name, 11-12: sector count (big-endian), 13-14: first track / sector, 15-209: sector map, 210-219: ZX tape header (type, length, start, ...) | S-WIKI |
-| File types | 1 BASIC, 2 number array, 3 string array, 4 CODE, 5 48K snapshot, 6 Microdrive, 7 SCREEN$, 8 special, 9 128K snapshot, 10 opentype, 11 execute; >= 16 SAM Coupé types | S-WIKI, counts on the corpus (sec. 8) |
+| File types | 1 BASIC, 2 number array, 3 string array, 4 CODE, 5 48K snapshot, 6 Microdrive, 7 SCREEN$, 8 special, 9 128K snapshot, 10 opentype, 11 execute | S-WIKI |
 | Sector chain | 510 data bytes + next track + next sector | S-WIKI |
 | Image files | `.mgt` cylinder-major (c0s0, c0s1, c1s0, ...); `.img` side-major | `loader_mgt.h` |
 
@@ -136,38 +136,52 @@ Read in S-ROM:
 - `RUN` (the error hook at `0x0008` catches it) loads the first `+SYS*` file from drive 1 and then runs a file whose
   name starts with `AUTO`.
 - The system file is 6656 bytes (`0x1A00`) loaded at `0x2000`, that is into the +D RAM (S-DISK: `+SYS 2a`, 14
-  sectors, start `0x2000`). Every `+SYS 2a` seen in the corpus has that size and start.
+  sectors, start `0x2000`).
 - The system file carries the user's configuration (printer, drives, step rate): S-TAPE's `CONFIG` program writes it
-  from the template `CONFIG2_C` (6656 bytes). Bodies therefore differ between disks: 11 distinct `+SYS` bodies in 27
-  images. The clean system disk S-DISK holds one configuration (body SHA-256 prefix `ba1582991bed6c7c`).
+  from the template `CONFIG2_C` (6656 bytes). Bodies therefore differ between disks. The clean system disk S-DISK holds one configuration (body SHA-256 prefix `ba1582991bed6c7c`).
 - With the DOS in RAM, `LOAD D1"name"` loads BASIC / CODE / SCREEN$, `LOAD D1"name" S` a 48K snapshot,
   `LOAD D1"name" K` a 128K snapshot, `LOAD P<n>` the n-th directory entry, `CAT 1` lists (S-MAME header, manual).
 
-## 8. The corpus: the 281 MGT images of catalog pass 1
-
-The catalog run of 2026-11-15 marked 281 `.mgt` works `unsupported_image` (the emulator has no +D; they were not
-run). Classified by [`classify_mgt.py`](classify_mgt.py) from the pool images:
-
-| Group | Images | Meaning for the emulator |
-|---|---:|---|
-| +D, system file `+SYS*` and `AUTO*` on the disk | 19 | `RUN` boots and starts the work |
-| +D, `+SYS*`, no `AUTO*` | 8 | `RUN` boots the DOS; the work is started by a `LOAD` |
-| +D, no system file, `AUTO*` present | 5 | the DOS has to come from a system disk first |
-| +D, no system file, no `AUTO*` | 210 | DOS from a system disk, then a `LOAD` the autostart chooses |
-| +D, another `SYS` name | 1 | as above |
-| SAM Coupé (types >= 16, mostly under `Sam Coupe/` paths) | 38 | not a ZX disk: out of scope, the catalog marks them `not-zx` |
-
-Of the 216 +D disks without a DOS, 202 hold snapshots plus a BASIC loader (`Loader | PIC | Snap`: Zenobi adventures
-and similar), 9 hold BASIC + CODE only, 4 hold only snapshots (1-4 of them), 1 holds only CODE.
-
-Two images are not 819 200 bytes (one 409 600: 40 cylinders; one 819 142: truncated).
-
-## 9. Snapshot formats that carry the +D
+## 8. Snapshot formats that carry the +D
 
 | Format | Field | Source |
 |---|---|---|
 | `.z80` v3 | hardware mode 3 = "48K + M.G.T.", 6 = "128K + M.G.T." | `core/src/loaders/snapshot/loader_z80.cpp` |
 | `.szx` | block `PLSD`: flags (paged, compressed, seek direction), RAM length, ROM length, ROM type (G+DOS / UNI-DOS / custom), control latch, drive count, track, sector, data, status; then 8 KB RAM and an optional custom ROM. Block `PDSK` names the disk images | S-FUSE `libspectrum/szx.c` |
+
+## 9. DISCiPLE (P7)
+
+The DISCiPLE (MGT, 1986) is the +D's predecessor: the same WD1772 and 8K RAM, an 8K GDOS 3 ROM
+(`data/rom/gdos.rom`), plus two joystick sockets, the network, an inhibit button, a pass-through edge and the
+printer port. S-MAME `mgt.cpp` (`spectrum_disciple_device`, noted "GDOS v3 all ok") and S-FUSE
+`peripherals/disk/disciple.c` agree on everything below; it is what the card `disciple` implements.
+
+| Port (low byte, A8-A15 not decoded) | Read | Write |
+|---|---|---|
+| `#1B` / `#5B` / `#9B` / `#DB` | WD1772 status / track / sector / data (register = A7..A6) | command / track / sector / data |
+| `#1F` | bits 0-4 the Kempston socket (`000FUDLR`, active high); bit 6 printer not busy (no printer: 0, S-FUSE `#BF`); bits 5, 7 low | control latch (below) |
+| `#3B` | - | network (not emulated) |
+| `#7B` | the ROM back at `#0000`, the RAM at `#2000` | the RAM at `#0000`, the ROM at `#2000` |
+| `#BB` | page in | page out |
+| `#FB` | - | printer data |
+
+Control latch (`#1F` write): bit 0 drive 1 (1) or drive 2 (0): one drive is always selected; bit 1 side; bit 2
+`/DDEN` (1 = single density, FM); bit 3 ROM bank (A13 of a 16K ROM; the 8K GDOS ignores it); bit 4 inhibit
+override; bit 5 the expansion select; bit 6 printer strobe; bit 7 the network line.
+
+Traps (M1 fetch while paged out): `#0001`, `#0008`, `#0066`, `#028E` (not the +D's `#003A`). Each is gated by
+"inhibit released, or latch bit 4"; a latch write with the button pressed and bit 4 clear pages out.
+
+`/RESET`: paged out, memory not swapped, the latch keeps its value; then a hold-off (S-MAME `m_reset_delay`,
+10 µs, 35 T at 3.5 MHz) in which no trap counts and `#7B` / `#BB` do nothing. Without it the trap at `#0001` (the
+reset's second fetch) would page GDOS in: its own reset (`DI; XOR A; OUT (#1F),A; JP #02F2`) ends at the 48K ROM's
+`START` (`#11CB`), which on a 128K skips the menu. The emulator measures the hold-off from the first fetch after
+the reset (the T-state counter is reset with the machine).
+
+GDOS 3 boots on `RUN` from drive 1 with the first CODE file whose name starts with `SYS` (G+DOS: `+SYS`), loaded
+into the card RAM. The system tape (GDOS 3d, `CONFIG` with `CONFIG1_C`-`CONFIG3_C`) writes that file:
+`data/boot/disciple/README.md`. `.z80` v3 byte 83 = 0 / 1 names the DISCiPLE (Epson / HP printer); SZX has no
+DISCiPLE block (S-FUSE `libspectrum` writes none).
 
 ## Open items
 
@@ -179,5 +193,5 @@ Two images are not 819 200 bytes (one 409 600: 40 cylinders; one 819 142: trunca
 | H-4 | Bits 0-6 of a `0xF7` read | PAL / board; not needed by G+DOS |
 | H-5 | Control latch `11` and `00` | PAL / board schematic (drive select lines) |
 | H-6 | Fuse's 2 / 3 / 5 / 6 ms table matches no part in S-WD (the -00 is 6 / 12 / 2 / 3); is the board's chip a -00, and which `r1 r0` does G+DOS write? | board photos (chip marking); the step bits G+DOS writes in Restore / Seek (a trace in P2). Until then: the -00 table of S-WD |
-| H-7 | The first boot on a 128K: MAME notes that DISCiPLE paging must be held off "for a while after reset" on 128K; does the +D need the same? | **Settled 2026-11-17: no.** MAME holds off only the DISCiPLE (`m_reset_delay`), not the +D; on our 128K G+DOS boots from the menu's 128 BASIC and 237 of the 243 corpus disks run there. The 128K's ROM 0 makes no M1 fetch at a trap address during its boot; its IM 1 goes through `#5B00` to ROM 1's `#0038`, so `#003A` pages the +D in each frame as on a 48K. An early "128K does not boot" was the emulator's `RESET=` setting (48 BASIC by default), not the card |
+| H-7 | The first boot on a 128K: MAME notes that DISCiPLE paging must be held off "for a while after reset" on 128K; does the +D need the same? | **Settled 2026-11-17: no.** MAME holds off only the DISCiPLE (`m_reset_delay`), not the +D; on our 128K G+DOS boots from the menu's 128 BASIC. The 128K's ROM 0 makes no M1 fetch at a trap address during its boot; its IM 1 goes through `#5B00` to ROM 1's `#0038`, so `#003A` pages the +D in each frame as on a 48K. An early "128K does not boot" was the emulator's `RESET=` setting (48 BASIC by default), not the card |
 | H-8 | +2A / +3 compatibility | G+DOS v1a on +2A ROMs: test on our +2A once P2 runs; expected refused (fit `unrealistic`) |

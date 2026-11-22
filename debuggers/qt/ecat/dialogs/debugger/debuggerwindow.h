@@ -9,6 +9,7 @@
 
 #include "dialogs/genericdbgwnd.h"
 #include "emulator/emulator.h"
+#include "nextviews.h"
 
 class QAction;
 class QLabel;
@@ -60,6 +61,13 @@ public:
     DisasmView * current_code();
     //The machine's own processor (the first tab), whose history the time travel records
     CPU * main_cpu() { return m_panes.empty() ? nullptr : m_panes.front().cpu; }
+    //Every processor with a tab, the machine's own first (not in ecat: the GUI control plane's debugger.select_cpu)
+    std::vector<CPU *> cpus() const
+    {
+        std::vector<CPU *> r;
+        for (const CpuPane &p : m_panes) r.push_back(p.cpu);
+        return r;
+    }
     MemoryView * current_memory(bool shown = false);
     //The pane the keyboard is in: "disassembly", "registers", "memory", "stack", or "" (none of them)
     QString focused_pane();
@@ -116,6 +124,9 @@ private:
     BreakpointsView * m_breakpoints;
     HistoryView * m_history;
     DevicesView * m_devices;
+    std::vector<NextTab> m_next_tabs;
+    void update_next_tabs();
+    NextReportView * next_view_in_sight() const;
     QLabel * m_state;
     QToolBar * m_toolbar;
     QLabel * m_zoom_label;

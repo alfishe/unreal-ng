@@ -66,9 +66,14 @@ previous start to the previous instruction:
 - **Discontinuities** (a snapshot load, a reset, a TTD seek or replay pass, a frame counter jump): not booked,
   counted; the call stack is cleared and rebuilt from the next calls.
 - **CPU clock changes**: T-states are CPU T-states of the clock at the time.
-- **The window's end**: while running, the last instruction's T-states and a frame that just ended are booked at the
-  next instruction start; `stop` books them (the CPU is held at an instruction start), so N frames run and stopped
-  are N frames and N frame lengths, as L1 counts a replay window.
+- **The window's end**: the frame end and the end of every run (`run_frames`, `run_tstates`, a step, a pause or a
+  breakpoint's park) book the last instruction's T-states and the frame end it crossed at once, on the thread that
+  ran the CPU; the next instruction start books only the time after that point, so nothing is counted twice. A
+  report read after a run of N frames shows N frames, wherever the run's target lies (also within the first
+  instruction of a frame), and the T-states the CPU ran. An interrupt acknowledged as the run's last step waits for
+  its handler's first instruction (it belongs to the interrupt's frame). `stop` closes the window the same way, so
+  N frames run and stopped are N frames and N frame lengths, as L1 counts a replay window. While the machine runs, a
+  report may still be the current instruction behind.
 
 ## Routines without a map
 

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
@@ -16,6 +17,12 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/chips/soundchip_turbosound.h"
+#include "emulator/sound/chips/soundchip_turbosoundfm.h"
+#include "emulator/sound/covox.h"
+#include "emulator/sound/soundmanager.h"
 
 /// TTD diff of two moments (docs/inprogress/2026-11-03-ttd-diff-moments, plan.md D1-D7): small programs recorded a few
 /// frames, then two moments compared; registers, latches, the mapping, memory ranges and their last writes checked
@@ -315,4 +322,270 @@ TEST_F(TTDDiffMoments_Test, D7_TheVerb)
     EXPECT_FALSE(control.Execute({"diff", {{"from_tinframe", "5"}}}).Ok());
     EXPECT_FALSE(control.Execute({"diff", {{"from_frame", "1"}, {"sections", "bogus"}}}).Ok());
     EXPECT_FALSE(control.Execute({"diff", {{"from_frame", "999999"}}}).Ok()) << "outside the history";
+}
+
+// ---- the fields inside a device (DM limit, plan.md "Device fields") ----
+
+namespace
+{
+
+const ttd::TTDDiffDevice* DeviceWithField(const ttd::TTDDiffMomentsResult& r, const std::string& prefix)
+{
+    for (const ttd::TTDDiffDevice& d : r.devices)
+        for (const ttd::TTDDiffField& f : d.fields)
+            if (f.name.compare(0, prefix.size(), prefix) == 0)
+                return &d;
+    return nullptr;
+}
+
+const ttd::TTDDiffField* Field(const ttd::TTDDiffDevice& d, const std::string& name)
+{
+    for (const ttd::TTDDiffField& f : d.fields)
+        if (f.name == name)
+            return &f;
+    return nullptr;
+}
+
+ttd::TTDDiffDevice DiffFields(const ttd::TTDStateFieldList& layout, const std::vector<ttd::TTDTimeField>& timeFields,
+                              const std::vector<uint8_t>& before, const std::vector<uint8_t>& after,
+                              uint32_t limit = 16)
+{
+    ttd::TTDDiffDevice d;
+    ttd::TTDDiffDeviceFields(layout, timeFields, before, after, limit, d);
+    return d;
+}
+
+}  // namespace
+
+/// D8: the AY's layout: a register the program wrote is a field with both values, the tone and envelope counters
+/// are counters listed after it; the counters alone are "only counters"
+TEST(TTDDiffDeviceFields_Test, D8_AyRegistersAndCounters)
+{
+    ttd::TTDStateFieldList layout;
+    SoundChip_AY8910::TTDFields(layout, "ay0.", 1);
+    std::vector<uint8_t> a(1 + 73, 0);
+    std::vector<uint8_t> b = a;
+    b[1 + 7] = 0x3E;    // R7: the mixer
+    b[1 + 19] = 0x05;   // tone_a.counter (17 + 2)
+    b[1 + 52] = 0x01;   // envelope.counter (51, byte 1)
+    const ttd::TTDDiffDevice d = DiffFields(layout, {}, a, b);
+    EXPECT_TRUE(d.described);
+    EXPECT_FALSE(d.CountersOnly());
+    EXPECT_EQ(d.fieldsChanged, 1u);
+    EXPECT_EQ(d.countersChanged, 2u);
+    ASSERT_EQ(d.fields.size(), 3u);
+    EXPECT_EQ(d.fields[0].name, "ay0.R7") << "the other fields first";
+    EXPECT_FALSE(d.fields[0].counter);
+    ASSERT_TRUE(d.fields[0].hasValues);
+    EXPECT_EQ(d.fields[0].before, 0u);
+    EXPECT_EQ(d.fields[0].after, 0x3Eu);
+    EXPECT_EQ(d.fields[1].name, "ay0.tone_a.counter");
+    EXPECT_TRUE(d.fields[1].counter);
+    EXPECT_EQ(d.fields[1].after, 5u);
+    EXPECT_EQ(d.fields[2].name, "ay0.envelope.counter");
+    EXPECT_EQ(d.fields[2].after, 0x100u) << "little endian";
+
+    b[1 + 7] = 0;
+    const ttd::TTDDiffDevice counters = DiffFields(layout, {}, a, b);
+    EXPECT_TRUE(counters.CountersOnly());
+    EXPECT_EQ(counters.fieldsChanged, 0u);
+
+    const ttd::TTDDiffDevice one = DiffFields(layout, {}, a, b, 1);
+    EXPECT_EQ(one.fields.size(), 1u) << "bounded by the limit";
+    EXPECT_EQ(one.moreFields, 1u);
+    EXPECT_EQ(one.countersChanged, 2u) << "counted past the limit too";
+}
+
+/// D9: the disk controller: the registers, a drive's track, the clocks as counters (its declared time fields)
+TEST(TTDDiffDeviceFields_Test, D9_DiskControllerAndItsDrives)
+{
+    ttd::TTDStateFieldList layout;
+    WD1793::TTDFields(layout, "", 0);
+    std::vector<uint8_t> a(WD1793::kTtdStateSize, 0);
+    std::vector<uint8_t> b = a;
+    b[1] = 5;                  // track
+    b[4] = 0x80;               // status
+    b[146 + 27 + 6] = 7;       // fdd[1].track
+    b[22] = 0x40;              // time (a declared time field)
+    b[146 + 18 + 2] = 1;       // fdd[0].rotation
+    const ttd::TTDDiffDevice d = DiffFields(layout, {{22, 8}, {30, 8}, {114, 8}}, a, b);
+    EXPECT_EQ(d.fieldsChanged, 3u);
+    EXPECT_EQ(d.countersChanged, 2u);
+    ASSERT_EQ(d.fields.size(), 5u);
+    EXPECT_EQ(d.fields[0].name, "track");
+    EXPECT_EQ(d.fields[0].after, 5u);
+    EXPECT_EQ(d.fields[1].name, "status");
+    EXPECT_EQ(d.fields[2].name, "fdd[1].track");
+    EXPECT_EQ(d.fields[2].after, 7u);
+    EXPECT_EQ(d.fields[3].name, "time");
+    EXPECT_TRUE(d.fields[3].counter);
+    EXPECT_EQ(d.fields[4].name, "fdd[0].rotation");
+    EXPECT_TRUE(d.fields[4].counter);
+    EXPECT_EQ(d.fields[4].after, 0x10000u);
+}
+
+/// D10: no layout: the bytes as `@offset` ranges, a declared time field a counter of its own; a time field inside a
+/// larger named field is split out of it
+TEST(TTDDiffDeviceFields_Test, D10_RangesAndTimeFieldsWithoutALayout)
+{
+    std::vector<uint8_t> a(32, 0);
+    std::vector<uint8_t> b = a;
+    b[0] = b[1] = b[3] = 1;   // one range (a gap of one byte joins)
+    b[20] = 2;                // another
+    b[9] = 9;                 // inside the time field at 8
+    const ttd::TTDDiffDevice d = DiffFields({}, {{8, 4}}, a, b);
+    EXPECT_FALSE(d.described);
+    ASSERT_EQ(d.fields.size(), 3u);
+    EXPECT_EQ(d.fields[0].name, "@0");
+    EXPECT_EQ(d.fields[0].size, 4u);
+    EXPECT_EQ(d.fields[0].changed, 3u);
+    EXPECT_EQ(d.fields[1].name, "@20");
+    EXPECT_EQ(d.fields[2].name, "@8");
+    EXPECT_TRUE(d.fields[2].counter);
+    EXPECT_EQ(d.fields[2].after, 0x900u);
+
+    const ttd::TTDStateFieldList engine = {{"engine", 0, 16, 0}};
+    std::vector<uint8_t> c = a;
+    c[9] = 1;
+    const ttd::TTDDiffDevice inside = DiffFields(engine, {{8, 4}}, a, c);
+    ASSERT_EQ(inside.fields.size(), 1u);
+    EXPECT_EQ(inside.fields[0].name, "engine+8");
+    EXPECT_TRUE(inside.CountersOnly());
+    c[2] = 1;
+    const ttd::TTDDiffDevice both = DiffFields(engine, {{8, 4}}, a, c);
+    ASSERT_EQ(both.fields.size(), 2u);
+    EXPECT_EQ(both.fields[0].name, "engine");
+    EXPECT_FALSE(both.fields[0].hasValues) << "16 bytes: no values";
+    EXPECT_EQ(both.fields[0].changed, 1u);
+}
+
+/// D11: the Covox of a live machine: a frame without writes moves its idle countdowns only; an OUT to #FB is a latch
+TEST_F(TTDDiffMoments_Test, D11_CovoxLatchAndIdleCountdown)
+{
+    _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-diff-covox", _model, LoggerLevel::LogNone);
+    ASSERT_TRUE(_emulator);
+    Covox* covox = _emulator->GetContext()->pSoundManager->getCovox();
+    ASSERT_NE(covox, nullptr);
+    ttd::TTDStateFieldList layout;
+    covox->TTDDescribeFields(layout);
+    std::vector<uint8_t> a(covox->TTDStateSize());
+    covox->TTDSaveState(a.data());
+    covox->handleFrameStart();
+    std::vector<uint8_t> b(covox->TTDStateSize());
+    covox->TTDSaveState(b.data());
+    const ttd::TTDDiffDevice idle = DiffFields(layout, covox->TTDDescribe().timeFields, a, b);
+    EXPECT_TRUE(idle.CountersOnly());
+    ASSERT_FALSE(idle.fields.empty());
+    EXPECT_EQ(idle.fields[0].name.compare(0, 12, "idle_frames["), 0) << idle.fields[0].name;
+
+    covox->portDeviceOutMethod(0x00FB, 0x40);
+    covox->TTDSaveState(b.data());
+    const ttd::TTDDiffDevice written = DiffFields(layout, covox->TTDDescribe().timeFields, a, b);
+    EXPECT_FALSE(written.CountersOnly());
+    ASSERT_FALSE(written.fields.empty());
+    EXPECT_EQ(written.fields[0].name.compare(0, 4, "dac["), 0) << written.fields[0].name;
+    EXPECT_EQ(written.fields[0].after, 0x40u);
+}
+
+/// D12: two moments of a recording: the AY register the program wrote is named with its values; later, with the
+/// program idle, the sound and disk devices differ in counters at most
+TEST_F(TTDDiffMoments_Test, D12_TheAyRegisterInTheDiffAndOnlyCountersLater)
+{
+    SoundCardScope turboSound(TestSound::TurboSound);   // the tests leave the AY socket empty unless asked
+    // R0 = #10, R7 = #3E (tone A on), R8 = #0F; then halt forever
+    // ld bc,#FFFD; ld a,0; out (c),a; ld b,#BF; ld a,#10; out (c),a; ... ei; halt; jr $-1
+    std::vector<uint8_t> code;
+    for (const auto& [reg, value] : std::vector<std::pair<uint8_t, uint8_t>>{{0, 0x10}, {7, 0x3E}, {8, 0x0F}})
+    {
+        const uint8_t write[] = {0x01, 0xFD, 0xFF, 0x3E, reg, 0xED, 0x79, 0x06, 0xBF, 0x3E, value, 0xED, 0x79};
+        code.insert(code.end(), std::begin(write), std::end(write));
+    }
+    code.insert(code.end(), {0xFB, 0x76, 0x18, 0xFD});
+    Record(Im2(code), 6);
+    const ttd::TTDDiffMomentsResult r = Diff({_frames[0], 0}, {_frames[2], 0}, ttd::kDiffDevices);
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    // The socket holds what the config fits: TurboSound (the AY as "ay0.") or the TSFM (its SSG half "fm0.ssg.")
+    std::string prefix = "ay0.";
+    const ttd::TTDDiffDevice* ay = DeviceWithField(r, prefix);
+    if (!ay)
+        ay = DeviceWithField(r, prefix = "fm0.ssg.");
+    ASSERT_NE(ay, nullptr) << Text(r);
+    EXPECT_FALSE(ay->CountersOnly()) << Text(r);
+    const ttd::TTDDiffField* r8 = Field(*ay, prefix + "R8");
+    ASSERT_NE(r8, nullptr) << Text(r);
+    EXPECT_FALSE(r8->counter);
+    EXPECT_EQ(r8->after, 0x0Fu);
+    EXPECT_NE(Text(r).find(prefix + "R8 #00->#0F"), std::string::npos) << Text(r);
+
+    const ttd::TTDDiffMomentsResult later = Diff({_frames[3], 0}, {_frames[5], 0}, ttd::kDiffDevices);
+    ASSERT_TRUE(later.error.empty()) << later.error;
+    for (const ttd::TTDDiffDevice& d : later.devices)
+        if (d.described)
+            EXPECT_TRUE(d.CountersOnly()) << d.name << " in\n" << Text(later);
+    // Those devices whose counters alone moved come after the others
+    bool seenCounters = false;
+    for (const ttd::TTDDiffDevice& d : later.devices)
+    {
+        if (seenCounters)
+            EXPECT_TRUE(d.CountersOnly()) << Text(later);
+        seenCounters = seenCounters || d.CountersOnly();
+    }
+}
+
+namespace
+{
+
+/// Every byte of a blob of @p size in exactly one field, and every declared time field one of them
+void ExpectCovers(const ttd::TTDStateFieldList& layout, size_t size, const std::vector<ttd::TTDTimeField>& timeFields,
+                  const std::string& what)
+{
+    std::vector<int> owners(size, 0);
+    for (const ttd::TTDStateField& f : layout)
+    {
+        ASSERT_LE(size_t(f.offset) + f.size, size) << what << ": " << f.name << " past the blob";
+        for (uint32_t b = 0; b < f.size; ++b)
+            ++owners[f.offset + b];
+    }
+    std::string wrong;   // the first bytes owned by no field or by more than one
+    for (size_t b = 0; b < size && wrong.size() < 80; ++b)
+        if (owners[b] != 1)
+            wrong += std::to_string(b) + "(" + std::to_string(owners[b]) + ") ";
+    EXPECT_TRUE(wrong.empty()) << what << ": bytes not in exactly one field: " << wrong;
+    for (const ttd::TTDTimeField& t : timeFields)
+    {
+        bool exact = false;
+        for (const ttd::TTDStateField& f : layout)
+            exact = exact || (f.offset == t.offset && f.size == t.width && (f.flags & ttd::kStateFieldCounter));
+        EXPECT_TRUE(exact) << what << ": the time field at " << t.offset << " is not a counter field of its own";
+    }
+}
+
+}  // namespace
+
+/// D13: the described layouts cover their blobs byte for byte, and their time fields are counter fields
+TEST_F(TTDDiffMoments_Test, D13_LayoutsCoverTheirBlobs)
+{
+    ttd::TTDStateFieldList ay;
+    SoundChip_AY8910::TTDFields(ay, "", 0);
+    ExpectCovers(ay, 73, {}, "AY");
+    ttd::TTDStateFieldList wd;
+    WD1793::TTDFields(wd, "", 0);
+    ExpectCovers(wd, WD1793::kTtdStateSize, {{22, 8}, {30, 8}, {114, 8}}, "WD1793");
+
+    // The sound devices as a machine builds them: TurboSound (two AYs), the TSFM (two YM2203), the Covox
+    _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-diff-layouts", _model, LoggerLevel::LogNone);
+    ASSERT_TRUE(_emulator);
+    EmulatorContext* context = _emulator->GetContext();
+    SoundChip_TurboSound ts(context);
+    SoundChip_TurboSoundFM tsfm(context);
+    for (const ttd::TTDSerializable* device : {static_cast<const ttd::TTDSerializable*>(&ts),
+                                               static_cast<const ttd::TTDSerializable*>(&tsfm),
+                                               static_cast<const ttd::TTDSerializable*>(context->pSoundManager->getCovox())})
+    {
+        ASSERT_NE(device, nullptr);
+        ttd::TTDStateFieldList layout;
+        device->TTDDescribeFields(layout);
+        EXPECT_FALSE(layout.empty()) << device->TTDDeviceName();
+        ExpectCovers(layout, device->TTDStateSize(), device->TTDDescribe().timeFields, device->TTDDeviceName());
+    }
 }

@@ -1,5 +1,7 @@
 # MoonSound TTD integration — technical design
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Revision 1** (2026-09-13).
 **Status (updated 2026-09-14):** Tier A — the fixed POD blob (library chip
 state + host-side latches, `MoonSoundTTDHeader`) — is implemented and

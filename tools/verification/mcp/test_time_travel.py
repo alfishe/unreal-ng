@@ -76,6 +76,20 @@ def test_reverse_continue_first_per_pc_names_the_pcs_without_a_hit(s):
     expect('PC 0x0038' in r.text and 'No hit in the window: 0xFFF0' in r.text, 'both in the text', r.text)
 
 
+def test_reverse_continue_condition_keeps_only_the_hits_where_it_holds(s):
+    # The IM 1 handler of the same history: a condition that never holds finds nothing, one that holds finds it,
+    # one that does not compile is refused with the reason
+    args = {'action': 'reverse_continue', 'pcs': ['0x0038'], 'all': True, 'limit': 4}
+    r = s.call('time_travel', dict(args, condition='FRAME > 100000000'))
+    expect(not r.is_error and r.structured.get('matched') is False and not r.structured.get('hits'),
+           'never holds: no hit', r.structured)
+    r = s.call('time_travel', dict(args, condition='SP > 0'))
+    hits = r.structured.get('hits', [])
+    expect(not r.is_error and len(hits) >= 1 and hits[0].get('pc') == 0x0038, 'holds: the handler', r.structured)
+    r = s.call('time_travel', dict(args, condition='A =='), ok=False)
+    expect(r.is_error and 'condition' in r.text.lower(), 'a bad condition refused with the reason', r.text)
+
+
 def test_memory_at_cpu_without_frame_reads_the_machine_now(s):
     r = s.call('time_travel', {'action': 'memory_at', 'space': 'cpu', 'offset': '0x4000', 'length': 16})
     expect(not r.is_error and r.structured.get('live') is True and len(r.structured.get('hex', '')) == 32,

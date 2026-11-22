@@ -94,6 +94,34 @@ TEST_F(NextCopper_Test, Mode3RestartsAtTheFrameStartAndMode2ContinuesWhereItStop
     EXPECT_EQ(_writes.size(), 2u) << "restarted at the frame start";
 }
 
+// copper.vhd restarts mode 11 on `vcount_i = 0 and hcount_i = 0`, vcount_i being cvc (zxnext.vhd copper_mod), which zxula_timing.vhd
+// loads with NR #64 on the first paper line and wraps to 0 after c_max_vc: the restart is NR #64 lines before the paper, not on it
+TEST_F(NextCopper_Test, Mode3RestartsWhereTheOffsetLineCountIsZero)
+{
+    std::vector<uint64_t> at;
+    _copper.SetBeforeWrite([&](uint64_t clock, uint8_t, uint8_t) { at.push_back(clock); });
+    _copper.WriteOffset(10);
+    Load({Move(0x40, 1), 0xFFFF}, 3);  // one MOVE, then the halt (WAIT line 511)
+    _copper.RunTo(At(1, 0));
+    ASSERT_EQ(at.size(), 1u) << "entering mode 11 starts the list";
+    _copper.RunTo(At(301, 447));
+    EXPECT_EQ(at.size(), 1u) << "halted until cvc = 0";
+    _copper.RunTo(At(302, 4));
+    ASSERT_EQ(at.size(), 2u) << "cvc = 0 at raw line 312 - 10";
+    EXPECT_EQ(at[1], At(302, 0));
+    _copper.RunTo(100);  // the frame wrapped
+    _copper.RunTo(At(5, 0));
+    EXPECT_EQ(at.size(), 2u) << "no restart at the paper top (cvc = 10 there)";
+    _copper.RunTo(At(302, 4));
+    ASSERT_EQ(at.size(), 3u);
+    EXPECT_EQ(at[2], At(302, 0));
+    // an offset of 0: the restart is the paper top again (clock 0 of the frame)
+    _copper.WriteOffset(0);
+    _copper.RunTo(100);
+    ASSERT_EQ(at.size(), 4u);
+    EXPECT_EQ(at[3], 0u);
+}
+
 TEST_F(NextCopper_Test, VerticalOffsetShiftsTheLineTheWaitSees)
 {
     _copper.WriteOffset(3);  // the copper's line count runs 3 ahead

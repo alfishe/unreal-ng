@@ -1,14 +1,16 @@
 #pragma once
 
 /// @file plusdautostart.h
-/// @brief The MGT +D disk autostart (docs/inprogress/2026-11-15-mgt-plus-d/autostart.md §3): what to start is chosen
-/// from the disk's G+DOS directory, then a user's steps are replayed on the emulation thread.
+/// @brief The MGT disk autostart, +D and DISCiPLE (docs/inprogress/2026-11-15-mgt-plus-d/autostart.md §3): what to
+/// start is chosen from the disk's G+DOS directory, then a user's steps are replayed on the emulation thread.
 ///
-/// Most +D disks carry no DOS (216 of the corpus' 243): G+DOS was already in the +D's RAM. So the plan is one of
-///  - `run`: the disk has `+SYS*` and `AUTO*`: reset, `RUN` (the ROM loads both);
-///  - `run+load`: `+SYS*`, no `AUTO*`: reset, `RUN`, wait for the DOS, the start command;
-///  - `system-disk+load`: no `+SYS*`: the emulator's system disk (boot/plusd/gdos-2a-system.mgt) in drive 1,
-///    reset, `RUN`, wait for the DOS, the work's disk back in drive 1, the start command;
+/// Most MGT disks carry no DOS: it was already in the card's RAM. The system file is `+SYS*` on the +D (G+DOS),
+/// `SYS*` on the DISCiPLE (GDOS 3: its ROM's RUN looks for that name). So the plan is one of
+///  - `run`: the disk has the system file and `AUTO*`: reset, `RUN` (the ROM loads both);
+///  - `run+load`: the system file, no `AUTO*`: reset, `RUN`, wait for the DOS, the start command;
+///  - `system-disk+load`: no system file: the emulator's system disk (boot/plusd/gdos-2a-system.mgt,
+///    boot/disciple/gdos-3d-system.mgt) in drive 1, reset, `RUN`, wait for the DOS, the work's disk back in drive 1,
+///    the start command;
 ///  - `mount`: nothing to start (only CODE, or a 128K snapshot on a 48K machine): the disk stays mounted.
 /// The start command, first match: an `AUTO*` program or snapshot; a BASIC loader (`loader`, `boot`, `menu`,
 /// `start`); the first BASIC program; the first snapshot (`S` 48K, `K` 128K) - typed as `LOAD d1"<name>"...`.
@@ -64,12 +66,16 @@ public:
 
     /// Where the system disk is looked for: next to the executable, then the resources
     static constexpr const char* kSystemDiskRelative = "boot/plusd/gdos-2a-system.mgt";
-    static std::string FindSystemDisk();
+    static constexpr const char* kDiscipleSystemDiskRelative = "boot/disciple/gdos-3d-system.mgt";
+    static std::string FindSystemDisk(bool disciple = false);
+    /// The system file of the card's DOS: `+SYS*` (G+DOS), `SYS*` (GDOS 3); CODE, any case
+    static bool IsSystemFile(const std::string& name, uint8_t type, bool disciple);
 
     explicit PlusDAutostart(EmulatorContext* context) : _context(context) {}
 
     /// The plan for the work's disk (its G+DOS directory). Nothing changes. `is48K`: a 128K snapshot cannot start
-    static Plan MakePlan(unrealdisk::DiskImage& work, bool is48K, const std::string& systemDiskPath);
+    static Plan MakePlan(unrealdisk::DiskImage& work, bool is48K, const std::string& systemDiskPath,
+                         bool disciple = false);
 
     /// Start the steps after the reset (the CPU held): `workPath` goes back into drive 1 for system-disk+load
     void Arm(const Plan& plan, const std::string& workPath);

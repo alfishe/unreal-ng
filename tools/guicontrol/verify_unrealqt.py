@@ -53,6 +53,23 @@ def check(gui, png):
     expect(refused(gui, 'debugger.focus', 'bad_request', pane='console'), 'debugger.focus refuses an unknown pane')
     gui.call('debugger.focus', pane='disassembly')
 
+    # processor tabs: the main CPU always; a sound card CPU when fitted puts the views on it
+    host = gui.list()['state']
+    expect(host.get('cpu') == 'main' and 'main' in host.get('cpus', []), 'the debugger state names the CPU in front',
+           host)
+    expect(gui.call('debugger.select_cpu', cpu='main') == {'cpu': 'main'}, 'debugger.select_cpu main')
+    expect(refused(gui, 'debugger.select_cpu', 'bad_request', cpu='z180'), 'debugger.select_cpu refuses an unknown CPU')
+    for card in ('gs', 'ms'):
+        if card not in host.get('cpus', []):
+            expect(refused(gui, 'debugger.select_cpu', 'not_now', cpu=card),
+                   f'debugger.select_cpu {card}: not_now without the card')
+            continue
+        expect(gui.call('debugger.select_cpu', cpu=card) == {'cpu': card}, f'debugger.select_cpu {card}')
+        expect(state('debugger/disassembly').get('cpu') == card, f'the disassembly shows {card}')
+        expect(state('debugger/memory').get('cpu') == card, f'the memory view shows {card}')
+        gui.call('debugger.select_cpu', cpu='main')
+    expect(state('debugger/disassembly').get('cpu') == 'main', 'the disassembly is the main CPU\'s again')
+
     # metadata switches
     labels = gui.list()['state']['metadata']['labels']
     expect(gui.call('metadata.set', switch='labels')['on'] == (not labels), 'metadata.set flips labels')

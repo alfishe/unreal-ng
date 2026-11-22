@@ -64,10 +64,10 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         if (_engine)
             _engine->SetStacklessNmi(on, _interrupts.get());
     };
-    _ctc.onInterrupt = [this](unsigned channel) {
-        _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
-    };
+    // ZC/TO is the CTC's interrupt request (zxnext.vhd 1941 ctc_zc_to), whatever the channel's enable: the status bit records it, the
+    // controller requests (or pulses) only while the channel's interrupt is on (Raise checks ctc_int_en)
     _ctc.onZeroCount = [this](unsigned channel) {
+        _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
         // joy_iomode_pin7, mode 01: ZC/TO(3) toggles the pin; with NR #0B bit 0 clear it only goes from 0 to 1 and stays
         const uint8_t nr0b = _board->Stored(0x0B);
         if (channel == 3 && (nr0b & 0x30) == 0x10 && ((nr0b & 0x01) || !_joyPin7))
@@ -1201,8 +1201,9 @@ void PortDecoder_Next::BindDma()
     };
     // zxnDDMA physical mode: the SRAM direct, no MMU, and the Layer 2 destination's bank and resolution
     bus.readPhysical = [this](uint32_t address) {
-        // the same wait for a read of the SRAM; the bank 7 block RAM has its own port (SRAM #040000 + 7 x #4000 = #05C000)
-        if (Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
+        // the same wait for a read of the SRAM: a physical address is always the SRAM (banks 5 and 7 too: their SRAM side, not the
+        // block RAM the MMU reaches)
+        if (Mem().SramWait28())
             _context->pCore->GetZ80()->InsertWaitStates(1);
         return Mem().PhysicalRead(address);
     };
@@ -1491,21 +1492,30 @@ static bool NextInstructionReadsMemory(uint8_t op)
 void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
+    {
+        if (_dmaBusTurnArmed) [[unlikely]]
+            ArmDmaBusTurn(false);
         return;
+    }
     if (_dmaRequestLate)
     {
         // The enable is written in the instruction's last cycle, after the T80 sampled BUSRQ for it: the bus goes over at the end of the next
-        // cycle, the next instruction's M1 (POC 036; ours runs that whole instruction first). The transfer is then done before that
-        // instruction's own data cycles, which an instruction that reads memory sees (zxnddma_compare probes the target with the very next
-        // instruction): ours cannot split an instruction, so such an instruction waits for the transfer, the others keep the measured order
-        const uint16_t pc = _context->pCore->GetZ80()->pc;
-        if (!NextInstructionReadsMemory(Mem().PeekSlot(pc)))
+        // cycle, the next instruction's M1 (POC 036). The transfer is then done before that instruction's own data cycles, which an
+        // instruction that reads memory sees (zxnddma_compare probes the target with the very next instruction). The engine asks the DMA
+        // at that M1's end (DmaAtMachineCycleEnd); the native interpreter cannot split an instruction: an instruction that reads memory
+        // waits for the transfer there, the others run first
+        _dmaRequestLate = false;
+        if (_engine)
         {
-            _dmaRequestLate = false;
+            _dmaAfterM1 = 2;
+            ArmDmaBusTurn(true);
             return;
         }
-        _dmaRequestLate = false;
+        const uint16_t pc = _context->pCore->GetZ80()->pc;
+        if (!NextInstructionReadsMemory(Mem().PeekSlot(pc)))
+            return;
     }
+    _dmaAfterM1 = 0;  // a single-cycle instruction: its M1's end is the instruction's
     // im2_dma_delay: an interrupt the program chose in NR #CC-#CE (or an NMI with #CC bit 7) pending or in service holds the DMA off
     // (dma.vhd START_DMA); the DMA asks again at each byte boundary of a held bus (Bus::delay, WRITE_4)
     _dma.SetClockTicks(8u / (_ratio ? _ratio : 1u));
@@ -1530,7 +1540,66 @@ void PortDecoder_Next::StepDma()
         if (moved == 0 || _dma.Waiting())
             break;
     }
+    const bool turns = _dma.Active() && _dma.Mode() == 2;
+    if (turns != _dmaBusTurnArmed) [[unlikely]]
+        ArmDmaBusTurn(turns);
+    if (_dmaBusTurnArmed)
+        UpdateDmaTurnNotBefore();
     NoteDmaActivity();
+}
+
+void PortDecoder_Next::DmaAtMachineCycleEnd(bool m1Next)
+{
+    if (_dmaAfterM1) [[unlikely]]
+    {
+        // the enable's first byte: not before the next instruction's M1, at its end
+        if (_dmaAfterM1 == 2 && m1Next)
+        {
+            _dmaAfterM1 = 1;
+            return;
+        }
+        _dmaAfterM1 = 0;
+        StepDma();
+        return;
+    }
+    // The burst mode's wait has released the bus: the DMA asks for it again when the prescaler period is over (dma.vhd WAITING_CYCLES ->
+    // START_DMA), and the T80 gives it at the end of the machine cycle running then (POC 036 `dmaprescb`: inside DJNZ after its M1, its
+    // displacement read or its internal cycle). The same rule as between instructions (StepDma): the DMA's cycles become the CPU's waits
+    if (!_dma.Active() || !_dma.Waiting() || _dma.HoldsBus() || Now28() < _dma.WaitEnd())
+    {
+        UpdateDmaTurnNotBefore();
+        return;
+    }
+    StepDma();
+}
+
+void PortDecoder_Next::UpdateDmaTurnNotBefore()
+{
+    // Now28() = t_states * 8 + t * 8 / multiplier (a power of two up to 8, the Next's 3.5 / 7 / 14 / 28 MHz): the first t whose Now28()
+    // reaches the wait's end. The answer of the full check is the same at every machine-cycle end before it (Now28() < WaitEnd())
+    if (!_engine)
+        return;
+    uint32_t notBefore = 0;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
+    if (!_dmaAfterM1 && _dma.Active() && _dma.Waiting() && !_dma.HoldsBus() && (multiplier & (multiplier - 1)) == 0 && multiplier <= 8)
+    {
+        const uint64_t base = static_cast<uint64_t>(_state->t_states) * 8;
+        const uint64_t end = _dma.WaitEnd();
+        const uint64_t perT = 8u / multiplier;  // clocks of 28 MHz per CPU T
+        if (end > base)
+        {
+            const uint64_t t = (end - base + perT - 1) / perT;
+            notBefore = t > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(t);
+        }
+    }
+    _engine->SetMachineCycleEndTurnNotBefore(notBefore);
+}
+
+void PortDecoder_Next::ArmDmaBusTurn(bool on)
+{
+    _dmaBusTurnArmed = on && _engine;
+    if (_engine)
+        _engine->SetMachineCycleEndTurn(on ? &_dmaBusTurn : nullptr);
 }
 
 void PortDecoder_Next::ReportDmaAccess(bool write, uint16_t address, uint8_t value)
@@ -1644,7 +1713,10 @@ void PortDecoder_Next::PerformReset(bool hard)
         RecordInt(e);
     }
     _dmaRequestLate = false;
+    _dmaAfterM1 = 0;
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
+    if (_dmaBusTurnArmed)
+        ArmDmaBusTurn(false);
     NoteDmaActivity();
     NoteMachineEvent(GSCardEvent::MachineReset, hard ? 1 : 0);
     _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
@@ -2162,6 +2234,11 @@ bool PortDecoder_Next::GenerateDriveNmi()
     return true;
 }
 
+bool PortDecoder_Next::NmiAcceptsCause() const
+{
+    return !_multiface->NmiHold() && !_divMmc->NmiHold();
+}
+
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
     return RaiseMultifaceNmi("m1_button");
@@ -2185,7 +2262,7 @@ void PortDecoder_Next::IoTrap(uint16_t port, bool write, uint8_t value)
     if (write && (low == 0xF1 || low == 0xF9) && PortEnabled(18))
         return;
     // the cause and the byte are taken while no NMI is on its way (nmi_accept_cause: the state machine idle or fetching)
-    if (!_multiface->NmiHold() && !_divMmc->NmiHold())
+    if (NmiAcceptsCause())
         _board->LatchIoTrap(cause, write, value);
     RaiseMultifaceNmi("io_trap");  // nmi_sw_gen_mf: the same assertion as the M1 button, behind NR #06 bit 3
 }

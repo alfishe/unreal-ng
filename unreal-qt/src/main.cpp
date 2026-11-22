@@ -133,8 +133,13 @@ int main(int argc, char *argv[])
 
     // ZX-Evo NVRAM (the ERS / TS-BIOS settings) outlives the app like the board's battery; headless instances
     // (agents, tests) keep theirs for the session only, so they never change the user's settings
+    // The VDAC4 ESP's flash (its module cache) likewise: headless instances get an empty one each, so every run of a
+    // program starts from the same state and parallel instances never share it
     if (QGuiApplication::platformName() != QLatin1String("offscreen") && QGuiApplication::platformName() != QLatin1String("minimal"))
+    {
         Config::SetDefaultNvramFolder(FileHelper::GetUserDataFolder("nvram"));
+        Config::SetDefaultVdac4EspCacheFolder(FileHelper::GetUserDataFolder("vdac4/zm"));
+    }
 
     // Housekeeping (crashed TTD recordings, ...) in the background: start-up never waits for it
     StartStartupCleanup();

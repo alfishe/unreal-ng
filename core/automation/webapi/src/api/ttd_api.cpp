@@ -639,7 +639,8 @@ void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
 ///         "offset" (default 0), "length" (default 256, at most 65536) }; space "cpu": Z80 addresses as the CPU saw
 ///         them at frame / tinframe
 /// Response: { "space" (the engine's region), "offset", "length", "frame", "at_frame" (the checkpoint read, the
-///             newest at or before frame), "exact", "hex" }; space "cpu" adds "banks"
+///             newest at or before frame), "exact", "moment" (frame_start | inside_frame | now), "at_tinframe" (where
+///             the CPU stood), "moment_text", "hex" }; space "cpu" adds "banks" and "live"
 void EmulatorAPI::memoryAtTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
@@ -662,6 +663,87 @@ void EmulatorAPI::memoryDiffTTD(const HttpRequestPtr& req, std::function<void(co
         RespondTTD(id, "memory-diff", std::move(options), callback);
 }
 
+/// @brief POST /api/v1/emulator/{id}/ttd/memory-series
+///
+/// Memory ranges at many frame starts in one forward walk of the checkpoints (PLAN #122 S1), without seeking.
+/// Body: { "ranges": "[space:]offset:length, ..." or an array of such strings or of {space?, address | offset,
+///         page?, length} (at most 16 ranges, 65536 bytes per frame; space cpu when absent), "from_frame"?,
+///         "to_frame"?, "step"? (default: the whole history, every frame) or "frames": [..] (ascending),
+///         "changes_only"?, "format"?: base64 (default) | hex | values, "limit"? (rows, default 1000),
+///         "max_bytes"? (row bytes per answer, default 1 MiB) }
+/// Response: { "ranges", "format", "first_frame", "last_frame", "moment", "moment_text", "rows": [{ "frame",
+///             "exact", "at_frame"?, "at_tinframe", "changed"?, "data": [one per range] }], "row_count",
+///             "frames_read", "pieces_decoded", "restored_frames", "truncated", "next_from_frame"?, "limits" }
+void EmulatorAPI::memorySeriesTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    // ranges: a string or an array (of strings or objects): the verb takes an array as JSON text. frames: an array of
+    // numbers, joined. The other members are scalars
+    std::map<std::string, std::string> options;
+    auto json = req->getJsonObject();
+    if (json && json->isObject())
+    {
+        for (const std::string& name : json->getMemberNames())
+        {
+            const Json::Value& v = (*json)[name];
+            if (v.isNull())
+                continue;
+            if (name == "ranges" && v.isArray())
+            {
+                Json::StreamWriterBuilder writer;
+                writer["indentation"] = "";
+                options[name] = Json::writeString(writer, v);
+                continue;
+            }
+            if (name == "frames" && v.isArray())
+            {
+                std::string list;
+                bool scalars = true;
+                for (const Json::Value& f : v)
+                {
+                    scalars = scalars && (f.isIntegral() || f.isString());
+                    list += (list.empty() ? "" : ",") + f.asString();
+                }
+                if (scalars)
+                {
+                    options[name] = list;
+                    continue;
+                }
+            }
+            if (v.isObject() || v.isArray())
+            {
+                Json::Value error;
+                error["error"]   = "Bad Request";
+                error["message"] = "'" + name + "' must be a number, a string or true / false (ranges: a string or an "
+                                   "array; frames: an array of numbers)";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            options[name] = v.isBool() ? (v.asBool() ? "true" : "false") : v.asString();
+        }
+    }
+    RespondTTD(id, "memory-series", std::move(options), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/screen-at
+///
+/// A past frame's picture or screen bytes, without seeking (PLAN #122 V2).
+/// Body: { "frame", "which"?: shown (default) | normal | shadow, "format"?: png (default) | bitmap | attributes |
+///         raw, "area"?: full | screen (shown png), "encoding"?: base64 | hex (bytes) }
+/// Response: { "frame", "which", "format", "shadow_capable", "border", "shown": { "at_start", "at_end",
+///             "changed_during_frame", "flips", "flip_samples" }, "mime"?, "width"?, "height"?, "screen"?, "page"?,
+///             "offset"?, "length"?, "encoding"?, "data", "moment_text" }
+void EmulatorAPI::screenAtTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "screen-at", std::move(options), callback);
+}
+
 void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
@@ -672,6 +754,8 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/step-instruction
+/// The body is the TTDControl verb's options: dir; with cpu naming a card also count, or kind over / out (the card's
+/// step through the history) or to with pc and max_frames (the card's run to the cursor through the history)
 void EmulatorAPI::stepInstructionTTD(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
@@ -699,10 +783,12 @@ void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
 
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-step-over
 ///
-/// Body: {} (none). One instruction back, or back past a whole routine when that instruction is its return.
+/// Body: {} or { "cpu": "gs" | "neogs" | "ms" | "multisound" }. One instruction back, or back past a whole routine
+/// when that instruction is its return; with cpu the same in the card CPU's instructions (gs-debugger design §8).
 ///
 /// Response: { "stepped", "over_call", "skipped"?, "call_out_of_reach"?, "blocking_marker"?, "pc"?, "frame",
-///             "tinframe", "text" }
+///             "tinframe", "text" }; with cpu a card move's reply (cpu, status, reached, from, target, card) beside
+///             stepped, over_call, skipped?, call_out_of_reach?, pc?, text
 void EmulatorAPI::reverseStepOverTTD(const HttpRequestPtr& req,
                                      std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& id) const
@@ -761,7 +847,7 @@ void EmulatorAPI::probeFramesTTD(const HttpRequestPtr& req, std::function<void(c
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-continue
 ///
 /// Body: { "pcs": [int, ...], "phys_page"?, "all"?, "limit"?, "before_frame"?, "before_tin"?, "before"?,
-///         "from_frame"? }  — non-empty list of reverse breakpoints; the rest narrow the walk.
+///         "from_frame"?, "condition"? }  — non-empty list of reverse breakpoints; the rest narrow the walk.
 ///       or { "cpu": "gs", "max_frames"? }  — on a sound card's CPU: back to its breakpoints' previous hit (no pcs)
 ///
 /// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int, "t": int, "phys_page": int|"rom",

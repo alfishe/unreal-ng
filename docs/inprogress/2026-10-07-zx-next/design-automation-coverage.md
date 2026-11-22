@@ -24,7 +24,7 @@ controls that make the Next as inspectable as the TS-Conf and Sprinter, and the 
 | `ports` | `describe(port, read|write)`: which device answers, the internal-port enable word |
 | `nextreg` read / write | a test or a debugger writes a register through a chosen door (`nextreg` instruction semantics or port pair) and reads any register without side effects |
 | layer capture | the composed frame is all that can be captured; "which layer drew this pixel?" needs per-layer images |
-| Qt panels, breakpoints on NextREG writes, DeZog/GDB wiring, TTD of NEXTREG writes | later phases (section 7) |
+| Qt panels, breakpoints on NextREG writes, DeZog/GDB wiring, TTD of NEXTREG writes | done but GDB: Qt panels 2026-11-19 (Embedded debugger tabs beside the PC history, eCat side tabs), see TODO |
 
 ## 2. Requirements
 

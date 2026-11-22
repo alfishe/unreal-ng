@@ -213,6 +213,9 @@ enum class TTDDeviceType : uint16_t
     P2666BetaDisk = 73, ///< Pentagon 2.666 LE: the RAM-disk Beta Disk emulator (its disk bytes ride with the RAM)
     P2666Uart = 74,     ///< Pentagon 2.666 LE: the UART, its FIFOs and the line in flight
     PlusD = 75,         ///< an MGT +D card (slot-built, "<slot>.plusd"): paging, latches, 8K RAM, its WD1772 and drives
+    Disciple = 76,      ///< an MGT DISCiPLE card (slot-built, "<slot>.disciple"): the +D's blob, swap, hold-off, inhibit
+    DivMmc = 77,        ///< a DivMMC card (slot-built, "<slot>.divmmc"): #E3, MAPRAM, the automap latch, two SD cards' SPI
+                        ///< state; its 128K RAM is the region DivMmcRam
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -317,6 +320,34 @@ struct TTDTimeField
     uint16_t offset = 0;   ///< byte offset in the state
     uint8_t width = 0;     ///< 1, 2, 4 or 8 bytes, little endian
 };
+
+/// What kind of value a state field holds (TTDStateField::flags)
+enum TTDStateFieldFlag : uint8_t
+{
+    /// Free-running: it moves while the program does nothing (a tone / noise / envelope counter, a phase, a clock, a
+    /// timer, an index pulse). A diff of two moments lists such fields apart ("only counters changed"). A declared
+    /// time field (TTDDeviceDescriptor::timeFields) is one whatever the layout says
+    kStateFieldCounter = 1u << 0,
+};
+
+/// One named field of a device's state blob (TTDSerializable::TTDDescribeFields): where its bytes sit in what
+/// TTDSaveState writes and what kind of value it is, so a diff of two states names the fields that changed
+/// instead of a byte count. Values up to 8 bytes read little endian
+struct TTDStateField
+{
+    std::string name;      ///< "R7", "tone_a.counter", "fdd[0].track": lower case, dots for parts, [n] for copies
+    uint32_t offset = 0;   ///< byte offset in the state
+    uint32_t size = 1;     ///< bytes
+    uint8_t flags = 0;     ///< TTDStateFieldFlag
+};
+using TTDStateFieldList = std::vector<TTDStateField>;
+
+/// Appends one field; a part's fields (a chip on a board) take the part's prefix ("ay0.") and its offset (base)
+inline void AddStateField(TTDStateFieldList& out, const std::string& prefix, uint32_t base, const char* name,
+                          uint32_t offset, uint32_t size, uint8_t flags = 0)
+{
+    out.push_back({prefix + name, base + offset, size, flags});
+}
 
 /// The fingerprint of a firmware image a device runs but a session does not
 /// record (TTDDeviceDescriptor::firmwareFingerprint): FNV-1a, 64 bits, over
@@ -449,6 +480,11 @@ public:
         d.variableSize = TTDVariableSize();
         return d;
     }
+
+    /// The state blob's layout as named fields (optional; default: none, a diff then names byte ranges). Asked
+    /// only by queries (diff of two moments), never per frame. Bytes no field covers show as `@offset` ranges; the
+    /// descriptor's time fields count as counters either way
+    virtual void TTDDescribeFields(TTDStateFieldList& out) const { (void)out; }
 
     /// Called once per device after a whole restore (CPU, chipset, every
     /// device, banking, every memory region), in restore order: for state a

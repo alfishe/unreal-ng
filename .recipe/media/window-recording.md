@@ -46,6 +46,13 @@ temporal processing) and the machine's sound; the keyboard is not drawn (use `ke
   so a lagging encoder drops frames instead of piling up work. H.265 and H.264 are 4:2:0 there (the hardware has no
   4:4:4 H.26x); ProRes 4444 is 4:4:4. MKV, GPU acceleration off, and other systems use ffmpeg (x264 / x265 4:4:4:
   a CRT mask keeps its colour, but 4K is slower than real time; the picture repeats while the encoder is behind).
+- Elsewhere with `hardware` ffmpeg's GPU encoder is found by a trial encode, the first that opens: NVENC (4:4:4 on
+  Turing and later: H.264 High 4:4:4, HEVC Rext; else 4:2:0), on Linux VA-API on each `/dev/dri/renderD*` (HEVC
+  4:4:4 in the low-power encoder, Intel Ice Lake and later; H.264 4:2:0 only), QuickSync (not on Linux: VA-API is
+  the same Intel encoder there, and QSV refuses the recorder's VFR stream), AMF. Constant QP 18. Measured on CRT
+  frames (1080p, PSNR in RGB against the source; T1200 + Tiger Lake, 2026-11-19): x264 4:4:4 crf 12 54 dB, VA-API
+  HEVC 4:4:4 46-49 dB, NVENC 4:4:4 45-46 dB, any 4:2:0 34-36 dB (the mask's colour is lost). Without a GPU
+  encoder x264 / x265 4:4:4.
   ffmpeg gets the picture as Matroska (uncompressed BGRA, each frame with its emulated time, variable frame rate):
   a picture held for several frames (a still screen, the frames a lagging writer owes) is sent once, and a picture
   equal to the one before is not sent (one changed pixel is a new one; four frames a second at least). The frame's
@@ -239,4 +246,9 @@ ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_fr
 - **Take control for the whole demo** (`POST /control/session`, MCP `control_execution take_control`) and release it
   after. Sessionless calls open an implicit session per client; another session holding control answers 409
   `held_by_other` to `record/frames`.
+- **`ffmpeg -i file.mp4 -f null -` warns "non monotonically increasing dts to muxer"** on some variable-rate files
+  (seen with NVENC / VA-API H.264, B-frames on): the file is fine. The frames sit on the machine's frame grid and the
+  file's dts rise strictly (`ffprobe -show_entries packet=dts`); the check re-encodes into a coarser time base (two
+  emulated frames per tick there), so two frames one emulated frame apart round to one tick. Check with
+  `ffmpeg -i file.mp4 -enc_time_base demux -f null -` (or `-c copy -f null -`): no warning.
 - **The file is the window's picture**: resize the window (or use `picture_height`) before starting, not during.

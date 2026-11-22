@@ -1,6 +1,6 @@
 # Pentagon 2.666 LE
 
-Created: 2026-11-11 · Status: **landed on master 2026-11-18** (`8a6481e3e`, P0-P5 done; see [TODO.md](TODO.md)) · PLAN #121
+Created: 2026-11-11 · Status: **done 2026-11-19** ([DONE.md](DONE.md))
 
 A new machine model for the Pentagon ver. 2.666 LE (koe, 2007-2025; FPGA EP2C8 + LPC2368 MCU, microATX board):
 a Pentagon-1024 with the ATM Turbo 2 shadow layer (`xx77`, `xFF7` dispatcher, ATM video modes, palette), the Evo

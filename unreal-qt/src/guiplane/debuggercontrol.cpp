@@ -1,6 +1,7 @@
 #include "debuggercontrol.h"
 
 #include <QApplication>
+#include <QJsonArray>
 #include <QHexView/qhexview.h>
 #include <QJsonDocument>
 #include <QKeyEvent>
@@ -9,6 +10,7 @@
 #include <cstdlib>
 
 #include "debugger/debuggerwindow.h"
+#include "debugger/debugmanager.h"
 #include "debugger/disassemblerwidget.h"
 #include "debugger/metadatasettings.h"
 #include "emulator/actions/actionregistry.h"
@@ -31,6 +33,12 @@ namespace
 constexpr const char* kDisassembly = "disassembly";
 constexpr const char* kMemory = "memory";
 constexpr int kDisassemblyPage = 16;  ///< rows a page moves the disassembly cursor (PageUp / PageDown)
+
+/// A CPU as the plane names it: "main", "gs", "ms"
+QString CpuName(DebugCpuId cpu)
+{
+    return QString::fromLatin1(DebugCpuName(cpu));
+}
 
 Result Gone()
 {
@@ -99,6 +107,7 @@ DebuggerControl::DebuggerControl(guicontrol::Host& host, DebuggerWindow* debugge
     connect(debugger->memoryView(), &QHexView::positionChanged, this, &DebuggerControl::Publish);
     connect(debugger, &DebuggerWindow::memoryViewChanged, this, &DebuggerControl::Publish);
     connect(debugger, &DebuggerWindow::visibilityChanged, this, &DebuggerControl::Publish);
+    connect(debugger, &DebuggerWindow::cpuChanged, this, &DebuggerControl::Publish);
     connect(&MetadataSettings::Instance(), &MetadataSettings::changed, this, &DebuggerControl::Publish);
     connect(qApp, &QApplication::focusChanged, this, &DebuggerControl::PublishFocus);
     if (binding != nullptr)
@@ -208,6 +217,23 @@ void DebuggerControl::BindHost()
             return Gone();
         window->sendPaneKey(Qt::Key_Return);
         return Result::Success(QJsonObject{{"pane", window->focusedPane()}});
+    });
+
+    root.SetCommand(QStringLiteral("debugger.select_cpu"), [debugger](const Call& call) {
+        DebuggerWindow* window = debugger();
+        if (window == nullptr)
+            return Gone();
+        // "cpu" is eCat's name of the main CPU: the same tab
+        std::string name = call.params.value(QStringLiteral("cpu")).toString().toLower().toStdString();
+        if (name == "cpu")
+            name = "main";
+        DebugCpuId cpu = DebugCpuId::Main;
+        if (!DebugManager::ParseCpuName(name, cpu))
+            return Result::Failure(errors::kBadRequest, QStringLiteral("cpu: main, gs or ms"));
+        if (!window->selectCpu(cpu))
+            return Result::Failure(errors::kNotNow,
+                                   QStringLiteral("cpu %1: no such processor in this machine").arg(CpuName(cpu)));
+        return Result::Success(QJsonObject{{"cpu", CpuName(window->currentCpu())}});
     });
 
     root.AddInterface(QStringLiteral("metadata"));
@@ -325,6 +351,15 @@ void DebuggerControl::BindDisassembly()
         if (!cursor)
         {
             done(Result::Failure(errors::kNotNow, QStringLiteral("the disassembly has no cursor row: click one first")));
+            return;
+        }
+        // A card's tab: the card runs to its cursor (RunControl::CardStep "to"), as the window's Run to Cursor
+        if (self && self->_debugger && IsCardCpu(self->_debugger->currentCpu()))
+        {
+            QString error;
+            self->_debugger->cardStep("to", *cursor, &error);
+            done(error.isEmpty() ? Result::Success(QJsonObject{{"cpu", CpuName(self->_debugger->currentCpu())}})
+                                 : Result::Failure(errors::kNotNow, error));
             return;
         }
         StateNode actionParams = StateNode::Object();
@@ -452,10 +487,9 @@ void DebuggerControl::BindMemory()
         const std::optional<uint16_t> cursor = window->memoryCursor();
         if (emulator == nullptr || emulator->GetMemory() == nullptr || !cursor)
             return Result::Failure(errors::kNotNow, QStringLiteral("the memory view shows no mapped page"));
-        Memory* memory = emulator->GetMemory();
-        const uint16_t target = static_cast<uint16_t>(memory->DirectReadFromZ80Memory(*cursor) |
-                                                      memory->DirectReadFromZ80Memory(static_cast<uint16_t>(*cursor + 1))
-                                                          << 8);
+        // The word as the CPU in front sees it (a card's in its own 64 KB)
+        const uint16_t target = static_cast<uint16_t>(window->readCpuByte(*cursor) |
+                                                      window->readCpuByte(static_cast<uint16_t>(*cursor + 1)) << 8);
         window->showMemoryAt(target);
         return Result::Success(cursorBody(window));
     });
@@ -492,7 +526,14 @@ void DebuggerControl::Publish()
 {
     if (!_host || !_debugger)
         return;
-    _host->Root().SetState(QJsonObject{{"open", _debugger->isVisible()}, {"pane", _debugger->focusedPane()}});
+    QJsonArray cpus;
+    for (const DebugCpuId cpu : _debugger->cpus())
+        cpus.append(CpuName(cpu));
+    const QString cpu = CpuName(_debugger->currentCpu());
+    _host->Root().SetState(QJsonObject{{"open", _debugger->isVisible()},
+                                       {"pane", _debugger->focusedPane()},
+                                       {"cpu", cpu},
+                                       {"cpus", cpus}});
     QJsonObject switches;
     for (const auto& [name, which] : Switches())
         switches[name] = MetadataSettings::Instance().IsOn(which);
@@ -507,7 +548,8 @@ void DebuggerControl::Publish()
             {"top", shown ? QJsonValue(params::Hex(disassembly->topAddress())) : QJsonValue()},
             {"cursor", shown && cursor ? QJsonValue(params::Hex(*cursor)) : QJsonValue()},
             {"pc", shown ? QJsonValue(params::Hex(disassembly->pcAddress())) : QJsonValue()},
-            {"scroll_mode", disassembly->byteScroll() ? "byte" : "command"}});
+            {"scroll_mode", disassembly->byteScroll() ? "byte" : "command"},
+            {"cpu", shown ? QJsonValue(cpu) : QJsonValue()}});
     }
     if (Node* view = View(kMemory))
     {
@@ -522,7 +564,8 @@ void DebuggerControl::Publish()
         view->SetState(QJsonObject{{"top", top ? QJsonValue(params::Hex(*top)) : QJsonValue()},
                                    {"cursor", cursor ? QJsonValue(params::Hex(*cursor)) : QJsonValue()},
                                    {"selection", selection},
-                                   {"follow", _debugger->memoryFollow()}});
+                                   {"follow", _debugger->memoryFollow()},
+                                   {"cpu", shown ? QJsonValue(cpu) : QJsonValue()}});
     }
 }
 

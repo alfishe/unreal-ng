@@ -9,7 +9,8 @@ The goals:
    - the Next's port contention by the high byte (mem_contend from the address alone);
    - the Z80N's own internal T-states contended (`Z80nCpuAccessInternal` `Contend` hook);
    - the +3 WAIT window (`UlaContention::SetWindowedWait`: 3 T earlier, the last cell 1 T shorter, hc 0 1 T later than the 128K's);
-   - the DMA: the bus goes over after the instruction that follows the enabling one, 1 T in and 4 T out (3 T for a burst wait);
+   - the DMA: the bus goes over at the end of the M1 of the instruction that follows the enabling one, 1 T in and 4 T out (3 T for a
+     burst wait); the burst's next byte at the first machine-cycle end after its wait (2026-11-19);
    - the DMA's port cycles take no port contention, its T-states without a strobe take the address's (`NextDma::HoldBus`);
    - the DMA on the +3 samples WAIT half a T before the CPU (`UlaContention::DmaDelayAt`).
 2. `Chg8kBan` / `Chg8kB_2`: a `NEXTREG` fetched from contended memory costs what this emulator gives, contention of its extra

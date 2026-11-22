@@ -393,6 +393,19 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     return false;
 }
 
+bool Z80::CardFdcsIdleInert() const
+{
+    const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+    const bool session = ttd && (ttd->IsRecording() || ttd->IsReplayActive());
+    for (size_t i = 0; i < _context->cardFdcCount; i++)
+    {
+        const WD1793* fdc = _context->cardFdcs[i];
+        if (!fdc->IsStepInert() || (session && !fdc->IsAsleep()))
+            return false;
+    }
+    return true;
+}
+
 bool Z80::IdleStepsInert(uint32_t allowedWork) const
 {
     // The work gate: only the jobs the caller handles (TTD input, RZX, a device INT line, the PC history act per step)
@@ -458,15 +471,8 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
         ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && _context->pBetaDisk && !_context->pBetaDisk->IsAsleep())
         return false;
     // A card's controller (MGT +D) the same way; none on most machines
-    for (size_t i = 0; i < _context->cardFdcCount; i++)
-    {
-        const WD1793* fdc = _context->cardFdcs[i];
-        if (!fdc->IsStepInert())
-            return false;
-        if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
-            ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && !fdc->IsAsleep())
-            return false;
-    }
+    if (_context->cardFdcCount != 0 && !CardFdcsIdleInert()) [[unlikely]]
+        return false;
 
     // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
     // its edges into the sound per step, the floppy controller runs its state machine per step
@@ -1610,7 +1616,8 @@ void Z80::NotifyInstructionStart()
         // from ROM reports kPhysPageNone.
         uint8_t flip = 0;
         const ttd::PhysPage execPhysPage = _memory->TtdKeyOf(m1_pc, flip);
-        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage, flip))
+        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage, flip) &&
+            !_context->ttdProbe.ExecuteFiltered(m1_pc))   // a conditional reverse continue's PCs and condition
         {
             const auto& st = _context->emulatorState;
             const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};

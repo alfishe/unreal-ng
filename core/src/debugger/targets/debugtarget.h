@@ -12,6 +12,15 @@
 struct BreakpointTapDemand;
 struct Z80Registers;
 
+/// Where the target's CPU is in time at a breakpoint hit (the per-hit record of a breakpoint that only counts)
+struct DebugTargetHitClock
+{
+    uint64_t frame = 0;    ///< the ZX frame the CPU runs in
+    uint32_t t = 0;        ///< the CPU's time since that frame's start, in its own unit
+    int64_t cpuTime = -1;  ///< the CPU's own clock, in its own unit
+    uint16_t pc = 0;       ///< the instruction doing the access (an event: the instruction the CPU stands at)
+};
+
 class IDebugTarget
 {
 public:
@@ -35,4 +44,13 @@ public:
 
     /// What the target's breakpoints need now (BreakpointManager repaint): the target turns its hooks on or off
     virtual void OnBreakpointDemand(const BreakpointTapDemand& demand) = 0;
+
+    /// Inside a breakpoint hit of this CPU (its hooks, the emulation thread): its moment and the instruction. `event`:
+    /// the hit is an event's, not an access of an instruction. False when the target cannot tell
+    virtual bool HitClock(bool event, DebugTargetHitClock& out) const
+    {
+        (void)event;
+        (void)out;
+        return false;
+    }
 };

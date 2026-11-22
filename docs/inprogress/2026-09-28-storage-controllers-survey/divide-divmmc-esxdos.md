@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Machines** | any 48K / 128K / +2 / +2A / +3 / Pentagon-class machine with the add-on; built into Karabas-Pro (a Profi clone) and, in its own form, the ZX Next ([zx-next.md](zx-next.md)) |
-| **unreal-ng now** | only the DivIDE **IDE ports** (`[HDD] Scheme=DIVIDE`, `IdeAdapter::DivideIn/Out`, on master since `f5fc5f05`). No `#E3` register, no DivIDE memory, no automap, no DivMMC SPI ports. So esxDOS cannot run |
+| **unreal-ng now** | the DivIDE **IDE ports** (`[HDD] Scheme=DIVIDE`, `IdeAdapter::DivideIn/Out`, since `f5fc5f05`); the **DivMMC** as the edge card `divmmc` on the classic machines (2026-11-21, §9): `#E3` paging, the automap, the SPI pair, two SD sockets, UnoDOS 3 boots, esxDOS with the user's `ESXMMC.BIN`. Not yet: the DivIDE's paging (§8 item 4) |
 | **Effort** | **L** in total: M-L for the shared paging + automap framework (8K granularity in `#0000-#3FFF`), then **S** for DivIDE, **S** for DivMMC, **S** for the esxDOS fixtures and tests |
 
 ## 1. What these interfaces are (plain words)
@@ -96,6 +96,15 @@ Sources: zxsp `DivIDE.cpp:317-349` (entry points after the fetch, `#3Dxx` instan
 
 Conditions: automap is enabled by jumper E (or, per the document, MAPRAM set); on a +2A / +3 jumper
 A must be set so the trap reacts only while ROM 3 (48 BASIC) is paged (zxsp `DivIDE.txt:21, 94-95`).
+That jumper is the DivIDE's. The DivMMC's CPLD (Mario Prato's `divmmc.vhd`) has no ROM condition at all: it sees
+only A0-A15, /M1 and /MREQ, so the trap fires in any ROM and in the +3 all-RAM mode; its jumper J3 only routes the
+ROM override to `/ROM1OE` + `/ROM2OE` on a +2A / +3, and the EEPROM jumper turns the mapping off. The ROM-3-only
+rule is the Next's (NextDivMmc) and ZEsarUX's TBBLUE path; the card offers it as the emulator option `automap=rom3`
+(§9). The CPLD's latch, on the falling /MREQ of every M1: `mapcond <= entry or #3Dxx or (mapcond and not
+#1FF8-#1FFF)`, `automap <= mapcond(old) or #3Dxx`. So an entry maps from the **next** opcode fetch on (the operands of
+the entry instruction come from the Spectrum ROM: `#0008` is `LD HL,(#5C5D)`, `#0562` is `IN A,(#FE)`), and
+`#1FF8-#1FFF` maps out from the next fetch on (its own opcode is the board's)
+([research-divmmc-original-rtl.md](../2026-10-07-zx-next/research-divmmc-original-rtl.md)).
 The NMI button on DivMMC boards pulls /NMI; the fetch at `#0066` then maps the board in (Karabas-Pro
 `NMI_n = mapcond`, `TOP:1197`).
 
@@ -197,6 +206,29 @@ after (the fast read path is `*(_bank_read[addr >> 14] + (addr & #3FFF))`; an 8-
 4. DivIDE (paging + the existing `IDE_DIVIDE` adapter).
 5. Karabas-Pro personality (DivMMC inside the Profi decoder, `#EB` shared with the Profi IDE family
    when CP/M is off, [karabas-pro-hardware-analysis.md](../2026-09-21-profi/karabas-pro-hardware-analysis.md) §1.7-1.8) - only if Karabas-Pro becomes a model.
+
+
+## 9. The `divmmc` slot card (2026-11-21)
+
+`DivMmcCard` (`core/src/emulator/slots/cards/divmmc/divmmccard.h`) puts `DivMmcPaging`
+(`core/src/emulator/io/divmmc/divmmcpaging.h`) in the Sinclair edge slot of the 48K, 128K, +2 and +2A / +3: CLI
+`slots plug edge.1 divmmc`, the create option `"slots":{"edge.1":"divmmc"}`, the recipe
+[slots.md](../../../.recipe/machines/slots.md#the-divmmc-on-a-48k--128k--2a--3-edge-card).
+
+| Piece | As built |
+|---|---|
+| Ports | the card's claims `#E3` (write), `#E7` (write), `#EB` (read / write), low byte decoded; a read of `#E3` / `#E7` leaves the bus alone |
+| Memory | the overlay at `#0000-#3FFF` while mapped (CONMEM, or the automap with the EEPROM or MAPRAM); bank 3 is read only under MAPRAM without CONMEM; machines without the card pay nothing (no hook, no overlay) |
+| Automap | the CPLD's two-stage latch on the Z80's M1 hook (`#0000-#3FFF` fetches only; one fetch anywhere after a change). Option `automap`: `on` (default, any ROM), `off` (EEPROM jumper: the latch runs, only MAPRAM maps), `rom3` (emulator option: the entries count only with the 48K BASIC ROM in bank 0) |
+| Firmware | option `rom`: `unodos` (UnoDOS 3, `data/rom/divmmc/unodos3.rom`, default) or `esxdos` (`data/rom/divmmc/esxmmc.bin`, the user's 8K `ESXMMC.BIN`, not shipped); a missing file refuses the card |
+| SD | media slots `sd.divmmc0` (aliases `divmmc`, `divmmc0`) and `sd.divmmc1` (`divmmc1`): an image or a folder (FAT16 default, FAT32, behind an MBR) |
+| Reset | the machine's reset is /RESET: the card selects and the SPI engine only, `#E3`, MAPRAM and the latch stay (the CPLD resets them only at power on), and the reset vector's fetch at `#0000` is an entry. A hard reset is the power cycle: `#E3`, MAPRAM, the latch, the SD cards off. A snapshot load unmaps the board |
+| Reports | the slot report's entry `live`: firmware, `automap_mode`, `control_register`, `conmem`, `mapram`, `bank`, `automapped`, `map_condition`, `mapped`, `selected_card`, `sd_cards[]` |
+| TTD | device `DivMmc` (77, instance `<slot>.divmmc`): the latches and both SD cards' SPI state; the 128K RAM as the region `divmmc.ram` (`TTDRegionId::DivMmcRam`); the firmware is the fingerprint field `slots.<slot>.rom`; the sectors are the media manager's |
+
+Not here: machines whose decoder holds the M1 hook (ATM3, Sprinter, TS-Conf) cannot take the card; the Next keeps its
+own `NextDivMmc`. The EEPROM is not writable (the CPLD's CONMEM + jumper write path). Tests: `DivMmcCard_Test.*`,
+`DivMmcPaging_Test.*`.
 
 ## Glossary
 

@@ -290,18 +290,20 @@ The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_o
 
 **Time travel on the card's CPU** ([TTD on a sound card's CPU](../control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu),
 [gs-debugger design §8](../../../inprogress/2026-09-27-gs-debugger/design.md)). In a recorded history the card's CPU
-is stepped both ways, seeked to an instruction count and reverse-continued to the previous hit of its own
-breakpoints (the list `bp_list` with `cpu gs` shows). Every move is a replay from the nearest checkpoint; the main CPU
+is stepped both ways, stepped over and out forward through the history (as a live card step would go: its own
+breakpoints end the step first), stepped over back (past a whole card routine when the instruction before is its
+return), seeked to an instruction count and reverse-continued to the previous hit of its own breakpoints (the list
+`bp_list` with `cpu gs` shows). Every move is a replay from the nearest checkpoint; the main CPU
 stands at its last completed instruction with the T-states into the next. The reverse search evaluates the card's
 breakpoints during the replay without counting hits or firing taps.
 
-| Plane | Seek | Step | Reverse continue |
-| :--- | :--- | :--- | :--- |
-| CLI | `ttd seek --cpu gs <n>` | `ttd si-back --cpu gs [--count N]`, `ttd si-forward --cpu gs` | `ttd reverse-continue --cpu gs [--max-frames N]` |
-| Lua | `ttd_card_seek("gs", n)` | `ttd_card_step("gs", -n)` | `ttd_card_reverse_continue("gs")` |
-| Python | `emu.ttd_card_seek("gs", n)` | `emu.ttd_card_step("gs", -n)` | `emu.ttd_card_reverse_continue("gs")` |
-| MCP | `time_travel` `card_seek` | `time_travel` `card_step` | `time_travel` `card_reverse_continue` |
-| REST / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}` | `POST /ttd/reverse-continue {cpu, max_frames}` |
+| Plane | Seek | Step | Step over / out | Run to the cursor | Step over back | Reverse continue |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| CLI | `ttd seek --cpu gs <n>` | `ttd si-back --cpu gs [--count N]`, `ttd si-forward --cpu gs` | `ttd si-forward --cpu gs --over` / `--out` | `ttd si-forward --cpu gs --to <pc>` | `ttd reverse-step-over --cpu gs` | `ttd reverse-continue --cpu gs [--max-frames N]` |
+| Lua | `ttd_card_seek("gs", n)` | `ttd_card_step("gs", -n)` | `ttd_card_step_over("gs")` / `ttd_card_step_out("gs")` | `ttd_card_run_to_cursor("gs", pc)` | `ttd_card_reverse_step_over("gs")` | `ttd_card_reverse_continue("gs")` |
+| Python | `emu.ttd_card_seek("gs", n)` | `emu.ttd_card_step("gs", -n)` | `emu.ttd_card_step_over("gs")` / `emu.ttd_card_step_out("gs")` | `emu.ttd_card_run_to_cursor("gs", pc)` | `emu.ttd_card_reverse_step_over("gs")` | `emu.ttd_card_reverse_continue("gs")` |
+| MCP | `time_travel` `card_seek` | `time_travel` `card_step` | `time_travel` `card_step_over` / `card_step_out` | `time_travel` `card_run_to_cursor` | `time_travel` `card_reverse_step_over` | `time_travel` `card_reverse_continue` |
+| REST / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}` | `POST /ttd/step-instruction {cpu, kind}` | `POST /ttd/step-instruction {cpu, kind: "to", pc}` | `POST /ttd/reverse-step-over {cpu}` | `POST /ttd/reverse-continue {cpu, max_frames}` |
 
 ## 9. Sound chip registers
 

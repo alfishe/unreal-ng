@@ -776,6 +776,35 @@ size_t SoundChip_TurboSound::TTDStateSize() const
            kFrameProgressStateSize;
 }
 
+void SoundChip_TurboSound::TTDDescribeFields(ttd::TTDStateFieldList& out) const
+{
+    using ttd::AddStateField;
+    constexpr uint8_t kCounter = ttd::kStateFieldCounter;
+    constexpr uint32_t kQueue = static_cast<uint32_t>(kSsgQueueStateSize);
+    const uint32_t oneChip = _chip0 ? static_cast<uint32_t>(_chip0->TTDStateSize()) : 0;
+    AddStateField(out, "", 0, "chip", 0, 1);
+    SoundChip_AY8910::TTDFields(out, "ay0.", 1);
+    SoundChip_AY8910::TTDFields(out, "ay1.", 1 + oneChip);
+    uint32_t at = 1 + 2 * oneChip;
+    AddStateField(out, "", 0, "render_cursor", at, 8, kCounter);
+    at += 8;
+    AddStateField(out, "", 0, "ssg_queue[0].count", at, 1);
+    AddStateField(out, "", 0, "ssg_queue[0].writes", at + 1, kQueue - 1);
+    at += kQueue;
+    AddStateField(out, "", 0, "ssg_queue[1].count", at, 1);
+    AddStateField(out, "", 0, "ssg_queue[1].writes", at + 1, kQueue - 1);
+    at += kQueue;
+    AddStateField(out, "", 0, "sample_phase", at, 8, kCounter);
+    AddStateField(out, "", 0, "decimation_phase", at + 8, 8, kCounter);
+    AddStateField(out, "", 0, "ay0.decimator_left.phase", at + 16, 8, kCounter);
+    AddStateField(out, "", 0, "ay0.decimator_right.phase", at + 24, 8, kCounter);
+    AddStateField(out, "", 0, "ay1.decimator_left.phase", at + 32, 8, kCounter);
+    AddStateField(out, "", 0, "ay1.decimator_right.phase", at + 40, 8, kCounter);
+    at += static_cast<uint32_t>(kRenderPhaseStateSize);
+    AddStateField(out, "", 0, "frame_tstates", at, 4, kCounter);
+    AddStateField(out, "", 0, "frame_samples", at + 4, 4, kCounter);
+}
+
 void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
 {
     const_cast<SoundChip_TurboSound*>(this)->settleSteps();

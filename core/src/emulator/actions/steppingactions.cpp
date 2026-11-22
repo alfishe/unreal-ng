@@ -481,11 +481,11 @@ ActionResult StepByUnit(const ActionCall& call, const std::string& unit, int64_t
     {
         RunControl control(call.emulator);
         if (unit == "frames")
-            result = FromRun(control.RunFrames(call.requester, static_cast<unsigned>(std::min<uint64_t>(amount, 10000))));
+            result = FromRun(control.RunFrames(call.requester, amount));
         else if (unit == "scanlines")
             result = FromRun(control.RunNScanlines(call.requester, static_cast<unsigned>(std::min<uint64_t>(amount, 1000))));
         else
-            result = FromRun(control.RunTStates(call.requester, std::min<uint64_t>(amount, 10000000)));
+            result = FromRun(control.RunTStates(call.requester, amount));
     }
     else if (unit == "frames")
         result = MoveFrames(context, -static_cast<int64_t>(amount));

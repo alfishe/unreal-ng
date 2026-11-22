@@ -132,8 +132,29 @@ TEST_F(NextDma_Test, BurstModeMovesOneByteAndThePrescalerPacesTheNextOnes)
     Send({0xCF, 0x87});
     EXPECT_EQ(_dma.Run(256, 0), 1u) << "burst: one byte";
     EXPECT_TRUE(_dma.Waiting());
-    EXPECT_EQ(_dma.Run(256, 79), 0u) << "the prescaler period (2 * 32 clocks) and WAITING_CYCLES -> START_DMA have not passed";
-    EXPECT_EQ(_dma.Run(256, 80), 1u) << "3.5 MHz: 8 CPU clocks to the period, +1 to see the timer, +1 START_DMA";
+    EXPECT_EQ(_dma.Run(256, 87), 0u) << "the prescaler period (2 * 32 clocks), WAITING_CYCLES -> START_DMA and BUSRQ's sampling have not passed";
+    EXPECT_EQ(_dma.Run(256, 88), 1u) << "3.5 MHz: 8 CPU clocks to the period, +1 to see the timer, +1 START_DMA, +1 the T80 registers BUSRQ";
+}
+
+// Power-on (a DMA just built, then reset as the board's power-on reset does): the registers dma.vhd does not reset have no initial value
+// in the VHDL, so Xilinx synthesis gives their flip-flops INIT 0 - B -> A, memory, decrement, addresses and length 0
+TEST(NextDmaPowerOn_Test, RegistersWithoutAnInitialValueStartAtZero)
+{
+    NextDma dma;
+    dma.Reset();
+    EXPECT_FALSE(dma.AToB()) << "R0_dir_AtoB_s = 0: B -> A";
+    for (const NextDma::PortView& port : {dma.PortA(), dma.PortB()})
+    {
+        EXPECT_EQ(port.address, 0);
+        EXPECT_FALSE(port.io);
+        EXPECT_EQ(port.step, 0) << "address mode 00: decrement";
+        EXPECT_EQ(port.timing, 1) << "the timing byte's initial value and reset value \"01\"";
+    }
+    EXPECT_EQ(dma.BlockLength(), 0);
+    EXPECT_EQ(dma.Mode(), 1) << "R4_mode_s reset value: continuous";
+    EXPECT_EQ(dma.Prescaler(), 0);
+    EXPECT_EQ(dma.ReadMask(), 0x7F);
+    EXPECT_FALSE(dma.Active());
 }
 
 TEST_F(NextDma_Test, DisableAndResetStopTheTransfer)
@@ -155,17 +176,17 @@ TEST_F(NextDma_Test, TheLastBytesPrescalerPeriodIsWaitedBeforeTheBlockEnds)
 {
     Send({0x7D, 0x00, 0x80, 0x02, 0x00});
     Send({0x14});
-    Send({0x50, 0x20, 0x02});  // prescaler 2: 64 clocks of 28 MHz, then two CPU clocks to FINISH_DMA / START_DMA
+    Send({0x50, 0x20, 0x02});  // prescaler 2: 64 clocks of 28 MHz, then two CPU clocks to FINISH_DMA / START_DMA (+1 BUSRQ's sampling)
     Send({0xCD, 0x00, 0x90});
     Send({0xCF, 0x87});
     EXPECT_EQ(_dma.Run(256, 0), 1u);
-    EXPECT_EQ(_dma.Run(256, 80), 1u) << "the last byte";
+    EXPECT_EQ(_dma.Run(256, 88), 1u) << "the last byte";
     EXPECT_TRUE(_dma.Active()) << "its period is still to be waited";
     EXPECT_FALSE(_dma.EndOfBlock());
     EXPECT_TRUE(_dma.Waiting());
-    EXPECT_EQ(_dma.Run(256, 159), 0u);
+    EXPECT_EQ(_dma.Run(256, 167), 0u);
     EXPECT_TRUE(_dma.Active());
-    EXPECT_EQ(_dma.Run(256, 160), 0u);
+    EXPECT_EQ(_dma.Run(256, 168), 0u);
     EXPECT_FALSE(_dma.Active()) << "the period is over: the block ends";
     EXPECT_TRUE(_dma.EndOfBlock());
 }
@@ -248,9 +269,9 @@ TEST_F(NextDma_Test, StatusBitZeroIsSetBetweenTheBytesOfARunningBlock)
     EXPECT_EQ(_dma.Run(256, 0), 1u);
     Send({0xBF});
     EXPECT_EQ(_dma.Read(), 0x3B);
-    _dma.Run(256, 80);   // the bytes are 80 clocks apart (prescaler 2 at 3.5 MHz, dma.vhd WAITING_CYCLES -> START_DMA)
-    _dma.Run(256, 160);
-    _dma.Run(256, 240);  // the last byte's wait is over: FINISH_DMA
+    _dma.Run(256, 88);   // the bytes are 88 clocks apart (prescaler 2 at 3.5 MHz, dma.vhd WAITING_CYCLES -> START_DMA, BUSRQ sampled)
+    _dma.Run(256, 176);
+    _dma.Run(256, 256);  // the last byte's wait (80 clocks, no bus to ask for) is over: FINISH_DMA
     Send({0xBF});
     EXPECT_FALSE(_dma.Active());
     EXPECT_EQ(_dma.Read() & 1, 0);

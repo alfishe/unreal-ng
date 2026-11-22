@@ -24,6 +24,7 @@
 /// the page store's threading model.
 
 #include <atomic>
+#include <functional>
 #include <cstdint>
 #include <vector>
 
@@ -213,7 +214,32 @@ public:
     /// @brief Move the hits out (control thread clears the probe's copy).
     std::vector<TTDSearchResult> ExtractHits();
 
+    /// @brief Which instruction starts an Execute probe keeps (a reverse continue with a condition): only the PCs
+    /// of a 64K-bit set, and of those only the ones whose condition holds at the instruction's start, with the
+    /// machine as the replay has it then. Outlives Arm / Reset / Disarm, so the replays of one search share it.
+    struct ExecuteFilter
+    {
+        const uint64_t* pcBits = nullptr;   ///< 1024 words, bit pc set: a wanted PC
+        std::function<bool()> condition;    ///< True: keep this instruction start (null: every wanted PC)
+    };
+
+    /// @brief Install @p filter (owned by the caller, alive until it is removed), or remove it with null.
+    void SetExecuteFilter(const ExecuteFilter* filter) { _executeFilter = filter; }
+
+    /// @brief Does the execute filter drop the instruction starting at @p pc? False without a filter. Called only
+    /// after Matches(), i.e. only while a replay probes; recording and normal runs never reach it.
+    inline bool ExecuteFiltered(uint16_t pc) const
+    {
+        const ExecuteFilter* f = _executeFilter;
+        if (!f)
+            return false;
+        if (((f->pcBits[pc >> 6] >> (pc & 63)) & 1u) == 0)
+            return true;
+        return f->condition && !f->condition();
+    }
+
 private:
+    const ExecuteFilter*   _executeFilter = nullptr;
     std::atomic<bool>      _armed{false};
     TTDSearchQuery         _query;
     std::vector<TTDSearchResult> _hits;

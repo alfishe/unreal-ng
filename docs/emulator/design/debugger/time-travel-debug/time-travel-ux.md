@@ -1,5 +1,7 @@
 # Time-Travel Debugging — UX Design
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 | | |
 |---|---|
 | **Status** | Design (2026-07-19). The panel as built is `unreal-qt/src/widgets/ttdwidget.*`, on the engine (`TimeTravelController`). The engine keeps a checkpoint for every frame and never thins, so the thinning tiers, the density strip and `budget_mb` below were not built; a history limit drops whole segments instead (parent TDD §0) |

@@ -1,5 +1,7 @@
 # TTD analyzer
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Reads Unreal-NG `.ttd` session files without an emulator: the time-travel engine's format (schema 2), records in
 parts, every record checked by CRC32C, one file per segment of history
 ([container format](../../../docs/emulator/design/debugger/time-travel-debug/ttd-container-format.md),
@@ -29,6 +31,12 @@ part 1: frames 8+8, 4 records, depends on [0], ok
 ```
 
 `validate` checks what the emulator's reader checks (header, index and trailer, every record, complete parts, unknown required streams) and more: it decodes every piece version through its chain and compares its content CRC, and checks each part's dependency list against the parts it really needs. The fixtures in `testdata/ttd/v2/` are written by the C++ writer (`TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures`); `tests/test_ttdcontainer.py` (over `ttdlib`) finds in them the counts the C++ reader found (`expected.json`).
+
+`scripts/check_ksy.py` checks the schema itself: it generates the Kaitai parser from `core/src/debugger/ttd/ttd.ksy` into `scratch/ttd-ksy/`, reads every `.ttd` of `testdata/ttd` with it and compares each field, record, part, index and payload with `ttdlib` and the C++ expectations next to the fixtures (exit 1 on a disagreement). It needs `kaitai-struct-compiler` (`brew install kaitai-struct-compiler`, with a JRE) and `pip install kaitaistruct` in a venv; without them it prints `SKIP:` and exits 0. Run it after a change of the format or of `ttd.ksy`:
+
+```bash
+python3 tools/verification/ttd-analyzer/scripts/check_ksy.py   # 38 file(s): 31 ok, 7 damaged (parse only), 0 failed
+```
 
 `info` prints the write journal's spans when the session holds it only for part of its history (D40):
 

@@ -73,11 +73,14 @@ void at_coherent_moment(::Emulator * emu, const std::function<void()> &fn)
 
 //------------------------------------------------------------------- disassembler
 
-// ecat's DisAsm over unreal-ng's Z80 decoder. The labels of the main machine are shown for its Z80 only
+// ecat's DisAsm over unreal-ng's Z80 decoder. Each CPU shows its own labels: the main machine's for its Z80, a sound
+// card's own store (DebugManager::GetLabelManager(cpu), its firmware symbols) for the card's; none where a CPU has none
+// (never another CPU's)
 class Z80DisAsm : public ecatshim::DisAsm
 {
 public:
-    Z80DisAsm(EmulatorContext * context, bool labels) : m_dis(context), m_context(context), m_labels(labels)
+    Z80DisAsm(EmulatorContext * context, bool labels, DebugCpuId cpu = DebugCpuId::Main)
+        : m_dis(context), m_context(context), m_labels(labels), m_cpu(cpu)
     {
         max_command_length = Z80Disassembler::MAX_INSTRUCTION_LENGTH;
     }
@@ -91,7 +94,11 @@ public:
         std::string text;
         // ecat's listing: upper case, labels for addresses only ("LD HL,#0000", not "LD HL,START (#0000)")
         Z80Disassembler::ListingStyleScope style({true, false});
-        if (m_labels) {
+        LabelManager * card_labels = (m_labels && IsCardCpu(m_cpu)) ? label_manager() : nullptr;
+        if (m_labels && !IsCardCpu(m_cpu)) {
+            text = m_dis.disassembleSingleCommand(buf, (uint16_t)PC, &len, &d);
+        } else if (card_labels != nullptr) {
+            Z80Disassembler::LabelsScope own(card_labels);
             text = m_dis.disassembleSingleCommand(buf, (uint16_t)PC, &len, &d);
         } else {
             Z80Disassembler::NoLabelsScope plain;
@@ -147,13 +154,15 @@ private:
     Z80Disassembler m_dis;
     EmulatorContext * m_context;
     bool m_labels;
+    DebugCpuId m_cpu;
     size_t m_label_count = (size_t)-1;
     unsigned int m_label_chars = 0;
 
     LabelManager * label_manager() const
     {
         if (!m_labels || m_context == nullptr || m_context->pDebugManager == nullptr) return nullptr;
-        return m_context->pDebugManager->GetLabelManager();
+        return IsCardCpu(m_cpu) ? m_context->pDebugManager->GetLabelManager(m_cpu)
+                                : m_context->pDebugManager->GetLabelManager();
     }
 
     static std::string hex(uint8_t b)
@@ -601,6 +610,20 @@ public:
         std::sort(r.begin(), r.end());
         return r;
     }
+    std::string breakpoint_condition(unsigned int address) override
+    {
+        // Several breakpoints at one address: it stops where any of them holds; one without a condition always
+        std::string condition;
+        BreakpointManager * bm = breakpoints();
+        if (bm == nullptr) return condition;
+        for (const auto &b : bm->GetAllBreakpoints()) {
+            const BreakpointDescriptor &d = *b.second;
+            if (!is_user_execution(d) || d.z80address != (address & 0xFFFF)) continue;
+            if (!d.condition) return {};
+            condition += (condition.empty() ? "(" : " || (") + d.condition->Canonical() + ")";
+        }
+        return condition;
+    }
     void add_run_to(unsigned int address)
     {
         BreakpointManager * bm = breakpoints();
@@ -803,7 +826,8 @@ public:
     }
     ecatshim::DisAsm * create_disasm(const std::string &, emulator::Result &) override
     {
-        return new Z80DisAsm(m_emu->GetContext(), false);
+        // The card's own labels (its firmware symbols), never the main CPU's
+        return new Z80DisAsm(m_emu->GetContext(), true, m_id);
     }
     std::vector<CpuRegister> get_register_values() override { return z80_registers(regs()); }
     std::vector<std::pair<std::string, std::string>> get_flags() override { return z80_flags(regs().f); }
@@ -1246,6 +1270,25 @@ uint64_t UnrealMachineFrames(ecatshim::Emulator * e)
 ecatshim::DisAsm * CreatePlainZ80DisAsm()
 {
     return new Z80DisAsm(nullptr, false);
+}
+
+bool UnrealMachineSetBreakpointCondition(ecatshim::Emulator * e, unsigned int address, const std::string &condition,
+                                         std::string &error)
+{
+    auto * m = dynamic_cast<UnrealMachine *>(e);
+    BreakpointManager * bm = m ? m->core()->GetBreakpointManager() : nullptr;
+    if (bm == nullptr) {
+        error = "no machine";
+        return false;
+    }
+    for (const auto &b : bm->GetAllBreakpoints()) {
+        const BreakpointDescriptor &d = *b.second;
+        if (d.type == BRK_MEMORY && (d.memoryType & BRK_MEM_EXECUTE) && !d.isRange && d.owner != kRunToOwner &&
+            d.z80address == (address & 0xFFFF))
+            return bm->SetBreakpointCondition(b.first, condition, error);
+    }
+    error = "no breakpoint there";
+    return false;
 }
 
 std::string UnrealMachineId(ecatshim::Emulator * e)

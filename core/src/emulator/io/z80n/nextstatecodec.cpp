@@ -27,7 +27,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 18;  // 18: + the zxnDDMA state (24-bit DMA addresses, physical / 2D / transparent / fill / Layer 2 X,Y); 17: + the audio render clock; 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 19;  // 19: + the interrupt status record (int_status) and its fold time; 18: + the zxnDDMA state (24-bit DMA addresses, physical / 2D / transparent / fill / Layer 2 X,Y); 17: + the audio render clock; 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -624,6 +624,8 @@ static void SaveInterrupts(Writer& w, const NextInterruptSource& i)
     w.Put(i._counterOffset);
     w.Put(i._pending);
     w.Put(i._inService);
+    w.Put(i._status);
+    w.Put(i._statusAt);
     w.Put(i._lastT);
     w.Put(i._pulseOn);
     w.Put(i._pulseFrame);
@@ -644,6 +646,8 @@ static void LoadInterrupts(Reader& r, NextInterruptSource& i)
     i._lineStartKnown = false;  // LineStartT is made again from the loaded fields
     r.Get(i._pending);
     r.Get(i._inService);
+    r.Get(i._status);
+    r.Get(i._statusAt);
     r.Get(i._lastT);
     r.Get(i._pulseOn);
     r.Get(i._pulseFrame);
@@ -943,6 +947,7 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size,
     p.UpdateUartRoute(false);  // the joystick connector's UART follows NR #0B, which the image holds
     p.SyncPiLine();            // and UART 1's pins NR #A0
     p.ApplySystemClock();      // CLK_28 is NR #11's
+    p.ArmDmaBusTurn(p._dma.Active() && p._dma.Mode() == 2);  // a burst block between machine cycles from the first instruction on
     if (p._screenNext)
         p._screenNext->RestartSpriteFrame();  // the next frame start is not the end of a frame the engine ran
     memory.Remap();  // the slot table, the windows and the contention flags follow the image

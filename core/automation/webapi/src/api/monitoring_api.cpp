@@ -26,13 +26,15 @@ void addCorsHeaders(drogon::HttpResponsePtr& resp);
 namespace
 {
 void RunMonitor(const HttpRequestPtr& req, const std::function<void(const HttpResponsePtr&)>& callback,
-                const std::string& verb, const std::string& instance = {})
+                const std::string& verb, const std::string& instance = {}, const std::string& breakpoint = {})
 {
     StateNode args = StateNode::Object();
     for (const auto& [name, value] : req->getParameters())
         args[name] = value;
     if (!instance.empty())
         args["instance"] = instance;
+    if (!breakpoint.empty())
+        args["id"] = breakpoint;
     const monitoring::Reply reply = monitoring::Call(verb, args);
     auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.body));
     resp->setStatusCode(static_cast<HttpStatusCode>(reply.status));
@@ -55,6 +57,12 @@ void EmulatorAPI::getBreakpointGroups(const HttpRequestPtr& req, SurfaceCallback
                                       const std::string& id) const
 {
     RunMonitor(req, callback, "breakpoint_groups", id);
+}
+
+void EmulatorAPI::getBreakpointHits(const HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& id,
+                                    const std::string& bpId) const
+{
+    RunMonitor(req, callback, "breakpoint_hits", id, bpId);
 }
 
 }  // namespace v1

@@ -27,6 +27,7 @@
 #include "common/systemhelper.h"
 #include "common/threadhelper.h"
 #include "common/timehelper.h"
+#include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
@@ -43,6 +44,7 @@
 #include "emulator/notifications.h"
 #include "emulator/slots/cards/plusd/plusdautostart.h"
 #include "emulator/slots/cards/plusd/plusdcard.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/tstaterunbudget.h"
@@ -1243,7 +1245,7 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     const bool mgt = IsMgtDisk(path);
     if (drive != 0 && mgt)
     {
-        result.message = "autostart boots the +D's drive 1 (A) - insert into drive " +
+        result.message = "autostart boots the MGT card's drive 1 (A) - insert into drive " +
                          std::string(1, static_cast<char>('A' + drive)) + " without autostart instead";
         MLOGERROR("AutostartDisk: %s", result.message.c_str());
         return result;
@@ -1261,7 +1263,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     // every plane answers an error, not "mounted, not started"
     // (without the card the MGT refusal below names the models that have it)
     const bool is48K = _context->config.mem_model == MM_SPECTRUM48;
-    const bool plusdCard = mgt && PlusDCard::Find(_context) != nullptr;
+    const PlusDCard* mgtCard = mgt ? PlusDCard::Find(_context) : nullptr;
+    const bool plusdCard = mgtCard != nullptr;
     if (plusdCard && !basic.empty() && basic != "48" && basic != "128")
     {
         result.message = "BASIC '" + basic + "': 48 or 128";
@@ -1269,7 +1272,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     }
     if (plusdCard && basic == "128" && is48K)
     {
-        result.message = "no 128 BASIC on a 48K: use 128K-PLUSD";
+        result.message =
+            std::string("no 128 BASIC on a 48K: use ") + (mgtCard->IsDisciple() ? "128K-DISCIPLE" : "128K-PLUSD");
         return result;
     }
 
@@ -1317,8 +1321,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
         // The plan from the directory (nothing changes); a disk with nothing to start stays mounted, no reset
         request.plusd = true;
         request.workPath = FileHelper::AbsolutePath(path);
-        request.systemDisk = PlusDAutostart::FindSystemDisk();
-        request.plusdPlan = PlusDAutostart::MakePlan(*image, is48K, request.systemDisk);
+        request.systemDisk = PlusDAutostart::FindSystemDisk(plusd->IsDisciple());
+        request.plusdPlan = PlusDAutostart::MakePlan(*image, is48K, request.systemDisk, plusd->IsDisciple());
         request.plusdPlan.basic = !basic.empty() ? basic : (is48K ? "48" : "128");
         result.basic = request.plusdPlan.basic;
         result.plan = request.plusdPlan.kind;
@@ -1343,7 +1347,7 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
             MediaResult inserted;
             {
                 CpuHold hold(*this, "plusd system disk");
-                inserted = _context->pMediaManager->Insert(PlusDCard::kDriveSlotIds[0], source, options);
+                inserted = _context->pMediaManager->Insert(plusd->DriveSlotId(0), source, options);
             }
             if (!inserted.Ok())
             {
@@ -1552,6 +1556,12 @@ void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
     else if (_context && _context->pPortDecoder)
     {
         _context->pPortDecoder->PowerCycle();
+    }
+    // A power cycle reaches the slot cards too: the state only their power-on circuit clears (the DivMMC's #E3)
+    if (hardReset && _context && _context->pSlotManager)
+    {
+        for (const std::unique_ptr<ICard>& card : _context->pSlotManager->Cards())
+            card->PowerCycle();
     }
 
     // The interrupted frame is abandoned: frame 0 starts at the reset state
@@ -2065,6 +2075,10 @@ void Emulator::WaitWhilePaused()
         screen->UpdateScreen();
     if (IsPaused())
         NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
+    // The analyzers close what they keep pending: a report read while parked has the last instruction
+    if (_context && _context->pDebugManager)
+        if (AnalyzerManager* analyzers = _context->pDebugManager->GetAnalyzerManager())
+            analyzers->dispatchRunStop();
 
     // Parks until the machine may run again, serving posted commands meanwhile; false on stop (the frame then
     // finishes and MainLoop::Run sees the stop request). Parked, this thread does not drive the Z80
@@ -2500,6 +2514,12 @@ bool Emulator::LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& s
     request.loaded = (*request.load)(request.error, planned);
     if (plusd && request.loaded)
         plusd->EndSnapshotLoad();
+    // Every other card that maps memory leaves the program the machine the snapshot describes (the DivMMC unmapped)
+    if (request.loaded && _context->pSlotManager)
+    {
+        for (const std::unique_ptr<ICard>& card : _context->pSlotManager->Cards())
+            card->AfterSnapshotLoad();
+    }
     // A model whose window shows another page than #7FFD names puts the state's bank there (the Pentagon 2.666, D-3)
     if (request.loaded && _context->pPortDecoder)
         _context->pPortDecoder->FinishSpectrum128State();
@@ -2962,14 +2982,16 @@ std::string Emulator::MgtDriveSlot(const std::string& path, uint8_t drive, std::
 {
     if (!IsMgtDisk(path))
         return {};
-    // An MGT disk is a +D (G+DOS) disk: a Beta 128 drive cannot run it (owner decision D-3: refuse, never switch the
-    // model)
-    if (PlusDCard::Find(_context) == nullptr)
-        return "no +D on this machine: an MGT disk needs the +D card (models 48K-PLUSD, 128K-PLUSD, or plusd in an edge "
-               "slot)";
+    // An MGT disk is a +D / DISCiPLE (G+DOS / GDOS) disk: a Beta 128 drive cannot run it (owner decision D-3:
+    // refuse, never switch the model)
+    const PlusDCard* card = PlusDCard::Find(_context);
+    if (card == nullptr)
+        return "no MGT interface on this machine: an MGT disk needs the +D or the DISCiPLE (models 48K-PLUSD, "
+               "128K-PLUSD, 48K-DISCIPLE, 128K-DISCIPLE, or plusd / disciple in an edge slot)";
     if (drive >= PlusDCard::kDrives)
-        return std::string("the +D has drives 1 and 2 (A, B): drive ") + static_cast<char>('A' + drive) + " is not one";
-    slotId = PlusDCard::kDriveSlotIds[drive];
+        return std::string("the ") + card->DisplayName() + " has drives 1 and 2 (A, B): drive " +
+               static_cast<char>('A' + drive) + " is not one";
+    slotId = card->DriveSlotId(drive);
     return {};
 }
 
@@ -3394,6 +3416,75 @@ void Emulator::FillInstructionProgress(MainPosition& position) const
         position.busCycle = static_cast<int8_t>(at.index);
 }
 
+bool Emulator::LeaveCardRun(std::string& error, uint32_t timeoutMs)
+{
+    error.clear();
+    if (!IsParkedInsideCardRun())
+        return true;
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+    {
+        error = "the machine is stopped inside the sound card's run (a General Sound breakpoint or step) and this "
+                "call runs on its own thread or holds its CPU: run or step the machine out of it first, then move "
+                "in time";
+        return false;
+    }
+    DebugManager* debug = _context ? _context->pDebugManager : nullptr;
+    _cardRunLeft.store(false, std::memory_order_release);
+    _leavingCardRun.store(true, std::memory_order_release);
+    if (debug)
+        debug->UpdateCardTight();   // every main instruction start catches the cards up: the next one ends it
+    struct EndLeave
+    {
+        Emulator& emulator;
+        DebugManager* debug;
+        ~EndLeave()
+        {
+            emulator._leavingCardRun.store(false, std::memory_order_release);
+            if (debug)
+                debug->UpdateCardTight();
+        }
+    } endLeave{*this, debug};
+
+    const execution::Result resumed = Resume(execution::Requester{execution::Origin::Internal, {}}, false);
+    if (resumed.outcome == execution::Outcome::Refused)
+    {
+        error = "the machine is stopped inside the sound card's run and could not be resumed out of it (" +
+                resumed.detail + "): run or step it out first, then move in time";
+        return false;
+    }
+    // Out of the card's run and paused again: at the main instruction start (NoteMainBoundaryAfterCardRun), or at a
+    // main CPU breakpoint on the way
+    auto settled = [this]() { return !IsParkedInsideCardRun() && IsPaused() && _arbiter.IsParked(); };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    uint64_t seq = DebugSeq();
+    while (!settled())
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+            break;
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        seq = WaitDebugChange(seq, static_cast<uint32_t>(std::min<int64_t>(left, 20) + 1));
+    }
+    if (settled())
+        return true;
+    Pause();
+    WaitForPauseConfirmation(500);
+    if (settled())
+        return true;
+    error = "the machine did not leave the sound card's run within " + std::to_string(timeoutMs) +
+            " ms: run or step it out first, then move in time";
+    return false;
+}
+
+void Emulator::NoteMainBoundaryAfterCardRun()
+{
+    if (!LeavingCardRun() || IsParkedInsideCardRun() || !_arbiter.IsLoopThread())
+        return;
+    bool expected = false;
+    if (_cardRunLeft.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+        Pause();   // the loop parks at its next instruction boundary, after this instruction
+}
+
 void Emulator::ParkInsideCardRun()
 {
     // Nested parks do not happen (the card's run is one), the flag is only this thread's
@@ -3714,7 +3805,40 @@ void Emulator::RunFrame(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
-void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
+uint64_t Emulator::RunTimelineCarry() const
+{
+    if (!_runTimeline.valid || !_core || !_context)
+        return 0;
+    const Z80& z80 = *_core->GetZ80();
+    const bool there = _runTimeline.frame == _context->emulatorState.frame_counter && _runTimeline.t == z80.t &&
+                       _runTimeline.frameLimit == z80._frameLimit && _runTimeline.pc == z80.pc &&
+                       _runTimeline.sp == z80.sp;
+    return there ? _runTimeline.overshoot : 0;
+}
+
+void Emulator::NoteRunTimelineEnd(uint64_t overshoot)
+{
+    const Z80& z80 = *_core->GetZ80();
+    _runTimeline.valid = true;
+    _runTimeline.frame = _context->emulatorState.frame_counter;
+    _runTimeline.t = z80.t;
+    _runTimeline.frameLimit = z80._frameLimit;
+    _runTimeline.pc = z80.pc;
+    _runTimeline.sp = z80.sp;
+    _runTimeline.overshoot = overshoot;
+}
+
+void Emulator::ContinueRunTimelineOf(const Emulator& source)
+{
+    _runTimeline.valid = false;
+    if (!_core || !_context || &source == this)
+        return;
+    const uint64_t carry = source.RunTimelineCarry();
+    if (carry != 0)
+        NoteRunTimelineEnd(carry);
+}
+
+Emulator::DirectRunResult Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 {
     DirectStepScope directStep(*this, "run_frames");
     CancelPendingStepOver();
@@ -3737,11 +3861,18 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
         WaitForPauseConfirmation(500);
     }
 
+    DirectRunResult result;
+
     Z80& z80 = *_core->GetZ80();
 
     // Run exactly N frames worth of t-states. The budget is in T-states of the frame length now in force and
-    // follows a hardware clock switch (TStateRunBudget), so "N frames" stays N frames of emulated time
+    // follows a hardware clock switch (TStateRunBudget), so "N frames" stays N frames of emulated time. On the
+    // timeline: the T-states the previous run's last instruction ran past its target are already spent, so the
+    // target is N frames after that target and a split run does not drift (RunTimeline)
     TStateRunBudget budget = TStateRunBudget::Frames(z80._frameLimit, frames);
+    const uint64_t carry = RunTimelineCarry();
+    budget.Credit(carry);
+    _runTimeline.valid = false;
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     // A halted CPU's idle cycles may run in one go, as one per step would: those that start inside the budget
@@ -3761,11 +3892,20 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
         // Notify after each frame so debugger/visualizers can update
         if (frameCompleted)
+        {
+            result.frames++;
             messageCenter.Post(NC_EXECUTION_CPU_STEP);
+        }
     }
+
+    result.tstates = budget.Elapsed() > carry ? budget.Elapsed() - carry : 0;
+    result.reached = budget.Reached() && !RunHalted();
+    if (result.reached)
+        NoteRunTimelineEnd(budget.Overshoot());
+    return result;
 }
 
-void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
+Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints, bool onTimeline)
 {
     DirectStepScope directStep(*this, "run_tstates");
     CancelPendingStepOver();
@@ -3784,25 +3924,42 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
         WaitForPauseConfirmation(500);
     }
 
+    DirectRunResult result;
+
     Z80& z80 = *_core->GetZ80();
 
-    // 64-bit: the target is counted from the current frame start and a long run spans many frames
-    uint64_t targetT = static_cast<uint64_t>(z80.t) + tStates;
+    // 64-bit: the target is counted from the current frame start and a long run spans many frames. Signed: on the
+    // timeline the previous run's overshoot comes off it, and that target may lie before this frame's start (the
+    // last instruction crossed a frame end past it) or before the current t (it is already reached: nothing runs)
+    const uint64_t carry = onTimeline ? RunTimelineCarry() : 0;
+    if (onTimeline)
+        _runTimeline.valid = false;
+    int64_t targetT = static_cast<int64_t>(z80.t) + static_cast<int64_t>(tStates) - static_cast<int64_t>(carry);
+    // T-states run so far, counted at each frame end and at the end
+    uint64_t ranBeforeFrame = 0;
+    uint32_t frameStartT = z80.t;
+    uint64_t overshoot = 0;
+    bool reached = static_cast<int64_t>(z80.t) >= targetT;
+    if (reached)
+        overshoot = static_cast<uint64_t>(static_cast<int64_t>(z80.t) - targetT);
 
     // A halted CPU's idle cycles may run in one go, as one per step would: those that start before the target
     Z80::IdleSkipScope idleSkip(z80, 0);
 
-    while (z80.t < targetT && !RunHalted())
+    while (!reached && !RunHalted())
     {
         const uint32_t limitBefore = z80._frameLimit;
-        z80.idleSkipLimit = targetT < UINT32_MAX ? static_cast<uint32_t>(targetT) : UINT32_MAX;
+        z80.idleSkipLimit = targetT < static_cast<int64_t>(UINT32_MAX) ? static_cast<uint32_t>(targetT) : UINT32_MAX;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
 
         if (frameCompleted)
         {
-            if (targetT >= limitBefore)
+            result.frames++;
+            ranBeforeFrame += static_cast<uint64_t>(limitBefore) - frameStartT;
+            frameStartT = 0;
+            if (targetT >= static_cast<int64_t>(limitBefore))
             {
                 targetT -= limitBefore;
             }
@@ -3812,14 +3969,27 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
                 // overshooting instruction already executed past it. Stop
                 // to avoid running an entire extra frame (which would
                 // inflate frame_counter and corrupt TTD probe records).
+                overshoot = static_cast<uint64_t>(static_cast<int64_t>(z80.t) + limitBefore - targetT);
+                reached = true;
                 break;
             }
         }
+        if (static_cast<int64_t>(z80.t) >= targetT)
+        {
+            overshoot = static_cast<uint64_t>(static_cast<int64_t>(z80.t) - targetT);
+            reached = true;
+        }
     }
+
+    result.tstates = ranBeforeFrame + (z80.t > frameStartT ? z80.t - frameStartT : 0);
+    result.reached = reached && !RunHalted();
+    if (onTimeline && result.reached)
+        NoteRunTimelineEnd(overshoot);
 
     // Notify debugger
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    return result;
 }
 
 void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)

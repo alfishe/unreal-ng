@@ -185,6 +185,9 @@ public:
     virtual void clear_breakpoints() = 0;
     // A copy: ecat returns a reference to its own vector, the views only read it
     virtual std::vector<unsigned int> get_breakpoints() = 0;
+    // Not in ecat: the condition of the execution breakpoint at the address (the Unreal condition language), as
+    // reverse-continue takes it; empty: it stops there whatever holds (no condition, or one of them has none)
+    virtual std::string breakpoint_condition(unsigned int) { return {}; }
     virtual bool has_temp_break() const { return false; }
 
     // Not in ecat: the windows of the address space in order, empty when it is not paged

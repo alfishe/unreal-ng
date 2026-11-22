@@ -1109,6 +1109,9 @@ public:
     void selectDriveLine(int drive);
     /// The card's side select latch (the WD1772 has no side output)
     void setSide(bool side1);
+    /// The card's /DDEN line (the DISCiPLE's control latch bit 2; the +D ties it low): true = single density (FM).
+    /// Kept in the density bit of the Beta 128 register image, which the TTD blob carries
+    void setDensityLine(bool singleDensity);
     /// endregion </Methods>
 
     /// region <Helper methods>
@@ -1134,6 +1137,7 @@ protected:
     // Sleep mode management - reduces CPU overhead when FDD is idle
     void wakeUp();          // Wake FDD from sleep mode
     void enterSleepMode();  // Put FDD into sleep mode
+    void setSleeping(bool sleeping);  // the one writer of _sleeping: an edge card's step work follows it
     bool isSleeping() const
     {
         return _sleeping;
@@ -1548,6 +1552,10 @@ public:
         d.timeFields = {{22, 8}, {30, 8}, {114, 8}};
         return d;
     }
+    /// The controller's layout as named fields (the table in wd1793.cpp) and the four drives under "fdd[n].";
+    /// its clocks, delays, index pulses and the motor countdown are counters. The +D card appends them at its offset
+    static void TTDFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base);
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override { TTDFields(out, "", 0); }
     /// endregion </TTDSerializable interface>
 };
 

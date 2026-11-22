@@ -179,6 +179,8 @@ call.
 
 ### `analysis/` — instrumenting the machine
 
+> TTD index (designs, plans, code, tests, open tasks): [docs/emulator/design/debugger/time-travel-debug/README.md](../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 | Recipe | What it covers |
 |:--|:--|
 | [analysis/reverse-engineering.md](analysis/reverse-engineering.md) | Reverse engineering on the analysis layers: capture from the game's medium, directed coverage, the review queue and resolve, experiments on muted clones, export, the rebuild / assemble gates, the score against a reference |
@@ -221,7 +223,7 @@ call.
 
 | Recipe | What it covers |
 |:--|:--|
-| [machines/plusd.md](machines/plusd.md) | `48K-PLUSD` / `128K-PLUSD` (MGT +D): G+DOS paging traps, WD1772 drives `fdd.plusd1` / `fdd.plusd2`, the system disk, `.mgt` autostart plans and the `state fdc` autostart node, which machine a work needs |
+| [machines/plusd.md](machines/plusd.md) | `48K-PLUSD` / `128K-PLUSD` (MGT +D) and `48K-DISCIPLE` / `128K-DISCIPLE` (MGT DISCiPLE): G+DOS / GDOS paging traps, WD1772 drives `fdd.plusd1` / `fdd.plusd2` (`fdd.disciple1` / `2`), the system disks, `.mgt` autostart plans and the `state fdc` autostart node, which machine a work needs |
 | [machines/pentagon.md](machines/pentagon.md) | Pentagon 128/512/1024 via `ram_size`, Pentagon-1024 `#EFF7` register (GigaScreen, 512x192, a4b), sound-stack defaults |
 | [machines/pentagon-2666.md](machines/pentagon-2666.md) | `P2666` (Pentagon 2.666 LE): Gluk boot at 28 MHz, the ATM shadow ports and two window maps, RAM-disk Beta Disk, SD / NedoOS, the `p2666` paging node, TTD blobs, snapshot rules |
 | [machines/scorpion.md](machines/scorpion.md) | SCORPION/PROFSCORP, Shadow Monitor `#1FFD`, ProfROM `#7EFD`, built-in Beta128, SOS/128K ROM bit |

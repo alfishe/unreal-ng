@@ -80,10 +80,21 @@ A hit's `why` reads like "72 % of the screen changed (4,980 of 6,912 bytes; attr
 time is the frame's start, with no PC: many instructions draw one picture. `exec` or `mem exact` on a screen byte
 names a writer.
 
-**exec.** With the coverage index: `QueryCoverageScan(executed, address range, page, order)` gives the frame. That frame
-is replayed once with the M1 hook, which stops at the first (`first`) or last (`last`) start inside the range. The hit
-gives tinframe, PC and the registers' A / HL. Without coverage (a session loaded from a file): the frames are replayed
-forward with the hook, at most `max_frames` (default 1000), and the reply says the coverage was missing.
+**exec.** With the coverage index: `QueryCoverageScan(executed, address range, page, order)` gives the candidate
+frames. Each candidate is replayed once with the M1 hook, which stops at the first (`first`) or last (`last`) start
+inside the range. The hit gives tinframe, PC and the registers' A / HL. Without coverage (a session loaded from a
+file): the frames are replayed forward with the hook, at most `max_frames` (default 1000), and the reply says the
+coverage was missing.
+
+The index answers "may contain": without a page it matches the same offset in any page, so the code at `#D000` and
+at `#9000` (both offset `#1000`, different pages) share bits. A candidate whose replay does not run the range is
+not a hit: it is counted in `index_rejected` (the text says how many did not run it) and the search goes on with
+the next candidates, batch after batch, until `limit` hits are confirmed or the window ends. (As first built, the
+search replayed only `limit` candidates, dropped the misses silently and listed the rest as hits with no
+instruction, so real hits were lost behind false ones: PLAN #122 F6, fixed 2026-11-19.) The candidates replayed are
+bounded by `max_frames`; when the budget runs out first, `more` is set and `next_from_frame` / `next_to_frame` point
+at the first candidate not replayed, and `missing` says so. Without the index, a window longer than `max_frames`
+also answers `more` with the next window.
 
 **port / border.** `SearchPortEvents` with `TTDPortQuery`. For `port`: direction, mask, value; forward for `first`,
 `newestFirst` for `last`. For `border`: the named event `border` (OUT to the ULA, bits 0-2), every record forward in
@@ -122,7 +133,7 @@ f2210+0  screen 78 % changed (5391 of 6912 bytes; attributes 96 %) over frames 2
   matters, plus one frame replay per hit. A 10,000-frame window costs milliseconds when the byte changes rarely, and
   a few tens of milliseconds for a screen redrawn every frame.
 - mem exact: the write journal (fast), else one replay per frame that wrote the address (2-6 ms each).
-- exec: an index lookup plus one replay per hit. Without coverage, one replay per frame scanned.
+- exec: an index lookup plus one replay per candidate (a hit, or a false candidate of another page). Without coverage, one replay per frame scanned.
 - port / border / key: journal scans, no replay.
 
 ## 6. The planes

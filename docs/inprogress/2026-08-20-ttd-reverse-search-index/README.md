@@ -1,9 +1,11 @@
 # Reverse-search acceleration and per-configuration TTD
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Status: complete. Per-configuration defects fixed; coverage index implemented,
 wired into reverse search and reverse breakpoints, persisted into `.ttd`,
 benchmarked and differentially tested; write journal block-compressed.
-2026-08-21.
+2026-08-21. The §5 leftovers were re-checked on v2 and closed on 2026-11-21.
 
 This note records what was measured, what was changed, and what is deliberately
 left for later — including the parts that cannot be finished until the missing
@@ -327,13 +329,124 @@ during development:
 
 ## 5. Not done, and why
 
-* **Index-guided reverse breakpoints stop helping with large breakpoint sets** —
-  see section 8.
-* **Wide and wrapping address ranges are never pruned.** A query spanning more
-  than one 16 KB page, or wrapping a page boundary, falls back to the full scan
-  rather than being approximated.
-* **Write and Io searches** still go through the journal and ignore the index —
-  the journal already answers them quickly.
+Re-checked against the v2 code on 2026-11-21. Every item is now done, checked and
+closed, or measured as not worth doing. The measurements are the `DISABLED_` tests of
+`TTD_ReverseSearchIndexMeasure` in `core/tests/debugger/ttd/ttdreversesearchindex_test.cpp`
+(see §6). The differential tests in the same file run on Pentagon 1024, TS-Config,
+Sprinter, Next (8K slots) and 48K.
+
+### 5.1 RSI-wide: wide and wrapping ranges (done)
+
+A query over more than one 16 KB page, or wrapping a page boundary, used to fall back
+to a full replay. `coverage-scan`, `coverage-rare` and `coverage-touched` collapsed a
+wrapping range to every offset, which was correct but inexact. The range now becomes
+an exact 16K-bit offset set (`TTDCoverageOffsetSet`, built once per search by
+`TimeTravelController::CoverageOffsets`), with the Next's 8K-slot halves handled as
+before. Each frame's key set is tested against it in one pass
+(`TTDCoverageIndex::FrameMayContain`). A range of 16 KB or more covers every offset,
+so pruning then rests on the page filter alone.
+
+Pentagon 1024, 300 frames, `find_last` with the index against the full scan:
+
+| Query | Index | Full scan | Gain |
+|---|---|---|---|
+| read `#7FF0..#800F` (wraps) | 3.49 ms | 148.98 ms | x42.7 |
+| execute `#BFF0..#C00F` (wraps) | 95.03 ms | 146.00 ms | x1.5 |
+| read `#4000..#FFFF`, page 9 (48 KB) | 196.46 ms | 240.61 ms | x1.2 |
+| execute `#4000..#FFFF` (48 KB) | 109.33 ms | 119.66 ms | x1.1 |
+| read `#0000..#FFFF` (all) | 2.28 ms | 2.29 ms | x1.0 |
+
+Tests: `TTD_ReverseSearchIndex_Test.WideAndWrappingRangesAreUnchangedByPruning`,
+`CoverageScanOfAWrappingRangeIsExact`, and `TTD_CoverageOffsetSet_Test.*`.
+
+### 5.2 RSI-bpset: large breakpoint sets (done; the remaining limit is not worth it)
+
+Reverse continue now builds one offset set from the PCs not hit yet, so a frame's key
+set is decoded once per frame instead of once per PC. The remaining limit is inherent
+to the index and not worth more work. A PC without a known page asks for its offset in
+every bank, and past a few PCs one of those offsets runs somewhere, mostly in ROM.
+Pentagon 128, 300 frames, PCs that never run:
+
+| PCs | Index | No index |
+|---|---|---|
+| 1 | 0.53 ms | 601.87 ms |
+| 16 | 285.78 ms | 332.30 ms |
+| 64 | 335.82 ms | 400.12 ms |
+| 256 | 394.76 ms | 416.74 ms |
+| 1024 | 398.92 ms | 434.08 ms |
+
+Even when pruning stops helping, the index path never costs more than the scan, so
+the old 65 / 76 ms note (§8) still holds. Test:
+`TTD_ReverseSearchIndex_Test.LargeBreakpointSetsAreUnchangedByTheIndex`.
+
+### 5.3 RSI-cond: conditions and read watchpoints
+
+* **Read watchpoints from read coverage: already done.** The recorder collects Read
+  coverage, and `FindLastAccess` prunes Read searches with it. Tests:
+  `ReadSearchIsUnchangedByPruning` and `PageFilteredSearchIsUnchangedByPruning` in
+  `ttdcoverageintegration_test.cpp`. `probe-frames` already took `if:` conditions.
+* **Conditions on reverse continue: done.** `reverse-continue` takes a `condition` in
+  the breakpoint condition language (registers, `FRAME`, `HITS`, ...). It is evaluated
+  at the start of each candidate instruction, on the machine as the replay has it, and
+  only the hits where it holds count. `@prev` operands, and conditions that do not
+  compile, are refused with the reason (HTTP 400 on the verb). The probe consults an
+  execute filter (a PC bit set plus the condition) only after a probe match, so
+  recording and normal runs do not change. It is on every plane: CLI `--condition`,
+  MCP, WebAPI / OpenAPI, Lua and Python. The Qt Run Back passes the conditions of its
+  breakpoints. A single reverse continue without a hit now puts the machine back where
+  it was. Candidate frames without a hit (a condition that never holds, or an offset
+  shared by other addresses) used to leave it at the last replayed moment. Cost: all hits of 4 PCs, 10000 hits, 148.81 ms without a condition
+  against 143.06 ms with one that is false everywhere. Tests:
+  `ConditionKeepsTheHitsWhereItHolds`, `RegisterConditionMatchesTheStateAtTheHit`,
+  `NoHitLeavesTheMachineWhereItWas`,
+  `TTD_ReverseContinueCondition_Test.BadConditionsAreRefused`, and the Qt
+  `RunBackHonoursBreakpointConditions`.
+* eCat Run Back (`debuggers/qt/ecat/dialogs/debugger/ttdcontrols.cpp`, RSI-cond-ecat,
+  2026-11-21) passes them too: each breakpoint address with its condition
+  (`CPU::breakpoint_condition`: the core's `BreakpointManager` on the embedded machine,
+  the REST breakpoint list's `condition` on a remote one) joined into one `condition`
+  (`(PC == #8000 && (A == 5)) || (PC == #9000)`, `TtdControls::run_back_condition`);
+  none with a condition sends the pcs alone, as before. Checked by
+  `unreal-debugger --self-check` (a condition that never holds: nothing moves; one that
+  holds: at the breakpoint). GDB `bc` does not need them, because gdb checks
+  conditions itself.
+
+### 5.4 RSI-models: per-model page sets (checked and closed)
+
+The v1 blockers listed under "Blocked on machine-model work" below are gone. Every
+model with a port decoder and a config folder can be created (KAY, QUORUM, LSY256 and
+PHOENIX have no port decoder yet). Extended paging is implemented. `ResolveModelRamPages` takes
+the bound from the model table's RAM size, so the configuration layer already
+publishes it. v2 had lost the v1 warning for a dirty page past the bound. The recorder
+now skips such a page, warns once and counts it (`GetPagesBeyondBound`). Test:
+`TTD_ModelPageBoundsAll_Test.EveryModelRecordsEveryPageItWrites` records every
+creatable model and checks every page banked in and every page written (4 frames,
+150 in the long tier).
+
+### 5.5 RSI-zone: zone maps and a blocked columnar journal (not worth it)
+
+Pentagon 128, 1500 frames (a 30 s boot that clears and tests RAM), the queries a zone
+map would answer:
+
+| Query | Journal off (default, D40) | Journal on |
+|---|---|---|
+| write that never matches, whole address space | 505-982 ms (replay) | 25.29 ms (2.88 M records) |
+| value at `#5C78` (found in frame 1341) | 51.75 ms | 2.99 ms |
+| port never written | 0.44 ms | 0.41 ms |
+
+A full journal scan runs at about 8.8 ns per record. The 64 MB default ring holds
+5.6 M records of 12 bytes, so the worst case is about 50 ms for a whole ring. A zone
+map can only remove that 50 ms, and port searches already take under 1 ms. With the
+journal off, the cost is the replay. A per-frame value set would add work to every
+recorded write, which is the hot path, while switching the journal on already gives
+x20-40. The columnar layout already exists where it pays, in the file (§7). Not
+built.
+
+### 5.6 Unchanged
+
+* **Write and Io searches** still go through the journal (or replay with write
+  coverage) and do not use the read / execute index. The journal already answers
+  them quickly.
 
 ## 7. Write journal compression (implemented)
 
@@ -391,18 +504,13 @@ produces a candidate and the search returns the right answer by luck. What
 catches it deterministically is asserting the invariant directly — the first
 covered frame must equal the session's first frame
 (`CoveredRangeAlignsWithTheTimeline`).
-* **Zone maps** (value set, SP min/max, port set) and the **blocked columnar
-  journal** remain unstarted.
-* **Read watchpoints** remain replay-only. A per-frame read coverage set makes
-  them practical for the first time; that is a capability gain, not just a
-  speed-up.
-* **Conditions in reverse execution.** Blocked on the conditional-breakpoint
-  evaluator, which does not exist yet.
+* Zone maps, read watchpoints and conditions in reverse execution: see §5 (closed
+  2026-11-21).
 
-### Blocked on machine-model work
+### Blocked on machine-model work (v1, 2026-08; resolved, see §5.4)
 
-These are not TTD defects but they cap what TTD can be tested against, and the
-per-configuration table above must be revisited when they are addressed:
+These were not TTD defects, but they capped what TTD could be tested against. Kept as
+history:
 
 * **Port decoders exist for 6 of 17 models.** `GetPortDecoderForModel` throws in
   its `default:` branch, so `MM_TSL` and `MM_ATM3` — the 4 MB machines whose 256
@@ -428,6 +536,10 @@ Two `DISABLED_` probes were used and are kept for re-measurement:
   `PROBE_SNAPSHOT`, `PROBE_OUT`, `PROBE_FRAMES`.
 * `TTD_ModelPagesProbe.DISABLED_ScreenPageIsCapturedFor48K` — prints the
   resolved page bound and checkpoint ref count for a 48K machine.
+
+* `TTD_ReverseSearchIndexMeasure.DISABLED_*` (`ttdreversesearchindex_test.cpp`) —
+  the 2026-11-21 re-check of §5: wide and wrapping ranges, large breakpoint
+  sets, conditions, zone-map candidates.
 
 Run with `--gtest_also_run_disabled_tests`. Journal compression figures were
 produced from journals extracted directly out of `.ttd` files.

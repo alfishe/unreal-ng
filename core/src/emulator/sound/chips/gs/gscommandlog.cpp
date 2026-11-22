@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <bit>
 #include <cstdio>
+#include <cstring>
+#include <iterator>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "3rdparty/digestpp/digestpp.hpp"
@@ -369,7 +372,7 @@ GSProtocolState GSCommandLog::State() const
     std::lock_guard lock(_stateMutex);
     GSProtocolState state = _state;
     state.on = true;
-    state.uploads = _uploads;
+    state.uploads.assign(_uploads.begin(), _uploads.begin() + static_cast<std::ptrdiff_t>(_uploadsShown));
     if (!_armed.load(std::memory_order_relaxed))
     {
         // Switched on, no host access since: nothing decoded yet
@@ -416,9 +419,10 @@ void GSCommandLog::Publish()
 
 /// region <Decoder>
 
-bool GSCommandLog::Skip() const
+bool GSCommandLog::Replaying() const
 {
-    // A TTD replay re-runs what the log already holds (the WD1793's history does the same)
+    // A TTD replay re-runs what the log already holds (the WD1793's history does the same); the decoder still
+    // follows it, so it stands where the machine stands
     return _context && _context->ttdReplayActive;
 }
 
@@ -492,9 +496,12 @@ void GSCommandLog::Arm()
     _lastDataFromHost = false;
     _hostStream = false;  // a stream from an earlier recording is not this one's
     _hostStreamCount = 0;
+    if (!Replaying())
     {
+        // A new recording; a replay arms again where the log already holds the blocks
         std::lock_guard lock(_stateMutex);
         _uploads.clear();
+        _uploadsShown = 0;
         _unknownCounts.fill(0);
     }
     _romProfile = _card ? GSFirmwareProfileOf(*_card) : nullptr;
@@ -519,9 +526,9 @@ void GSCommandLog::SetProfile(const GSFirmwareProfile* profile)
     // The stack back to one profile: the ROM's (a reset, a start) or code that replaces the firmware
     if (_hostStream && profile != _profile)
         EndHostStream(true, false);
-    _stack.clear();
+    _stackSize = 0;
     if (profile)
-        _stack.push_back(profile);
+        _stack[_stackSize++] = profile;
     _profile = profile;
     _profileIndex = ProfileIndex(profile);
     _mode = -1;
@@ -529,8 +536,9 @@ void GSCommandLog::SetProfile(const GSFirmwareProfile* profile)
 
 void GSCommandLog::PushProfile(const GSFirmwareProfile* profile)
 {
-    if (Skip() || !profile)
+    if (!profile)
         return;
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -543,15 +551,22 @@ void GSCommandLog::PushProfile(const GSFirmwareProfile* profile)
     }
     if (_hostStream)
         EndHostStream(true, false);
-    _stack.push_back(profile);
+    if (_stackSize == kMaxStack)
+    {
+        // Deeper than any loader goes: the oldest code above the ROM's makes room
+        std::copy(_stack + 2, _stack + kMaxStack, _stack + 1);
+        _stackSize--;
+    }
+    _stack[_stackSize++] = profile;
     _profile = profile;
     _profileIndex = ProfileIndex(profile);
 }
 
 const GSFirmwareProfile* GSCommandLog::Resolver(uint8_t code) const
 {
-    for (auto it = _stack.rbegin(); it != _stack.rend(); ++it)
+    for (uint8_t i = _stackSize; i-- > 0;)
     {
+        const GSFirmwareProfile* const* it = &_stack[i];
         if ((*it)->Command(code).name)
             return *it;
         if (!(*it)->extends)
@@ -567,7 +582,9 @@ const GSCommandInfo& GSCommandLog::Info(uint8_t code) const
 
 void GSCommandLog::Push(GSCommandLogEntry entry)
 {
-    if (_stack.size() > 1 && entry.profile == _profileIndex)
+    if (Replaying())
+        return;
+    if (_stackSize > 1 && entry.profile == _profileIndex)
         entry.profile = ProfileIndex(Resolver(entry.command));
     _history.Push(entry);
 }
@@ -655,6 +672,7 @@ void GSCommandLog::BeginTransfer()
     _stallReported = false;
     _progressFrame = _context ? _context->emulatorState.frame_counter : 0;
     _uploadBytes.clear();
+    _uploadBytesSerial = ++_uploadSerial;
     if (info.transfer == GSTransferKind::BlockUpload || info.transfer == GSTransferKind::BlockDownload)
     {
         // #14 / #15: length low (the pre byte), length high, address low, address high
@@ -707,7 +725,7 @@ void GSCommandLog::EndTransfer(bool truncated, bool automation)
     _inTransfer = false;
     if (!truncated && static_cast<GSTransferKind>(_transfer) == GSTransferKind::BlockUpload)
         RecordUpload();
-    _uploadBytes.clear();
+    // The bytes stay until the next transfer: a move back into this block finds them
 }
 
 void GSCommandLog::EndHostStream(bool truncated, bool automation)
@@ -719,7 +737,8 @@ void GSCommandLog::EndHostStream(bool truncated, bool automation)
     e.profile = _hostStreamProfile;
     if (truncated)
         e.flags |= GSCommandLogFlags::kTruncated;
-    _history.Push(e);  // not Push(): no command to resolve the profile by
+    if (!Replaying())
+        _history.Push(e);  // not Push(): no command to resolve the profile by
     _hostStream = false;
     _hostStreamCount = 0;
 }
@@ -750,9 +769,57 @@ void GSCommandLog::RecordUpload()
         }
     }
     std::lock_guard lock(_stateMutex);
+    // Run again after a move back (a replay, a resume on the same line): the block is the one the list holds back
+    for (size_t i = _uploadsShown; i < _uploads.size(); i++)
+    {
+        const GSUploadRecord& held = _uploads[i];
+        if (held.frame == record.frame && held.address == record.address && held.sha256 == record.sha256)
+        {
+            _uploadsShown = i + 1;
+            return;
+        }
+    }
+    _uploads.resize(_uploadsShown);  // held records not met again are another line's
     if (_uploads.size() == kMaxUploads)
         _uploads.erase(_uploads.begin());
     _uploads.push_back(std::move(record));
+    _uploadsShown = _uploads.size();
+}
+
+void GSCommandLog::ShowUploads(uint64_t frame, bool drop, bool frameStart)
+{
+    // A record knows its frame only: at a frame's start (a checkpoint) the frame's own blocks are still to come
+    std::lock_guard lock(_stateMutex);
+    size_t shown = 0;
+    while (shown < _uploads.size() && (_uploads[shown].frame < frame || (!frameStart && _uploads[shown].frame == frame)))
+        shown++;
+    if (drop)
+        _uploads.resize(shown);
+    _uploadsShown = shown;
+}
+
+void GSCommandLog::UploadBytesFollow()
+{
+    // The decoder came back to another moment: the #14 block it is in has the bytes the card holds so far
+    if (!_inTransfer || static_cast<GSTransferKind>(_transfer) != GSTransferKind::BlockUpload)
+        return;  // the bytes are kept for a later move into their block
+    if (_uploadBytesSerial == _uploadSerial && _blockCount <= _uploadBytes.size())
+    {
+        _uploadBytes.resize(_blockCount);  // the same block, further on
+        return;
+    }
+    // Another block: read the bytes back where the card's code put them; the last one may still be in the mailbox
+    _uploadBytes.clear();
+    const uint32_t pending = _lastDataFromHost && _blockCount > 0 ? 1 : 0;
+    for (uint32_t i = 0; i + pending < _blockCount && _card; i++)
+    {
+        uint8_t value = 0;
+        _card->peekCardMemory(static_cast<uint16_t>(_blockAddr + i), value);
+        _uploadBytes.push_back(value);
+    }
+    if (pending)
+        _uploadBytes.push_back(_lastData);
+    _uploadBytesSerial = _uploadSerial;
 }
 
 void GSCommandLog::StartUploadedCode(uint16_t address)
@@ -761,7 +828,7 @@ void GSCommandLog::StartUploadedCode(uint16_t address)
     const GSFirmwareProfile* profile = nullptr;
     {
         std::lock_guard lock(_stateMutex);
-        for (auto it = _uploads.rbegin(); it != _uploads.rend(); ++it)
+        for (auto it = _uploads.rend() - static_cast<std::ptrdiff_t>(_uploadsShown); it != _uploads.rend(); ++it)
             if (address >= it->address && address < it->address + it->length)
             {
                 it->started = true;
@@ -784,9 +851,9 @@ bool GSCommandLog::DispatchHandler(uint8_t code, uint16_t& handler) const
         out = static_cast<uint16_t>(lo | (hi << 8));
         return true;
     };
-    for (auto it = _stack.rbegin(); it != _stack.rend(); ++it)
+    for (uint8_t i = _stackSize; i-- > 0;)
     {
-        const GSFirmwareProfile& p = **it;
+        const GSFirmwareProfile& p = *_stack[i];
         if (p.dispatch.kind == GSDispatchKind::Words && p.dispatch.place == GSPlace::Window)
         {
             // Entries #00-#1F, then `highFrom` on
@@ -824,13 +891,14 @@ std::array<uint32_t, 256> GSCommandLog::UnknownCommands() const
 std::vector<GSUploadRecord> GSCommandLog::Uploads() const
 {
     std::lock_guard lock(_stateMutex);
-    return _uploads;
+    return {_uploads.begin(), _uploads.begin() + static_cast<std::ptrdiff_t>(_uploadsShown)};
 }
 
 void GSCommandLog::HostCommand(uint8_t command, bool automation)
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -934,7 +1002,8 @@ void GSCommandLog::HostCommand(uint8_t command, bool automation)
     if (_profile && (!info || !info->name))
     {
         std::lock_guard lock(_stateMutex);
-        _unknownCounts[command]++;
+        if (!Replaying())
+            _unknownCounts[command]++;
     }
     if (uint16_t handler = 0; DispatchHandler(command, handler))
     {
@@ -975,8 +1044,9 @@ void GSCommandLog::HostCommand(uint8_t command, bool automation)
 
 void GSCommandLog::HostData(uint8_t value, bool automation)
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -1047,8 +1117,9 @@ void GSCommandLog::HostData(uint8_t value, bool automation)
 
 void GSCommandLog::HostReplyRead(uint8_t value, bool automation)
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -1119,27 +1190,33 @@ void GSCommandLog::HostReplyRead(uint8_t value, bool automation)
 
 void GSCommandLog::HostStatusRead(uint8_t status)
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
     if (!_armed.load(std::memory_order_relaxed))
     {
         const PublishOnExit publish{*this};
         Arm();
+        _dirty = true;
     }
     // A poll in a loop: no entry, no publish unless the card took the command
-    if (status & 0x80)
+    if ((status & 0x80) && !_polledReady)
+    {
         _polledReady = true;
+        _dirty = true;
+    }
     if (_commandPending && !(status & 0x01))
     {
         const PublishOnExit publish{*this};
         NoteTaken(status);
+        _dirty = true;
     }
 }
 
 void GSCommandLog::HostReset()
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -1156,15 +1233,21 @@ void GSCommandLog::HostReset()
 
 void GSCommandLog::Frame()
 {
+    const bool replaying = Replaying();
+    if (!replaying)
+        Live();
     // A host that only polls the status (IN #BB, no hook) sees the card take the command: so does the log, at the
     // frame start at the latest
-    if (_commandPending && _card && !Skip() && _armed.load(std::memory_order_relaxed))
+    if (_commandPending && _card && _armed.load(std::memory_order_relaxed))
     {
         NoteTaken(_card->getStatusRaw());
         if (!_commandPending)
+        {
+            _dirty = true;
             Publish();
+        }
     }
-    if (_repliesLeft > 0 && _command >= 0 && _profile && _card && _context && !Skip() &&
+    if (_repliesLeft > 0 && _command >= 0 && _profile && _card && _context &&
         _armed.load(std::memory_order_relaxed) && !_replyStallReported &&
         Info(static_cast<uint8_t>(_command)).handshake.replyWait)
     {
@@ -1182,16 +1265,189 @@ void GSCommandLog::Frame()
             PushAnomaly(GSCommandLogAnomaly::CardReplyStall, static_cast<uint32_t>(frame - _replyWaitFrame), false);
             _replyStallReported = true;
         }
+        _dirty = true;
     }
-    if (!_inTransfer || _stallReported || !_context || Skip())
-        return;
-    if (_commandPending || _context->emulatorState.frame_counter - _progressFrame < kStallFrames)
-        return;  // the card has not taken the command yet: busy, not stalled
-    GSCommandLogEntry e = Make(GSCommandLogKind::Anomaly, uint8_t(GSCommandLogAnomaly::TransferStalled), false);
-    e.command = _transferCommand;
-    e.count = _blockCount;
-    Push(e);
-    _stallReported = true;
+    // A transfer the card has taken the command of (not busy) with no byte for kStallFrames is stalled
+    if (_inTransfer && !_stallReported && _context && !_commandPending &&
+        _context->emulatorState.frame_counter - _progressFrame >= kStallFrames)
+    {
+        GSCommandLogEntry e = Make(GSCommandLogKind::Anomaly, uint8_t(GSCommandLogAnomaly::TransferStalled), false);
+        e.command = _transferCommand;
+        e.count = _blockCount;
+        Push(e);
+        _stallReported = true;
+        _dirty = true;
+    }
+    // A checkpoint of this frame holds the machine after its frame start: the decoder as it stands now
+    if (!replaying && _dirty)
+        TakeMark();
 }
 
 /// endregion </Decoder>
+
+/// region <Time travel (D3)>
+
+GSCommandLog::Moment GSCommandLog::Now() const
+{
+    Moment m;
+    if (_context)
+    {
+        m.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);  // as the entries hold it
+        if (const Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+            m.t = cpu->t;
+    }
+    return m;
+}
+
+void GSCommandLog::Live()
+{
+    if (_switched.load(std::memory_order_relaxed)) [[unlikely]]
+    {
+        // A log switched on again starts over: the marks of its previous run would put back a decoder that did not
+        // see what happened while it was off
+        _switched.store(false, std::memory_order_relaxed);
+        _marks.clear();
+    }
+    if (_settle) [[unlikely]]
+        Settle();
+}
+
+void GSCommandLog::Settle()
+{
+    _settle = false;
+    // A live run from where a move left the machine is a new line (a resume in the past forks a branch): what the
+    // log holds after this moment, kept or held back, happened on the line the machine left
+    const Moment now = Now();
+    _history.Truncate([&](const GSCommandLogEntry& e) { return After(e, now); }, true);
+    while (!_marks.empty() && _marks.back().frame > now.frame)
+        _marks.pop_back();
+    ShowUploads(now.frame, true);
+}
+
+void GSCommandLog::TakeMark()
+{
+    _dirty = false;
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    Mark mark{frame, _armed.load(std::memory_order_relaxed), static_cast<const GSCommandLogDecoder&>(*this)};
+    if (!_marks.empty() && _marks.back().frame >= frame)
+    {
+        _marks.back() = mark;
+        return;
+    }
+    if (_marks.size() >= kMaxMarks)
+        _marks.erase(_marks.begin(), _marks.begin() + kMaxMarks / 4);
+    _marks.push_back(mark);
+}
+
+void GSCommandLog::Restored()
+{
+    if (!_history.On() || !_context)
+        return;
+    if (_switched.load(std::memory_order_relaxed))
+    {
+        _switched.store(false, std::memory_order_relaxed);
+        _marks.clear();
+    }
+    // The checkpoint holds the machine after its frame start: the newest mark at or before its frame is the decoder
+    // there (no mark: the log had not seen traffic yet, it starts over at the next hook)
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    const auto it = std::upper_bound(_marks.begin(), _marks.end(), frame,
+                                     [](uint64_t f, const Mark& m) { return f < m.frame; });
+    if (it != _marks.begin())
+    {
+        const Mark& mark = *std::prev(it);
+        static_cast<GSCommandLogDecoder&>(*this) = mark.decoder;
+        _armed.store(mark.armed, std::memory_order_relaxed);
+    }
+    else
+    {
+        static_cast<GSCommandLogDecoder&>(*this) = GSCommandLogDecoder{};
+        _armed.store(false, std::memory_order_relaxed);
+    }
+    UploadBytesFollow();
+    ShowUploads(frame, false, true);
+    _dirty = false;
+    _settle = true;
+    Publish();
+}
+
+void GSCommandLog::Landed(const history::TimeMoment* lineSince)
+{
+    const Moment now = Now();
+    if (lineSince && _context)
+    {
+        // A branch switch: the lines are the same up to their parting only. The entries and marks after it are the
+        // left line's; past it the target line's entries were not seen, and the decoder starts over
+        const EmulatorState& st = _context->emulatorState;
+        const history::TimeMoment part = *lineSince;
+        auto afterPart = [&](const GSCommandLogEntry& e) {
+            return e.frame > part.frame || (e.frame == part.frame && st.TtdTInFrame(e.mainT) > part.tInFrame);
+        };
+        _history.Truncate(afterPart, false);
+        while (!_marks.empty() && _marks.back().frame > part.frame)
+            _marks.pop_back();
+        ShowUploads(part.frame, true);
+        if (now.frame > part.frame || (now.frame == part.frame && st.TtdTInFrame(now.t) > part.tInFrame))
+        {
+            static_cast<GSCommandLogDecoder&>(*this) = GSCommandLogDecoder{};
+            _armed.store(false, std::memory_order_relaxed);
+            UploadBytesFollow();
+            Publish();
+        }
+    }
+    ShowUploads(now.frame, false);
+    // The entries after the machine's moment are held back; on a move forward the held ones up to it come back
+    _history.Rewind([&](const GSCommandLogEntry& e) { return After(e, now); });
+    _settle = true;
+}
+
+namespace
+{
+/// What SaveLive keeps: the decoder and the follow state
+struct GSCommandLogLive
+{
+    GSCommandLogDecoder decoder;
+    bool armed = false;
+    bool dirty = false;
+    bool settle = false;
+    uint32_t uploadBytesSerial = 0;
+    uint64_t uploadsShown = 0;
+};
+static_assert(std::is_trivially_copyable_v<GSCommandLogLive>);
+}  // namespace
+
+void GSCommandLog::SaveLive(std::vector<uint8_t>& out) const
+{
+    GSCommandLogLive live{static_cast<const GSCommandLogDecoder&>(*this), _armed.load(std::memory_order_relaxed),
+                          _dirty, _settle, _uploadBytesSerial, 0};
+    {
+        std::lock_guard lock(_stateMutex);
+        live.uploadsShown = _uploadsShown;
+    }
+    // Then the bytes of the #14 block going on
+    out.resize(sizeof(live) + _uploadBytes.size());
+    std::memcpy(out.data(), &live, sizeof(live));
+    if (!_uploadBytes.empty())
+        std::memcpy(out.data() + sizeof(live), _uploadBytes.data(), _uploadBytes.size());
+}
+
+void GSCommandLog::LoadLive(const std::vector<uint8_t>& in)
+{
+    if (in.size() < sizeof(GSCommandLogLive))
+        return;
+    GSCommandLogLive live;
+    std::memcpy(&live, in.data(), sizeof(live));
+    static_cast<GSCommandLogDecoder&>(*this) = live.decoder;
+    _armed.store(live.armed, std::memory_order_relaxed);
+    _dirty = live.dirty;
+    _settle = live.settle;
+    _uploadBytesSerial = live.uploadBytesSerial;
+    _uploadBytes.assign(in.begin() + sizeof(live), in.end());
+    {
+        std::lock_guard lock(_stateMutex);
+        _uploadsShown = std::min<size_t>(static_cast<size_t>(live.uploadsShown), _uploads.size());
+    }
+    Publish();
+}
+
+/// endregion </Time travel (D3)>

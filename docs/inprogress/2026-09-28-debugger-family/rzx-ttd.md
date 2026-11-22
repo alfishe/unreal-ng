@@ -1,5 +1,7 @@
 # RZX and TTD: two ways to record a Spectrum session, and how to bridge them
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 - **Date:** 2026-09-29
 - **Status:** research article with a proposal. No RZX code exists in
   unreal-ng yet.

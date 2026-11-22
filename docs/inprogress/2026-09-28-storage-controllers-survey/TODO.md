@@ -25,3 +25,4 @@ tracked as [PLAN.md](../PLAN.md) row #63. The IDE part it measures against was o
 - [ ] SMUC: see the sibling survey `2026-09-28-scorpion-smuc/` (not covered here).
 
 - [x] 2026-10-08: DivMMC / DivIDE paging and automap built as `DivMmcPaging` (core/src/emulator/io/divmmc, bus overlay + M1 observer, no change to `Memory`); UnoDOS 3.141 boots and lists a folder through `RST 8` on the 48K machine. A read of `#EB` starting an exchange works with UnoDOS. Esxdos itself not run (no ROM here). Left: TTD blob, slot card, reset hook
+- [x] 2026-11-21: the slot card `divmmc` (edge, 48K / 128K / +2A / +3): TTD blob + RAM region, reset / power cycle, SD media slots, slot report state ([divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) §9)

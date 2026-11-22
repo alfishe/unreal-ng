@@ -258,11 +258,13 @@ inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind,
 /// ApplyScriptOptions). The breakpoint id, or -1 when refused
 /// `condition` (empty: none) in `dialect` ("unreal", "c"); a condition that does not compile raises ValueError with
 /// the reason and its column, the other refusals answer -1. `cpu` "gs": the sound card CPU's breakpoint. `stop` false:
-/// it only counts its hits (BreakpointSpec::stop)
+/// it only counts its hits (BreakpointSpec::stop); `hitLog` the hits its per-hit record keeps (-1: the default, 1000;
+/// 0: none), `hitLogKeep` "first" (default) or "last" (ValueError when it is neither)
 inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8_t access, uint16_t address,
                                   const std::string& page, int32_t to, bool slotOnly, int32_t mask, const std::string& hits,
                                   const std::string& condition = "", const std::string& dialect = "",
-                                  const std::string& cpu = "", bool stop = true)
+                                  const std::string& cpu = "", bool stop = true, int64_t hitLog = -1,
+                                  const std::string& hitLogKeep = "")
 {
     BreakpointManager* bpm = PythonBreakpoints(self, cpu);
     if (!bpm)
@@ -276,6 +278,12 @@ inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8
         return -1;
     spec.condition = condition;
     spec.stop = stop;
+    if (hitLog > static_cast<int64_t>(BreakpointHitLog::kMaxCapacity))
+        throw py::value_error("hit_log must be 0.." + std::to_string(BreakpointHitLog::kMaxCapacity));
+    if (hitLog >= 0)
+        spec.hitLog = static_cast<uint32_t>(hitLog);
+    if (!hitLogKeep.empty() && !BreakpointManager::ParseHitLogKeep(hitLogKeep, spec.hitLogKeep))
+        throw py::value_error("hit_log_keep must be 'first' or 'last'");
     if (!BreakpointConditionProgram::ParseDialect(dialect, spec.conditionDialect))
         throw py::value_error("dialect must be 'unreal' or 'c'");
     const uint16_t id = bpm->AddBreakpoint(spec, error);
@@ -3329,8 +3337,11 @@ namespace PythonBindings
             }, "Execute one frame", py::arg("skip_breakpoints") = true)
             .def("run_frames", [](Emulator& self, unsigned count, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
-                self.RunNFrames(count, skipBreakpoints);
-            }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
+                const Emulator::DirectRunResult r = self.RunNFrames(count, skipBreakpoints);
+                return StateNodeToPy(execution::RunOutcomeNode(
+                    self, execution::RunOutcomeOf("frames", count, r.frames, r.tstates, r.reached)));
+            }, "Execute N frames on the direct-run timeline (split-independent: 30 + 70 == 100); dict with count, "
+               "frames_run, tstates_run, frame, t, stop, message", py::arg("count"), py::arg("skip_breakpoints") = true)
 
             // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until(text="PRESS", max_frames=500)
             // (condition= for if=), watch_add(condition="...", then="notify"), watches(), watch_remove(id | "all")
@@ -3347,10 +3358,13 @@ namespace PythonBindings
             }, "Remove a frame watch by id, or \"all\"", py::arg("id"))
 
             // T-state and scanline stepping
-            .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+            .def("run_tstates", [](Emulator& self, uint64_t count, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
-                self.RunTStates(count, skipBreakpoints);
-            }, "Execute N T-states", py::arg("count"), py::arg("skip_breakpoints") = true)
+                const Emulator::DirectRunResult r = self.RunTStates(count, skipBreakpoints, /*onTimeline=*/true);
+                return StateNodeToPy(execution::RunOutcomeNode(
+                    self, execution::RunOutcomeOf("tstates", count, r.frames, r.tstates, r.reached)));
+            }, "Execute N T-states on the run_frames timeline (slices end where one run ends); the run_frames dict",
+               py::arg("count"), py::arg("skip_breakpoints") = true)
             .def("run_to_scanline", [](Emulator& self, unsigned scanline, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilScanline(scanline, skipBreakpoints);
@@ -3711,53 +3725,58 @@ namespace PythonBindings
             // Breakpoint management
             .def("bp", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
                              const std::string& hits, const std::string& condition, const std::string& dialect,
-                             const std::string& cpu, bool stop) -> int {
+                             const std::string& cpu, bool stop, int64_t hit_log, const std::string& hit_log_keep) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_EXECUTE, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect, cpu, stop);
+                                              dialect, cpu, stop, hit_log, hit_log_keep);
             }, "Add a breakpoint (bp); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
                "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop, and record the first hit_log of them (frame, t, pc; default 1000, 0 none; hit_log_keep 'last': the newest), bp_hit_log reads them. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true,
+               py::arg("hit_log") = -1, py::arg("hit_log_keep") = "")
             .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
                              const std::string& hits, const std::string& condition, const std::string& dialect,
-                             const std::string& cpu, bool stop) -> int {
+                             const std::string& cpu, bool stop, int64_t hit_log, const std::string& hit_log_keep) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_READ, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect, cpu, stop);
+                                              dialect, cpu, stop, hit_log, hit_log_keep);
             }, "Add a breakpoint (bp_read); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
                "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop, and record the first hit_log of them (frame, t, pc; default 1000, 0 none; hit_log_keep 'last': the newest), bp_hit_log reads them. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true,
+               py::arg("hit_log") = -1, py::arg("hit_log_keep") = "")
             .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
                              const std::string& hits, const std::string& condition, const std::string& dialect,
-                             const std::string& cpu, bool stop) -> int {
+                             const std::string& cpu, bool stop, int64_t hit_log, const std::string& hit_log_keep) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_WRITE, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect, cpu, stop);
+                                              dialect, cpu, stop, hit_log, hit_log_keep);
             }, "Add a breakpoint (bp_write); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
                "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop, and record the first hit_log of them (frame, t, pc; default 1000, 0 none; hit_log_keep 'last': the newest), bp_hit_log reads them. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true,
+               py::arg("hit_log") = -1, py::arg("hit_log_keep") = "")
             .def("bp_port_in", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
-                             const std::string& condition, const std::string& dialect, const std::string& cpu, bool stop) -> int {
+                             const std::string& condition, const std::string& dialect, const std::string& cpu, bool stop, int64_t hit_log, const std::string& hit_log_keep) -> int {
                 return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_IN, port, "", -1, false, mask, hits, condition, dialect,
-                                              cpu, stop);
+                                              cpu, stop, hit_log, hit_log_keep);
             }, "Add a port breakpoint (bp_port_in); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
+               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop, and record the first hit_log of them (frame, t, pc; default 1000, 0 none; hit_log_keep 'last': the newest), bp_hit_log reads them. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
-               py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
+               py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true,
+               py::arg("hit_log") = -1, py::arg("hit_log_keep") = "")
             .def("bp_port_out", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
-                             const std::string& condition, const std::string& dialect, const std::string& cpu, bool stop) -> int {
+                             const std::string& condition, const std::string& dialect, const std::string& cpu, bool stop, int64_t hit_log, const std::string& hit_log_keep) -> int {
                 return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_OUT, port, "", -1, false, mask, hits, condition, dialect,
-                                              cpu, stop);
+                                              cpu, stop, hit_log, hit_log_keep);
             }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
+               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop, and record the first hit_log of them (frame, t, pc; default 1000, 0 none; hit_log_keep 'last': the newest), bp_hit_log reads them. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
-               py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
+               py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true,
+               py::arg("hit_log") = -1, py::arg("hit_log_keep") = "")
             .def("bp_nextreg_write", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
                              int32_t vmask, const std::string& hits) -> int {
                 return PythonScriptNextRegBreakpoint(self, BRK_IO_OUT, reg, to, doors, value, vmask, hits);
@@ -4053,16 +4072,31 @@ namespace PythonBindings
                "gsporttrace | pchist | aylog | audio | all; op start | stop | toggle | pause | resume | pause_toggle | "
                "clear | status; keyword options keep, capacity, seconds, source, on. {name, state, can_pause, ...}",
                py::arg("name"), py::arg("op") = "status")
-            .def("bp_reset_hits", [](Emulator& self, int id) -> bool {
-                BreakpointManager* bpm = self.GetBreakpointManager();
+            .def("bp_reset_hits", [](Emulator& self, int id, const std::string& cpu) -> bool {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 if (!bpm)
                     return false;
                 if (id >= 0)
                     return bpm->ResetHitCount(static_cast<uint16_t>(id));
                 bpm->ResetAllHitCounts();
                 return true;
-            }, "Hit counters back to 0: one breakpoint (id), or all (no id). False for an unknown id",
-               py::arg("id") = -1)
+            }, "Hit counters back to 0 and per-hit records emptied: one breakpoint (id), or all (no id). False for an "
+               "unknown id (cpu 'gs': the sound card CPU's)", py::arg("id") = -1, py::arg("cpu") = "")
+            .def("bp_hit_log", [](Emulator& self, int64_t id, const std::string& cpu, int64_t from, int64_t limit) {
+                StateNode args = StateNode::Object();
+                args["instance"] = self.GetId();
+                args["id"] = std::to_string(id);
+                args["cpu"] = cpu;
+                if (from >= 0)
+                    args["from"] = std::to_string(from);
+                if (limit >= 0)
+                    args["limit"] = std::to_string(limit);
+                return StateNodeToPy(monitoring::Call("breakpoint_hits", args).body);
+            }, "A breakpoint's hits as WebAPI GET /api/v1/emulator/{id}/breakpoints/{bp}/hits: {ok, instance, cpu, id, "
+               "stop, hit_count, match_count?, log: {capacity, keep, total, stored, dropped, oldest} or None, hits: "
+               "[{index, hit, frame, t, pc, address, value?, kind, cpu_time?}], first_index, more, next_from?}; a "
+               "refusal: ok False, error, message. from_index: the first record index (next_from goes on); limit: 1..10000 (default 100)",
+               py::arg("id"), py::arg("cpu") = "", py::arg("from_index") = -1, py::arg("limit") = -1)
             .def("bp_count", [](Emulator& self, const std::string& cpu) -> size_t {
                 BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->GetBreakpointsCount() : 0;
@@ -7147,7 +7181,7 @@ namespace PythonBindings
                 for (uint16_t pc : pcs)
                     list += (list.empty() ? "" : ",") + std::to_string(pc);
                 std::map<std::string, std::string> options{{"pcs", list}};
-                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame
+                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame, condition
                 TtdKwargsPy(options, kwargs);
                 const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
@@ -7183,6 +7217,36 @@ namespace PythonBindings
                                                                           {"count", std::to_string(count)}}));
             }, "Step a sound card's CPU by n instructions (negative: back)",
                py::arg("cpu"), py::arg("n") = 1)
+
+            .def("ttd_card_reverse_step_over", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "reverse-step-over", {{"cpu", cpu}}));
+            }, "A sound card CPU's step over back: one card instruction back, or past a whole card routine to its "
+               "CALL / RST when that instruction is its return (over_call, skipped in the reply)",
+               py::arg("cpu"))
+
+            .def("ttd_card_step_over", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu}, {"kind", "over"}}));
+            }, "A sound card CPU's step over through the history (its breakpoints end it first; history_end: not "
+               "ended in the history, the card at its end)",
+               py::arg("cpu"))
+
+            .def("ttd_card_step_out", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu}, {"kind", "out"}}));
+            }, "A sound card CPU's step out through the history (its breakpoints end it first; history_end: not "
+               "ended in the history, the card at its end)",
+               py::arg("cpu"))
+
+            .def("ttd_card_run_to_cursor", [](Emulator& self, const std::string& cpu, uint32_t pc,
+                                              std::optional<uint64_t> maxFrames) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"cpu", cpu}, {"dir", "forward"}, {"kind", "to"}, {"pc", std::to_string(pc)}};
+                if (maxFrames)
+                    options["max_frames"] = std::to_string(*maxFrames);
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", options));
+            }, "A sound card CPU's run to the cursor through the history: its next instruction at pc after the card's "
+               "position, its breakpoints first (not reached in the history or in max_frames frames: reached False, "
+               "status no_hit, nothing moved)",
+               py::arg("cpu"), py::arg("pc"), py::arg("max_frames") = py::none())
 
             .def("ttd_card_reverse_continue", [](Emulator& self, const std::string& cpu, std::optional<uint64_t> maxFrames) -> py::object {
                 std::map<std::string, std::string> options{{"cpu", cpu}};
@@ -7338,6 +7402,46 @@ namespace PythonBindings
             }, "The byte ranges of a memory that differ between two checkpoints: {changed_bytes, ranges: [{offset, length}]}",
                 py::arg("space"), py::arg("from_frame"), py::arg("to_frame"), py::arg("limit") = 100)
 
+            // Reads of the past without seeking (PLAN #122 S1, V2). A bad argument raises ValueError; a refusal (no
+            // history, a frame that did not end in it) is a dict with error
+            .def("ttd_memory_series", [](Emulator& self, py::object ranges, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                // ranges: a string, or a list of strings / dicts {space, address | offset, page, length} (JSON text)
+                bool objects = false;
+                if (py::isinstance<py::list>(ranges) || py::isinstance<py::tuple>(ranges))
+                    for (const auto& item : ranges)
+                        objects = objects || py::isinstance<py::dict>(item);
+                options["ranges"] = objects ? py::module_::import("json").attr("dumps")(ranges).cast<std::string>()
+                                            : TtdOptionTextPy(ranges);
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "memory-series", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "Memory ranges at the start of many frames in one walk of the checkpoints (no seek): ranges "
+               "'[space:]offset:length, ...' or a list of such strings or dicts; keywords from_frame, to_frame, step, "
+               "frames (a list), changes_only, format (base64 | hex | values), limit, max_bytes. Returns {rows: "
+               "[{frame, exact, at_tinframe, data: [one per range]}], frames_read, truncated, next_from_frame?, ...}",
+                py::arg("ranges"))
+
+            .def("ttd_screen_at", [](Emulator& self, uint64_t frame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "screen-at", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "A past frame's picture or screen bytes (no seek): keywords which (shown | normal | shadow), format (png "
+               "| bitmap | attributes | raw), area (full | screen), encoding (base64 | hex). Returns {data, mime?, "
+               "shown: {at_start, at_end, changed_during_frame, flips}, moment_text, ...}",
+                py::arg("frame"))
+
             .def("ttd_coverage_summary", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                             py::object kindObj, uint64_t bucketSize, size_t limit) -> py::object {
                 std::map<std::string, std::string> options{{"from_frame", std::to_string(fromFrame)},
@@ -7353,13 +7457,18 @@ namespace PythonBindings
                 py::arg("bucket_size") = 0, py::arg("limit") = 100)
 
             .def("ttd_timeline", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj, uint64_t bucketSize,
-                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs) -> py::object {
+                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs, py::object fileObj,
+                                    py::object branchObj) -> py::object {
                 std::map<std::string, std::string> options{
                     {"from_frame", std::to_string(fromFrame)}, {"bucket_size", std::to_string(bucketSize)},
                     {"limit", std::to_string(limit)},          {"buckets", buckets ? "true" : "false"},
                     {"ports", ports ? "true" : "false"},       {"min_phase_ms", std::to_string(minPhaseMs)}};
                 if (!toFrameObj.is_none())
                     options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                if (!fileObj.is_none())
+                    options["file"] = TtdOptionTextPy(fileObj);
+                if (!branchObj.is_none())
+                    options["branch"] = TtdOptionTextPy(branchObj);
                 const ttd::TTDReply reply = TtdRunPy(self, "timeline", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
                     throw py::value_error(reply.message);
@@ -7368,9 +7477,11 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 return StateNodeToPy(value);
             }, "The recording cut into phases of the same activity (tape, disk, input, net, sound, screen, burst, halt, "
-               "paging), each with its facts; from what the session holds, no replay",
+               "paging), each with its facts; from what the session holds, no replay. file: a .ttd file (or a "
+               "recording's folder) read without loading it, branch: a line of that file (id, GUID or name)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("bucket_size") = 0,
-                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200);
+                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200,
+                py::arg("file") = py::none(), py::arg("branch") = py::none());
 
         emulatorClass.def("ttd_cause_chain", [](Emulator& self, py::object target, py::object frameObj,
                                                 py::object tinObj, py::object pageObj, unsigned depth,

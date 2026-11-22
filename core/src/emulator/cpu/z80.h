@@ -800,6 +800,8 @@ public:
     /// screen and the sound catch up by time, so their per-step calls need not run (the engine's precondition
     /// for the idle fast-forward: Z84C15Engine, RunHaltedIdle)
     bool IdleStepsInert(uint32_t allowedWork) const;
+    /// IdleStepsInert's part for the edge cards' floppy controllers (MGT +D); out of line, none on most machines
+    UNREAL_NOINLINE bool CardFdcsIdleInert() const;
     /// The native step's idle fast-forward (StepInstruction with no work-gate job, or only the machine's interrupt
     /// source and step hook): after a step that left the CPU halted, the idle fetches that follow run as arithmetic
     /// up to the next boundary where the interrupt decision may change, the frame end or idleSkipLimit (no-op while

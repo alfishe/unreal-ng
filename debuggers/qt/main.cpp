@@ -43,6 +43,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QTableWidget>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolBar>
@@ -77,6 +78,7 @@
 #include "dialogs/debugger/disasmview.h"
 #include "dialogs/debugger/ttdcontrols.h"
 #include "dialogs/debugger/memoryview.h"
+#include "dialogs/debugger/nextviews.h"
 #include "dialogs/debugger/pagedmemory.h"
 #include "dialogs/debugger/sideviews.h"
 
@@ -608,8 +610,13 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     };
     auto count = [](const QJsonObject &c) { return (uint64_t)c.value("instruction").toInteger(); };
     QAction * step = nullptr;
-    for (QAction * a : dw->actions())
+    QAction * step_over = nullptr;
+    QAction * step_out = nullptr;
+    for (QAction * a : dw->actions()) {
         if (a->text() == "Step") step = a;
+        if (a->text() == "Step over") step_over = a;
+        if (a->text() == "Step out of the routine") step_out = a;
+    }
 
     // The readout's words, inside an instruction of the main CPU and at its boundary
     const QJsonObject inside{{"cpu", "gs"}, {"known", true}, {"instruction", 1200}, {"pc", 0x0A3C}, {"card_position", true},
@@ -639,8 +646,9 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     check(ttd->card_cpu() == name && c0.value("known").toBool(), "ttd card: the card's tab, its count known");
     printf("    (card %s at instruction %llu)\n", name.toUtf8().constData(), (unsigned long long)c0.value("instruction").toInteger());
     check(ttd->step_back_action()->isEnabled() && ttd->run_back_action()->isEnabled() &&
-              !ttd->step_over_back_action()->isEnabled() && ttd->step_back_action()->toolTip().contains(name + " instruction"),
-          "ttd card: Step Back and Run Back the card's, Step Over Back off");
+              ttd->step_over_back_action()->isEnabled() && ttd->step_back_action()->toolTip().contains(name + " instruction") &&
+              ttd->step_over_back_action()->toolTip().contains(name + " instruction"),
+          "ttd card: Step Back, Step Over Back and Run Back the card's");
     check(ttd->moment().contains(name + " at instruction " + QString::number(count(c0))), "ttd card: the moment names the card");
 
     // Step Back: one card instruction; the card's view reads the card there, the moment names both CPUs
@@ -679,10 +687,60 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     check(step != nullptr && c2.value("card_position").toBool() && count(c2) == n1 + 1 && m->debug_paused(),
           "ttd card: Step (F7) in the past, one card instruction forward");
 
+    // Step Over Back (Shift+F8): the card back, one instruction or over a whole card routine
+    said = Said();
+    ttd->step_over_back();
+    const QJsonObject cb = card();
+    check(said.count == 0 && cb.value("card_position").toBool() && count(cb) < count(c2) &&
+              ttd->last_result().startsWith("Step Over Back: " + name),
+          "ttd card: Step Over Back, the card back");
+    // Step over (F8) and Step out (Ctrl+F8) in the past: the card's steps through the history, no live run. From well
+    // inside the history: the checks so far stand at its end, where F7 / F8 / Ctrl+F8 step on live (D-3) and leave the
+    // machine inside the card's run (a move in time from there first leaves it)
+    const uint64_t past = count(cb) > 5000 ? count(cb) - 5000 : count(cb);
+    auto seek_card = [&](uint64_t n) {
+        ttd->call("seek", {{"cpu", name.toStdString()}, {"instruction", std::to_string(n)}}, nullptr);
+        ttd->poll(true);
+    };
+    seek_card(past);
+    if (step_over != nullptr) step_over->trigger();
+    const QJsonObject co = card();
+    check(step_over != nullptr && said.count == 0 && co.value("card_position").toBool() && count(co) > past &&
+              m->debug_paused() && ttd->last_result().startsWith("Step over: " + name),
+          "ttd card: Step over (F8) in the past, through the history");
+    if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+    seek_card(past);
+    if (step_out != nullptr) step_out->trigger();
+    const QJsonObject cu = card();
+    check(step_out != nullptr && said.count == 0 && cu.value("card_position").toBool() && count(cu) > past &&
+              m->debug_paused() && ttd->last_result().startsWith("Step out: " + name),
+          "ttd card: Step out (Ctrl+F8) in the past, through the history");
+    if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+    // Run to cursor (F4) in the past: the card's next instruction at the cursor, through the history; one never
+    // reached is said and nothing moves (no live run)
+    seek_card(past + 1);
+    const unsigned int cursor = (unsigned int)card().value("pc").toInteger();
+    seek_card(past);
+    said = Said();
+    const bool ran = ttd->step_forward("to", cursor);
+    const QJsonObject ct = card();
+    check(ran && said.count == 0 && ct.value("card_position").toBool() && count(ct) == past + 1 && m->debug_paused() &&
+              ttd->last_result().startsWith("Run to the cursor: " + name),
+          "ttd card: Run to cursor (F4) in the past, through the history");
+    if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+    said = Said();
+    const bool missed = ttd->step_forward("to", 0xFFFF);
+    check(missed && said.count == 1 && count(card()) == past + 1,
+          "ttd card: Run to cursor (F4) in the past never reached: said, nothing moved");
+    if (said.count == 1) printf("    (said: %s)\n", said.text.toUtf8().constData());
+    // The checks below start in the past too (their F7s replay the history, not live steps)
+    const uint64_t base = count(c2) > 2000 ? count(c2) - 2000 : count(c2);
+    seek_card(base);
+
     // Run Back without a card breakpoint: the core's refusal is said, nothing moved
     said = Said();
     ttd->run_back();
-    check(said.count == 1 && said.warning && !said.text.isEmpty() && count(card()) == count(c2),
+    check(said.count == 1 && said.warning && !said.text.isEmpty() && count(card()) == base,
           "ttd card: Run Back without a card breakpoint is refused, said");
     if (said.count == 1) printf("    (said: %s)\n", said.text.toUtf8().constData());
 
@@ -950,6 +1008,26 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         fields += m->dm->get_device(i)->device->get_device_fields().size();
     check(fields > 20, "devices tab has fields");
 
+    // A Next's own tabs (NextREG, MMU, Copper, Sprites, DMA, CTC / IM2): there on a Next only, each read whole
+    {
+        QTabWidget * side = tabs_with(window, "Devices");
+        QList<NextReportView *> views;  // in the tabs' order
+        for (int i = 0; side != nullptr && i < side->count(); i++)
+            if (auto * v = qobject_cast<NextReportView *>(side->widget(i))) views << v;
+        check(views.size() == 6, "next tabs: six views");
+        const bool next = !views.isEmpty() && views.front()->present();
+        bool shown = side != nullptr;
+        for (NextReportView * v : views) shown = shown && side->isTabVisible(side->indexOf(v)) == next;
+        check(shown, next ? "next tabs: shown on a Next" : "next tabs: hidden on another machine");
+        if (next) {
+            for (NextReportView * v : views) v->refresh();
+            check(views[0]->table() && views[0]->table()->rowCount() > 100, "next tabs: NextREG lists the registers");
+            check(views[1]->table() && views[1]->table()->rowCount() == 8, "next tabs: MMU lists the eight slots");
+            check(views[4]->fields()->topLevelItemCount() > 10, "next tabs: DMA fields");
+            check(views[5]->table() && views[5]->table()->rowCount() == 4, "next tabs: four CTC channels");
+        }
+    }
+
     window_check(window, cpu, check);
 
     // The window's scale: the views' font and their rows follow it, the keys step it, 100 % gives every size back
@@ -1076,6 +1154,40 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         check(made != 0 && ttd->delete_branch(made), "ttd: delete the branch (switches to the trunk first)");
         ttd->call("branches", {}, &list);
         check(list.value("branches").toArray().size() < 2, "ttd: one line of history again");
+        // Run Back honours breakpoint conditions (set as another client sets them: eCat has no condition editor)
+        check(TtdControls::run_back_condition({{0x8000, ""}}).empty() &&
+                  TtdControls::run_back_condition({{0x8000, "A == 5"}, {0x9000, ""}}) ==
+                      "(PC == #8000 && (A == 5)) || (PC == #9000)",
+              "ttd: Run Back's condition from the breakpoints'");
+        if (past >= 6) {
+            ttd->call("seek", {{"frame", std::to_string(past - 6)}}, nullptr);
+            ttd->poll(true);
+            const unsigned int pc = cpu->get_pc();
+            const std::vector<unsigned int> kept = cpu->get_breakpoints();
+            cpu->clear_breakpoints();
+            cpu->add_breakpoint(pc);
+            std::string error;
+            const auto inform = ttd->inform;
+            ttd->inform = [](const QString &, const QString &, bool) {};   // the answer is read from last_result
+            if (UnrealMachineSetBreakpointCondition(m, pc, "FRAME > 100000000", error)) {
+                ttd->call("seek", {{"frame", std::to_string(past)}}, nullptr);
+                ttd->poll(true);
+                const uint64_t at = frame();
+                ttd->run_back();
+                check(frame() == at && ttd->last_result().contains("no breakpoint"),
+                      "ttd: Run Back with a condition that never holds: nothing moved");
+                UnrealMachineSetBreakpointCondition(m, pc, "FRAME >= 0", error);
+                ttd->run_back();
+                check(frame() < at && cpu->get_pc() == pc && ttd->last_result().contains("at the breakpoint"),
+                      "ttd: Run Back with a condition that holds: at the breakpoint");
+                if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+            } else {
+                printf("  %-52s %s (%s)\n", "ttd: Run Back with a condition", "skipped", error.c_str());
+            }
+            ttd->inform = inform;
+            cpu->clear_breakpoints();
+            for (unsigned int a : kept) cpu->add_breakpoint(a);
+        }
         if (gs != nullptr) {
             // In the history, a few frames in: the card's own positions
             ttd->call("seek", {{"frame", std::to_string(past)}}, nullptr);

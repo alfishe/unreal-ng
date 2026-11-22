@@ -580,3 +580,500 @@ TEST(TTD_CardPositions_Sessions_Test, ACardPositionInASegmentEvictedToDisk)
     ASSERT_TRUE(r.Ok()) << r.message;
     ExpectAtCapture(b, oracle, "an evicted segment");
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The card's step over back (ReverseStepOverCard, the debuggers' Shift+F8 on a card's tab)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// One card boundary the recording's own run saw (GSCardTarget::ScanTrace): the card has run `count` instructions
+struct CardBoundary
+{
+    uint16_t pc = 0;
+    uint16_t sp = 0;
+    bool isReturn = false;   ///< the instruction at pc is a return (RET, RET cc, RETI, RETN)
+};
+
+/// a is at the stack level of b or above it (a stack that grew less), modulo 64K
+bool AtOrAbove(uint16_t a, uint16_t b)
+{
+    return static_cast<int16_t>(static_cast<uint16_t>(a - b)) >= 0;
+}
+
+/// Records @p frames frames with every card boundary in [from, to) traced
+std::map<uint64_t, CardBoundary> RecordTraced(Bench& b, int frames, uint64_t from, uint64_t to)
+{
+    std::map<uint64_t, CardBoundary> trace;
+    EXPECT_TRUE(b.ttd->StartRecording());
+    {
+        const GSCardTarget::ScanScope scan(*b.target, UINT64_MAX);
+        GSCardTarget* target = b.target;
+        b.target->ScanTrace([&trace, target, from, to](GeneralSoundCard* card, uint64_t count, uint16_t pc) {
+            if (count < from || count >= to)
+                return;
+            Z80CpuRegisters regs{};
+            card->cardRegisters(regs);
+            trace[count] = CardBoundary{pc, regs.sp, target->IsReturnAt(card, pc)};
+        });
+        b.emulator->RunNFrames(frames);
+    }
+    b.ttd->StopRecording();
+    return trace;
+}
+
+/// What a step over back from boundary n gives by the trace: n - 1, or, when the instruction at n - 1 is a return that
+/// lifted the stack to n's level, the newest boundary before it at that level (nullopt: not in the trace)
+std::optional<uint64_t> ExpectedOver(const std::map<uint64_t, CardBoundary>& trace, uint64_t n, bool& over)
+{
+    over = false;
+    const auto at = trace.find(n);
+    const auto ret = trace.find(n - 1);
+    if (at == trace.end() || ret == trace.end())
+        return std::nullopt;
+    if (!ret->second.isReturn || AtOrAbove(ret->second.sp, at->second.sp))
+        return n - 1;
+    over = true;
+    for (auto it = std::make_reverse_iterator(ret); it != trace.rend(); ++it)
+        if (AtOrAbove(it->second.sp, at->second.sp))
+            return it->first;
+    return std::nullopt;
+}
+
+class TTD_CardReverseStepOver_Test : public ::testing::TestWithParam<Card>
+{
+};
+}  // namespace
+
+/// The oracle: the recording's own trace of every card boundary (PC, SP) names where each step over back lands; for a
+/// short routine also single card steps back (one instruction back at a time until the stack is at the level again).
+/// The landing is the card position a direct seek gives, byte for byte, with the main CPU at that boundary. A plain
+/// instruction before is one step back
+TEST_P(TTD_CardReverseStepOver_Test, LandsWhereTheTraceAndSingleStepsBackSay)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, GetParam()));
+    ASSERT_TRUE(LoadCardRoutines(b));
+    const uint64_t perFrame = PerFrame(b);
+    const uint64_t from = b.Count() + perFrame + perFrame / 4;
+    const uint64_t to = from + perFrame / 2;
+    const std::map<uint64_t, CardBoundary> trace = RecordTraced(b, 4, from, to);
+    ASSERT_GT(trace.size(), 1000u);
+    ASSERT_EQ(trace.begin()->first, from);
+    ASSERT_EQ(trace.rbegin()->first, to - 1) << "a boundary per card instruction";
+    ASSERT_EQ(trace.size(), to - from) << "a boundary per card instruction";
+
+    // The boundaries after a lifting return: the shortest routine, the longest one, and one after a plain instruction
+    std::optional<uint64_t> shortest, longest, plain;
+    uint64_t shortestLength = UINT64_MAX, longestLength = 0;
+    size_t returns = 0;
+    for (uint64_t n = from + 1; n < to; n++)
+    {
+        bool over = false;
+        const std::optional<uint64_t> k = ExpectedOver(trace, n, over);
+        if (!k)
+            continue;
+        if (!over)
+        {
+            if (!plain && n > from + perFrame / 8)
+                plain = n;
+            continue;
+        }
+        returns++;
+        const uint64_t length = n - 1 - *k;
+        if (length < shortestLength)
+            shortest = n, shortestLength = length;
+        if (length > longestLength)
+            longest = n, longestLength = length;
+    }
+    ASSERT_TRUE(shortest && longest && plain) << "the card returns from its routines";
+    ASSERT_GT(returns, 0u);
+
+    for (const uint64_t n : {*plain, *shortest, *longest})
+    {
+        bool over = false;
+        const uint64_t expected = *ExpectedOver(trace, n, over);
+        const std::string what = std::string(CardName(GetParam())) + " from card instruction " + std::to_string(n);
+        // The landing as a direct seek gives it
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, expected).Ok()) << what;
+        const GSCardTarget::CardState direct = b.CardNow();
+        const ttd::TTDTimePoint directMain = b.ttd->CurrentPosition();
+
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, n).Ok()) << what;
+        const ttd::TTDCardMoveResult r = b.ttd->ReverseStepOverCard(b.cpu);
+        ASSERT_TRUE(r.Ok()) << what << ": " << r.message;
+        EXPECT_EQ(r.from, n) << what;
+        EXPECT_EQ(r.target, expected) << what;
+        EXPECT_EQ(r.position.instruction, expected) << what;
+        EXPECT_EQ(r.overCall, over) << what;
+        EXPECT_FALSE(r.callOutOfReach) << what;
+        EXPECT_EQ(r.skipped, over ? n - 1 - expected : 0u) << what;
+        EXPECT_EQ(r.position.pc, trace.at(expected).pc) << what;
+        ExpectSameCard(b.CardNow(), direct, what);
+        EXPECT_EQ(b.ttd->CurrentPosition().frame, directMain.frame) << what;
+        EXPECT_EQ(b.ttd->CurrentPosition().tInFrame, directMain.tInFrame) << what;
+        EXPECT_TRUE(b.ttd->AtCardPosition()) << what;
+    }
+
+    // Single steps back for the shortest routine: the return, then back until the stack is at the level again
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *shortest).Ok());
+    const uint16_t level = trace.at(*shortest).sp;
+    ASSERT_TRUE(b.ttd->StepCardInstructions(b.cpu, -1).Ok());
+    Z80CpuRegisters regs = b.RegistersOf(b.CardNow());
+    ASSERT_TRUE(b.target->IsReturnAt(b.card(), regs.pc)) << "the instruction before is the return";
+    ASSERT_FALSE(AtOrAbove(regs.sp, level));
+    uint64_t steps = 1;
+    while (!AtOrAbove(regs.sp, level) && steps <= shortestLength + 1)
+    {
+        ASSERT_TRUE(b.ttd->StepCardInstructions(b.cpu, -1).Ok());
+        regs = b.RegistersOf(b.CardNow());
+        steps++;
+    }
+    EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, *shortest - steps);
+    bool over = false;
+    EXPECT_EQ(*shortest - steps, *ExpectedOver(trace, *shortest, over)) << "single steps back and the trace agree";
+}
+
+INSTANTIATE_TEST_SUITE_P(Cards, TTD_CardReverseStepOver_Test, ::testing::Values(Card::GS, Card::NeoGS, Card::MultiSound),
+                         [](const ::testing::TestParamInfo<Card>& info) { return std::string(CardName(info.param)); });
+
+/// From a main position the level is the card's where it stands caught up to the main CPU's moment; a refusal (no
+/// history, no card, at the card's first instruction of the history) leaves the machine where it stood
+TEST(TTD_CardReverseStepOver_Edges_Test, FromAMainPositionAndTheRefusals)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, Card::NeoGS));
+    ASSERT_TRUE(LoadCardRoutines(b));
+    EXPECT_EQ(b.ttd->ReverseStepOverCard(b.cpu).status, ttd::TTDCardMoveResult::Status::NoHistory);
+    EXPECT_EQ(b.ttd->ReverseStepOverCard(DebugCpuId::MultiSoundGS).status, ttd::TTDCardMoveResult::Status::NoCard);
+    const uint64_t perFrame = PerFrame(b);
+    const uint64_t from = b.Count();
+    const std::map<uint64_t, CardBoundary> trace = RecordTraced(b, 3, from, from + perFrame * 3);
+
+    // A main position: the card's count there is the caught-up one; the step over back starts from it
+    const uint64_t first = b.ttd->GetEarliestRecordedFrame();
+    ASSERT_TRUE(b.ttd->SeekTo({first + 1, 1000}));
+    ASSERT_FALSE(b.ttd->AtCardPosition());
+    const ttd::TTDCardMoveResult r = b.ttd->ReverseStepOverCard(b.cpu);
+    ASSERT_TRUE(r.Ok()) << r.message;
+    bool over = false;
+    const std::optional<uint64_t> expected = ExpectedOver(trace, r.from, over);
+    ASSERT_TRUE(expected) << "card instruction " << r.from << " in the trace";
+    EXPECT_EQ(r.position.instruction, *expected);
+    EXPECT_EQ(r.overCall, over);
+    EXPECT_TRUE(b.ttd->AtCardPosition());
+
+    // The history's first card instruction: nothing before it, nothing moved
+    ASSERT_TRUE(b.ttd->SeekTo({first, 0}));
+    const uint64_t startCount = b.ttd->CardPositionNow(b.cpu).instruction;
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, startCount).Ok());
+    const GSCardTarget::CardState before = b.CardNow();
+    const ttd::TTDCardMoveResult early = b.ttd->ReverseStepOverCard(b.cpu);
+    EXPECT_EQ(early.status, ttd::TTDCardMoveResult::Status::AtStart) << early.message;
+    EXPECT_EQ(early.from, startCount);
+    ExpectSameCard(b.CardNow(), before, "at the history's start");
+    EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, startCount);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The card's step over / step out through the past (StepCardForward, the debuggers' F8 / Ctrl+F8 on a card's tab)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// Where a live card step (GSCardTarget::ArmStep / StepBoundary from a standing card) taken at boundary n ends, by
+/// the recording's trace: Over with `overTarget` at the first later boundary at it with SP at or above n's (none: the
+/// next boundary); Out at the first boundary after a return ran with SP at or above n's. nullopt: not before `end`
+std::optional<uint64_t> ExpectedForward(const std::map<uint64_t, CardBoundary>& trace, uint64_t n, bool over,
+                                        std::optional<uint16_t> overTarget, uint64_t end)
+{
+    const auto start = trace.find(n);
+    if (start == trace.end())
+        return std::nullopt;
+    const uint16_t sp = start->second.sp;
+    bool returning = start->second.isReturn;
+    uint16_t returnSp = sp;
+    for (auto it = std::next(start); it != trace.end() && it->first < end; ++it)
+    {
+        const CardBoundary& k = it->second;
+        if (over)
+        {
+            if (!overTarget || (k.pc == *overTarget && k.sp >= sp))
+                return it->first;
+            continue;
+        }
+        if (returning && k.sp > returnSp)
+            return it->first;
+        returning = k.sp >= sp && k.isReturn;
+        returnSp = k.sp;
+    }
+    return std::nullopt;
+}
+
+class TTD_CardStepForward_Test : public ::testing::TestWithParam<Card>
+{
+};
+}  // namespace
+
+/// The oracle: the recording's own trace of every card boundary (PC, SP) names where a live card step over / step out
+/// from each boundary would end; the step through the history lands there, byte for byte the card a direct seek gives.
+/// Over a CALL the card passes the routine (and a step over back from there returns to the CALL); a breakpoint inside
+/// it ends the step there first; out of the routine the card stands after its return. At the history's end the step
+/// goes no further (at_end: the debuggers step on live)
+TEST_P(TTD_CardStepForward_Test, LandsWhereALiveStepWouldAndStopsAtTheHistorysEnd)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, GetParam()));
+    ASSERT_TRUE(LoadCardRoutines(b));
+    const uint64_t perFrame = PerFrame(b);
+    const uint64_t from = b.Count() + perFrame;
+    const std::map<uint64_t, CardBoundary> trace = RecordTraced(b, 4, from, UINT64_MAX);
+    const ttd::TTDTimePoint end = b.ttd->SessionEndPosition();
+    ASSERT_TRUE(b.ttd->SeekTo({end.frame, 0}));
+    const uint64_t endCount = b.ttd->CardPositionNow(b.cpu).instruction;
+    ASSERT_GT(endCount, from + perFrame * 2);
+    const std::string name = CardName(GetParam());
+
+    // A CALL the card enters (its SP two lower at the next boundary, the next PC not after it), early in the window
+    std::optional<uint64_t> call, plain;
+    uint16_t callTarget = 0;
+    for (uint64_t n = from + 1; n + 1 < from + perFrame && (!call || !plain); n++)
+    {
+        const CardBoundary& at = trace.at(n);
+        const CardBoundary& next = trace.at(n + 1);
+        uint16_t target = 0;
+        const bool passes = b.target->StepOverTarget(b.card(), at.pc, target);
+        if (!call && passes && static_cast<uint16_t>(at.sp - 2) == next.sp && next.pc != target &&
+            ExpectedForward(trace, n, true, target, endCount))
+            call = n, callTarget = target;
+        if (!plain && !passes && !at.isReturn && n > from + 16)
+            plain = n;
+    }
+    ASSERT_TRUE(call && plain) << name << ": the card calls its routines";
+
+    auto check = [&](uint64_t n, bool over, uint64_t expected, const std::string& what) {
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, expected).Ok()) << what;
+        const GSCardTarget::CardState direct = b.CardNow();
+        const ttd::TTDTimePoint directMain = b.ttd->CurrentPosition();
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, n).Ok()) << what;
+        const ttd::TTDCardMoveResult r = b.ttd->StepCardForward(b.cpu, over);
+        ASSERT_TRUE(r.Ok()) << what << ": " << r.message;
+        EXPECT_EQ(r.from, n) << what;
+        EXPECT_EQ(r.position.instruction, expected) << what;
+        EXPECT_EQ(r.position.pc, trace.at(expected).pc) << what;
+        EXPECT_FALSE(r.historyEnd) << what;
+        EXPECT_FALSE(r.stoppedByBreakpoint) << what;
+        ExpectSameCard(b.CardNow(), direct, what);
+        EXPECT_EQ(b.ttd->CurrentPosition().frame, directMain.frame) << what;
+        EXPECT_EQ(b.ttd->CurrentPosition().tInFrame, directMain.tInFrame) << what;
+    };
+
+    // Step over the CALL: past the whole routine
+    const uint64_t overEnd = *ExpectedForward(trace, *call, true, callTarget, endCount);
+    EXPECT_GT(overEnd, *call + 1) << "the routine ran in between";
+    check(*call, true, overEnd, name + " over the CALL at " + std::to_string(*call));
+    // Back over it again: a step over back from there names the CALL when the routine's return came just before
+    bool backOver = false;
+    if (const std::optional<uint64_t> back = ExpectedOver(trace, overEnd, backOver); back)
+    {
+        const ttd::TTDCardMoveResult r = b.ttd->ReverseStepOverCard(b.cpu);
+        ASSERT_TRUE(r.Ok()) << r.message;
+        EXPECT_EQ(r.position.instruction, *back);
+        if (backOver)
+            EXPECT_EQ(*back, *call) << "over and back over the same routine";
+    }
+    // Step over a plain instruction: one instruction
+    check(*plain, true, *plain + 1, name + " over a plain instruction");
+    // Step out from inside the routine: after its return
+    const std::optional<uint64_t> outEnd = ExpectedForward(trace, *call + 1, false, std::nullopt, endCount);
+    ASSERT_TRUE(outEnd) << name << ": the routine returns in the history";
+    EXPECT_EQ(*outEnd, overEnd) << "out of the routine lands where over it does";
+    check(*call + 1, false, *outEnd, name + " out of the routine");
+
+    // A breakpoint at the routine's first instruction ends the step over there, as live
+    BreakpointManager* breakpoints = b.context->pDebugManager->GetBreakpointsManager(b.cpu);
+    BreakpointSpec spec;
+    spec.type = BRK_MEMORY;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = trace.at(*call + 1).pc;
+    std::string error;
+    const uint16_t id = breakpoints->AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    const uint32_t hitsBefore = breakpoints->GetBreakpointById(id)->hitCount;
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *call).Ok());
+    const ttd::TTDCardMoveResult hit = b.ttd->StepCardForward(b.cpu, true);
+    ASSERT_TRUE(hit.Ok()) << hit.message;
+    EXPECT_TRUE(hit.stoppedByBreakpoint);
+    EXPECT_EQ(hit.breakpointId, id);
+    EXPECT_EQ(hit.position.instruction, *call + 1);
+    EXPECT_EQ(breakpoints->GetBreakpointById(id)->hitCount, hitsBefore) << "the search counts no hits";
+    breakpoints->RemoveBreakpointByID(id);
+
+    // Near the history's end: a step that does not end before it goes to its end; there nothing moves
+    std::optional<uint64_t> late;
+    for (uint64_t n = endCount - 1; n > endCount - 4000 && !late; n--)
+        if (trace.count(n) && !ExpectedForward(trace, n, false, std::nullopt, endCount))
+            late = n;
+    if (late)
+    {
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *late).Ok());
+        const ttd::TTDCardMoveResult r = b.ttd->StepCardForward(b.cpu, false);
+        ASSERT_TRUE(r.Ok()) << r.message;
+        EXPECT_EQ(r.position.instruction, endCount) << name << ": step out from " << *late;
+        EXPECT_TRUE(r.historyEnd || r.position.instruction == endCount);
+    }
+    else
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, endCount).Ok());
+    const GSCardTarget::CardState atEnd = b.CardNow();
+    for (const bool over : {true, false})
+    {
+        const ttd::TTDCardMoveResult r = b.ttd->StepCardForward(b.cpu, over);
+        EXPECT_EQ(r.status, ttd::TTDCardMoveResult::Status::AtEnd) << r.message;
+        EXPECT_EQ(r.from, endCount);
+        ExpectSameCard(b.CardNow(), atEnd, "at the history's end");
+        EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, endCount);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Cards, TTD_CardStepForward_Test, ::testing::Values(Card::GS, Card::NeoGS, Card::MultiSound),
+                         [](const ::testing::TestParamInfo<Card>& info) { return std::string(CardName(info.param)); });
+
+/// From a main position the step starts where the card stands caught up to the main CPU's moment; no history, no
+/// card: refused, nothing moved
+TEST(TTD_CardStepForward_Edges_Test, FromAMainPositionAndTheRefusals)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, Card::GS));
+    ASSERT_TRUE(LoadCardRoutines(b));
+    EXPECT_EQ(b.ttd->StepCardForward(b.cpu, true).status, ttd::TTDCardMoveResult::Status::NoHistory);
+    EXPECT_EQ(b.ttd->StepCardForward(DebugCpuId::MultiSoundGS, true).status, ttd::TTDCardMoveResult::Status::NoCard);
+    const uint64_t perFrame = PerFrame(b);
+    const uint64_t from = b.Count();
+    const std::map<uint64_t, CardBoundary> trace = RecordTraced(b, 3, from, from + perFrame * 3);
+
+    const uint64_t first = b.ttd->GetEarliestRecordedFrame();
+    ASSERT_TRUE(b.ttd->SeekTo({first + 1, 1000}));
+    ASSERT_FALSE(b.ttd->AtCardPosition());
+    const ttd::TTDCardMoveResult r = b.ttd->StepCardForward(b.cpu, true);
+    ASSERT_TRUE(r.Ok()) << r.message;
+    ASSERT_TRUE(trace.count(r.from)) << "card instruction " << r.from << " in the trace";
+    uint16_t target = 0;
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, r.from).Ok());
+    const bool passes = b.target->StepOverTarget(b.card(), trace.at(r.from).pc, target);
+    const std::optional<uint64_t> expected =
+        ExpectedForward(trace, r.from, true, passes ? std::optional<uint16_t>(target) : std::nullopt, UINT64_MAX);
+    ASSERT_TRUE(expected);
+    EXPECT_EQ(r.position.instruction, *expected);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The card's run to the cursor through the history (RunCardToCursor, the debuggers' F4 on a card's tab in the past)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// The first boundary after n in the trace with the card's PC at pc (nullopt: none before end)
+std::optional<uint64_t> ExpectedCursor(const std::map<uint64_t, CardBoundary>& trace, uint64_t n, uint16_t pc, uint64_t end)
+{
+    for (auto it = trace.upper_bound(n); it != trace.end() && it->first < end; ++it)
+        if (it->second.pc == pc)
+            return it->first;
+    return std::nullopt;
+}
+
+class TTD_CardRunToCursor_Test : public ::testing::TestWithParam<Card>
+{
+};
+}  // namespace
+
+/// The oracle: the recording's own trace names the card's next boundary at the cursor; the run lands there, byte for
+/// byte the card a direct seek gives, the main CPU at that boundary. A card breakpoint on the way ends it first; a
+/// cursor the card never reaches answers no_hit and moves nothing (max_frames bounds the search: truncated); at the
+/// history's end nothing moves (at_end: the debuggers run on live)
+TEST_P(TTD_CardRunToCursor_Test, LandsAtTheCardsNextInstructionThereOrMovesNothing)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, GetParam()));
+    ASSERT_TRUE(LoadCardRoutines(b));
+    const uint64_t perFrame = PerFrame(b);
+    const uint64_t from = b.Count() + perFrame;
+    const std::map<uint64_t, CardBoundary> trace = RecordTraced(b, 4, from, UINT64_MAX);
+    const ttd::TTDTimePoint end = b.ttd->SessionEndPosition();
+    ASSERT_TRUE(b.ttd->SeekTo({end.frame, 0}));
+    const uint64_t endCount = b.ttd->CardPositionNow(b.cpu).instruction;
+    ASSERT_GT(endCount, from + perFrame * 2);
+    const std::string name = CardName(GetParam());
+
+    // From the outer loop's CALL (PC #4000): to the innermost routine, and to the outer loop's NOP after the calls
+    std::optional<uint64_t> start;
+    for (uint64_t n = from + 1; n < from + perFrame && !start; n++)
+        if (trace.count(n) && trace.at(n).pc == 0x4000)
+            start = n;
+    ASSERT_TRUE(start) << name << ": the card runs its outer loop";
+    for (const uint16_t cursor : {uint16_t(0x4020), uint16_t(0x4003), uint16_t(0x4000)})
+    {
+        const std::string what = name + " to #" + std::to_string(cursor);
+        const std::optional<uint64_t> expected = ExpectedCursor(trace, *start, cursor, endCount);
+        ASSERT_TRUE(expected) << what;
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *expected).Ok()) << what;
+        const GSCardTarget::CardState direct = b.CardNow();
+        const ttd::TTDTimePoint directMain = b.ttd->CurrentPosition();
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *start).Ok()) << what;
+        const ttd::TTDCardMoveResult r = b.ttd->RunCardToCursor(b.cpu, cursor);
+        ASSERT_TRUE(r.Ok()) << what << ": " << r.message;
+        EXPECT_EQ(r.from, *start) << what;
+        EXPECT_EQ(r.position.instruction, *expected) << what;
+        EXPECT_EQ(r.position.pc, cursor) << what;
+        EXPECT_FALSE(r.stoppedByBreakpoint) << what;
+        ExpectSameCard(b.CardNow(), direct, what);
+        EXPECT_EQ(b.ttd->CurrentPosition().frame, directMain.frame) << what;
+        EXPECT_EQ(b.ttd->CurrentPosition().tInFrame, directMain.tInFrame) << what;
+    }
+
+    // A breakpoint on the way (the middle routine's first instruction) ends it there first, counting no hits
+    BreakpointManager* breakpoints = b.context->pDebugManager->GetBreakpointsManager(b.cpu);
+    BreakpointSpec spec;
+    spec.type = BRK_MEMORY;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = 0x4010;
+    std::string error;
+    const uint16_t id = breakpoints->AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    const uint32_t hitsBefore = breakpoints->GetBreakpointById(id)->hitCount;
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *start).Ok());
+    const ttd::TTDCardMoveResult hit = b.ttd->RunCardToCursor(b.cpu, 0x4020);
+    ASSERT_TRUE(hit.Ok()) << hit.message;
+    EXPECT_TRUE(hit.stoppedByBreakpoint);
+    EXPECT_EQ(hit.breakpointId, id);
+    EXPECT_EQ(hit.position.instruction, *ExpectedCursor(trace, *start, 0x4010, endCount));
+    EXPECT_EQ(breakpoints->GetBreakpointById(id)->hitCount, hitsBefore) << "the search counts no hits";
+    breakpoints->RemoveBreakpointByID(id);
+
+    // Never reached: no_hit, the machine where it stood; one frame searched: truncated
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *start).Ok());
+    const GSCardTarget::CardState before = b.CardNow();
+    const ttd::TTDTimePoint beforeMain = b.ttd->CurrentPosition();
+    for (const uint64_t maxFrames : {uint64_t(1000), uint64_t(1)})
+    {
+        const ttd::TTDCardMoveResult miss = b.ttd->RunCardToCursor(b.cpu, 0x5000, maxFrames);
+        EXPECT_EQ(miss.status, ttd::TTDCardMoveResult::Status::NoHit) << miss.message;
+        EXPECT_FALSE(miss.Ok());
+        EXPECT_EQ(miss.truncated, maxFrames == 1) << miss.message;
+        EXPECT_NE(miss.message.find("#5000"), std::string::npos) << miss.message;
+        ExpectSameCard(b.CardNow(), before, "not reached");
+        EXPECT_EQ(b.ttd->CurrentPosition().frame, beforeMain.frame);
+        EXPECT_EQ(b.ttd->CurrentPosition().tInFrame, beforeMain.tInFrame);
+        EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, *start);
+    }
+
+    // At the history's end: nothing moves
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, endCount).Ok());
+    const GSCardTarget::CardState atEnd = b.CardNow();
+    const ttd::TTDCardMoveResult r = b.ttd->RunCardToCursor(b.cpu, 0x4020);
+    EXPECT_EQ(r.status, ttd::TTDCardMoveResult::Status::AtEnd) << r.message;
+    ExpectSameCard(b.CardNow(), atEnd, "at the history's end");
+    EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, endCount);
+}
+
+INSTANTIATE_TEST_SUITE_P(Cards, TTD_CardRunToCursor_Test, ::testing::Values(Card::GS, Card::NeoGS, Card::MultiSound),
+                         [](const ::testing::TestParamInfo<Card>& info) { return std::string(CardName(info.param)); });

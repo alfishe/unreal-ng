@@ -336,6 +336,15 @@ bool BreakpointSpecFromParams(Emulator& emulator, const ActionValue& value, Brea
     // stop false: the breakpoint only counts its hits
     if (const std::optional<bool> stop = BoolParam(value, "stop", error))
         spec.stop = *stop;
+    // hit_log: the hits a breakpoint that only counts records (0: none); hit_log_keep: first or last
+    if (const std::optional<uint32_t> log = UIntParam(value, "hit_log", BreakpointHitLog::kMaxCapacity, error))
+        spec.hitLog = *log;
+    if (const std::optional<std::string> keep = TextParam(value, "hit_log_keep"))
+        if (!BreakpointManager::ParseHitLogKeep(*keep, spec.hitLogKeep))
+        {
+            error = "hit_log_keep: first or last";
+            return false;
+        }
     if (!error.empty())
         return false;
     spec.note = TextParam(value, "note").value_or("");
@@ -463,7 +472,7 @@ void RegisterBreakpointActions(const std::function<void(const char*, const char*
     add("dbg.bp_add", "Add a breakpoint", debugger, ValueKind::Press,
         "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address "
         "(or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, "
-        "value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, stop? (false: only count), note?, group?",
+        "value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, stop? (false: only count), hit_log? (stop false: hits recorded, default 1000, 0 none), hit_log_keep? (first|last), note?, group?",
         "Add a breakpoint of any kind: memory, ports with a mask or a preset, ZX Next registers, the beam, the copper, "
         "the magic opcodes, a key.",
         [](const ActionCall& call) {

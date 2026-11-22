@@ -137,6 +137,42 @@ static void ReplyRun(const execution::RunReply& reply, std::function<void(const 
 
 // region Stepping Commands
 
+/// A counted run's number from the request body (`count`, or the route's alias): absent -> `fallback`; anything but a
+/// non-negative integer -> 400 with `key` named, and false. The range is RunControl's (1..max, refused above, never cut)
+static bool RunCountOrError(const std::shared_ptr<Json::Value>& json, std::initializer_list<const char*> keys,
+                            uint64_t fallback, uint64_t& count, std::function<void(const HttpResponsePtr&)>& callback)
+{
+    count = fallback;
+    if (!json)
+        return true;
+    for (const char* key : keys)
+    {
+        if (!json->isMember(key))
+            continue;
+        const Json::Value& value = (*json)[key];
+        if (value.isUInt64())
+        {
+            count = value.asUInt64();
+            return true;
+        }
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = std::string("'") + key + "' must be a positive integer";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return false;
+    }
+    return true;
+}
+
+/// The body's optional "breakpoints" (true: the first breakpoint ends the run; default false: skipped)
+static bool RunBreakpoints(const std::shared_ptr<Json::Value>& json)
+{
+    return json && json->isMember("breakpoints") && (*json)["breakpoints"].asBool();
+}
+
 namespace
 {
 /// The end of a step as the protocol's PauseEvent describes it (docs/inprogress/2026-09-28-debugger-model/
@@ -230,8 +266,15 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     if (bp.hitMode != BRK_HIT_ALWAYS)
         j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
     j["hit_count"] = static_cast<Json::UInt>(bp.hitCount);
-    // False: the breakpoint only counts its hits (BRK_COUNT_TAP)
+    // False: the breakpoint only counts its hits (BRK_COUNT_TAP); its per-hit record (GET .../breakpoints/{bp}/hits)
     j["stop"] = bp.tapSink != BRK_COUNT_TAP;
+    if (bp.tapSink == BRK_COUNT_TAP)
+    {
+        Json::Value log(Json::objectValue);
+        log["capacity"] = static_cast<Json::UInt>(bp.hitLogCapacity);
+        log["keep"] = BreakpointManager::HitLogKeepName(bp.hitLogKeep);
+        j["hit_log"] = bp.hitLogCapacity ? log : Json::Value(Json::nullValue);
+    }
     if (bp.condition)
     {
         // Counted on every match; hit_count counts the matches whose condition held
@@ -252,23 +295,6 @@ std::string BreakpointPageText(const Json::Value& value)
     if (value.isObject())
         return value.get("kind", "").asString() + (value.isMember("page") ? value["page"].asString() : std::string());
     return value.asString();
-}
-
-Json::Value StepStopJson(const Emulator& emulator)
-{
-    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
-    Json::Value json;
-    json["cpu"] = DebugCpuName(stop.cpu);
-    json["reason"] = stop.hit ? "breakpoint" : "step";
-    if (stop.hit)
-    {
-        json["breakpoint_id"] = stop.breakpointId;
-        json["address"] = stop.address;
-        json["access"] = BreakpointHitKindName(stop.kind);
-        if (stop.cpu != DebugCpuId::Main)
-            json["cpu_pc"] = stop.cpuPc;
-    }
-    return json;
 }
 
 /// A step route with ?cpu= (or the body's "cpu") naming a card CPU: that CPU's step (RunControl::CardStep); true
@@ -331,52 +357,15 @@ void EmulatorAPI::stepsNow(const HttpRequestPtr& req, std::function<void(const H
     if (ReplyCardStep(emulator, req, callback, "in", true))
         return;
 
-    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
-    auto* ctx = emulator->GetContext();
-    if (ctx && ctx->IsRunControlClaimed() && !webapi_session::HoldsControl(req, ctx))
-    {
-        auto state = ctx->GetRunControlState();
-        Json::Value error;
-        error["error"] = "Run-control held";
-        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
     try
     {
-        auto json = req->getJsonObject();
-        unsigned count = json && json->isMember("count") ? (*json)["count"].asUInt() : 1;
-        if (count < 1) count = 1;
-        if (count > 100000) count = 100000; // Safety limit
-        
-        // Execute N instructions; a breakpoint ends the run early (the reply's "stop" says which)
-        const unsigned executed = emulator->RunNCPUCycles(count, false);
-        if (ReplyIfControlTakenBack(emulator, callback))
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule, 1..kMaxRunSteps (more is refused,
+        // never cut) and the answer (executed, frames_run, tstates_run, frame, t, stop); a breakpoint ends the run
+        uint64_t count = 1;
+        if (!RunCountOrError(req->getJsonObject(), {"count"}, 1, count, callback))
             return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Executed " + std::to_string(executed) + " instructions";
-        ret["count"] = count;
-        ret["executed"] = executed;
-        ret["stop"] = StepStopJson(*emulator);
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        ReplyRun(execution::RunControl(emulator).Steps(webapi_session::RequesterOf(req, emulator->GetContext()), count),
+                 callback);
     }
     catch (const std::exception& e)
     {
@@ -547,31 +536,15 @@ void EmulatorAPI::runTStatesNow(const HttpRequestPtr& req, std::function<void(co
     
     try
     {
+        // RunControl: 1..kMaxRunTStates on the direct-run timeline (slices end where one run ends), more is refused;
+        // the answer says what ran (tstates_run, frames_run, frame, t, stop)
         auto json = req->getJsonObject();
-        unsigned tstates = json && json->isMember("tstates") ? (*json)["tstates"].asUInt() : 1;
-        if (tstates < 1) tstates = 1;
-        if (tstates > 10000000) tstates = 10000000; // Safety limit
-        
-        emulator->RunTStates(tstates);
-        if (ReplyIfControlTakenBack(emulator, callback))
+        uint64_t tstates = 1;
+        if (!RunCountOrError(json, {"tstates", "count"}, 1, tstates, callback))
             return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Ran " + std::to_string(tstates) + " t-states";
-        ret["tstates"] = tstates;
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        ReplyRun(execution::RunControl(emulator).RunTStates(webapi_session::RequesterOf(req, emulator->GetContext()),
+                                                            tstates, RunBreakpoints(json)),
+                 callback);
     }
     catch (const std::exception& e)
     {
@@ -741,20 +714,13 @@ void EmulatorAPI::runFramesNow(const HttpRequestPtr& req, std::function<void(con
     try
     {
         auto json = req->getJsonObject();
-        unsigned count = 1;
-        if (json)
+        // Accept both "count" (documented) and "frames" (common guess) keys
+        if (json && !json->isMember("count") && !json->isMember("frames"))
         {
-            // Accept both "count" (documented) and "frames" (common guess) keys
-            if (json->isMember("count"))
+            for (const std::string& key : json->getMemberNames())
             {
-                count = (*json)["count"].asUInt();
-            }
-            else if (json->isMember("frames"))
-            {
-                count = (*json)["frames"].asUInt();
-            }
-            else if (!json->getMemberNames().empty())
-            {
+                if (key == "breakpoints")
+                    continue;
                 // Body present but neither key found - reject instead of silently running 1 frame
                 // (silent default caused "blank screen" confusion: users passed a mistyped key,
                 // only 1 frame ran, and the loaded program had not redrawn the screen yet)
@@ -769,29 +735,14 @@ void EmulatorAPI::runFramesNow(const HttpRequestPtr& req, std::function<void(con
                 return;
             }
         }
-        if (count < 1) count = 1;
-        if (count > 10000) count = 10000; // Safety limit
-        
-        emulator->RunNFrames(count);
-        if (ReplyIfControlTakenBack(emulator, callback))
+        uint64_t count = 1;
+        if (!RunCountOrError(json, {"count", "frames"}, 1, count, callback))
             return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Ran " + std::to_string(count) + " frames";
-        ret["count"] = count;
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl: 1..kMaxRunFrames on the direct-run timeline (split-independent), more is refused, never cut;
+        // the answer says what ran (frames_run, tstates_run, frame, t, stop)
+        ReplyRun(execution::RunControl(emulator).RunFrames(webapi_session::RequesterOf(req, emulator->GetContext()),
+                                                           count, RunBreakpoints(json)),
+                 callback);
     }
     catch (const std::exception& e)
     {
@@ -1346,6 +1297,25 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
             return;
         }
         spec.stop = body["stop"].asBool();
+    }
+    // hit_log: the hits a breakpoint that only counts records (frame, t, pc; 0: none; default 1000); hit_log_keep:
+    // first (default) or last
+    if (body.isMember("hit_log"))
+    {
+        uint32_t capacity = 0;
+        if (!ParseJsonUInt(body["hit_log"], BreakpointHitLog::kMaxCapacity, capacity))
+        {
+            badRequest("'hit_log' must be 0.." + std::to_string(BreakpointHitLog::kMaxCapacity));
+            return;
+        }
+        spec.hitLog = capacity;
+    }
+    if (body.isMember("hit_log_keep") &&
+        (!body["hit_log_keep"].isString() ||
+         !BreakpointManager::ParseHitLogKeep(body["hit_log_keep"].asString(), spec.hitLogKeep)))
+    {
+        badRequest("'hit_log_keep' must be first or last");
+        return;
     }
     // Condition: an expression in the Unreal language (condition_dialect "c": C precedence, decimal numbers)
     if (body.isMember("condition"))

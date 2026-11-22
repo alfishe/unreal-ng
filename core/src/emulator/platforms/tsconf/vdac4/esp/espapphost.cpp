@@ -1,8 +1,10 @@
 #include "espapphost.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -384,8 +386,54 @@ void EspAppHost::Reap()
                  _tasks.end());
 }
 
+#ifdef UNREAL_XTENSA_PROFILE
+namespace
+{
+uint64_t ProfileNs()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
+}
+}  // namespace
+
+void EspAppHost::DumpProfile()
+{
+    const char* prefix = std::getenv("UNREAL_XTENSA_PROFILE");
+    if (!prefix || !*prefix)
+        return;
+    const uint64_t second = _nowUs / 1'000'000;
+    char path[1024];
+    std::snprintf(path, sizeof(path), "%s.%p.%05llu.host", prefix, static_cast<void*>(this),
+                  static_cast<unsigned long long>(second));
+    if (FILE* f = std::fopen(path, "w"))
+    {
+        const Profile& p = _profile;
+        std::fprintf(f, "us %llu instructions %llu\n", static_cast<unsigned long long>(_nowUs),
+                     static_cast<unsigned long long>(_instructions));
+        std::fprintf(f, "budget %llu %llu used %llu %llu\n", static_cast<unsigned long long>(p.budget[0]),
+                     static_cast<unsigned long long>(p.budget[1]), static_cast<unsigned long long>(p.used[0]),
+                     static_cast<unsigned long long>(p.used[1]));
+        std::fprintf(f, "runs %llu run_ns %llu trap_ns %llu switch_ns %llu pcm_ns %llu advance_ns %llu\n",
+                     static_cast<unsigned long long>(p.runs), static_cast<unsigned long long>(p.runNs),
+                     static_cast<unsigned long long>(p.trapNs), static_cast<unsigned long long>(p.switchNs),
+                     static_cast<unsigned long long>(p.pcmNs), static_cast<unsigned long long>(p.advanceNs));
+        for (const auto& kv : p.traps)
+            std::fprintf(f, "trap %08x %llu %llu\n", kv.first, static_cast<unsigned long long>(kv.second.first),
+                         static_cast<unsigned long long>(kv.second.second));
+        std::fclose(f);
+    }
+    std::snprintf(path, sizeof(path), "%s.%p.%05llu.blocks", prefix, static_cast<void*>(this),
+                  static_cast<unsigned long long>(second));
+    _cpu->DumpProfile(path);
+}
+#endif
+
 void EspAppHost::Advance(uint64_t nowUs)
 {
+#ifdef UNREAL_XTENSA_PROFILE
+    const uint64_t advanceStart = ProfileNs();
+#endif
     while (_nowUs < nowUs)
     {
         const uint64_t sliceEnd = std::min<uint64_t>(nowUs, (_nowUs / 1000 + 1) * 1000);
@@ -406,13 +454,36 @@ void EspAppHost::Advance(uint64_t nowUs)
 
         const uint64_t budget = (sliceEnd - _nowUs) * _mhz;
         Task* first = nullptr;
+#ifdef UNREAL_XTENSA_PROFILE
+        _profileCore = 0;
+        _profile.budget[0] += budget;
+        _profile.budget[1] += budget;
+#endif
         RunCore(budget, first, nullptr);
         Task* second = nullptr;
+#ifdef UNREAL_XTENSA_PROFILE
+        _profileCore = 1;
+#endif
         RunCore(budget, second, first);
         _sliceUsedCycles = 0;
 
+#ifdef UNREAL_XTENSA_PROFILE
+        const uint64_t pcmStart = ProfileNs();
+#endif
         PcmPlay(_nowUs, sliceEnd);
+#ifdef UNREAL_XTENSA_PROFILE
+        _profile.pcmNs += ProfileNs() - pcmStart;
+#endif
         _nowUs = sliceEnd;
+#ifdef UNREAL_XTENSA_PROFILE
+        if (_nowUs >= _profileNextUs)
+        {
+            _profile.advanceNs += ProfileNs() - advanceStart;
+            DumpProfile();
+            _profile.advanceNs -= ProfileNs() - advanceStart;
+            _profileNextUs = (_nowUs / 1'000'000 + 1) * 1'000'000;
+        }
+#endif
 
         // An app that hears nothing from the Z80 for 5 s is stopped (module_app.cpp:451-456)
         // (inside the firmware model, Vdac4EspFirmware owns that rule: ports.appDone is set there)
@@ -423,6 +494,9 @@ void EspAppHost::Advance(uint64_t nowUs)
             StopApp();
         }
     }
+#ifdef UNREAL_XTENSA_PROFILE
+    _profile.advanceNs += ProfileNs() - advanceStart;
+#endif
 }
 
 void EspAppHost::RunCore(uint64_t budget, Task*& running, const Task* other)
@@ -431,6 +505,9 @@ void EspAppHost::RunCore(uint64_t budget, Task*& running, const Task* other)
     Task* task = PickReady(other);
     while (task != nullptr && used < budget)
     {
+#ifdef UNREAL_XTENSA_PROFILE
+        uint64_t mark = ProfileNs();
+#endif
         _cpu->LoadState(task->cpu);
         if (task->hasPending)
         {
@@ -441,7 +518,17 @@ void EspAppHost::RunCore(uint64_t budget, Task*& running, const Task* other)
         while (used < budget)
         {
             _sliceUsedCycles = used;
+#ifdef UNREAL_XTENSA_PROFILE
+            const uint64_t runStart = ProfileNs();
+            _profile.switchNs += runStart - mark;
+#endif
             const IEspCpu::Result result = _cpu->Run(budget - used);
+#ifdef UNREAL_XTENSA_PROFILE
+            mark = ProfileNs();
+            _profile.runNs += mark - runStart;
+            ++_profile.runs;
+            _profile.used[_profileCore] += result.executed;
+#endif
             used += result.executed;
             _instructions += result.executed;
             _sliceUsedCycles = used;
@@ -449,7 +536,18 @@ void EspAppHost::RunCore(uint64_t budget, Task*& running, const Task* other)
                 break;
             if (result.reason == IEspCpu::Stop::Trap)
             {
+#ifdef UNREAL_XTENSA_PROFILE
+                const bool handled = HandleTrap(*task, result.pc);
+                const uint64_t trapEnd = ProfileNs();
+                auto& trap = _profile.traps[result.pc];
+                ++trap.first;
+                trap.second += trapEnd - mark;
+                _profile.trapNs += trapEnd - mark;
+                mark = trapEnd;
+                if (!handled)
+#else
                 if (!HandleTrap(*task, result.pc))
+#endif
                 {
                     live = task->state != TaskState::Done;
                     break;
@@ -462,6 +560,9 @@ void EspAppHost::RunCore(uint64_t budget, Task*& running, const Task* other)
         }
         if (live)
             _cpu->SaveState(task->cpu);
+#ifdef UNREAL_XTENSA_PROFILE
+        _profile.switchNs += ProfileNs() - mark;
+#endif
         running = task;
         if (task->state == TaskState::Ready)
         {

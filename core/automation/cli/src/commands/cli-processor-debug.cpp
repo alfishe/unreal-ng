@@ -17,6 +17,7 @@
 #include <debugger/listing/listingparser.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/execution/runcontrol.h>
 #include <emulator/memory/memory.h>
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
@@ -24,6 +25,7 @@
 #include <cctype>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 
 // HandleStepIn - lines 879-1033
 
@@ -699,6 +701,53 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
 
 // Atomic Stepping Commands
 
+namespace
+{
+/// A run count 1..max from the command line; else the refusal (RunCountRefusal) and false: nothing runs, nothing is cut
+bool ParseRunCount(const ClientSession& session, const std::string& text, const char* unit, uint64_t max,
+                   uint64_t& count)
+{
+    try
+    {
+        size_t used = 0;
+        if (text.empty() || text[0] == '-')
+            throw std::invalid_argument(text);
+        count = std::stoull(text, &used);
+        if (used != text.size())
+            throw std::invalid_argument(text);
+    }
+    catch (...)
+    {
+        session.SendResponse("Error: Invalid count '" + text + "'. Must be a number between 1 and " +
+                             std::to_string(max));
+        return false;
+    }
+    if (count < 1 || count > max)
+    {
+        session.SendResponse("Error: " + execution::RunCountRefusal(unit, count, max));
+        return false;
+    }
+    return true;
+}
+
+/// What a counted run did, in the planes' words (RunOutcomeText), then PC and SP
+void SendRunOutcome(const ClientSession& session, Emulator& emulator, const char* unit, uint64_t requested,
+                    const Emulator::DirectRunResult& result)
+{
+    const execution::RunOutcome outcome =
+        execution::RunOutcomeOf(unit, requested, result.frames, result.tstates, result.reached);
+    std::stringstream ss;
+    ss << execution::RunOutcomeText(emulator, outcome) << CLIProcessor::NEWLINE;
+    if (Z80State* z80 = emulator.GetZ80State())
+    {
+        ss << std::hex << std::uppercase << std::setfill('0');
+        ss << "PC: $" << std::setw(4) << z80->pc << "  SP: $" << std::setw(4) << z80->sp << CLIProcessor::NEWLINE;
+    }
+    session.SendResponse(ss.str());
+}
+}  // namespace
+
+
 void CLIProcessor::HandleRunTStates(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -719,37 +768,19 @@ void CLIProcessor::HandleRunTStates(const ClientSession& session, const std::vec
 
     if (args.empty())
     {
-        session.SendResponse("Usage: run_tstates <count> - Run N t-states (1 t-state = 1 ULA step / 2 pixels)");
+        session.SendResponse("Usage: run_tstates <count> [breakpoints] - Run N t-states (1 t-state = 1 ULA step / 2 "
+                             "pixels; 1.." + std::to_string(execution::kMaxRunTStates) + ", on the run_frames timeline)");
         return;
     }
 
-    unsigned count = 0;
-    try
-    {
-        count = static_cast<unsigned>(std::stoul(args[0]));
-        if (count < 1 || count > 10000000)
-        {
-            session.SendResponse("Error: T-state count must be between 1 and 10000000");
-            return;
-        }
-    }
-    catch (...)
-    {
-        session.SendResponse("Error: Invalid count. Must be a number between 1 and 10000000");
+    uint64_t count = 0;
+    if (!ParseRunCount(session, args[0], "tstates", execution::kMaxRunTStates, count))
         return;
-    }
+    const bool breakpoints = args.size() > 1 && (args[1] == "breakpoints" || args[1] == "bp");
 
-    emulator->RunTStates(count);
-
-    Z80State* z80 = emulator->GetZ80State();
-    std::stringstream ss;
-    ss << "Ran " << count << " t-states" << NEWLINE;
-    if (z80)
-    {
-        ss << std::hex << std::uppercase << std::setfill('0');
-        ss << "PC: $" << std::setw(4) << z80->pc << "  SP: $" << std::setw(4) << z80->sp << NEWLINE;
-    }
-    session.SendResponse(ss.str());
+    // On the direct-run timeline, as every plane's run_tstates: slices end where one run ends
+    const Emulator::DirectRunResult result = emulator->RunTStates(count, !breakpoints, /*onTimeline=*/true);
+    SendRunOutcome(session, *emulator, "tstates", count, result);
 }
 
 void CLIProcessor::HandleRunToScanline(const ClientSession& session, const std::vector<std::string>& args)
@@ -968,37 +999,18 @@ void CLIProcessor::HandleRunFrames(const ClientSession& session, const std::vect
 
     if (args.empty())
     {
-        session.SendResponse("Usage: run_frames <count> - Run N video frames");
+        session.SendResponse("Usage: run_frames <count> [breakpoints] - Run N video frames (1.." +
+                             std::to_string(execution::kMaxRunFrames) + "; split-independent: 30 + 70 == 100)");
         return;
     }
 
-    unsigned count = 0;
-    try
-    {
-        count = static_cast<unsigned>(std::stoul(args[0]));
-        if (count < 1 || count > 10000)
-        {
-            session.SendResponse("Error: Frame count must be between 1 and 10000");
-            return;
-        }
-    }
-    catch (...)
-    {
-        session.SendResponse("Error: Invalid count. Must be a number between 1 and 10000");
+    uint64_t count = 0;
+    if (!ParseRunCount(session, args[0], "frames", execution::kMaxRunFrames, count))
         return;
-    }
+    const bool breakpoints = args.size() > 1 && (args[1] == "breakpoints" || args[1] == "bp");
 
-    emulator->RunNFrames(count);
-
-    Z80State* z80 = emulator->GetZ80State();
-    std::stringstream ss;
-    ss << "Ran " << count << " frames" << NEWLINE;
-    if (z80)
-    {
-        ss << std::hex << std::uppercase << std::setfill('0');
-        ss << "PC: $" << std::setw(4) << z80->pc << "  SP: $" << std::setw(4) << z80->sp << NEWLINE;
-    }
-    session.SendResponse(ss.str());
+    const Emulator::DirectRunResult result = emulator->RunNFrames(static_cast<unsigned>(count), !breakpoints);
+    SendRunOutcome(session, *emulator, "frames", count, result);
 }
 
 // Run N CPU cycles (instructions)
@@ -1030,15 +1042,16 @@ void CLIProcessor::HandleRunNCycles(const ClientSession& session, const std::vec
     try
     {
         count = static_cast<unsigned>(std::stoul(args[0]));
-        if (count < 1 || count > 100000)
+        if (count < 1 || count > execution::kMaxRunSteps)
         {
-            session.SendResponse("Error: Cycle count must be between 1 and 100000");
+            session.SendResponse("Error: " + execution::RunCountRefusal("instructions", count, execution::kMaxRunSteps));
             return;
         }
     }
     catch (...)
     {
-        session.SendResponse("Error: Invalid count. Must be a number between 1 and 100000");
+        session.SendResponse("Error: Invalid count. Must be a number between 1 and " +
+                             std::to_string(execution::kMaxRunSteps));
         return;
     }
 

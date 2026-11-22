@@ -504,6 +504,12 @@ protected:
     void ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage, uint8_t flip = 0);
     void WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage, uint8_t flip = 0);
 
+private:
+    /// The body of ReadDebugEffects, forced inline into MemoryReadDebug (memory.cpp only): the classic machines'
+    /// debug read stays one function per access. The write keeps its tail call (inlining it too gained nothing)
+    __forceinline void ReadDebugEffectsInline(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage,
+                                              uint8_t flip);
+
 public:
 
     /// The inner access (Fast / Debug, contended or not), then the bus overlay

@@ -700,7 +700,10 @@ r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run earl
 -- r = {executed, stopped, breakpoint_id, address, access}: an execution breakpoint stops
 -- before its instruction, a memory / port one after it (.recipe/analysis/breakpoints-and-events.md)
 emu:run_frame()          -- Run exactly one video frame
-emu:run_frames(count)    -- Run exactly N video frames
+r = emu:run_frames(count [, skip_breakpoints = true])  -- N video frames on the run timeline (split-independent)
+r = emu:run_tstates(count [, skip_breakpoints = true]) -- N t-states on the same timeline
+-- r = {count, unit, frames_run, tstates_run, frame, t, stop = {cpu, reason = done|breakpoint|stopped, ...}, message}
+-- (command-interface.md, Counted runs)
 
 -- Registers (global functions, the bound or selected emulator)
 regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t
@@ -871,9 +874,14 @@ id = gs_on_dac_fetch(fn, {mode="sync"})  -- a card event callback (hit.arg its d
                                -- MultiSound's
 id, why = bp_chipreg("ay", 7, {value=0x3F, vmask=0x3F})  -- a sound chip register write by the main CPU: ay, fm,
                                -- saa, opl4, opl4wave, dac, cbl; to= a range end, unit= one chip of the kind
-bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
+bp_reset_hits(id[, cpu])       -- hit counter back to 0 and the per-hit record emptied (no id: all)
 bp(0x0038, {stop=false})       -- only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+bp(0x0038, {stop=false, hit_log=100, hit_log_keep="last"})  -- ... and records the newest 100 hits (default the first
+                               -- 1000; 0 none)
 bp_hits(id)                    -- the hit count; -1 for an unknown id
+r = bp_hit_log(id, {cpu=, from=, limit=})  -- the per-hit record, as GET .../breakpoints/{bp_id}/hits: r.hit_count,
+                               -- r.log {capacity, keep, total, stored, dropped, oldest}, r.hits[i] {index, hit,
+                               -- frame, t, pc, address, value, kind, cpu_time}, r.more / r.next_from
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
@@ -1271,6 +1279,16 @@ local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit =
 -- each answers the TTDControl reply as a table: cpu, status, reached, from, target, card, frame, tinframe, ...
 ttd_card_seek("gs", 123456)          --> the card at its instruction count 123456; the main CPU follows by replay
 ttd_card_step("gs", -5)              --> 5 card instructions back (positive n: forward; default 1)
+ttd_card_step_over("gs")             --> the card's step over through the history (as a live card step would go;
+                                     --    its breakpoints end it first: breakpoint = {...}; history_end = true:
+                                     --    not ended in the history, the card at its end; at the end: "at_end")
+ttd_card_step_out("gs")              --> the card's step out through the history (the same reply)
+ttd_card_run_to_cursor("gs", 0x4020) --> the card's run to the cursor through the history: its next instruction at
+                                     --    #4020 (hit = true, cursor); its breakpoints first (hit = false); not
+                                     --    reached (in the history or in max_frames, the 3rd argument, default
+                                     --    1000): reached = false, status "no_hit", nothing moved
+ttd_card_reverse_step_over("gs")     --> one card instruction back, or past a whole card routine to its CALL / RST
+                                     --    when that instruction is its return: over_call, skipped, text
 ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
                                      --    breakpoint = {id, kind, address}; status "no_hit" / "no_breakpoints"
 ttd_card_position("gs")              --> { cpu, known, instruction, pc, card_position, caught_up,
@@ -1280,6 +1298,8 @@ ttd_card_position()                  --> every card CPU (an array)
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 -- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
 local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
+-- condition: only hits where a breakpoint condition holds at the instruction's start
+local hit = ttd_reverse_continue({0x8200}, { condition = "A == 5 && M(#5C78) > 3" })
 ```
 
 **Reverse search:**
@@ -1477,8 +1497,23 @@ local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset =
 local now = ttd_memory_at{space = "cpu", offset = 0x5C00, length = 64}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
+-- memory_at names its moment: moment = "frame_start" (before the frame's first instruction) | "inside_frame" | "now",
+-- at_tinframe (where the CPU stood), moment_text
+
+-- Memory over many frames in one walk of the checkpoints (no seek per frame); every row equals memory_at there
+local s = ttd_memory_series{ranges = {"0x5C78:2", {space = "ram", page = 5, offset = 0x1B00, length = 32}},
+                            from_frame = 100, to_frame = 400, step = 10, changes_only = true, format = "hex"}
+-- { rows = { {frame = 100, exact = true, at_tinframe = 7, data = {"6500", "..."}}, {frame = 110, changed = {0}, ...} },
+--   row_count = ..., frames_read = 31, truncated = false, ... }   -- frames = {F, ...} instead of from/to/step;
+--   limit (rows), max_bytes; truncated with next_from_frame past them
+-- A past frame's screen, the machine put back
+local shot = ttd_screen_at{frame = 150}                       -- the final picture: data (PNG, base64), mime
+local attrs = ttd_screen_at{frame = 150, which = "shadow", format = "attributes", encoding = "hex"}
+-- shot.shown = { at_start = {screen = "normal", page = 5, p7ffd = 16}, at_end = {...}, changed_during_frame = false,
+--                flips = {} }
 
 local timeline = ttd_timeline{min_phase_ms = 500}   -- also from_frame, to_frame, buckets, limit, bucket_size, ports
+local saved = ttd_timeline{file = "/path/run.ttd", branch = "1"}   -- a file or a recording's folder, not loaded
 -- { from_frame = ..., to_frame = ..., phases = { {frame_start = ..., frame_end = ...,
 --   tags = {"halt", "input"}, executed = ..., keys = {"A"}, busiest_frame = ..., ...}, ... },
 --   events = {...}, missing = { {fact = "writes", reason = "the write journal is off"} }, ... }
@@ -1524,6 +1559,9 @@ local d = ttd_diff{from_frame = 1201, to_frame = 1204, sections = "cpu,memory"}
 --   memory = {changed = 2, pages = 1, ranges = { {region = "ram", page = 2, offset = 0x2000, address = 0xA000,
 --   length = 1, changed = 1, before = {3}, after = {6}, last_write = {frame = 1203, tinframe = 71, pc = 0x800C,
 --   address = 0xA000, text = "inc (hl)"}}, ... }, more = 0}, writer_searches = 2, ms = ... }
+-- With sections "devices": devices = {changed = { {name = "ay-socket.ts", bytes = 325, changed = 9, counters_only = false,
+--   fields = { {name = "ay0.R8", offset = 9, size = 1, changed = 1, before = 0, after = 15},
+--   {name = "ay0.tone_a.counter", ..., counter = true}, ... }}, ... }, same = 4, counters_only = 2}
 
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,

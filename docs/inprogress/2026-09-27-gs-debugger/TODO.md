@@ -1,5 +1,7 @@
 # TODO — GS/NeoGS card-CPU debugger
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Requirements rev. 3 and design rev. 2 (2026-09-28): NeoGS in master, NeoGS target moved to phases 1-2, front-ends handed to the [debugger model](../2026-09-28-debugger-model/). (#44, the thread-safe GS control path, landed in `8dacbc82`.)
 
 Plan: [PLAN.md](../PLAN.md) #45 (T2).
@@ -161,7 +163,12 @@ fixed RAM window, 3: high ROM at `#C000`).
    - Done: the device history `<slot>.commands` (every plane through the history verbs; the stream file is the
      export), fed by LLE, LW and NeoGS, owned by `SoundManager` / the MultiSound card; four anomalies;
      `GSCommandLog_Test`, `BM_GSCommandLog_HostTraffic_*`, MCP `test_the_command_log_is_a_device_history`. Design
-     §6.3 "As built". Left: TTD seek cut-off (D3), card-side hooks, block destinations of uploads.
+     §6.3 "As built". Left: card-side hooks, block destinations of uploads.
+   - D3 done (2026-11-20, worktree `scratch/wt-ttd-d3`): the log follows time travel (`history::ITimeFollower`,
+     `DeviceHistory::Rewind` / `Truncate`): a move holds the entries after the moment back, a move forward brings
+     them back, a live run from the past logs anew, a branch switch keeps the shared past; the decoder follows the
+     machine (frame-start marks, replay decodes without logging). Design §6.3 "TTD (D3)"; tests
+     `GSCommandLog_Test.Ttd*`, `DeviceHistory_Test.Rewind*` / `Truncate*`.
 4. [x] **Protocol state and send with decoding (F3, F6).**
    - Done: `GSProtocolState` from the command log's decoder (`protocol` in the GS report), `GSHostDriver` (the
      debugger's send: each byte when the mailbox allows it, replies read, decoded; TTD input `GSReadData`), CLI /
@@ -275,7 +282,7 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
 13. [ ] **Card debugger** per [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md) (GS, then
     NeoGS): two Qt windows paused together, its acceptance checklists.
 
-## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), not landed
+## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 
 Owner decision 2026-11-17: either CPU is stepped both ways; the other CPU is computed by replay from the nearest
 checkpoint; the main CPU is shown at its last completed instruction plus a T offset; a run first lets the main CPU
@@ -294,10 +301,55 @@ reach its boundary.
   `OpenApiTTDCards_Test`, MCP and Lua tests, live `tools/verification/mcp/test_ttd_card_positions.py`.
 - [x] UI (landed a6be6598d 2026-11-18): eCat's time group on the card's tab (Step Back, F7 in the past,
   Run Back to the card's breakpoints; in process and over REST), the moment naming both CPUs (`gs at instruction N,
-  PC #...; main CPU PC #..., +N T into the next instruction`); Embedded has no card CPU view, its moment label shows a
-  card position. [TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md#8-positions-on-a-sound-cards-cpu-2026-11-18).
+  PC #...; main CPU PC #..., +N T into the next instruction`); Embedded's moment label shows a card position (and,
+  since its processor tabs, its time group is the card's too: the item below). [TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md#8-positions-on-a-sound-cards-cpu-2026-11-18).
   Tests: `DebuggerTimeTravelCard_Test`, `unreal-debugger --self-check` (both modes).
-- [ ] Embedded: a CPU selector (Main / GS / MS) for its registers and disassembler (proposed, not built).
+- [x] Embedded: processor tabs (2026-11-18): Main CPU plus one per card CPU fitted (GS / NeoGS, MultiSound GS), no bar
+  with the main CPU alone. The tab in front retargets the registers (card edits through `CpuView::SetRegister`), the
+  stack, the memory pages (the card's windows by name), the memory view (the card's 64 KB, 16 KB at a time), the
+  disassembly (`debuggercpu::CardSource`: the card's bytes, labels and breakpoints; F2 toggles the card's), the steps
+  and run to cursor (`RunControl::CardStep`, also Debug menu's and the main window's keys) and the time group
+  (`DebuggerTimeTravel::setCpu`: the card verbs, as eCat). A card's stop brings its tab forward once per
+  `LastStop().serial`; a move in time does not. Guiplane: `debugger.select_cpu {cpu}`, `cpu` / `cpus` in the
+  `debugger` state, `cpu` in the views'. Code: `unreal-qt/src/debugger/debuggercpu.cpp`. Tests:
+  `DebuggerCpuTabs_Test` (unreal-qt-tests).
+- [x] The card tab's open ends (2026-11-19, landed 61276899f / 065836119):
+  - Labels: the card's own `LabelManager` (`DebugManager::GetLabelManager(cpu)`) in the Embedded memory view's
+    tooltip and Label Manager, and in eCat's card disassembly (`Z80DisAsm` with the card's labels); no markup and no
+    main CPU labels on a card's tab.
+  - Step over back on the card: `TimeTravelController::ReverseStepOverCard` (one card instruction back, or past the
+    whole routine when that instruction is a return that lifted the stack to the level now: a replay scan
+    backwards with the card's SP at each boundary, `GSCardTarget::ScanStackLevel`, at most 1000 frames; out of
+    reach the card stays on the return, `call_out_of_reach`). `reverse-step-over {cpu}` on every plane
+    (CLI `ttd reverse-step-over --cpu`, Lua / Python `ttd_card_reverse_step_over`, MCP `card_reverse_step_over` and
+    `reverse_step_over` with `cpu`, REST / WebSocket). Shift+F8 on the card's tab in both debuggers.
+  - Step over / step out forward in the past: `TimeTravelController::StepCardForward` (a forward replay scan that
+    decides each card boundary as a live card step does, `GSCardTarget::ScanStep`; the card's breakpoints end it
+    first; not ended in the history: to its end, `history_end`; 1000 frames at most, `truncated`).
+    `step-instruction {cpu, kind: over | out}` on every plane (CLI `ttd si-forward --cpu gs --over` / `--out`,
+    Lua / Python `ttd_card_step_over` / `ttd_card_step_out`, MCP `card_step_over` / `card_step_out`). F8 /
+    Ctrl+F8 on the card's tab in the past in both debuggers.
+  - F7 / F8 / Ctrl+F8 at the history's end (`at_end`) run the card's live step, unrecorded (D-3, as the main CPU).
+  - [x] Run to cursor (F4) on a card's tab in the past (2026-11-20). **As built:**
+    `TimeTravelController::RunCardToCursor`, the same forward replay scan as the step over / out
+    (`CardForwardScan`, `GSCardTarget::ScanStep` with `StepKind::To` and the cursor): the card's first boundary at
+    the cursor after its position; its breakpoints end it first; not reached in the history or in `max_frames`
+    (default 1000) frames: `no_hit`, nothing moved, the live machine untouched (`truncated` when the frame limit
+    ended the search); at the history's end `at_end` and the debuggers run the live card run. `step-instruction
+    {cpu, kind: to, pc, max_frames}` on every plane (CLI `ttd si-forward --cpu gs --to <pc> [--max-frames N]`, Lua /
+    Python `ttd_card_run_to_cursor`, MCP `card_run_to_cursor` with `addr`, REST / WebSocket, OpenAPI); the reply adds
+    `cursor` and `hit`. F4 on the card's tab in both debuggers.
+  - [x] Moves right after a live card step at the history's end (D-3, 2026-11-20): they were refused (409) while the
+    machine stood inside the card's run; now the machine leaves it first (`Emulator::LeaveCardRun`, TTD branches
+    debuggers.md §7). A card step back from past the history's end lands at the history's newest card instruction
+    (`history_end`).
+  - Tests: `TTD_CardReverseStepOver_*`, `TTD_CardStepForward_*`, `TTD_CardRunToCursor_*` (trace oracles: the recording's own card PC / SP at
+    every boundary), `TTDControl_CardPositions_Test`, `CliTTDCards_Test`, Lua, MCP and OpenAPI tests,
+    `DebuggerTimeTravelCard_Test.TheCardsTabStepsOverBackAndThroughThePast`, `unreal-debugger --self-check`, live
+    `test_ttd_card_oracle.py` (step over back against single steps back, step over / out against single steps
+    forward). The firmware right after its boot (the classic card's RAM test, the NeoGS's command wait loop) runs
+    no CALL for frames on end, so these tests give the card nested routines of its own in its RAM, interrupts off
+    (`ttdtest::LoadCardRoutines`, the live script's `plant_card_routines`).
 
 ### Later
 
