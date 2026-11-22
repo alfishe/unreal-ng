@@ -884,9 +884,47 @@ flowchart LR
   card breakpoint conditions use this store. The planes reach it with `cpu`
   ([command interface 4.4](../../emulator/design/control-interfaces/command-interface.md#44-labels--symbol-management)).
 - **Open.** User labels per firmware (L5) are not saved to the settings folder
-  yet; `symbols export --cpu gs` writes them by hand. NeoGS (N5) is not done:
-  no sources are imported, and no bundle matches a NeoGS flash. The Qt
-  debugger's card view still shows no labels (phase 5).
+  yet; `symbols export --cpu gs` writes them by hand. The Qt debugger's card
+  view still shows no labels (phase 5).
+
+**As built (N5, NeoGS).**
+
+- **Sources.** The NedoPC SVN `ngs` `/z80/` (r193) parts the emulator runs are
+  in `materials/neogs/ngs-firmware/` with a README (the main ROM, the loader,
+  the shared includes). They are for AS (`asl` + `p2bin`), which builds from
+  its C sources on macOS.
+- **The mark-up is a build here too.** `markup_symbols.py` assembles
+  `main_rom/main_ngs.a80` with `asl -g MAP`. The result equals the main ROM in
+  `data/rom/neogs/full_ngs.rom` at `#10000` byte for byte, and the script
+  fails otherwise. Labels come from asl's MAP file: segment CODE, plus the
+  EQUs of `equ_ngs.a80` that lie in the RAM window (the variables). There are
+  1378 labels, 1254 in the ROM and 124 in the RAM window.
+- **Pages.** The loader runs the main ROM from RAM pages 0-1, so
+  `neogs.map` uses `RAM0:` (low 16K at `#0000`) and `RAM1:` (high 16K at
+  `#C000` with MPAG 0). The bundle `gs:neogs` matches flash page 4, the copy
+  the loader starts. A different `NEOGS.ROM` on the SD card still gets these
+  labels; the profile (below) does not match it.
+- **Comparison.** `data/symbols/gs/NEOGS-VS-GS.md` classes each NeoGS ROM
+  label against GS v1.05a. A label's routine is its bytes up to the next
+  label, compared with as many GS bytes from the GS label of the same name. A
+  16-bit operand counts as equal when it names the same label in both. A label
+  GS does not have counts as the same when its bytes are in the GS ROM. The
+  result: 1230 same, 14 changed, 10 NeoGS only, and 30 GS labels NeoGS drops
+  (the RAM test `INITR*`, the `SMPMD1`/`SMPMD3` paths, `Patch6`/`Patch7`).
+  NeoGS adds the module speed tables (`CREATE_TABL`, `SET7XOR`, `SPEDI*`) and
+  `COMM5__`. The comparison file is in `data/symbols/gs/`, not
+  `materials/neogs/firmware/COMPARISON.md` as planned, next to the report it
+  belongs to.
+- **Profile.** The command tables are v1.05a's handler for handler (131
+  commands, the same addresses; NeoGS names `#6A`/`#6B` `COM6A`/`COM6B`, GS
+  `Patch2`/`Patch5`), and so are the variables. The built-in profile `neogs`
+  therefore reuses the v1.05a tables and matches the 32 KB main ROM.
+  `GeneralSoundCard::firmwarePage` gives the pages the command code runs from:
+  the ROM on a GS; on NeoGS, RAM pages 0-1 once the main ROM runs, else the
+  flash copy. `IdentifyGSFirmware` hashes those, so the command log, the state
+  and the firmware objects know NeoGS v1.11.
+- **Open.** The loader is not marked up: it runs at boot only, from the RAM
+  window at `#4080`, and has its own command set.
 
 ### 6.3 The command log (F1-F1c, F3, F4, W1-W4)
 
@@ -964,7 +1002,8 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
 - **TTD (D3).** The log is not part of the checkpoint. On a TTD seek, entries
   with a time after the seek target are cut off, using the per-entry frame
   and cycle. Replay forward regenerates them, because the hooks fire during
-  replay as well.
+  replay as well. (As built below: a replay is not logged, the cut entries are
+  held back and come back on a move forward; a live run logs anew.)
 
 **As built (phase 4, item 3).**
 
@@ -985,7 +1024,41 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
   changes the mailbox, so it sees the status the access met.
   - While the log is off a hook is a null test and one relaxed load. A log switched on again starts over and
     identifies the firmware again.
-  - A TTD replay is not recorded (as in the WD1793's history).
+  - A TTD replay is not recorded (as in the WD1793's history); the decoder still runs in it (D3 below).
+- **TTD (D3, done 2026-11-20).** The log follows time travel (`history::ITimeFollower`, devicehistory.h): it shows
+  the line of history up to where the machine stands. The rule:
+  - **Order.** An entry is after the machine's moment when its `(frame, t)` (the main CPU's T-state in the frame) is
+    later. A move lands on an instruction boundary; an access happens inside an instruction, so the entries of one
+    instruction are all before it or all after it. Entries at a frame start (`card_took` seen there, a stall) carry
+    the checkpoint's own moment and stay.
+  - **A move** (seek, step either way, reverse continue, bookmark, card move: every one ends in `PresentPosition`)
+    holds the entries after the moment back (`DeviceHistory::Rewind`): not shown, not counted. A move forward on the
+    same line keeps the held ones up to the new moment again, in order; a seek back to the end restores the log
+    exactly. A replay logs nothing, so nothing is twice.
+  - **A live run from the past** (a resume forks a branch, a tool's access there) is a new line: at its first hook
+    the held entries and the kept ones after the moment go (`Truncate`), and the run logs anew. After a seek back
+    and a run forward the log equals what a straight run logged, a wrapped ring included (written and dropped
+    counts too).
+  - **A branch switch** (`SwitchBranch`) keeps the past the two lines share (`LineagesPartAt`, the fork of their
+    lineages): entries after the parting go. Past the parting the target line's entries are not there (the log did
+    not see them on this pass) and the decoder starts over.
+  - **The decoder** follows the machine. At each frame start after traffic the log keeps a mark: the decoder's
+    state there (at most 65,536, oldest dropped). A checkpoint restore (any, `TimeRestored`) puts back the newest
+    mark at or before its frame (none: the decoder starts over), the replay to the target runs the decoder without
+    logging, and a query that replays elsewhere saves and loads it around (`SaveLiveState`). So a post byte, a
+    reply or an upload's byte count due at the target is decoded as a straight run decodes it.
+  - **Uploads and the profile stack (M5, F4)** go with it. The decoder value holds the profile stack (at most 8, a
+    fixed array), the mode, the host data stream and the revision 4 flags, so a move back to before a `#13` decodes
+    by the ROM's profile again. Outside it, as log state: the bytes of the `#14` block going on (a restore into the
+    same block keeps its first bytes, into another reads them back from the card's RAM through its window; a query
+    saves them with the decoder) and the upload records, shown up to the machine's frame (from a checkpoint's frame
+    start: not that frame's own). A replay meets a held record again (same frame, address, digest) and does not add
+    it; a live run from the past drops the records after its moment. The unknown command counts (AU6) count live
+    runs only.
+  - **Cost.** Off: the hooks as before (a null test, one relaxed load); the controller's calls are one relaxed load
+    with no follower and a test per follower. On: a mark per frame with traffic, the decoder in a seek's replay.
+  - **Not cut:** the stream file (a record goes there once, when first pushed). Planes see the cut through the
+    history verbs; no API change.
 - **The card side is not hooked.** `CardTook` is seen at the next host access, when status bit 0 is clear. The
   card's own reads of `#01` / `#02` and its reply writes `#03` are not entries.
 - **Profile.** The ROM digest selects it (§6.1); the lightweight card uses gs105a's. NeoGS firmware has no profile,
@@ -999,6 +1072,20 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
       `#D1` / `#D2` named). `#D2`, `#F3` or `#F4` ends the upload.
     - `#14` / `#15` end at their length, at their address (dest `ram`).
     - `#0E` / `#0F` streams end at the next command.
+    - A profile's `block256` (a fixed length, NeoTracker's `#E8` header) ends at its length; `block_pages` (the pre
+      byte's count of 256-byte pages, NeoTracker's `#EA`) at that many pages (V-4).
+    - A profile's `sectors` (M12, the NeoGS SD driver's `#1E`, V-5): `"sectors": { "length": 512, "count": 5,
+      "select": 0, "read": 2, "write": 3 }` names the parameter that counts the sectors (0: 256) and the one whose value
+      selects the direction (pre byte = parameter 0). A read is the host's reads, a write its data bytes; with
+      `handshake.strobe` the `#BB` write before each sector is part of the transfer, not a command. The block ends at
+      count x length (text `sector read: N bytes` / `sector write: N bytes`, `direction` in its state), and the
+      command's reply (the status byte, `#77` done) is still due after it. Any other sub-command (init, compare)
+      moves no sectors: its reply follows the parameters. A command takes up to 6 parameters (`#1E`: sub-command,
+      LBA 31-0, count).
+    - A profile with `hostDataStream` (GP's MP3 streamer, V-3) takes data bytes outside its commands as a stream:
+      they count into one `Block` (`host_data`, text `stream: N bytes of host data`), not `Data` entries or pre bytes.
+      The code's polls (`#01`, `#06`) go on inside it; a barrier or exit command, a command with its own transfer, a
+      reset or a profile change ends it (the last three `truncated`). The protocol state shows it as a transfer.
     - A reset ends any of them `truncated`.
   - The block's firmware destination (the module table) is not read: `dest` is `unknown` except for `#14` / `#15`.
 - **Anomalies (F4).**
@@ -1009,12 +1096,32 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
     `#32`-`#35`, `#38`, `#3B`-`#3E`, `#42`, `#45`-`#47`, `#6A`; `GSCommandInfo::replyUnflagged`): that read clears
     bit 7, so once the card took the command the reply is in the register without the flag.
   - `transfer_stalled`: an upload with no byte for 50 frames, reported once.
+  - Revision 4 (TODO item 7, requirements F4; every card feeds the same hooks, so LW too, W4):
+    - `reply_read_without_poll`: a due reply read while bit 7 is set but no status poll (`IN #BB`, the hook
+      `HostStatusRead`) saw it since the command or the last reply. The byte was right by the card's speed; it breaks
+      under turbo. Tool reads (`readData`) poll for themselves and are not flagged.
+    - `data_before_command`: a note: a data byte before a command the profile gives no pre byte.
+    - `command_while_busy`: inside a LOAD stream, `#F3` / `#F4` (restart the upload) or a command that is not a
+      stream command (acknowledged, not run).
+    - `card_reply_stall`: a command whose handshake has `replyWait` (the handler spins until its reply is read) with
+      its reply unread for 50 frame starts, once.
+    - `stale_reply_drain`: a read nothing asked for while bit 7 is the card's byte, once a run (a command or a data
+      write starts a new one). Not for a profile with `unsolicitedReplies` (NeoTracker's `DataToZX`).
+    - `upload_over_running_code`: a `#14` block whose 16K windows map the RAM page the card PC executes from.
+    - `command_rejected_in_state`: a command the profile's current `modes` entry does not accept (entered by `enter`,
+      left by `leave` or a card reset).
+  - The handshake (M6) keeps legal cases out: after a command with `ack: data` a set bit 0 is no
+    `command_overwritten`; a `barrier` command ends what was open and starts the decoder over.
+  - `GSCommandLog::PushProfile` selects the profile code started on the card decodes by (item 8 calls it at `#13`); a
+    card reset returns to the ROM's.
 - **Tests.** `GSCommandLog_Test`: decoding on the lightweight card; one block per upload with the stall; `#14` at its
-  length; the three host anomalies on the LLE card; a reset; a restart. The MCP check is
+  length; the three host anomalies on the LLE card; a reset; a restart. D3: `TtdSeekBackCutsAndSeekForwardRestores`
+  (seek back, forward, frame step back, back to the end; the decoder at the target), `TtdRunAfterSeekBackLogsAsAStraightRun`
+  (the default ring and a wrapped one of 256; then a switch to the trunk), `TtdSeekWithTheLogOff`; `DeviceHistory_Test`
+  `RewindHoldsBackAndBringsBackAWrappedRing`, `TruncateKeepsTheSharedPartAndTheStreamOnce`. The MCP check is
   `test_the_command_log_is_a_device_history`.
 - **Benchmark (P2).** `BM_GSCommandLog_HostTraffic_{None,Off,Ring}`: one frame of an upload with 256 host writes.
-- **Not done.** TTD cut-off on a seek (D3, phase 6). The log starting itself when a debugger attaches (an option,
-  F1b). A Qt panel (U2).
+- **Not done.** The log starting itself when a debugger attaches (an option, F1b). A Qt panel (U2).
 
 ### 6.4 Protocol state and firmware objects (F3, F5, W2, W3)
 
@@ -1285,6 +1392,34 @@ the GS slot.
 > - *Reverse continue* (`ReverseContinueCard`) replays frames backwards from the current one with the card's breakpoint
 >   manager armed in the scan. The newest hit before the current card count is the answer; with none, the machine is
 >   put back exactly where it stood and the answer says so.
+> - *Step over back* (`ReverseStepOverCard`, 2026-11-19) mirrors the main CPU's `ReverseStepOver`. It goes one card
+>   instruction back. When that instruction is a return (`IsReturnAt`) and the card's SP there is below the level
+>   it has now (int16 compare), frames are replayed backwards with the scan watching the card's SP at every boundary
+>   (`ScanStackLevel`). The newest boundary before the return with SP at or above the level is the landing (the
+>   CALL / RST, or the instruction an interrupt came after). At most `kCardReverseMaxFrames` frames are searched;
+>   with no landing in them the card stays on the return (`callOutOfReach`).
+> - *Step over / step out forward in the past* (`StepCardForward`, 2026-11-19) give the step a live card step would
+>   take from the card's position. The replay runs forward from the frame holding the card's count. The scan arms
+>   the step at the start boundary from the card's registers and code, as `ArmStep` arms a step from a standing card
+>   (`ScanStep`). It decides each later boundary as `StepBoundary` does:
+>   - over: the address after a CALL / RST / DJNZ / block instruction with SP at or above the start's; any other
+>     instruction is a step in;
+>   - out: the first boundary after a return at the start's stack level or above.
+>
+>   The card's stopping breakpoints end the step at their oldest hit after the start, as live; the hit counts are
+>   untouched. A step that does not end in the history goes to the history's end (`historyEnd`). There the
+>   debuggers run the next step live, unrecorded (TTD branches D-3). If it does not end within
+>   `kCardReverseMaxFrames` frames, it goes as far as they reach (`truncated`). At the history's end already the
+>   answer is `AtEnd` and nothing moves.
+> - *Run to cursor forward* (`RunCardToCursor`, 2026-11-20): the same scan with `StepKind::To` and the cursor's
+>   address; a boundary ends it when the card's PC is the cursor. The card's breakpoints end it first. Not reached in
+>   the history or within `maxFrames` (default `kCardReverseMaxFrames`) frames: `NoHit`, the card put back where it
+>   stood, nothing moved (`truncated` when the frame limit ended the search). At the history's end: `AtEnd`, the
+>   debuggers run the card live.
+> - *Moves back from past the history's end* (after a live card step there, D-3): a step back whose target is
+>   beyond the history lands at the history's newest card instruction (the count at its last frame's checkpoint,
+>   `historyEnd`); a move asked while the machine stands inside the card's run first leaves it
+>   (`Emulator::LeaveCardRun`, TTD branches debuggers.md §7).
 > - *Leaving a card position*: the card's natural state (the one a plain seek to the main boundary gives) is kept
 >   with the position (`CardStand`). The machine leaves the position at the first input service outside a replay
 >   (`ServiceInput` -> `LeaveCardStand`: a resume, a run of frames or T-states), at a main-CPU step forward, on
@@ -1306,7 +1441,7 @@ the GS slot.
     (`time-travel-debugging-tdd.md`), in a separate stream.
   - Without card debugging active, "who wrote" answers by replaying the frame
     range in debug mode.
-- **Command log (D3):** §6.3.
+- **Command log (D3):** §6.3 (done 2026-11-20: the log follows every move, "As built").
 - **Card breakpoints in reverse search (D4)** reuse the main CPU's reverse
   search, which replays checkpoints forward and records hits. It runs with
   the `gs` breakpoint manager armed.
@@ -1539,7 +1674,7 @@ the same structure):
   "variables":[ { "name": "streamRingFree", "kind": "register", "register": "HL", "pc": ["ringLoop","ringEnd"] },
                 { "name": "streamInfo", "kind": "smc_operand", "at": "streaminfobyte" } ],
   "isrExit": "INTEND",
-  "symbolFile": "symbols/gs/neotracker.map"
+  "symbolFile": "neotracker.map"
 }
 ```
 
@@ -1581,6 +1716,69 @@ the same structure):
 - **SD transaction log (M12)** is a decoder for the `#1E` extension command,
   driven by the NeoGS SD driver's profile (its handshake and parameters),
   writing entries to the command log with `kind = sd`.
+
+**As built (2026-11-19, TODO item 6: M1, M2, M6, M7).**
+
+- `gsfirmwareprofile.h` holds schema 2: `matches`, `dispatch`, commands with `handshake` and `transferLength`
+  (`block256`), `structs` (u8 / u16 / u24 / u32 / s8 / s16 / bytes / nested struct, `count` and `stride`),
+  `instances` and `objectVariables` (memory, register over a PC range, `smc_operand`).
+- `ParseGSFirmwareProfile(json, symbols, error)` reads the JSON form; names resolve through the profile's
+  `symbolFile` (relative to `<symbols>/gs`) (`[ROMn:|RAMn:]ADDR NAME` lines, the `data/symbols/gs/*.map` format). A symbol of a RAM or ROM page
+  binds an instance to that page; `"page": {"kind": "ram", "page": n}` binds an address. Faults are named and the
+  file is skipped with a warning.
+- `GSFirmwareProfiles()`: the three built-ins first (the command log stores the index), then
+  `<symbols>/gs/profiles/*.json` in name order. `FindGSFirmwareProfile` also checks the files' `rom` matches;
+  `FindGSUploadProfile(sha, addr, length)` is the M5 lookup (used by item 8).
+- Page-bound reads go through `GeneralSoundCard::cardRomPage` / `cardRamPage` (LLE and NeoGS), never the windows.
+- `gsfirmwareobjects.h`: `GSReadFirmwareObjects` (rows of fields, nested up to depth 8; registers from the card CPU,
+  valid only in the PC range), `GSFirmwareProfilesState`, and the planes: WebAPI `/state/audio/gs/firmware`
+  (`profile`, `object`) and `/firmware/profiles`, CLI `gs firmware`, MCP aspects `audio_gs_firmware[.<object>]` /
+  `audio_gs_firmware_profiles`, Lua / Python `gs_firmware`, `gs_firmware_profiles`.
+- Not yet: `isrExit`. The M6 handshake (item 7) is in §6.3; the profile stack and the dispatch view are below.
+
+**As built (2026-11-19, TODO items 8-10: M4, M5, M8, AU6).**
+
+- **Uploads (M5).** `GSCommandLog` buffers each `#14` block and hashes it (SHA-256) when the block ends;
+  `Uploads()` (and `uploads` in the protocol state) keep the last 16 with address, length, digest, matched
+  profile and whether the code was started. An `upload` match covers a prefix (`length`), so the kernel's 768-byte
+  padded block matches the 686 bytes of `ngssd.bin`. `#13 <addr>` pushes the profile of the newest upload that covers
+  the address: on top of the stack when the profile has `extends: true` (the SD driver patches the stock firmware),
+  else in place of it. A card reset returns to the ROM's profile; a command with `handshake.exit` (GP's `#00`) too.
+  The decoder asks the stack top-down, falling through `extends` profiles; each entry keeps the index of the
+  profile that named it.
+- **Dispatch view (M4).** `dispatch.kind`: `words` (a word per entry; entries from `#20` on are the commands from
+  `highFrom`, NeoTracker's `#E0`) or `stock_split` (COMTAB / COMTABH, as the built-ins). The firmware objects read
+  (`object = dispatch`, or all) adds `dispatch`: each entry's `handler`, its ROM `baseline` (stock split; the table
+  read through the window, so NeoGS's RAM copy shows patches), `patched` with `patched_by` (the `extends` profile
+  that names the command), `unknown` (the stub, or no command named). Without `profile`, the read decodes by the
+  command log's stack top while it records, else by the ROM's.
+- **Handler per command (M4).** Instead of a probe at the dispatch PC (a check on every card instruction), the log
+  reads the handler from the dispatch table when the host writes the command: the table does not change between the
+  write and the dispatch. The entry carries it (`destAddr` with `kHandler`; `card_pc` in the state) and the
+  profile's `handler` label (`card_label`: the kernel's `#1E` is `GSDDRV`). LW cards have no card memory: no
+  `card_pc`.
+- **Unknown commands (AU6).** The log counts the commands the stack names no command for
+  (`UnknownCommands()`, `unknown_commands` in the firmware objects read): one implementation for LLE, NeoGS and LW,
+  no card-side probe.
+- **Generator (M8).** `tools/gsfirmware/profile_from_source.py` reads `COMTAB` / `COMTABH`, the `; #NN - TEXT`
+  comments, stub aliases (`COMF2 EQU COMZ`), `STRUCT … ENDS` and `; struct` EQU blocks, and the addresses from the
+  mark-up map. The committed `tools/gsfirmware/gs105a.profile.json` is regenerated and compared by
+  `test_profile_from_source.py`; `GSFirmwareProfile_Test.TheGeneratedProfileNamesTheBuiltinCommands` checks that it
+  names exactly the commands of the built-in v1.05a profile. The v1.05a sources comment only the low commands, so
+  the generated names of the others are their labels; the built-in profile keeps the guide's names.
+
+**As built (2026-11-19, TODO item 11, found by V-1).** gstest on the classic GS showed two decoder gaps, closed in
+the profile schema, not per program:
+
+- **Mode selections.** A mode may take commands as its own selections (`selects`) and end at any command from
+  `leaveFrom` on. The built-ins have the stock test mode: `#FA` enters, `#00-#1F` pick a test from `TCOMTB` (logged
+  `#0B (test selection)`, no parameters or transfer: `#0E` there is not the LPT Covox stream), a command from `#20`
+  leaves (`COMINT2` runs it).
+- **Value poll.** `handshake.valuePoll`: the host reads the reply until it is not 0. `#F4` has one reply (INIT
+  writes 0, then the number of RAM pages); its 0 reads are logged "not ready" with the reply still due, and neither
+  `stale_reply_drain` nor `reply_read_without_poll` fires for them.
+- NeoGS's own firmware had no profile then (N5), so V-1 runs on the classic GS (`FitGeneralSoundCard(Z80)` in the
+  ZX-Evo's ZX-bus slot); the NeoGS scenarios (V-3 to V-5) run on the NeoGS profile.
 
 ### 8A.10 Validation scenarios (requirements §4.16)
 

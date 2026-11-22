@@ -1,5 +1,7 @@
 # Recipe: TTD — Turn Recording On/Off, Save/Load, Travel Through Time
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Time-Travel Debug records every frame (checkpoints + compressed dirty pages)
 and every port read and write. You can then scrub, step and replay the
 machine backward and forward. The write journal (every memory write, for

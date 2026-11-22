@@ -82,7 +82,7 @@ struct TTDFindEventQuery
     std::string key;                   ///< a ZX key name; empty: any key
     bool pressed = true;
 
-    // exec without the coverage index: frames replayed at most
+    // exec: frames replayed at most (without the coverage index the window's frames, with it the index's candidates)
     uint32_t maxFrames = 1000;
 
     static constexpr uint32_t kMaxLimit = 100;
@@ -117,6 +117,9 @@ struct TTDFindEventResult
     std::vector<std::string> missing;  ///< sources the session lacks and what that changed
     uint64_t framesScanned = 0;
     uint64_t framesReplayed = 0;
+    /// exec: frames the coverage index named (it keys page offsets) where the address did not run; replayed, never
+    /// answered (F6 of docs/inprogress/2026-11-12-re-api-efficiency)
+    uint64_t indexRejected = 0;
     double ms = 0.0;
 };
 

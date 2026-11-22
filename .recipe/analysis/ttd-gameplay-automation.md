@@ -1,5 +1,7 @@
 # Recipe: TTD for Gameplay — Automated Runs, Event Discovery, Gameplay Tests
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Goal: drive a game from a script, record it, and find out from the recording *where in the game's code and memory a
 gameplay event lives* (crash, jump, pickup, death, level end). The same loop gives the checks for an automated
 gameplay test and the checkpoints for a speedrun script. Worked on ATV Simulator (Z80 snapshot, Pentagon) while writing

@@ -1,5 +1,7 @@
 # TTD Overhead Budget & Runtime Feature Gating
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 | | |
 |---|---|
 | **Status** | History. Section 1a was measured on v1 (deleted 2026-10-30); the estimates and the runtime knobs below are the original design. The engine's measured figures are in the migration's phase results ([phase-1-results.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-1-results.md) to [phase-4-results.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-4-results.md)). As built, the knobs `budget_mb`, `journal_mb`, `dense_seconds` and the thinning tiers do not exist: the engine keeps every frame, a history limit in frames or bytes drops whole segments, and the write journal is off by default and switched per recording (D40, D41) |

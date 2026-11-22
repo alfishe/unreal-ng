@@ -555,5 +555,8 @@ public:
     /// checkpoint's blob map.
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::TurboSound; }
     std::string TTDDeviceName() const override { return "TurboSound"; }
+    /// The board's layout: the chip select, both AYs ("ay0.", "ay1."), the pending SSG writes per chip, and the
+    /// render cursor and phases and the frame progress (counters)
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override;
     /// endregion </TTDSerializable interface>
 };

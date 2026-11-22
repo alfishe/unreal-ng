@@ -12,6 +12,7 @@ entity tb_zxnext is
       g_l2const  : natural := 0;   -- Layer 2 SRAM returns this byte everywhere (0 = the x pattern)
       g_ahead    : natural := 2;   -- sprite scenarios: the row / sprite chosen is the one shown this many lines after the force
       g_h0       : natural := 200; -- the pixel counter value the sweep's clock offsets start from
+      g_pent     : natural := 0;   -- 1 = the ULA in the Pentagon timing (its border is taken every half pixel, not per 8-pixel cell)
       g_log      : string  := "dump.txt";
       g_events   : string  := "events.txt"
    );
@@ -54,6 +55,7 @@ architecture sim of tb_zxnext is
 
    signal hc_s, vc_s : unsigned(8 downto 0);
    signal count28 : natural := 0;
+   signal last_cpu_rise : natural := 0;  -- count28 at the CPU clock's last rising edge (a T-state's start)
    ----------------------------------------------------------------- the registers under test (VHDL-2008 external names)
 begin
    ----------------------------------------------------------------- the core
@@ -121,6 +123,13 @@ begin
       end loop;
    end process;
    clk28_n <= not clk28;
+
+   process (p_cpu_clk)
+   begin
+      if rising_edge(p_cpu_clk) then
+         last_cpu_rise <= count28;
+      end if;
+   end process;
 
    process (clk28)
       variable n : natural := 0;
@@ -257,6 +266,15 @@ begin
          wait for T28;
          t_pal_we <= '0';
       end procedure;
+      -- off the clock edge, so that port_fe_reg loads it on the next rising edge (count28 + 1 of the force's event line); a write
+      -- assigned on an edge's own time step races that edge
+      procedure fe_write(v : std_logic_vector(4 downto 0)) is
+      begin
+         wait for T28 / 4;
+         t_fe_val <= v; t_fe_we <= '1';
+         wait for T28;
+         t_fe_we <= '0';
+      end procedure;
       procedure set_reg(idx : natural; v : std_logic_vector(7 downto 0)) is
       begin
          t_en(idx) <= '1';
@@ -332,10 +350,12 @@ begin
          when 50 => kind := 2; n_reg := x"6A"; n_base := x"20"; n_new := x"30"; set_reg(2, x"01");                 -- Radastan: the XOR bit
          when 51 => kind := 2; n_reg := x"6A"; n_base := x"00"; n_new := x"05"; set_reg(2, x"01");                 -- LoRes palette offset
          when 52 => kind := 2; n_reg := x"70"; n_base := x"00"; n_new := x"10"; set_reg(4, x"01");                 -- Layer 2 resolution 320x256
+         when 54 => kind := 5; n_base := x"00"; n_new := x"07";                                                     -- border colour, port #FE (0 -> 7)
          when 53 => r_idx := 32; r_base := x"00"; r_new := x"08"; set_reg(3, x"01"); set_reg(0, x"00");  -- tilemap text mode (NR #6B bit 3)
          when others => null;
       end case;
       if g_scenario = 50 then nr_write(x"6A", x"20"); end if;
+      if g_pent = 1 then t_pent <= '1'; end if;
       if g_ref = 1 then r_new := r_base; pal_new := pal_base; n_new := n_base; end if;
       if g_scenario = 0 then wait; end if;
       wait until unsigned(p_vc) = to_unsigned(10, 9);
@@ -376,13 +396,18 @@ begin
          write(l, to_integer(unsigned(p_hc)));
          write(l, string'(" "));
          write(l, count28);
+         write(l, string'(" "));
+         write(l, last_cpu_rise);
          writeline(ev, l);
-         if kind = 2 then nr_write(n_reg, n_new);
+         if kind = 5 then fe_write(n_new(4 downto 0));
+         elsif kind = 2 then nr_write(n_reg, n_new);
          elsif kind = 4 then p57_write(n_new);
          elsif kind = 3 then p5b_write(n_new);
          elsif pal then pal_write(pal_idx, pal_new); else set_reg(r_idx, r_new); end if;
          wait until unsigned(p_vc) = to_unsigned(line_no + 2, 9) and unsigned(p_hc) = to_unsigned(0, 9);
-         if kind = 2 then
+         if kind = 5 then
+            fe_write(n_base(4 downto 0));
+         elsif kind = 2 then
             nr_write(n_reg, n_base);
          elsif kind = 4 then
             p303b_write(spr);

@@ -160,10 +160,11 @@ first books the instruction's T-states to the cell and routine it ran in (as the
 pops, so the attribution is the same as decoding at the next step. Per instruction only the cells and the jump-in
 test on an entry cell remain (the entry test reads the bits the count update already loaded).
 
-Two per-step decoders are kept for the A/B of POC 046 only (`Settings::flowSource`): 1 decodes the previous
-instruction from `Z80::opcode` / `prefix` (already fetched, no memory read) and 2 re-reads the instruction's byte
-from memory (the first version). Both store the instruction's SP and PC at every step and resolve the transfer at the
-next step:
+The per-step decoders of the A/B of POC 046 (`Settings::flowSource` 1: the previous instruction from `Z80::opcode` /
+`prefix`, 2: the instruction's byte re-read from memory) were removed on 2026-11-20: a decoder resolves a transfer
+only at the next step, so a run that ended on a CALL or a RET left the stack one step behind until the machine went
+on. The CPU flow events are the only source, exact right after any step. The rules the flow events apply (the
+decoders compared the SP before and after):
 
 | Previous | Taken when | Action |
 |:--|:--|:--|
@@ -542,8 +543,9 @@ the POC's `replay --core 1` + `compare_kit.py` (not a unit test: it needs the re
 - `report attribution=address` (the nearest entry at or before, with labels): today the kit export + a `.ann` +
   `fig_budget.py` gives it.
 - The `trace cpuprofile start|stop|clear` alias (§13).
-- `Settings::flowSource` 1 / 2 (per-step decoders): internal, for the A/B and the `FlowSourcesAgree` test; remove
-  once a recorded fixture replaces that test.
+- `Settings::flowSource` 1 / 2 (per-step decoders) and the `FlowSourcesAgree` test: removed 2026-11-20 (the stack
+  lagged one step after a run that ended on a CALL / RET); `ConditionalTransfersAndADispatch` checks the flow events
+  directly, step by step.
 - The kit export's `class` column (only `halt`, which `fig_budget.py` reads) and `smc` (always false): L1 has them
   from its decoder.
 - Profiling a recording from the planes (an analysis clone with `countReplay`, as the POC's `replay --core 1`).

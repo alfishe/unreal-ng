@@ -11,8 +11,10 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/floppydriveslot.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/slots/slotmanager.h"
+#include "emulator/slots/slotplanner.h"
 
 namespace
 {
@@ -47,6 +49,7 @@ uint64_t Fnv1a(const uint8_t* data, size_t size)
 
 static_assert(PlusDCard::kStateFdcSize == WD1793::kTtdStateSize, "the +D blob embeds the WD1772's blob");
 static_assert(PlusDCard::kStateFdcContextSize == WD1793::kTransferContextSize, "the +D blob embeds the command context");
+static_assert(PlusDCard::kDiscipleStateSize >= PlusDCard::kDiscipleStateOffset + 16, "the DISCiPLE tail fits");
 
 /// The card's TTD device (SaveState / LoadState)
 class PlusDTtd final : public ttd::TTDSerializable
@@ -58,7 +61,7 @@ public:
 
     size_t TTDStateSize() const override
     {
-        return PlusDCard::kStateSize;
+        return _card.StateSize();
     }
     void TTDSaveState(uint8_t* dst) const override
     {
@@ -70,15 +73,15 @@ public:
     }
     std::string TTDDeviceName() const override
     {
-        return "PlusD";
+        return _card.IsDisciple() ? "Disciple" : "PlusD";
     }
     ttd::TTDDeviceType TTDType() const override
     {
-        return ttd::TTDDeviceType::PlusD;
+        return _card.IsDisciple() ? ttd::TTDDeviceType::Disciple : ttd::TTDDeviceType::PlusD;
     }
     uint64_t TTDHashState() const override
     {
-        std::vector<uint8_t> blob(PlusDCard::kStateSize);
+        std::vector<uint8_t> blob(_card.StateSize());
         TTDSaveState(blob.data());
         return Fnv1a(blob.data(), blob.size());
     }
@@ -88,7 +91,30 @@ public:
         // The WD1772's clocks advance with emulated time, as in the Beta blob (WD1793::TTDDescribe)
         constexpr uint16_t fdc = PlusDCard::kStateFdcOffset;
         d.timeFields = { { fdc + 22, 8 }, { fdc + 30, 8 }, { fdc + 114, 8 } };
+        if (_card.IsDisciple())
+            d.timeFields.push_back({ static_cast<uint16_t>(PlusDCard::kDiscipleStateOffset + 8), 8 });
         return d;
+    }
+    /// The card's latches, its RAM, the WD1772 (the WD1793 layout under "fdc.") and the transfer context
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override
+    {
+        using ttd::AddStateField;
+        AddStateField(out, "", 0, "version", 0, 1);
+        AddStateField(out, "", 0, "paged", 1, 1);
+        AddStateField(out, "", 0, "control", 2, 1);
+        AddStateField(out, "", 0, "printer_data", 3, 1);
+        AddStateField(out, "", 0, "strobe", 4, 1);
+        AddStateField(out, "", 0, "strobe_first_edge", 5, 1);
+        AddStateField(out, "", 0, "printed_bytes", 6, 4);
+        AddStateField(out, "", 0, "last_printed", 10, 1);
+        AddStateField(out, "", 0, "no_drive_selected", 11, 1);
+        AddStateField(out, "", 0, "spin_up_done_at", 12, 8);
+        constexpr uint32_t ram = static_cast<uint32_t>(PlusDCard::kStateRamOffset);
+        constexpr uint32_t fdc = static_cast<uint32_t>(PlusDCard::kStateFdcOffset);
+        AddStateField(out, "", 0, "ram", ram, fdc - ram);
+        WD1793::TTDFields(out, "fdc.", fdc);
+        AddStateField(out, "", 0, "fdc.transfer_context", fdc + static_cast<uint32_t>(PlusDCard::kStateFdcSize),
+                      static_cast<uint32_t>(PlusDCard::kStateFdcContextSize));
     }
 
 private:
@@ -97,7 +123,12 @@ private:
 
 std::unique_ptr<ICard> PlusDCard::Create(const CardContext& context)
 {
-    return std::make_unique<PlusDCard>(context);
+    return std::make_unique<PlusDCard>(context, Model::PlusD);
+}
+
+std::unique_ptr<ICard> PlusDCard::CreateDisciple(const CardContext& context)
+{
+    return std::make_unique<PlusDCard>(context, Model::Disciple);
 }
 
 PlusDCard* PlusDCard::Find(const EmulatorContext* context)
@@ -112,9 +143,11 @@ PlusDCard* PlusDCard::Find(const EmulatorContext* context)
     return nullptr;
 }
 
-PlusDCard::PlusDCard(const CardContext& context)
-    : ICard(context), _context(context.emulator), _ttd(std::make_unique<PlusDTtd>(*this))
+PlusDCard::PlusDCard(const CardContext& context, Model model)
+    : ICard(context), _context(context.emulator), _model(model), _ttd(std::make_unique<PlusDTtd>(*this))
 {
+    if (context.def != nullptr)
+        _inhibit = (slots::OptionBits(*context.def, context.options, slots::Opt::Inhibit) & slots::Bit(1)) != 0;
     windowStart = 0x0000;
     windowEnd = 0x4000;
     observesReads = true;
@@ -128,7 +161,7 @@ PlusDCard::PlusDCard(const CardContext& context)
         _drives[i] = std::make_unique<FDD>(_context);
     _fdc = std::make_unique<WD1793>(_context, WdVariant::Wd1772,
                                     std::array<FDD*, 4>{ _drives[0].get(), _drives[1].get(), nullptr, nullptr },
-                                    "plusd");
+                                    CardId());
 
     try
     {
@@ -149,24 +182,27 @@ PlusDCard::~PlusDCard()
 
 void PlusDCard::LoadRom()
 {
-    const std::string path = ResolveRomPath(kRomPath);
+    const char* romPath = IsDisciple() ? kDiscipleRomPath : kRomPath;
+    const std::string what = std::string("the ") + (IsDisciple() ? "DISCiPLE" : "+D") + " ROM " + romPath;
+    const std::string path = ResolveRomPath(romPath);
     if (path.empty())
-        throw std::runtime_error(std::string("the +D ROM ") + kRomPath + " was not found");
+        throw std::runtime_error(what + " was not found");
     FILE* file = FileHelper::OpenFile(path, "rb");
     if (file == nullptr)
-        throw std::runtime_error(std::string("the +D ROM ") + kRomPath + " cannot be opened");
+        throw std::runtime_error(what + " cannot be opened");
     const size_t size = std::fread(_rom.data(), 1, _rom.size(), file);
     const bool larger = size == _rom.size() && std::fgetc(file) != EOF;
     std::fclose(file);
     if (size != _rom.size() || larger)
-        throw std::runtime_error(std::string("the +D ROM ") + kRomPath + " is not 8K");
+        throw std::runtime_error(what + " is not 8K");
 }
 
 void PlusDCard::Attach()
 {
     Z80* z80 = _context->pCore->GetZ80();
     if (z80->machineM1Hook != nullptr)
-        throw std::runtime_error("the machine's M1 hook is taken (the +D paging traps need it)");
+        throw std::runtime_error(std::string("the machine's M1 hook is taken (the ") + DisplayName() +
+                                 " paging traps need it)");
 
     if (!_context->AddCardFdc(_fdc.get()))
         throw std::runtime_error("the machine has no room for another disk controller");
@@ -190,12 +226,12 @@ void PlusDCard::Attach()
         {
             FloppyDriveSlot::CardDrive spec;
             spec.fdd = _drives[i].get();
-            spec.id = kDriveSlotIds[i];
-            spec.label = "+D drive " + std::to_string(i + 1);
+            spec.id = DriveSlotId(i);
+            spec.label = std::string(IsDisciple() ? "DISCiPLE" : "+D") + " drive " + std::to_string(i + 1);
             spec.tags = { "wd1772", "gdos" };
             if (i == 0)
                 spec.tags.emplace_back("boot");
-            spec.aliases = { "plusd" + std::to_string(i + 1) };
+            spec.aliases = { std::string(CardId()) + std::to_string(i + 1) };
             _driveSlots[i] = std::make_unique<FloppyDriveSlot>(_context, spec);
             media->RegisterSlot(*_driveSlots[i]);
         }
@@ -209,7 +245,7 @@ void PlusDCard::Detach()
         for (size_t i = 0; i < kDrives; i++)
         {
             if (_driveSlots[i])
-                media->UnregisterSlot(kDriveSlotIds[i]);
+                media->UnregisterSlot(DriveSlotId(i));
         }
     }
     for (auto& slot : _driveSlots)
@@ -241,6 +277,8 @@ uint8_t PlusDCard::portDeviceInMethod(uint16_t port)
 
 uint8_t PlusDCard::portDeviceReadCycle(uint16_t port, bool& drives)
 {
+    if (IsDisciple())
+        return DiscipleRead(port, drives);
     drives = true;
     switch (static_cast<uint8_t>(port))
     {
@@ -264,6 +302,11 @@ uint8_t PlusDCard::portDeviceReadCycle(uint16_t port, bool& drives)
 
 void PlusDCard::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
+    if (IsDisciple())
+    {
+        DiscipleWrite(port, value);
+        return;
+    }
     switch (static_cast<uint8_t>(port))
     {
         case kPortStatusCommand:
@@ -294,6 +337,8 @@ void PlusDCard::portDeviceOutMethod(uint16_t port, uint8_t value)
 
 uint8_t PlusDCard::Peek(uint16_t port, bool& drives) const
 {
+    if (IsDisciple())
+        return DisciplePeek(port, drives);
     drives = true;
     switch (static_cast<uint8_t>(port))
     {
@@ -317,6 +362,11 @@ uint8_t PlusDCard::Peek(uint16_t port, bool& drives) const
 
 void PlusDCard::WriteControl(uint8_t value)
 {
+    if (IsDisciple())
+    {
+        DiscipleWriteControl(value);
+        return;
+    }
     const bool strobeChanged = ((value ^ _control) & kControlStrobe) != 0;
     _control = value;
     if (strobeChanged)
@@ -327,6 +377,14 @@ void PlusDCard::WriteControl(uint8_t value)
 void PlusDCard::WriteControlLines()
 {
     const uint8_t value = _control;
+    if (IsDisciple())
+    {
+        // Bit 0 picks one of the two drives (MAME m_floppy[~data & 1], Fuse disciple_cn_write): always one selected
+        _fdc->selectDriveLine((value & kDiscipleControlDrive1) ? 0 : 1);
+        _fdc->setSide((value & kDiscipleControlSide) != 0);
+        _fdc->setDensityLine((value & kDiscipleControlSingleDensity) != 0);
+        return;
+    }
     // The drive select lines: drive 1 on bit 0, drive 2 on bit 1. Both set: the two drives would answer together;
     // drive 1 does here. None: no drive (no disk, no index)
     int line = -1;
@@ -361,9 +419,20 @@ void PlusDCard::BusReset()
     // plusd_active but clears ram.romcs, so nothing is mapped). Paged in, the +D ROM's #0000 entry would hand over to
     // #11CB, the 48K ROM's START: on a 128K that is ROM 0's code, and the boot hangs on whatever the RAM holds
     SetPagedLine(false);
-    _control = 0;
     _strobeFirstEdge = false;
     _fdc->reset();
+    if (IsDisciple())
+    {
+        // The latch (a 74LS374) has no reset input: it keeps the drive, side and density; the swap is cleared and
+        // paging held off (MAME device_reset: m_map, m_romcs, m_reset_delay)
+        _memSwap = false;
+        _resetHold = true;
+        _resetHoldStarted = false;
+        _resetHoldStart = 0;
+        WriteControlLines();
+        return;
+    }
+    _control = 0;
     _fdc->selectDriveLine(-1);
     _fdc->setSide(false);
 }
@@ -376,18 +445,34 @@ uint8_t PlusDCard::onRead(uint16_t addr, uint8_t normal, bool isExecution, bool 
     (void)romPaged;
     if (!_paged || addr >= 0x4000)
         return normal;
-    return addr < 0x2000 ? _rom[addr] : _ram[addr - 0x2000];
+    // The DISCiPLE's port #7B swaps the halves: RAM at #0000, ROM at #2000
+    const bool lowIsRom = !_memSwap;
+    if (addr < 0x2000)
+        return lowIsRom ? _rom[addr] : _ram[addr];
+    return lowIsRom ? _ram[addr - 0x2000] : _rom[addr - 0x2000];
 }
 
 void PlusDCard::onWrite(uint16_t addr, uint8_t value, bool romPaged)
 {
     (void)romPaged;
-    if (_paged && addr >= 0x2000 && addr < 0x4000)
+    if (!_paged || addr >= 0x4000)
+        return;
+    if (!_memSwap && addr >= 0x2000)
         _ram[addr - 0x2000] = value;
+    else if (_memSwap && addr < 0x2000)
+        _ram[addr] = value;
 }
 
 void PlusDCard::BeforeMachineM1(uint16_t address)
 {
+    if (IsDisciple())
+    {
+        // Every fetch below #0300 moves the hold-off on: the first one after /RESET starts it
+        HoldingOff();
+        if (IsTrapAddress(_model, address) && !_paged && DisciplePagingAllowed())
+            SetPagedLine(true);
+        return;
+    }
     if (IsTrapAddress(address) && !_paged)
         SetPagedLine(true);
 }
@@ -418,7 +503,10 @@ void PlusDCard::OnMachineM1(uint16_t address)
 
 bool PlusDCard::RepeatM1IsInert(uint16_t address) const
 {
-    return !IsTrapAddress(address) || _paged;
+    // The DISCiPLE's hold-off ends on a fetch: a repeated fetch is not inert while it runs
+    if (IsDisciple() && _resetHold)
+        return false;
+    return !IsTrapAddress(_model, address) || _paged;
 }
 
 /// endregion </Paging>
@@ -456,7 +544,7 @@ void PlusDCard::RestoreSnapshot(const SnapshotRegisters& registers, const uint8_
 
 void PlusDCard::CollectTtdDevices(std::vector<CardTtdDevice>& out)
 {
-    out.push_back({ _ttd.get(), SlotId() + "." + kCardId, nullptr });
+    out.push_back({ _ttd.get(), SlotId() + "." + CardId(), nullptr });
 }
 
 void PlusDCard::TtdFingerprint(std::vector<std::pair<std::string, uint64_t>>& out) const
@@ -483,6 +571,16 @@ void PlusDCard::SaveState(uint8_t* dst) const
     std::memcpy(dst + kStateRamOffset, _ram.data(), _ram.size());
     _fdc->TTDSaveState(dst + kStateFdcOffset);
     _fdc->SaveTransferContext(dst + kStateFdcOffset + kStateFdcSize);
+    if (IsDisciple())
+    {
+        uint8_t* tail = dst + kDiscipleStateOffset;
+        tail[0] = _memSwap ? 1 : 0;
+        tail[1] = _resetHold ? 1 : 0;
+        tail[2] = _resetHoldStarted ? 1 : 0;
+        tail[3] = _inhibit ? 1 : 0;
+        for (int i = 0; i < 8; i++)
+            tail[8 + i] = static_cast<uint8_t>(_resetHoldStart >> (8 * i));
+    }
 }
 
 bool PlusDCard::LoadState(const uint8_t* src)
@@ -508,7 +606,142 @@ bool PlusDCard::LoadState(const uint8_t* src)
     if (src[11] != 0)
         _fdc->RestoreNoDriveSelected();
     _fdc->RestoreSpinUpDoneAt(static_cast<size_t>(spinUp));
+    if (IsDisciple())
+    {
+        const uint8_t* tail = src + kDiscipleStateOffset;
+        _memSwap = tail[0] != 0;
+        _resetHold = tail[1] != 0;
+        _resetHoldStarted = tail[2] != 0;
+        _inhibit = tail[3] != 0;
+        _resetHoldStart = 0;
+        for (int i = 0; i < 8; i++)
+            _resetHoldStart |= static_cast<uint64_t>(tail[8 + i]) << (8 * i);
+    }
     return true;
 }
 
 /// endregion </Time travel>
+
+/// region <DISCiPLE>
+
+uint64_t PlusDCard::Now() const
+{
+    return _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
+}
+
+void PlusDCard::UpdateResetHold()
+{
+    // Measured from the first fetch after /RESET (the reset vector): the clock may be set back around a reset
+    const uint64_t now = Now();
+    if (!_resetHoldStarted)
+    {
+        _resetHoldStarted = true;
+        _resetHoldStart = now;
+        return;
+    }
+    if (now - _resetHoldStart >= kResetHoldTStates)
+        _resetHold = false;
+}
+
+bool PlusDCard::HoldingOff()
+{
+    if (_resetHold)
+        UpdateResetHold();
+    return _resetHold;
+}
+
+bool PlusDCard::DisciplePagingAllowed()
+{
+    if (HoldingOff())
+        return false;
+    return !_inhibit || (_control & kDiscipleControlInhibitOverride) != 0;
+}
+
+uint8_t PlusDCard::DiscipleRead(uint16_t port, bool& drives)
+{
+    const uint8_t low = static_cast<uint8_t>(port);
+    if ((low & 0x3F) == kDisciplePortFdc)
+    {
+        drives = true;
+        return _fdc->ReadRegister(static_cast<uint8_t>(low >> 6));
+    }
+    switch (low)
+    {
+        case kDisciplePortBoot:
+            // A read puts the ROM back at #0000 (MAME: not during the reset hold-off); the data bus is left alone
+            if (!HoldingOff())
+                _memSwap = false;
+            drives = false;
+            return 0xFF;
+        case kDisciplePortPaging:
+            if (DisciplePagingAllowed())
+                SetPagedLine(true);
+            drives = false;
+            return 0xFF;
+        default:
+            return DisciplePeek(port, drives);
+    }
+}
+
+void PlusDCard::DiscipleWrite(uint16_t port, uint8_t value)
+{
+    const uint8_t low = static_cast<uint8_t>(port);
+    if ((low & 0x3F) == kDisciplePortFdc)
+    {
+        _fdc->WriteRegister(static_cast<uint8_t>(low >> 6), value);
+        return;
+    }
+    switch (low)
+    {
+        case kDisciplePortControl:
+            DiscipleWriteControl(value);
+            break;
+        case kDisciplePortBoot:
+            if (!HoldingOff())
+                _memSwap = true;
+            break;
+        case kDisciplePortPaging:
+            if (!HoldingOff())
+                SetPagedLine(false);
+            break;
+        case kDisciplePortPrinter:
+            _printerData = value;
+            break;
+        case kDisciplePortNetwork:
+        default:
+            // The network (#3B, latch bit 7) is not emulated
+            break;
+    }
+}
+
+uint8_t PlusDCard::DisciplePeek(uint16_t port, bool& drives) const
+{
+    const uint8_t low = static_cast<uint8_t>(port);
+    drives = true;
+    if ((low & 0x3F) == kDisciplePortFdc)
+        return _fdc->PeekRegister(static_cast<uint8_t>(low >> 6));
+    if (low == kDisciplePortControl)
+    {
+        // Bits 0-4 the joystick socket (Kempston order, active high); bit 6 = printer not busy through IC10's 74LS240:
+        // no printer is connected, so busy (0, Fuse #BF); bits 5 and 7 low (the network line idles low)
+        const uint8_t stick = _context != nullptr && _context->pJoystick != nullptr ? _context->pJoystick->Read() : 0x00;
+        return static_cast<uint8_t>(stick & 0x1F);
+    }
+    // #3B / #7B / #BB / #FB: write only, or the card leaves the data bus alone
+    drives = false;
+    return 0xFF;
+}
+
+void PlusDCard::DiscipleWriteControl(uint8_t value)
+{
+    const bool strobeChanged = ((value ^ _control) & kDiscipleControlStrobe) != 0;
+    _control = value;
+    if (strobeChanged)
+        StrobeEdge();
+    WriteControlLines();
+    // With the inhibit button pressed the card stays out unless bit 4 lets it in (MAME iorq_w #1F)
+    if (_inhibit && (value & kDiscipleControlInhibitOverride) == 0)
+        SetPagedLine(false);
+}
+
+/// endregion </DISCiPLE>

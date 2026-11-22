@@ -1,5 +1,7 @@
 # TTD offline analysis: record cheap, analyze without limits
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 - **Date:** 2026-09-29
 - **Status:** proposal with tracking. No code for the offline part yet.
 - **Where the ideas come from:** the TTD recording editor, visualizer and

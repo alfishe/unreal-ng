@@ -25,11 +25,29 @@ Every source below is filled by the recording as it is today; the query reads th
 | Write index `Writes()` (only when the write journal is on, off by default) | memory write records | `ForEach` over the window | O(records) |
 | Session facts | port journal valid, input history complete, write journal segments | O(1) | O(1) |
 
-A device's state blob may carry time fields that change every frame (a card's own clock), so a blob's change says
-nothing about activity. The timeline counts only the device memory regions (card RAM, video RAM, fonts: what a CPU or
-DMA wrote) and the port traffic of each device; the blobs (registers, clocks, palettes) are not counted. The engine
-keeps each blob as a region of its own (`device.<instance>`, ids from `TTDRegionId::DeviceStateFirst`): those are left
-out of `regions`.
+The engine keeps each device's state blob (registers, latches, timers, palettes) as a region of its own
+(`device.<instance>`, ids from `TTDRegionId::DeviceStateFirst`). The timeline counts, per blob, the frames whose
+checkpoint found it changed (`devices[]` entries with `state`), apart from the device memory regions (`regions`: card
+RAM, video RAM, fonts). A blob may hold a clock that moves every frame: the few that declare it as time fields
+(`profixtkbc`, `atm2kbc`, `evehostcard`, the TurboSound FM pair, MultiSound) keep it out of the change, the others do
+not. Measured over 100 idle recorded frames per model (2026-11-21):
+
+| Changes | Blobs |
+|---------|-------|
+| in no frame | tape, mouse, keyboard matrix, joysticks, controllers, ATA, uPD765, +3 paging, Beta Disk on most models |
+| in every frame (a clock or counter) | `covox` (Pentagon, Scorpion, ATM3, ATM710, Profi, TS-Conf, GMX), `ds12887` (ATM3), `atm2kbc`, `profixtkbc`, `tsconfstate`, `nextstate`, `p2666board` / `p2666sound` / `p2666uart` |
+| in some frames | ATM3 `betadisk` 57-58, `evoavrvolatile` 30-78 (TS-Conf 35; the count differs run to run), Sprinter `sprinterpld` 76 / `betadisk` 7 / `z84c15` 4, GMX `betadisk` 41 / `scorpionprofrom` 22 / `smuc` 25 / `gmxpaging` 16, TS-Conf `ds12887` 8; 1-3 frames: ATM3 `atmpaging`, ATM710 `betadisk`, Sprinter and GMX `tape`, `ds12887` |
+
+On the synthetic program (Pentagon) the keyboard matrix changes in 2 of the 23 idle frames (the key presses), the
+tape blob in the frames that poll it (its poll counter). So the rule is generic, no per-device list: a blob that
+changed in every frame of the window (of more than one frame) carries no "when" and is named once in
+`states_every_frame`, out of the phases and buckets; the others are counted per phase and bucket. The reply grows by
+at most one entry per device and phase. A blob's change is no activity tag (a phase cut on a register would split
+phases at every latch write).
+
+A segment's first checkpoint (a baseline, D41) stores every piece anew, which is no change of the machine: there the
+timeline counts a piece (RAM, device region or blob) only when its content differs from the checkpoint before (a
+decode of the baseline's pieces, once a segment).
 
 Not in the recording, so not in the timeline: HALT idle time inside a frame (only whether the frame ended in HALT), sound
 energy, a screen picture (the screenshot stream is registered but off), interrupts per frame outside RZX and the
@@ -60,7 +78,8 @@ pass over each journal.
 ## 3. The reply
 
 Top level: `from_frame`, `to_frame`, `bucket_size`, `bucket_count`, `fps`, `phases[]`, `buckets[]` (when asked),
-`events[]`, `missing[]`, `devices[]`, `truncated`, `cost` (`frames`, `port_records`, `ms`).
+`events[]`, `missing[]`, `devices[]`, `states_every_frame` (the blobs that changed in every frame, §1), `truncated`,
+`cost` (`frames`, `port_records`, `ms`).
 
 A phase (and an overview bucket; both sum their frames):
 
@@ -75,7 +94,7 @@ A phase (and an overview bucket; both sum their frames):
 | `keys` | the keys pressed (names, distinct), `key_events` |
 | `input_other`, `net_events` | joystick / mouse / other input events; network events |
 | `ula_reads`, `border_outs`, `beeper_toggles` | the port records of the port map row bound to the #FE latch (tier 2). A keyboard poll and an EAR read are the same IN: a loader is told apart by the rate, not by the port |
-| `devices[]` | per used device: `device` (index into the top-level `devices[]`: name, port tags), `in`, `out` (tier 2; a port belongs to the matching row with the most decoded bits); per used media slot (read from the host, table above): `slot`, `sectors`; per device memory region that changed (a card with its own CPU or DMA - GS / NeoGS RAM, VDAC2 RAM -, a video RAM, a font RAM): `region` (its name), `frames` (frames whose checkpoint found it changed; memory, so no clock field moves it) |
+| `devices[]` | per used device: `device` (index into the top-level `devices[]`: name, port tags), `in`, `out` (tier 2; a port belongs to the matching row with the most decoded bits); per used media slot (read from the host, table above): `slot`, `sectors`; per device memory region that changed (a card with its own CPU or DMA - GS / NeoGS RAM, VDAC2 RAM -, a video RAM, a font RAM): `region` (its name), `frames` (frames whose checkpoint found it changed; memory, so no clock field moves it); per device state blob that changed in some frames (§1): `state` (`device.<instance>`), `frames` |
 | `border_changes`, `paging_changes`, `length_changes` | frame-start state against the previous frame |
 | `writes` | write records (write journal on only) |
 | `tags` | the activity tags (§4) |
@@ -145,7 +164,8 @@ Thresholds are relative (medians and fractions of the window), not constants tun
   decides. Without this a 48K counted every frame: the ROM's FRAMES counter (#5C78) shares piece 1 of page 5 with
   the attributes.
 - **Not counted:** palettes and sprite patterns held in device-state blobs (Next, TS-Conf CRAM / SFILE): a palette
-  change alone is no `screen` frame.
+  change alone is no `screen` frame. The blob's change shows as its `state` entry (§1), unless the blob moves every
+  frame (`nextstate`, `tsconfstate`).
 - **Sessions from a file.** The layouts are not in the session file. A ULA model there falls back to the 7FFD page
   5 / 7 6,912 bytes; any other model answers `screen` in `missing[]` ("the session was loaded from a file, which does
   not keep this model's screen layouts"), never a guess.
@@ -193,8 +213,41 @@ change no phase. The MCP text lists the phases (one line each) and the events; b
 - Docs: command-interface.md, the plane docs, `.recipe/analysis/ttd-reverse-debugging.md` (start a recording's
   analysis with `timeline`).
 
-## 8. Not in scope
+## 8. A `.ttd` file without loading it
 
-- A `.ttd` file without loading it (port search can; the timeline can follow later).
+Option `file` (CLI `--file`, every plane): the timeline of a `.ttd` file, or of a recording's folder (its segments
+joined into a temporary file first, as `load` does), on the emulator's machine.
+`TimeTravelController::QueryTimelineInFile` reads the file into a controller of its own that has no machine
+(`TimeTravelController(nullptr)`): `LoadEngineSession(..., bind=false)` skips what ties a session to a machine (the
+model, ROM and slot checks, the peripheral registration, `BindLive`), `CommitLoadedSession` builds the side table, the
+input and marker journals from the engine's events, the coverage index, the bookmarks and the branches exactly as a
+load builds them, and the same query (`QueryTimelineOn`) runs there. So the answer is, by construction, the one
+`timeline` gives after loading the file (a test compares both, field by field), and it differs from the answer the
+live recording gave only by what a file does not keep: the HALT waits (`missing` `halt`, no `halt` tag) and, off the
+ULA models, the screen layouts (`missing` `screen`).
+
+- **Why the C++ side, not `ttdtool`.** The query reads the coverage index, the port journals, the checkpoints' changed
+  pieces and the engine's event log; `tools/python/ttd` parses the container but would have to re-implement every
+  fact and the phase cut, and two implementations drift. One verb on every plane, one code path.
+- **This session is not touched.** The file's controller is a local of the call; the instance's own session, cursor
+  and machine stay as they were and nothing parks (it works while recording).
+- **Branches.** The timeline is per line, as live (the active branch's lineage). `branch` (an id, a GUID or a name)
+  picks the file's line; the default is the branch the file saved as active, the one a load makes active. `branch`
+  without `file` is refused: the session's own timeline is its active branch, switch first.
+- **The machine the facts are read against.** The file holds no port map and no clock. On an instance of the recorded
+  model the port map and the frame rate are this instance's (what a load into it would use); on another model the
+  port classification is left out with `missing` `ports` ("the file was recorded on PENTAGON, whose port map the file
+  does not hold: ...") and the frame rate is 50 (at 48.8-50.1 Hz the shortest phase is 10 frames either way).
+- **Reply.** As live, plus `file`, `branch` (the line read) and `model` (the recorded one). A file or branch not found
+  answers 404, an unreadable file 400.
+- **Cost.** The whole file is read and decoded as a load reads it (the port search on a file does the same), then the
+  query: the file call costs a load plus the query.
+- **Found on the way.** A loaded branch had no port records: `AddImportedLine` left the new line's journals off, so
+  the file's IN / OUT and vector records of every branch part were dropped (the trunk's were kept), and a loaded
+  branch answered `in` 0 and port searches with nothing. The imported line's journals now take the records as the
+  trunk's do (`ttdtimeline_file_test.cpp` checks the timeline and a port search after a load).
+
+## 9. Not in scope
+
 - Sound energy, a picture per frame, HALT time inside a frame: not recorded (§1), and recording them would break TL-3.
 - Labels such as "menu" or "gameplay": the tags say what the machine did; naming the phase is the agent's job.

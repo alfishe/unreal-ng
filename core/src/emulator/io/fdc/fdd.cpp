@@ -231,6 +231,25 @@ inline uint64_t get_u64(const uint8_t*& cur)        { uint64_t v; std::memcpy(&v
 static constexpr size_t kFddStateSize = 27;
 static_assert(kFddStateSize == 27, "FDD state size drift");
 
+void FDD::TTDFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base)
+{
+    using ttd::AddStateField;
+    constexpr uint8_t kCounter = ttd::kStateFieldCounter;
+    AddStateField(out, prefix, base, "drive", 0, 1);
+    AddStateField(out, prefix, base, "side", 1, 1);
+    AddStateField(out, prefix, base, "motor", 2, 1);
+    AddStateField(out, prefix, base, "direction", 3, 1);
+    AddStateField(out, prefix, base, "head_load", 4, 1);
+    AddStateField(out, prefix, base, "disk_inserted", 5, 1);
+    AddStateField(out, prefix, base, "track", 6, 1);
+    AddStateField(out, prefix, base, "index", 7, 1, kCounter);
+    AddStateField(out, prefix, base, "ready", 8, 1);
+    AddStateField(out, prefix, base, "write_protect", 9, 1);
+    AddStateField(out, prefix, base, "motor_stop_timeout", 10, 8, kCounter);
+    AddStateField(out, prefix, base, "rotation", 18, 8, kCounter);
+    AddStateField(out, prefix, base, "reserved", 26, 1);
+}
+
 size_t FDD::TTDStateSize() const
 {
     return kFddStateSize;

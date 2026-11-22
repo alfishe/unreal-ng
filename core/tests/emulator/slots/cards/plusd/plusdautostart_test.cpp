@@ -34,6 +34,7 @@
 #include "emulator/slots/cards/plusd/plusdautostart.h"
 #include "emulator/slots/cards/plusd/plusdcard.h"
 #include "emulator/slots/slotcontrol.h"
+#include "unrealdisk/diskfs.h"
 
 namespace
 {
@@ -174,12 +175,12 @@ protected:
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
 
-    void Create(const std::string& model, bool withCard)
+    void Create(const std::string& model, bool withCard, const char* card = "plusd")
     {
         std::function<void(CONFIG&)> slotSet;
         std::string error;
         if (withCard)
-            ASSERT_TRUE(SlotControl::CreateOverride({{"edge.1", "plusd"}}, slotSet, error)) << error;
+            ASSERT_TRUE(SlotControl::CreateOverride({{"edge.1", card}}, slotSet, error)) << error;
         _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero, slotSet);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
@@ -270,13 +271,61 @@ TEST(PlusDAutostart_Plan, RulesByDirectory)
     EXPECT_EQ(plan(code).kind, "mount");
     EXPECT_NE(plan(code).message.find("no program to start"), std::string::npos);
 
-    GdosDisk sam;
-    sam.Add("samfile", 19, std::vector<uint8_t>(100, 0));
-    EXPECT_EQ(plan(sam).kind, "mount");
-    EXPECT_NE(plan(sam).message.find("not a G+DOS disk"), std::string::npos);
+    GdosDisk foreign;
+    foreign.Add("other", 19, std::vector<uint8_t>(100, 0));
+    EXPECT_EQ(plan(foreign).kind, "mount");
+    EXPECT_NE(plan(foreign).message.find("not a G+DOS disk"), std::string::npos);
 
     std::unique_ptr<DiskImage> image = loader.Image();
     EXPECT_EQ(PlusDAutostart::MakePlan(*image, true, "").kind, "mount") << "no system disk, nothing to boot";
+}
+
+/// The DISCiPLE's plan (~5 ms): GDOS 3 boots `SYS*`, not G+DOS's `+SYS*`; a 128K snapshot names 128K-DISCIPLE
+TEST(PlusDAutostart_Plan, DiscipleLooksForSys)
+{
+    EXPECT_TRUE(PlusDAutostart::IsSystemFile("SYSTEM 3d", 4, true));
+    EXPECT_TRUE(PlusDAutostart::IsSystemFile("sys", 4, true));
+    EXPECT_FALSE(PlusDAutostart::IsSystemFile("+SYS 2a", 4, true)) << "the DISCiPLE ROM does not load +SYS";
+    EXPECT_TRUE(PlusDAutostart::IsSystemFile("+SYS 2a", 4, false));
+    EXPECT_FALSE(PlusDAutostart::IsSystemFile("SYSTEM 3d", 4, false));
+    EXPECT_FALSE(PlusDAutostart::IsSystemFile("SYSTEM 3d", 1, true)) << "CODE only";
+
+    GdosDisk disk;
+    const uint8_t header[9] = {0x03, 0x70, 0x17, 0x00, 0x20, 0xFF, 0xFF, 0x00, 0x00};  // CODE 6000 bytes at #2000
+    disk.Add("SYSTEM 3d", 4, std::vector<uint8_t>(6000, 0x11), header);
+    disk.AddBorderLoop("game", 4);
+    std::unique_ptr<DiskImage> image = disk.Image();
+    const PlusDAutostart::Plan p = PlusDAutostart::MakePlan(*image, true, "", true);
+    EXPECT_EQ(p.kind, "run+load") << p.message;
+    EXPECT_EQ(p.dos, "disk");
+    EXPECT_EQ(p.command, "LOAD d1\"game\"");
+    EXPECT_EQ(p.dosBody.size(), 6000u);
+
+    GdosDisk snap128;
+    snap128.Add("Big", 9, std::vector<uint8_t>(1000, 0));
+    image = snap128.Image();
+    EXPECT_NE(PlusDAutostart::MakePlan(*image, true, "", true).message.find("128K-DISCIPLE"), std::string::npos);
+}
+
+/// `system-disk+load` on the DISCiPLE (~1 s): a disk without `SYS*` boots GDOS 3d from
+/// data/boot/disciple/gdos-3d-system.mgt in `fdd.disciple1`, then the work's disk comes back and its loader runs
+TEST_F(PlusDAutostart_Test, DiscipleBootsGdos3dThenTheWork)
+{
+    Create("48K", true, "disciple");
+    _emulator->EnableTurboMode();
+    GdosDisk disk;
+    disk.AddBorderLoop("Loader", 5);
+    const std::string path = disk.Save("disciple-nodos.mgt");
+    const Emulator::DiskAutostartResult result = _emulator->AutostartDisk(path);
+    ASSERT_TRUE(result.started) << result.message;
+    EXPECT_EQ(result.plan, "system-disk+load");
+    PlusDCard* card = PlusDCard::Find(_context);
+    ASSERT_NE(card, nullptr);
+    ASSERT_TRUE(card->IsDisciple());
+    EXPECT_EQ(card->Drive(0)->getSlotId(), "fdd.disciple1");
+    EXPECT_TRUE(RunsWithBorder(5, 2000)) << Describe();
+    EXPECT_EQ(Status().plan.dosBody.size(), 0x1A00u) << "SYSTEM 3d";
+    EXPECT_FALSE(card->Drive(0)->isWriteProtect()) << "the work's disk is back";
 }
 
 /// An MGT disk goes to the +D's drive (~30 ms): drive A / B are `fdd.plusd1` / `2`, C is refused; Beta drive A stays
@@ -307,7 +356,8 @@ TEST_F(PlusDAutostart_Test, MgtRefusedWithoutTheCard)
     const Emulator::DiskAutostartResult result = _emulator->AutostartDisk(path);
     EXPECT_FALSE(result.mounted);
     EXPECT_FALSE(result.started);
-    EXPECT_NE(result.message.find("no +D"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("no MGT interface"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("48K-DISCIPLE"), std::string::npos) << result.message;
 }
 
 /// `run` (~1 s): the system disk with an AUTO program: reset, RUN; the ROM loads +SYS, then AUTO, which runs
@@ -323,6 +373,35 @@ TEST_F(PlusDAutostart_Test, RunsAutoWithTheDisksDos)
     EXPECT_EQ(result.plan, "run");
     EXPECT_EQ(result.dos, "disk");
     EXPECT_TRUE(RunsWithBorder(3, 1500)) << Describe();
+}
+
+/// A program written by unrealdisk's G+DOS writer (DiskFs, as `zxdisk put`), not by hand (~1 s): the system disk with
+/// `AUTO` put on it, saved as .mgt; the +D ROM's RUN loads +SYS, then G+DOS loads the written AUTO, which runs
+TEST_F(PlusDAutostart_Test, RunsAProgramWrittenByTheDiskTool)
+{
+    Create("48K", true);
+    _emulator->EnableTurboMode();
+    GdosDisk border;
+    border.AddBorderLoop("x", 5);
+    std::unique_ptr<DiskImage> loopImage = border.Image();
+    std::vector<uint8_t> program;
+    std::string error;
+    ASSERT_TRUE(unrealdisk::DiskFs(*loopImage).Read("", "x", program, error)) << error;
+
+    std::unique_ptr<DiskImage> image = SystemDisk().Image();
+    unrealdisk::DiskFs fs(*image);
+    unrealdisk::DiskFsWriteOptions options;
+    options.basicType = 0;
+    options.start = 10;
+    ASSERT_TRUE(fs.Write("", "AUTO", program, options, error)) << error;
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("written.mgt");
+    const unrealdisk::FloppySaveResult saved = unrealdisk::FloppyFormats::Save({}, *image, path, false);
+    ASSERT_TRUE(saved.saved) << saved.reason;
+
+    const Emulator::DiskAutostartResult result = _emulator->AutostartDisk(path);
+    ASSERT_TRUE(result.started) << result.message;
+    EXPECT_EQ(result.plan, "run");
+    EXPECT_TRUE(RunsWithBorder(5, 1500)) << Describe();
 }
 
 /// On a 128K the reset goes to its menu and the steps choose 128 BASIC (FLAGS bit 4: a 128K game checks it);
@@ -442,196 +521,10 @@ TEST_F(PlusDAutostart_Test, CodeOnlyIsMounted)
     EXPECT_NE(result.message.find("no program to start"), std::string::npos) << result.message;
 }
 
-/// One autostart of a corpus image on one configuration, then its verdict
-struct CorpusRun
-{
-    Emulator::DiskAutostartResult result;
-    PlusDAutostart::Status status;
-    int settled = -1;        ///< frames after the steps until the FDC stayed idle (-1: never in 4000)
-    std::string verdict;     ///< running, report, reset, in-dos, not-started
-    std::string detail;      ///< the report line, the steps' message, ...
-    std::string screen;      ///< the first non-empty screen line
-};
-
-/// `model` with the card in edge.1, the autostart in `basic` ("" = the machine's own). Loading ends when the FDC stays
-/// idle (not busy, the motor off) 300 frames, at most 4000: G+DOS reads about one sector per revolution, so a 40K
-/// adventure takes some 800 frames, and a loader's PAUSE of a few seconds must not count as the end. Not "the +D paged
-/// out": the +D traps KEY-SCAN, so an INKEY$ menu pages it in many times a frame. Then the verdict from the screen: a
-/// BASIC report line ("C Nonsense in BASIC, 200:1") = report; the ROM copyright or the 128K menu = reset; the FDC
-/// still busy = in-dos; else running
-static CorpusRun RunCorpusImage(const std::string& path, const std::string& model, const std::string& basic)
-{
-    CorpusRun run;
-    std::function<void(CONFIG&)> slotSet;
-    std::string error;
-    if (!SlotControl::CreateOverride({{"edge.1", "plusd"}}, slotSet, error))
-    {
-        run.verdict = "not-started";
-        run.detail = error;
-        return run;
-    }
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero, slotSet);
-    if (emulator == nullptr)
-    {
-        run.verdict = "not-started";
-        run.detail = "no emulator";
-        return run;
-    }
-    EmulatorContext* context = emulator->GetContext();
-    emulator->EnableTurboMode();
-    emulator->RunNFrames(100, true);
-    run.result = emulator->AutostartDisk(path, 0, basic);
-    for (int frame = 0; frame < 2500; frame += 10)
-    {
-        emulator->RunNFrames(10, true);
-        run.status = context->pDiskAutostart->PlusD().GetStatus();
-        if (!run.status.active)
-            break;
-    }
-    PlusDCard* card = PlusDCard::Find(context);
-    if (run.status.finished && run.status.ok)
-    {
-        for (int frame = 0, fdcIdle = 0; frame < 4000 && run.settled < 0; frame++)
-        {
-            emulator->RunNFrames(1, true);
-            // The WD1772 status: bit 0 busy, bit 7 the motor on (it stops some 10 revolutions after the last command)
-            const uint8_t fdcStatus = card && card->Fdc() ? card->Fdc()->PeekRegister(0) : 0;
-            fdcIdle = (fdcStatus & 0x81) != 0 ? 0 : fdcIdle + 1;
-            if (fdcIdle >= 300)
-                run.settled = frame - 299;
-        }
-    }
-    const std::string screen = ScreenOCR::ocrScreen(emulator->GetUUID());
-    const std::regex reportLine(R"(^\s*([0-9A-Z]) (.+), (\d+):(\d+)\s*$)");
-    std::string report;
-    bool copyright = false;
-    for (size_t start = 0; start < screen.size();)
-    {
-        size_t end = screen.find('\n', start);
-        if (end == std::string::npos)
-            end = screen.size();
-        std::string text = screen.substr(start, end - start);
-        while (!text.empty() && text.back() == ' ')
-            text.pop_back();
-        if (run.screen.empty() && !text.empty())
-            run.screen = text;
-        if (std::regex_match(text, reportLine))
-            report = text.substr(text.find_first_not_of(' '));
-        copyright |= text.find("Sinclair Research Ltd") != std::string::npos || text.find("128 BASIC") != std::string::npos;
-        start = end + 1;
-    }
-    if (!run.status.finished || !run.status.ok)
-    {
-        run.verdict = "not-started";
-        run.detail = run.status.message.empty() ? run.result.message : run.status.message;
-    }
-    else if (run.settled < 0)
-    {
-        run.verdict = "in-dos";
-        run.detail = "the FDC still busy after 4000 frames";
-    }
-    else if (!report.empty())
-    {
-        run.verdict = "report";
-        run.detail = report;
-    }
-    else if (copyright)
-    {
-        run.verdict = "reset";
-        run.detail = run.screen;
-    }
-    else
-        run.verdict = "running";
-    EmulatorTestHelper::CleanupEmulator(emulator);
-    return run;
-}
-
-/// The corpus run (P4.4 / P4.5, test-plan §5; skipped unless UNREAL_PLUSD_CORPUS names the classified table of
-/// docs/inprogress/2026-11-15-mgt-plus-d/classify_mgt.py and UNREAL_PLUSD_POOL the pool's images folder). Every +D
-/// image on three configurations with the card: 48K, 128K in 128 BASIC (its menu), 128K in 48 BASIC; a verdict each
-/// (RunCorpusImage), then the tags: `min` = the smallest machine it runs on (48K, 128K, none), `runs_on` / `fails_on`
-/// the configurations. A 128K snapshot is not tried on the 48K (G+DOS cannot load it there). One TSV row per image
-/// (UNREAL_PLUSD_CORPUS_OUT, else the test scratch folder). Nothing is tuned to a title
-TEST(PlusDAutostart_Corpus, AllImages)
-{
-    const char* table = std::getenv("UNREAL_PLUSD_CORPUS");
-    const char* pool = std::getenv("UNREAL_PLUSD_POOL");
-    if (table == nullptr || *table == '\0' || pool == nullptr || *pool == '\0')
-        GTEST_SKIP() << "UNREAL_PLUSD_CORPUS (classified TSV) and UNREAL_PLUSD_POOL (pool/images) not set";
-    const char* outEnv = std::getenv("UNREAL_PLUSD_CORPUS_OUT");
-    const std::string outPath = outEnv != nullptr && *outEnv != '\0' ? outEnv
-                                                                     : TestPathHelper::GetUniqueTestScratchPath("corpus.tsv");
-    std::ifstream in(table);
-    ASSERT_TRUE(in.good()) << table;
-    std::ofstream out(outPath);
-    struct Config
-    {
-        const char* name;
-        const char* model;
-        const char* basic;
-    };
-    const Config configs[] = {{"48K", "48K", "48"}, {"128K", "128K", "128"}, {"128K/48", "128K", "48"}};
-    out << "sha\ttitle\tmin\truns_on\tfails_on\tplan\tdos\tcommand";
-    for (const Config& config : configs)
-        out << '\t' << config.name << "\t" << config.name << "_detail\t" << config.name << "_settled\t" << config.name
-            << "_screen";
-    out << '\n';
-    std::string line;
-    std::getline(in, line);  // header
-    int rows = 0;
-    while (std::getline(in, line))
-    {
-        std::vector<std::string> cells;
-        size_t from = 0;
-        for (size_t tab; (tab = line.find('\t', from)) != std::string::npos; from = tab + 1)
-            cells.push_back(line.substr(from, tab - from));
-        cells.push_back(line.substr(from));
-        if (cells.size() < 8 || cells[3] != "plusd")
-            continue;
-        const std::string& sha = cells[0];
-        const std::string path = std::string(pool) + "/" + sha.substr(0, 2) + "/" + sha + ".mgt";
-
-        std::vector<CorpusRun> runs;
-        for (const Config& config : configs)
-            runs.push_back(RunCorpusImage(path, config.model, config.basic));
-        std::string runsOn;
-        std::string failsOn;
-        std::string min;
-        for (size_t i = 0; i < runs.size(); i++)
-        {
-            const bool tried = runs[i].result.plan != "mount" || runs[i].verdict != "not-started";
-            std::string& list = runs[i].verdict == "running" ? runsOn : failsOn;
-            if (tried || runs[i].verdict == "running")
-                list += std::string(list.empty() ? "" : " ") + configs[i].name;
-            if (runs[i].verdict == "running" && min.empty())
-                min = configs[i].model;
-        }
-        // The plan of the first configuration that started it (the 48K mounts a 128K snapshot)
-        const CorpusRun* shown = &runs[0];
-        for (const CorpusRun& run : runs)
-        {
-            if (run.result.plan != "mount")
-            {
-                shown = &run;
-                break;
-            }
-        }
-        out << sha << '\t' << cells[1] << '\t' << (min.empty() ? "none" : min) << '\t' << runsOn << '\t' << failsOn
-            << '\t' << shown->result.plan << '\t' << shown->result.dos << '\t' << shown->result.command;
-        for (const CorpusRun& run : runs)
-            out << '\t' << run.verdict << '\t' << run.detail << '\t' << run.settled << '\t' << run.screen;
-        out << '\n';
-        out.flush();
-        rows++;
-    }
-    std::cout << "---- " << rows << " images, table " << outPath << "\n";
-    EXPECT_GT(rows, 0);
-}
-
 /// One image, for a closer look: UNREAL_PLUSD_ONE = the .mgt, UNREAL_PLUSD_MODEL = 48K / 128K (default 48K),
 /// UNREAL_PLUSD_BASIC = 48 / 128 (default the machine's own).
 /// Prints the steps, the BASIC position (PPC / SUBPPC / ERR_NR / FLAGS) and the screen text every 250 frames
-TEST(PlusDAutostart_Corpus, One)
+TEST(PlusDAutostart_Image, One)
 {
     const char* path = std::getenv("UNREAL_PLUSD_ONE");
     if (path == nullptr || *path == '\0')

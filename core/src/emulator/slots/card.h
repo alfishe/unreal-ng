@@ -40,6 +40,7 @@
 
 class EmulatorContext;
 class GeneralSoundCard;
+struct StateNode;
 namespace ttd
 {
 class ITTDRegionSource;
@@ -104,7 +105,27 @@ public:
     virtual uint8_t Peek(uint16_t port, bool& drives) const = 0;
 
     /// Bus /RESET: ICardAudio::BusReset
+
+    /// A power cycle (Emulator hard reset), after BusReset: the state only the card's power-on circuit clears (the
+    /// DivMMC's #E3 and MAPRAM). Default: nothing beyond the reset
+    virtual void PowerCycle()
+    {
+    }
+
+    /// A snapshot was loaded (Emulator::LoadSnapshotNow, after the loader's reset): a card that maps memory leaves
+    /// the program the machine the snapshot describes. Default: nothing
+    virtual void AfterSnapshotLoad()
+    {
+    }
     /// endregion </Bus>
+
+    /// The card's live state for the slot report (DeviceState::Slots, `slots[].live`): fields added to `out`, an
+    /// object. False: the card reports none (default)
+    virtual bool ReportLiveState(StateNode& out) const
+    {
+        (void)out;
+        return false;
+    }
 
     /// A host MIDI panic (the TTD input MidiPanic, applied at an instruction boundary): the card's MIDI synthesizer
     /// stops every voice. False: the card has no MIDI synthesizer

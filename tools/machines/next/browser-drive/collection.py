@@ -7,7 +7,8 @@
 The collection folder (<card>/collection/{games,demos}/<genre>/<Title>/, built by the collection builder with an index.tsv whose
 `main_file` column is `games/<genre>/<Title>/<file>`) is walked the way a person walks it: reset, boot, Browser, directory by
 directory (the Browser's position is recognised from its header bar; only the part that differs from the previous title's folder is walked), ENTER on the main file. A directory or file name is found by the shortest unique prefix typed into the Browser's
-search (H); names that begin with a character the search cannot type are reached by counting down from the top of the listing.
+search (H); names that begin with a character the search cannot type are reached by counting down from the top of the listing
+(the keys, waits and rules of testdata/machines/zxnext/browser-navigation.json, through drive.py / navigation.py).
 For each title the report keeps: the picture after `--wait` seconds, whether the machine is still in NextZXOS (idle at the key-wait
 loop = nothing started), the CPU clock and the DivMMC mapping. Writes <out>/<NNN>-<title>.png, <out>/sheet-<category>.png and
 <out>/report.md (a title that did not start is listed first).
@@ -15,14 +16,9 @@ loop = nothing started), the CPU clock and the DivMMC mapping. Writes <out>/<NNN
 import argparse, base64, csv, io, json, os, re, sys, time, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from drive import Machine  # noqa: E402
+from drive import Machine, paper  # noqa: E402
+import navigation as nav  # noqa: E402
 
-
-
-def sorted_entries(folder):
-    """The Browser's order: '.' and '..' on top, then names case-insensitively"""
-    names = sorted(os.listdir(folder), key=lambda n: n.lower())
-    return ['.', '..'] + names
 
 
 def header_sig(machine):
@@ -31,7 +27,7 @@ def header_sig(machine):
     from PIL import Image
     data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
     im = Image.open(io.BytesIO(base64.b64decode(data['data']))).convert('RGB')
-    return hashlib.md5(im.crop((64, 64, 576, 72)).tobytes()).hexdigest()
+    return hashlib.md5(im.crop(paper(im, 0, 0, 512, 8)).tobytes()).hexdigest()
 
 
 def grab_png(machine, path):
@@ -48,63 +44,7 @@ def in_browser(machine):
     def black_share(box):
         region = im.crop(box)
         return sum(1 for px in region.getdata() if px == (0, 0, 0)) / float(region.size[0] * region.size[1])
-    return black_share((64, 64, 576, 80)) > 0.5 and black_share((64, 400, 576, 416)) > 0.5
-
-
-SEARCHABLE = re.compile(r"^[A-Za-z0-9 ._-]+")
-
-
-def search_line_sig(machine):
-    """The Browser's bottom prompt line (Search: <text>) as a hash: it changes when typed text arrives"""
-    import hashlib
-    from PIL import Image
-    data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
-    im = Image.open(io.BytesIO(base64.b64decode(data['data']))).convert('RGB')
-    return hashlib.md5(im.crop((64, 418, 576, 434)).tobytes()).hexdigest()
-
-
-def type_search(machine, text):
-    """H, then the text. A typed text can fail to arrive (the Search prompt stayed empty and the next ENTER opened the wrong entry). The
-    prompt line has a blinking cursor, so "did it change" compares against BOTH blink states taken before typing; the text is typed again
-    only when the prompt still equals one of them after a settle time (typing twice leaves doubled letters: never retype on a doubt)"""
-    machine.tap('h')
-    time.sleep(0.5)
-    machine.idle(0.3)
-    before = set()
-    for _ in range(6):  # a few frames apart: both blink phases
-        before.add(search_line_sig(machine))
-        time.sleep(0.15)
-    for attempt in range(2):
-        machine.call('/%s/keyboard/type' % machine.id, {'text': text, 'delay_frames': 5})
-        time.sleep(1.0 + 0.15 * len(text))
-        machine.idle(0.3)
-        shots = {search_line_sig(machine) for _ in range(4) if time.sleep(0.12) is None}
-        if not (shots & before):
-            break
-    machine.tap('enter')  # accept the search: the cursor stays on the match
-    time.sleep(0.5)
-    machine.idle(0.5)  # the Browser has taken the search before the next ENTER opens the entry
-
-
-def reach(machine, folder, name):
-    """Put the Browser's cursor on `name` of the directory shown (host path `folder`): the search (H) with the shortest unique prefix of
-    the name's searchable part (letters, digits, space, dot, underscore, hyphen - the Browser's search takes spaces, which matters:
-    "Next3D Demo Cube" has no unique prefix without them); names whose searchable part is ambiguous are reached by counting down from the top"""
-    entries = sorted_entries(folder)
-    lower = [e.lower() for e in entries]
-    match = SEARCHABLE.match(name)
-    if match:
-        text = match.group(0)
-        low = text.lower()
-        for length in range(1, len(low) + 1):
-            if sum(e.startswith(low[:length]) for e in lower) == 1:
-                type_search(machine, text[:length])
-                return True
-    index = entries.index(name)  # ambiguous: count down from the top of the directory
-    for _ in range(index):
-        machine.tap('down', 4)
-        time.sleep(0.15)
-    return True
+    return black_share(paper(im, 0, 0, 512, 16)) > 0.5 and black_share(paper(im, 0, 336, 512, 352)) > 0.5
 
 
 def main():
@@ -160,15 +100,12 @@ def main():
                     os.remove(full)
         for attempt in range(3):
             machine.call('/%s/reset' % machine.id, {})
-            machine.idle(2.5)
+            machine.step('boot')
             # the main menu may be up at once (B opens the Browser); if the boot splash is up instead, SPACE brings the menu and B follows
-            machine.tap('b')
-            machine.idle(2.5)
+            machine.step('browser')
             if not in_browser(machine):
-                machine.tap('space')
-                machine.idle(2)
-                machine.tap('b')
-                machine.idle(2.5)
+                machine.step('menu')
+                machine.step('browser')
             if in_browser(machine):
                 break
             print('   (the Browser did not open, attempt %d: resetting again)' % (attempt + 1), flush=True)
@@ -183,66 +120,57 @@ def main():
             for _ in range(10):
                 if () in header_sigs and header_sig(machine) == header_sigs[()]:
                     break
-                machine.tap('edit')
-                machine.idle(0.6)
-            else:
-                pass
+                machine.step('up')
             position = []
             header_sigs.setdefault((), header_sig(machine))
         common = 0
         while common < min(len(position), len(target)) and position[common] == target[common]:
             common += 1
         for _ in range(len(position) - common):
-            machine.tap('edit')
-            machine.idle(0.6)
+            machine.step('up')
         folder = os.path.join(args.card, *target[:common])
         for i in range(common, len(target)):
-            reach(machine, folder, target[i])
-            machine.tap('enter')
-            machine.idle(1.2)
+            machine.reach(folder, target[i], root=i == 0)
+            machine.step('open')
             folder = os.path.join(folder, target[i])
             header_sigs.setdefault(tuple(target[:i + 1]), header_sig(machine))
         png = os.path.join(args.out, '%03d-%s.png' % (n, re.sub(r'[^A-Za-z0-9]+', '_', t['title'])[:40]))
-        reach(machine, folder, parts[-1])
+        machine.reach(folder, parts[-1])
         if args.debug_shots:
             grab_png(machine, png.replace('.png', '-cursor.png'))
-        if parts[-1].lower().endswith('.tap'):
-            # SYMBOL SHIFT + ENTER in the Browser opens the TAP loader's options for this game (a game started once is remembered
-            # and starts straight away next time, so the menu is only there on the first run or through this chord)
-            machine.call('/%s/keyboard/combo' % machine.id, {'keys': ['sym_shift', 'enter'], 'frames': 6})
-        else:
-            machine.tap('enter')  # run the main file
-        if parts[-1].lower().endswith('.tap'):
-            # NextZXOS's TAP loader asks "To begin loading, select mode: 1 128K, 0 USR0, 4 48K, P Pentagon, N Next/+3": a tape is
-            # run in the Next's own mode (N), then given time to load
-            time.sleep(3.0)
+        def tap_loader(step):
+            # NextZXOS's TAP loader asks "To begin loading, select mode: 1 128K, 0 USR0, 4 48K, P Pentagon, N Next/+3"; its mode key
+            # (N, the next step) comes after the play speed: S this many times
+            if step.get('opens') != 'tap-loader':
+                return
             for _ in range(args.tap_speed):
                 machine.tap('s')
                 time.sleep(0.6)
             if args.tap_speed:
                 grab_png(machine, png.replace('.png', '-loader.png'))
-            machine.tap('n')
-            time.sleep(args.wait)
+        machine.run_file(parts[-1], tap_loader)  # the main file's run steps (browser-navigation.json, run)
+        if parts[-1].lower().endswith('.tap'):
+            time.sleep(args.wait)  # the tape is given time to load
         time.sleep(args.wait)
         state = machine.call('/%s/state/next' % machine.id)
         regs = machine.call('/%s/registers' % machine.id)
         # A BASIC program waiting for a key sits in the same key-wait loop (#0C8F) as the Browser does, so for .bas the loop says nothing:
         # those titles are judged by what is on the screen (NextZXOS grey paper) after the start keys
         is_basic = parts[-1].lower().endswith(('.bas', '.tap'))  # both can sit in the ROM's key-wait loop while running
-        idle = (not is_basic) and regs['interrupt']['halted'] and regs['special']['pc'] == 0x0C8F
+        idle = (not is_basic) and regs['interrupt']['halted'] and regs['special']['pc'] == nav.IDLE_PC
         # The Browser only LOADS a BASIC program saved without an autostart line: the editor shows the listing and nothing runs. Type RUN
         # (the letters r u n, then ENTER: the editor takes plain text) - loading is not enough
         ran_by_hand = False
         if is_basic and parts[-1].lower().endswith('.bas'):
             probe = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
             shot = Image.open(io.BytesIO(base64.b64decode(probe['data']))).convert('RGB')
-            bar = shot.crop((64, 400, 576, 416))
+            bar = shot.crop(paper(shot, 0, 336, 512, 352))
             listing = sum(1 for px in bar.getdata() if px == (0, 0, 0)) > 0.5 * bar.size[0] * bar.size[1] and \
-                sum(1 for px in shot.crop((64, 64, 576, 80)).getdata() if px == (0, 0, 0)) < 0.1 * 512 * 16
+                sum(1 for px in shot.crop(paper(shot, 0, 0, 512, 16)).getdata() if px == (0, 0, 0)) < 0.1 * 512 * 16
             if listing:
-                machine.call('/%s/keyboard/type' % machine.id, {'text': 'run', 'delay_frames': 5})
+                machine.call('/%s/keyboard/type' % machine.id, {'text': nav.BASIC_RUN['text'], 'delay_frames': nav.STEPS['type']['delay']})
                 time.sleep(1.0)
-                machine.tap('enter')
+                machine.step(nav.BASIC_RUN['then'])
                 time.sleep(args.wait)
                 ran_by_hand = True
         png = os.path.join(args.out, '%03d-%s.png' % (n, re.sub(r'[^A-Za-z0-9]+', '_', t['title'])[:40]))
@@ -288,7 +216,7 @@ def main():
                 # NextZXOS's own screen: grey paper WITH text (menu, Browser, welcome page); a program that cleared the screen is all grey
                 back = top == (182, 182, 182) and 0.6 * total < n_top < 0.995 * total
             else:
-                back = regs2['interrupt']['halted'] and regs2['special']['pc'] == 0x0C8F
+                back = regs2['interrupt']['halted'] and regs2['special']['pc'] == nav.IDLE_PC
             life = ('RUN-typed ' if ran_by_hand else '') + ('moves ' if moves else 'static ') + ('reacts ' if reacts else 'no-reaction ') + ('BACK-IN-OS' if back else 'running')
             after.save(png.replace('.png', '-keys.png'))
             if back:

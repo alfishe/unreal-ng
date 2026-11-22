@@ -1,5 +1,7 @@
 # TTD & GDB — Implementation Plan
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 | | |
 |---|---|
 | **Status** | History: the plan for v1 (`TimeTravelManager`, deleted 2026-10-30) and the GDB stub, as proposed. The engine that replaced v1 was built by the [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md); its phases are not this plan's |

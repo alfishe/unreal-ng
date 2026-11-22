@@ -29,7 +29,8 @@ public:
         /// At the start of a read or write cycle or a T without a strobe: the waits the video logic gives the address on the bus
         /// (`io`: no MREQ, a port cycle or an idle T)
         std::function<void(uint16_t, bool)> contend;
-        /// zxnDDMA physical mode: a byte of the 4 MB SRAM, the MMU bypassed (22-bit address)
+        /// zxnDDMA physical mode: a byte of the SRAM, the MMU bypassed (22-bit address; the board's SRAM lines wrap it further:
+        /// NextMemory::PhysicalAddressMask)
         std::function<uint8_t(uint32_t)> readPhysical;
         std::function<void(uint32_t, uint8_t)> writePhysical;
         /// zxnDDMA Layer 2 X,Y destination: the 16K bank (NR #12, or the shadow NR #13 when `hidden`) and the resolution (NR #70 bits 5:4)
@@ -110,6 +111,22 @@ public:
     bool CeWait() const { return _ceWait; }
     uint8_t ReadMask() const { return _readMask; }
     uint8_t ReadSequenceIndex() const { return _readSeq; }  ///< which of the 7 values the next read returns
+    /// The zxnDDMA state (core 3.03.00, zxnddma.gde 2.5): what #D7-#F7 programmed and where a 2D block is
+    struct DdmaView
+    {
+        uint8_t extA = 0, extB = 0;  ///< #D7 / #DB: address bits 21:16 of port A / B (bits 7:6 dropped)
+        bool physical = false, twoD = false, transparent = false, fill = false, layer2Xy = false, hidden = false;  ///< #DF flags
+        uint16_t layer2X = 0;
+        uint8_t layer2Y = 0;
+        uint16_t rowLength = 0, rows = 0, strideA = 0, strideB = 0;  ///< #E3 / #E7 / #EB / #EF
+        uint8_t transparentValue = 0, fillValue = 0;                  ///< #F3 / #F7
+        uint16_t row = 0, column = 0;  ///< the 2D position of the next byte
+    };
+    DdmaView Ddma() const
+    {
+        return {_extA, _extB, _phys, _2d, _transparent, _fill, _l2xy, _hidden, _l2x, _l2y, _rowLen, _rows, _strideA, _strideB,
+                _transValue, _fillValue, _row, _col};
+    }
     /// The byte a read returns while the read sequence is at the status (what Read() computes first, without stepping anything)
     uint8_t StatusByte() const
     {
@@ -163,11 +180,14 @@ private:
 
     Bus _bus;
     std::function<void(const NextDma&)> _onBlock;
-    // WR0-WR2, WR4
-    bool _aToB = true;
+    // WR0-WR2, WR4. Power-on values: dma.vhd gives the registers its reset leaves alone (direction, addresses, block length, port
+    // types and address modes) no initial value; Xilinx synthesis (XST for the issue 2's Spartan-6, Vivado for the issue 4 / 5's Artix-7)
+    // makes such a flip-flop's INIT 0, which the configuration loads (GSR). So: B -> A, both ports memory, decrement, all addresses 0.
+    // The timing bytes have an initial value ("01") and are reset anyway
+    bool _aToB = false;
     uint16_t _portAAddress = 0, _portBAddress = 0, _blockLength = 0;
     bool _portAIsIo = false, _portBIsIo = false;
-    uint8_t _portAMode = 1, _portBMode = 1;  // 0 decrement, 1 increment, 2/3 fixed
+    uint8_t _portAMode = 0, _portBMode = 0;  // 0 decrement, 1 increment, 2/3 fixed
     uint8_t _portATiming = 1, _portBTiming = 1, _prescaler = 0;
     uint8_t _mode = 1;  // 0 byte, 1 continuous, 2 burst
     bool _autoRestart = false, _ceWait = false;

@@ -869,8 +869,51 @@ TEST_F(AutomationLua_Test, TransferStateAnswersTheReportOfEverySurface)
     EXPECT_EQ(output, "nil\tNot Found: Target emulator 'no-such-instance' not found\n");
 }
 
+/// Reads of the past from Lua (PLAN #122 S1, V2): ttd_memory_series takes a ranges table of strings and of
+/// {space, page, offset, length} tables; ttd_screen_at answers the screen's bytes; both as the TTDControl replies
+TEST(AutomationLuaPastReads_Test, MemorySeriesAndScreenAtAnswerTheirReplies)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // DI; loop: LD A,(#5B00); INC A; LD (#5B00),A; JR loop
+    const uint8_t program[] = {0xF3, 0x3A, 0x00, 0x5B, 0x3C, 0x32, 0x00, 0x5B, 0x18, 0xF7};
+    for (size_t i = 0; i < sizeof(program); i++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    context->pCore->GetZ80()->pc = 0x8000;
+    ttd::TTDControl control(context);
+    ASSERT_TRUE(control.Execute({"start", {}}).Ok());
+    emulator->RunNFrames(4, true);
+    ASSERT_TRUE(control.Execute({"stop", {}}).Ok());
+    {
+        BoundLua lua;
+        lua.start();
+        lua.Bind(emulator);
+        std::string message;
+        std::string output;
+        ASSERT_TRUE(lua.executeCode(
+            "local r = ttd_memory_series{ranges = {'0x5B00:1', {space = 'ram', page = 5, offset = 0x1B00, length = 1}},\n"
+            "                            format = 'values'}\n"
+            "assert(r.rows and #r.rows == r.row_count and #r.rows >= 4, tostring(r.error))\n"
+            "for _, row in ipairs(r.rows) do assert(row.data[1][1] == row.data[2][1]) end\n"
+            "assert(r.rows[#r.rows].data[1][1] ~= r.rows[1].data[1][1])\n"
+            "assert(r.moment == 'frame_start')\n"
+            "local s = ttd_screen_at{frame = r.first_frame, which = 'normal', format = 'attributes', encoding = 'hex'}\n"
+            "assert(s.length == 768 and #s.data == 1536 and s.shown.at_end.page == 5, tostring(s.error))\n"
+            "local bad = ttd_memory_series{ranges = '0x5B00'}\n"
+            "assert(bad.ok == false and bad.error:find('Invalid range'), tostring(bad.error))\n"
+            "print('ok')",
+            message, output))
+            << message;
+        EXPECT_EQ(output, "ok\n");
+        lua.stop();
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 /// Time travel on a sound card's CPU from Lua (gs-debugger design §8): ttd_card_seek / ttd_card_step /
-/// ttd_card_reverse_continue / ttd_card_position answer the TTDControl replies as tables
+/// ttd_card_reverse_step_over / ttd_card_step_over / ttd_card_step_out / ttd_card_run_to_cursor / ttd_card_reverse_continue /
+/// ttd_card_position answer the TTDControl replies as tables
 TEST(AutomationLuaCardPositions_Test, CardMovesAnswerTheirReplies)
 {
     ttdtest::Bench b;
@@ -897,6 +940,24 @@ TEST(AutomationLuaCardPositions_Test, CardMovesAnswerTheirReplies)
             "assert(p.card_position and p.instruction == " + t + " - 4 and p.main.frame ~= nil)\n"
             "assert(#ttd_card_position() == 1)\n"
             "assert(ttd_card_position('ms') == nil)\n"
+            "local over = ttd_card_reverse_step_over('gs')\n"
+            "assert(over.reached and over.stepped and over.from == " + t + " - 4, tostring(over.error or over.text))\n"
+            "assert(over.card.instruction == over.target and over.target < " + t + " - 4)\n"
+            "assert(type(over.over_call) == 'boolean' and type(over.text) == 'string')\n"
+            "assert(ttd_card_seek('gs', " + t + " - 4).reached)\n"
+            "local so = ttd_card_step_over('gs')\n"
+            "assert(so.reached and so.kind == 'over' and so.from == " + t + " - 4 and so.target > so.from, "
+            "tostring(so.error or so.message))\n"
+            "local st = ttd_card_step_out('neogs')\n"
+            "assert(st.reached and st.kind == 'out' and st.from == so.target and st.target > st.from)\n"
+            "local cursor = ttd_card_seek('gs', " + t + " - 3).card.pc\n"
+            "assert(ttd_card_seek('gs', " + t + " - 4).reached)\n"
+            "local to = ttd_card_run_to_cursor('gs', cursor)\n"
+            "assert(to.reached and to.hit and to.kind == 'to' and to.cursor == cursor and to.target == " + t + " - 3, "
+            "tostring(to.error or to.message))\n"
+            "local miss = ttd_card_run_to_cursor('gs', 0x5000, 1)\n"
+            "assert(miss.reached == false and miss.status == 'no_hit' and miss.hit == false, tostring(miss.status))\n"
+            "assert(ttd_card_seek('gs', " + t + " - 4).reached)\n"
             "local none = ttd_card_reverse_continue('gs', 3)\n"
             "assert(none.ok == false and none.status == 'no_breakpoints', tostring(none.status))\n"
             "local bad = ttd_card_seek('zz', 1)\n"

@@ -1,6 +1,7 @@
 // DivMmcPaging (core/src/emulator/io/divmmc/divmmcpaging.h): the DivMMC / DivIDE board on a classic machine -
 // #E3 paging with the EEPROM and banked RAM at #0000-#3FFF, MAPRAM, the automap on M1 fetches at the entry
-// points, the SPI pair. Rules: docs/inprogress/2026-09-28-storage-controllers-survey/divide-divmmc-esxdos.md §2.
+// points (the CPLD's two-stage latch: an entry maps from the next opcode fetch on), the SPI pair, /RESET and power on.
+// Rules: docs/inprogress/2026-09-28-storage-controllers-survey/divide-divmmc-esxdos.md §2, Mario Prato's divmmc.vhd.
 
 #include "stdafx.h"
 #include "pch.h"
@@ -103,7 +104,9 @@ TEST_F(DivMmcPaging_Test, MapramIsStickyAndShowsBank3ReadOnlyAtZero)
     _z80->sp = 0xFF00;
     _z80->Z80Step();
     EXPECT_EQ(_z80->pc, 0x0008);
-    _z80->Z80Step();              // the opcode at #0008 (it came from the Spectrum ROM)
+    _z80->Z80Step();              // the instruction at #0008 (it came from the Spectrum ROM)
+    EXPECT_TRUE(_div->MapCondition());
+    _z80->Z80Step();              // the next fetch (#000B) maps the board: bank 3's byte there, NOP
     EXPECT_TRUE(_div->Automapped());
     EXPECT_EQ(_z80->rd(0x0020), 0xC3) << "bank 3 at #0000";
     _z80->wd(0x0020, 0x00);
@@ -112,22 +115,105 @@ TEST_F(DivMmcPaging_Test, MapramIsStickyAndShowsBank3ReadOnlyAtZero)
     EXPECT_EQ(_div->RamBank(3)[0x20], 0xC3);
 }
 
-TEST_F(DivMmcPaging_Test, AutomapEntriesMapInAfterTheFetchAndOffAreaMapsOut)
+TEST_F(DivMmcPaging_Test, AutomapEntriesMapInFromTheNextFetchAndOffAreaMapsOut)
 {
-    // RST 8: the fetch at #0008 maps in after the opcode read
+    // RST 8: the fetch at #0008 sets the map condition; the board comes in at the next opcode fetch
     Load(0x8000, {0xCF});
     _z80->pc = 0x8000;
     _z80->sp = 0xFF00;
     _z80->Z80Step();
     EXPECT_EQ(_z80->pc, 0x0008);
-    EXPECT_FALSE(_div->Automapped()) << "not yet: the fetch has not happened";
+    EXPECT_FALSE(_div->MapCondition()) << "not yet: the fetch has not happened";
+    _z80->Z80Step();
+    EXPECT_TRUE(_div->MapCondition());
+    EXPECT_FALSE(_div->Automapped()) << "the instruction at the entry runs from the Spectrum ROM";
+    EXPECT_EQ(_z80->pc, 0x000B) << "LD HL,(CH_ADD): three bytes of the Spectrum ROM";
+    EXPECT_EQ(_z80->machineM1HookEnd, 0x10000u) << "the change waits for the next fetch, wherever it is";
     _z80->Z80Step();
     EXPECT_TRUE(_div->Automapped());
+    EXPECT_EQ(_z80->machineM1HookEnd, DivMmcPaging::kHookEnd);
     EXPECT_EQ(_z80->rd(0x0100), _firmware[0x100]);
-    // a fetch in #1FF8-#1FFF maps out
+    // a fetch in #1FF8-#1FFF still comes from the board and maps it out from the next fetch on
     _z80->pc = 0x1FF8;
     _z80->Z80Step();
+    EXPECT_FALSE(_div->MapCondition());
+    EXPECT_TRUE(_div->Automapped()) << "the opcode at #1FF8 is the board's (LD B,A)";
+    _z80->Z80Step();
     EXPECT_FALSE(_div->Automapped());
+    EXPECT_FALSE(_div->Mapped());
+}
+
+// The CPLD latches the automap on the falling /MREQ of an M1 cycle: the operands of the instruction at an entry are
+// read before the next M1, from the Spectrum ROM (#0008: LD HL,(#5C5D) takes the system variable, not the board's
+// bytes at #0009-#000A)
+TEST_F(DivMmcPaging_Test, EntryInstructionReadsItsOperandsFromTheSpectrumRom)
+{
+    _memory->DirectWriteToZ80Memory(0x5C5D, 0x34);
+    _memory->DirectWriteToZ80Memory(0x5C5E, 0x12);
+    _z80->pc = 0x0008;
+    _z80->hl = 0;
+    _z80->Z80Step();
+    EXPECT_EQ(_z80->hl, 0x1234) << "the operand bytes #5D #5C came from the Spectrum ROM";
+    EXPECT_FALSE(_div->Automapped());
+}
+
+// A /RESET keeps #E3, MAPRAM and the latch (the CPLD has no reset on them) and drops the card selects; power on clears
+// everything
+TEST_F(DivMmcPaging_Test, ResetKeepsTheMapAndPowerOnClearsIt)
+{
+    _z80->out(0x00E3, 0x80 | 0x40 | 5);
+    _z80->out(0x00E7, 0xFE);
+    ASSERT_EQ(_div->SelectedCard(), 0);
+    _div->Reset();
+    EXPECT_TRUE(_div->Conmem());
+    EXPECT_TRUE(_div->Mapram());
+    EXPECT_EQ(_div->Bank(), 5);
+    EXPECT_TRUE(_div->Mapped());
+    EXPECT_EQ(_div->SelectedCard(), -1) << "the chip selects are reset";
+    _div->PowerOn();
+    EXPECT_FALSE(_div->Conmem());
+    EXPECT_FALSE(_div->Mapram());
+    EXPECT_EQ(_div->Bank(), 0);
+    EXPECT_FALSE(_div->Mapped());
+    EXPECT_EQ(_z80->rd(0x0000), _memory->DirectReadFromZ80Memory(0x0000));
+}
+
+// The EEPROM jumper ("automap off"): the latch runs, the board maps nothing; with MAPRAM set it maps bank 3 again
+TEST_F(DivMmcPaging_Test, AutomapOffMapsOnlyWithMapram)
+{
+    _div->SetAutomapEnabled(false);
+    _z80->pc = 0x3D00;
+    _z80->Z80Step();
+    EXPECT_TRUE(_div->Automapped());
+    EXPECT_FALSE(_div->Mapped());
+    EXPECT_EQ(_z80->rd(0x0100), _memory->DirectReadFromZ80Memory(0x0100));
+    _div->RamBank(3)[0x0100] = 0x5A;
+    _z80->out(0x00E3, 0x40);
+    EXPECT_TRUE(_div->Mapped());
+    EXPECT_EQ(_z80->rd(0x0100), 0x5A);
+}
+
+// The blob: #E3, MAPRAM, the latch and the select come back; the overlay follows the restored map
+TEST_F(DivMmcPaging_Test, StateRoundTrip)
+{
+    _z80->out(0x00E3, 0x40 | 7);
+    _z80->pc = 0x3D00;
+    _z80->Z80Step();
+    _z80->out(0x00E7, 0xFD);
+    std::vector<uint8_t> blob(DivMmcPaging::kStateSize);
+    _div->SaveState(blob.data());
+    _div->PowerOn();
+    ASSERT_FALSE(_div->Mapped());
+    ASSERT_TRUE(_div->LoadState(blob.data()));
+    EXPECT_TRUE(_div->Mapram());
+    EXPECT_EQ(_div->Bank(), 7);
+    EXPECT_TRUE(_div->Automapped());
+    EXPECT_TRUE(_div->MapCondition());
+    EXPECT_EQ(_div->SelectedCard(), 1);
+    _div->RamBank(3)[0x0042] = 0x99;
+    EXPECT_EQ(_z80->rd(0x0042), 0x99) << "mapped again: bank 3 at #0000 under MAPRAM";
+    blob[0] = 0x7F;
+    EXPECT_FALSE(_div->LoadState(blob.data())) << "another version";
 }
 
 TEST_F(DivMmcPaging_Test, TrDosEntryMapsInInstantly)
@@ -210,7 +296,7 @@ protected:
 
 TEST_F(DivMmcUnoDos_Test, BootsMountsTheCardAndReachesBasic)
 {
-    _div->Reset();
+    _div->PowerOn();
     _emulator->Reset();
     int frames = 0;
     bool ready = EmulatorTestHelper::RunUntilBASICReady(_emulator, 1500, &frames);
@@ -224,7 +310,7 @@ TEST_F(DivMmcUnoDos_Test, BootsMountsTheCardAndReachesBasic)
 TEST_F(DivMmcUnoDos_Test, UnoDosSdDriverIsCleanOnTheBus)
 {
     ASSERT_TRUE(bustest::Enable(_context, "divmmc.spi"));
-    _div->Reset();
+    _div->PowerOn();
     _emulator->Reset();
     ASSERT_TRUE(EmulatorTestHelper::RunUntilBASICReady(_emulator, 1500));
     const auto commands = bustest::Commands(_context, "divmmc.spi");
@@ -238,7 +324,7 @@ TEST_F(DivMmcUnoDos_Test, UnoDosSdDriverIsCleanOnTheBus)
 // F_READDIR (#A4), the whole way over the automap, the board's RAM, the SPI port and the SD card in SPI mode
 TEST_F(DivMmcUnoDos_Test, GuestListsTheRootFolderThroughRst8)
 {
-    _div->Reset();
+    _div->PowerOn();
     _emulator->Reset();
     ASSERT_TRUE(EmulatorTestHelper::RunUntilBASICReady(_emulator, 1500));
     Memory* memory = _context->pMemory;

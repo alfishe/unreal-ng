@@ -212,7 +212,7 @@
    "group": "Run",
    "kind": "press",
    "held": false,
-   "params": "count? (1..100000, 1)"
+   "params": "count? (1..10000000, 1; more is refused)"
   },
   {
    "id": "run.frames",
@@ -220,7 +220,7 @@
    "group": "Run",
    "kind": "press",
    "held": false,
-   "params": "count? (1..10000, 1)"
+   "params": "count? (1..200000, 1; more is refused)"
   },
   {
    "id": "run.tstates",
@@ -228,7 +228,7 @@
    "group": "Run",
    "kind": "press",
    "held": false,
-   "params": "count? (1..10000000, 1)"
+   "params": "count? (1..14000000000, 1; more is refused)"
   },
   {
    "id": "mach.start",
@@ -1138,7 +1138,7 @@
    "group": "Debugger",
    "kind": "press",
    "held": false,
-   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, stop? (false: only count), note?, group?"
+   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, stop? (false: only count), hit_log? (stop false: hits recorded, default 1000, 0 none), hit_log_keep? (first|last), note?, group?"
   },
   {
    "id": "dbg.bp_remove",

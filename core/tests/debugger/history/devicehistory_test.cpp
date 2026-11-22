@@ -199,3 +199,57 @@ TEST(DeviceHistory_Test, FastPushKeepsTheOrder)
     EXPECT_EQ(h.GetStats().written, 0u) << "off: a staged record goes nowhere";
     EXPECT_EQ(switches, (std::vector<bool>{ true, false }));
 }
+
+/// Time travel (gs-debugger design §6.3, D3): a move back holds the records after the moment back, a move forward
+/// brings them back in order, a wrapped ring comes out as a straight run would have left it
+TEST(DeviceHistory_Test, RewindHoldsBackAndBringsBackAWrappedRing)
+{
+    TestHistory h("dev", "things");
+    std::string error;
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Ring, .limit = 4 }, error));
+    for (int i = 1; i <= 6; i++)
+        h.Push({ i });
+    ASSERT_EQ(Values(h), (std::vector<int>{ 3, 4, 5, 6 }));
+
+    h.Rewind([](const TestRecord& r) { return r.value > 4; });
+    EXPECT_EQ(Values(h), (std::vector<int>{ 3, 4 }));
+    EXPECT_EQ(h.Held(), 2u);
+    EXPECT_EQ(h.GetStats().written, 4u) << "held records are not counted";
+
+    h.Rewind([](const TestRecord& r) { return r.value > 5; });
+    EXPECT_EQ(Values(h), (std::vector<int>{ 3, 4, 5 }));
+    EXPECT_EQ(h.Held(), 1u);
+
+    // Live from here: what is pushed lands after the kept part, as a straight run's ring
+    h.Truncate([](const TestRecord& r) { return r.value > 5; }, true);
+    EXPECT_EQ(h.Held(), 0u);
+    h.Push({ 6 });
+    h.Push({ 7 });
+    EXPECT_EQ(Values(h), (std::vector<int>{ 4, 5, 6, 7 }));
+    const history::Stats stats = h.GetStats();
+    EXPECT_EQ(stats.written, 7u);
+    EXPECT_EQ(stats.dropped, 3u);
+}
+
+/// A truncation drops the kept and held records after the moment only; a record that comes back is not streamed twice
+TEST(DeviceHistory_Test, TruncateKeepsTheSharedPartAndTheStreamOnce)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("rewind-stream.jsonl");
+    std::string error;
+    {
+        TestHistory h("dev", "things");
+        ASSERT_TRUE(h.Configure({ .mode = history::Mode::Capture, .stream = path }, error)) << error;
+        for (int i = 1; i <= 6; i++)
+            h.Push({ i });
+        h.Rewind([](const TestRecord& r) { return r.value > 2; });
+        EXPECT_EQ(h.Held(), 4u);
+        h.Rewind([](const TestRecord& r) { return r.value > 4; });
+        EXPECT_EQ(Values(h), (std::vector<int>{ 1, 2, 3, 4 }));
+        h.Truncate([](const TestRecord& r) { return r.value > 3; }, false);
+        EXPECT_EQ(Values(h), (std::vector<int>{ 1, 2, 3 }));
+        EXPECT_EQ(h.Held(), 0u) << "the held 5 and 6 lie after the moment too";
+        h.Rewind([](const TestRecord&) { return false; });
+        EXPECT_EQ(Values(h), (std::vector<int>{ 1, 2, 3 }));
+    }
+    EXPECT_EQ(Lines(path).size(), 6u) << "each record streamed once, when it was first pushed";
+}

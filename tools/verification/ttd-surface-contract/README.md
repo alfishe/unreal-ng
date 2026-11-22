@@ -1,5 +1,7 @@
 # TTD surface contract
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 `ttd_surface_contract.py` checks that the time-travel calls give the same answers on every automation surface: WebAPI, CLI, Lua and Python. It is part of Phase 5 of the TTD v2 migration ([phase-5-switchover-tdd.md](../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-5-switchover-tdd.md), requirement QR-8).
 
 Every surface turns its input into a `TTDControl` request and the reply into its own form: JSON, CLI text, a Lua table or values, a Python dict or `RuntimeError`. The verbs, their checks and their messages live in `TTDControl` (`core/src/debugger/ttd/ttdcontrol.cpp`) and are tested in `core-tests` (`TTDControl_Test`). This script checks the part `core-tests` cannot reach: each surface's mapping inside the running application.

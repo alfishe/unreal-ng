@@ -1,5 +1,7 @@
 # S7 TTD outcome: time travel on the Sprinter (2026-10-02)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Branch `sprinter-ttd`. The TTD part of phase S7 ([roadmap-and-plan.md](roadmap-and-plan.md) S7 row):
 TTD records, seeks and replays the Sprinter exactly. Until now it refused the machine
 (`PeripheralId::SprinterPld` was declared without a serializer). Design as built:

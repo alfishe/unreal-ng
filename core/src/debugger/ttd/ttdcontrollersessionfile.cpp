@@ -394,7 +394,7 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
                                                                            TTDSessionFacts& facts,
                                                                            std::vector<uint8_t>& coverage,
                                                                            TTDBookmarkJournal& bookmarks,
-                                                                           std::string& err)
+                                                                           std::string& err, bool bind)
 {
     auto loaded = std::make_unique<TimeTravelEngine>();
     TTDSessionLoadReport report;
@@ -410,7 +410,7 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
         err = "the file does not say which machine recorded it (no controller facts)";
         return nullptr;
     }
-    if (_context)
+    if (_context && bind)
     {
         // A checkpoint is the memory and chipset of one machine: another model
         // restores into the wrong layout, another ROM set maps recorded pages
@@ -435,7 +435,7 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
 
     // The machine's serializers and memory, as a recording would have them
     std::string registrationError;
-    if (!RegisterModelPeripherals(&registrationError))
+    if (bind && !RegisterModelPeripherals(&registrationError))
     {
         err = "cannot load session: " + registrationError;
         return nullptr;
@@ -448,7 +448,7 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
     // where one is fitted, the live card's state kept; the socket's `ay` and `ts` boards share an id, the device
     // table's instance names the board). Then the slot-built cards' and the board's own checks (the MultiSound's
     // MIDI bank, the Sprinter's ISA population) read the baseline checkpoint's device states
-    if (_context && loaded->CheckpointCount() > loaded->FirstCheckpoint())
+    if (_context && bind && loaded->CheckpointCount() > loaded->FirstCheckpoint())
     {
         const SlotManager::TtdDeviceSet recorded = SlotManager::TtdDeviceSet::Of(loaded->Devices(), facts.notRecorded);
         TTDDeviceStates states;
@@ -470,7 +470,7 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
     }
 
     std::string unbound;
-    if (loaded->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)
+    if (bind && loaded->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)
     {
         err = "this machine cannot take the session: " + unbound;
         return nullptr;
@@ -862,6 +862,80 @@ TTDPortSearchResult TimeTravelController::SearchPortEventsInFile(const std::stri
         return result;
     }
     return ttd::SearchPortEvents(file.BusReads(), file.BusWrites(), q);
+}
+
+TTDTimelineResult TimeTravelController::QueryTimelineInFile(const std::string& path, const TTDTimelineOptions& options,
+                                                            const std::string& branch) const
+{
+    TTDTimelineResult result;
+    const TTDFileSource source(path);
+    if (!source.Valid())
+    {
+        result.error = "cannot open " + path;
+        return result;
+    }
+    std::vector<uint8_t> magic(6);
+    if (source.Size() >= 6 && source.ReadAt(0, magic.data(), 6) && IsV1File(magic))
+    {
+        result.error = path + ": " + kV1Refused;
+        return result;
+    }
+    // The file's session in a controller of its own with no machine, built as a load builds it (the side table,
+    // the journals from the engine's events, the coverage index, the bookmarks, the branches): the query below is
+    // then the one a loaded session answers. Nothing is checked against or bound to this machine
+    TimeTravelController view(nullptr);
+    TTDSessionFacts facts;
+    std::vector<uint8_t> coverage;
+    TTDBookmarkJournal bookmarks;
+    std::string err;
+    std::unique_ptr<TimeTravelEngine> loaded = view.LoadEngineSession(source, facts, coverage, bookmarks, err,
+                                                                      /*bind=*/false);
+    if (!loaded)
+    {
+        result.error = path + ": " + err;
+        return result;
+    }
+    view.CommitLoadedSession(std::move(loaded), facts, coverage, bookmarks);
+    if (!branch.empty())
+    {
+        // An id, a GUID or a name; the line becomes the active one, as a switch to it would make it
+        const TTDBranchInfo* info = nullptr;
+        TTDGuid guid{};
+        if (branch.size() < 10 && std::all_of(branch.begin(), branch.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            info = view._branches.Get(static_cast<uint32_t>(std::stoul(branch)));
+        if (!info && TTDGuidFromString(branch, guid))
+            info = view._branches.FindGuid(guid);
+        if (!info)
+            info = view._branches.FindName(branch);
+        if (!info || info->id >= view._lines.size() || !view._lines[info->id])
+        {
+            result.error = "Unknown branch: " + branch;
+            return result;
+        }
+        view._tip = info->id;
+        view.ViewBranch(info->id);
+        view.PublishLineage();
+    }
+
+    TimelineMachine machine;
+    machine.model = static_cast<MEM_MODEL>(facts.modelId);
+    TTDRecordedMachine recorded;
+    recorded.modelId = facts.modelId;
+    DescribeRecordedMachine(recorded);
+    if (_context && _context->config.mem_model == machine.model)
+    {
+        // This instance is of the recorded model: its port map and its frame rate, as after a load into it
+        machine.ports = _context->pPortDecoder;
+        machine.fps = TTDFrameRate(_context);
+    }
+    else
+        machine.portsMissing = "the file was recorded on " +
+                               (recorded.model.empty() ? std::string("another model") : recorded.model) +
+                               ", whose port map the file does not hold: read it on an instance of that model";
+    result = view.QueryTimelineOn(options, machine);
+    result.branch = view._tip;
+    result.model = recorded.model;
+    return result;
 }
 
 std::vector<uint8_t> TimeTravelController::BranchRecordBytes(uint32_t id) const

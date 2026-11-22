@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -33,6 +34,10 @@ class EspXtensaRuntime;
 class Vdac4Board
 {
 public:
+    /// The ESP flash folders of boards with none configured (headless, tests): "<temp>/unreal-ng-vdac4-<pid>-<n>"
+    /// (ProcessTempFolder; the start-up cleanup removes those of gone processes, startupcleanup.cpp)
+    static constexpr const char* kOwnCachePrefix = "unreal-ng-vdac4-";
+
     /// `nowNs`: the machine's emulated time; `catchUp`: brings the Tang's clock to the CPU before a LINK access
     Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<uint64_t()> nowNs,
                std::function<void()> catchUp);
@@ -77,6 +82,8 @@ private:
     class TangLink;
     void Log(const std::string& line);
     void Publish();
+    /// The esp_jit feature (or UNREAL_XTENSA_JIT) to the ESP runtime when it changed; main thread
+    void ApplyJitFeature();
 
     EmulatorContext* _context;
     Vdac4Tang& _tang;
@@ -85,10 +92,12 @@ private:
     std::unique_ptr<TangLink> _link;
     std::unique_ptr<Vdac4Audio> _audio;
     bool _audioAttached = false;
+    int _jit = -1; ///< what ApplyJitFeature last set: -1 nothing yet
     std::unique_ptr<vdac4::EspXtensaRuntime> _runtime;
     std::unique_ptr<Vdac4FtWorker> _ft;  ///< the Tang's work for the ESP's jobs (vdac4ftworker.h)
     uint64_t _jobStamp = 0;              ///< the running ESP job's stamp (its thread)
     std::unique_ptr<Vdac4Esp> _esp;
+    std::filesystem::path _ownCache;  ///< the ESP flash folder made for this board (none configured): removed with it
     std::ofstream _logFile;
     mutable std::mutex _ringLock;  ///< the log and packet rings: written on the emulation thread, read by any
     std::deque<std::string> _recentLog;

@@ -1,5 +1,7 @@
 # TTD Scrubber
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 A PySide6 desktop tool for driving the emulator's Time-Travel Debug engine
 from outside the process, via the WebAPI. Connects to a running emulator
 WebAPI server, waits for an active emulator instance, and lets you:

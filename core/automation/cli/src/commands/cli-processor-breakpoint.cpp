@@ -6,6 +6,8 @@
 
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/breakpoints/breakpointselection.h>
+#include <emulator/monitoring/monitoringapi.h>
+#include <cstdio>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <emulator/emulator.h>
@@ -105,6 +107,28 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
             spec.slotOnly = true;
         else if (a == "--count")
             spec.stop = false;  // counts the hits, never stops
+        else if (a == "--log")
+        {
+            // The hits the per-hit record of a breakpoint that only counts keeps (bphits <id> reads it)
+            uint32_t capacity = 0;
+            const std::string text = hasValue ? args[++i] : std::string();
+            if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos || text.size() > 6 ||
+                (capacity = static_cast<uint32_t>(std::stoul(text))) > BreakpointHitLog::kMaxCapacity)
+            {
+                error = "--log needs the hits to keep, 0.." + std::to_string(BreakpointHitLog::kMaxCapacity) +
+                        " (0: none)";
+                return false;
+            }
+            spec.hitLog = capacity;
+        }
+        else if (a == "--log-keep")
+        {
+            if (!hasValue || !BreakpointManager::ParseHitLogKeep(args[++i], spec.hitLogKeep))
+            {
+                error = "--log-keep needs first or last";
+                return false;
+            }
+        }
         else if (a == "--mask")
         {
             uint16_t mask = 0;
@@ -186,6 +210,59 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
     return true;
 }
 
+std::string CLIProcessor::BreakpointHitsText(const monitoring::Reply& reply)
+{
+    const StateNode& body = reply.body;
+    auto number = [](const StateNode& node, const char* name) -> int64_t {
+        const StateNode* value = node.find(name);
+        return value && value->kind == StateNode::Kind::Int ? value->i : 0;
+    };
+    auto text = [](const StateNode& node, const char* name) -> std::string {
+        const StateNode* value = node.find(name);
+        return value && value->kind == StateNode::Kind::String ? value->s : std::string();
+    };
+    if (!reply.Ok())
+        return "Error: " + text(body, "message");
+    std::ostringstream out;
+    out << "Breakpoint #" << number(body, "id");
+    if (text(body, "cpu") != "main")
+        out << " (" << text(body, "cpu") << " CPU)";
+    out << ": " << number(body, "hit_count") << " hits";
+    if (body.find("match_count"))
+        out << ", " << number(body, "match_count") << " matches";
+    const StateNode* log = body.find("log");
+    if (!log || log->kind != StateNode::Kind::Object)
+    {
+        const StateNode* stop = body.find("stop");
+        out << (stop && stop->kind == StateNode::Kind::Bool && stop->b ? " (it stops: no per-hit record)"
+                                                                       : " (no per-hit record kept)");
+        return out.str();
+    }
+    out << "; record keeps the " << text(*log, "keep") << " " << number(*log, "capacity") << ", holds "
+        << number(*log, "stored") << ", dropped " << number(*log, "dropped");
+    const StateNode* hits = body.find("hits");
+    if (hits)
+        for (const StateNode& hit : hits->items)
+        {
+            char line[160];
+            std::snprintf(line, sizeof(line), "%s[%lld] hit %lld  frame %lld  t %lld  PC #%04llX  %s #%04llX",
+                          NEWLINE, static_cast<long long>(number(hit, "index")), static_cast<long long>(number(hit, "hit")),
+                          static_cast<long long>(number(hit, "frame")), static_cast<long long>(number(hit, "t")),
+                          static_cast<unsigned long long>(number(hit, "pc")), text(hit, "kind").c_str(),
+                          static_cast<unsigned long long>(number(hit, "address")));
+            out << line;
+            if (hit.find("value"))
+                out << " = #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << number(hit, "value")
+                    << std::dec << std::setfill(' ');
+            if (hit.find("cpu_time"))
+                out << "  cpu_time " << number(hit, "cpu_time");
+        }
+    const StateNode* more = body.find("more");
+    if (more && more->kind == StateNode::Kind::Bool && more->b)
+        out << NEWLINE << "more: --from " << number(body, "next_from");
+    return out.str();
+}
+
 std::string CLIProcessor::AddBreakpointAndDescribe(BreakpointManager& manager, const BreakpointSpec& spec, const char* what)
 {
     std::string error;
@@ -216,12 +293,13 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     if (args.empty())
     {
         stringstream ss;
-        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [--count] [note]"
+        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [--count [--log N] [--log-keep first|last]] [note]"
            << " [if <condition>]" << NEWLINE
            << "Sets an execution breakpoint: one address or a range. With a page it fires on that page through any"
            << NEWLINE << "slot that shows it (--slot-only: only through the slot of the address). --hits stops on the"
            << NEWLINE << "Nth hit only, from the Nth on (>=N) or on every Nth (%N); every hit is counted. --count only" << NEWLINE
-           << "counts the hits and never stops (bplist shows the count)." << NEWLINE
+           << "counts the hits and never stops (bplist shows the count); it records the first 1000 hits' frame, T," << NEWLINE
+           << "PC and address (--log N: N of them, 0 none; --log-keep last: the newest), bphits <id> shows them." << NEWLINE
            << "if: the rest of the line is a condition (Unreal language; numbers decimal, hex as #FF, $FF or" << NEWLINE
            << "0xFF; --dialect c before it: C precedence); only the hits where it holds count for --hits." << NEWLINE
            << "Examples:" << NEWLINE << "  bp 0x1234            - Breakpoint at 0x1234" << NEWLINE
@@ -229,7 +307,7 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
            << "  bp 0x8000-0x80FF     - Anywhere in 0x8000-0x80FF" << NEWLINE
            << "  bp 0xC000 --page ram32 - RAM page 32 offset 0, in whatever slot it is mapped" << NEWLINE
            << "  bp 0x0038 --hits 50  - The 50th interrupt" << NEWLINE
-           << "  bp 0x0038 --count    - Count the interrupts, never stop" << NEWLINE
+           << "  bp 0x0038 --count    - Count the interrupts, never stop; bphits <id> lists when" << NEWLINE
            << "  bp 1234 Main loop    - With a note" << NEWLINE << "Use 'bplist' to view all breakpoints";
         session.SendResponse(ss.str());
         return;
@@ -305,7 +383,7 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
     if (args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: wp <address>[-<end>] <r|w|rw> [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [--count] [note]"
+        ss << "Usage: wp <address>[-<end>] <r|w|rw> [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [--count [--log N] [--log-keep first|last]] [note]"
            << NEWLINE << "Sets a memory watchpoint on one address or a range (with a page: on that page through any slot"
            << NEWLINE << "that shows it)." << NEWLINE << "Types:" << NEWLINE << "  r    - Watch for memory reads" << NEWLINE
            << "  w    - Watch for memory writes" << NEWLINE << "  rw   - Watch for both reads and writes" << NEWLINE
@@ -363,7 +441,7 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
     if (args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: bport <port> <i|o|io> [--mask M] [--hits N|>=N|%N] [--count] [note]" << NEWLINE
+        ss << "Usage: bport <port> <i|o|io> [--mask M] [--hits N|>=N|%N] [--count [--log N] [--log-keep first|last]] [note]" << NEWLINE
            << "Sets a port breakpoint. With --mask it matches every port where (port & M) == (<port> & M)." << NEWLINE
            << "Types:" << NEWLINE << "  i    - Watch for port IN operations" << NEWLINE
            << "  o    - Watch for port OUT operations" << NEWLINE << "  io   - Watch for both IN and OUT operations"
@@ -588,7 +666,7 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
     if (args.empty() || !ParseGSCardEvent(args[0].c_str(), kind))
     {
         std::stringstream ss;
-        ss << "Usage: bevent <kind> [--value V [--vmask M]] [--hits N|>=N|%N] [--count] [--group G] [note]" << NEWLINE
+        ss << "Usage: bevent <kind> [--value V [--vmask M]] [--hits N|>=N|%N] [--count [--log N] [--log-keep first|last]] [--group G] [note]" << NEWLINE
            << "Stops on a General Sound / NeoGS protocol event (gs-debugger design §4) or a machine event. The card's events stop the" << NEWLINE
            << "machine at the card's next instruction boundary; the host's stop the main CPU after its access." << NEWLINE
            << "Card (the gs CPU): int, nmi, reset, page (a page register written), card_command, card_data (the card" << NEWLINE
@@ -650,7 +728,7 @@ void CLIProcessor::HandleChipRegisterBreakpoint(const ClientSession& session, co
     if (args.size() < 2 || !ParseSoundChipKind(args[0].c_str(), chip))
     {
         std::stringstream ss;
-        ss << "Usage: bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits N|>=N|%N] [--count] [--group G] [note]"
+        ss << "Usage: bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits N|>=N|%N] [--count [--log N] [--log-keep first|last]] [--group G] [note]"
            << NEWLINE << "Stops the main CPU after its OUT wrote a sound chip's register (platform-debugging P3)." << NEWLINE
            << "Chips: ay (AY / YM2149, the SSG of a YM2203: 0-15), fm (YM2203 FM: #10-#FF), saa (SAA1099: 0-#1F)," << NEWLINE
            << "  opl4 (MoonSound FM: bank 0 #000-#0FF, bank 1 #100-#1FF), opl4wave (0-#FF), dac (Covox / SounDrive:"
@@ -684,7 +762,7 @@ void CLIProcessor::HandleChipRegisterBreakpoint(const ClientSession& session, co
     session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Chip register breakpoint"));
 }
 
-// HandleBPHits: bphits reset [id]
+// HandleBPHits: bphits <id> [--from K] [--limit N] | bphits reset [id]
 void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
     // --cpu main|gs|ms anywhere: whose breakpoints
@@ -704,10 +782,44 @@ void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<
         session.SendResponse("Breakpoint manager not available");
         return;
     }
-    if (args.empty() || args[0] != "reset")
+    if (!args.empty() && args[0] != "reset")
     {
-        session.SendResponse(std::string("Usage: bphits reset [id]") + NEWLINE +
-                             "Sets the hit counters back to 0 (one breakpoint, or all); bplist shows them.");
+        // bphits <id>: the counts and the per-hit record (monitoring::Call breakpoint_hits, as every plane)
+        StateNode request = StateNode::Object();
+        request["instance"] = emulator->GetId();
+        request["cpu"] = DebugCpuName(cpu);
+        uint16_t bp = 0;
+        if (!ParseAddress(args[0], bp))
+        {
+            session.SendResponse("Error: '" + args[0] + "' is no breakpoint id");
+            return;
+        }
+        request["id"] = static_cast<int64_t>(bp);
+        for (size_t i = 1; i + 1 < args.size(); i += 2)
+        {
+            if (args[i] != "--from" && args[i] != "--limit")
+            {
+                session.SendResponse("Error: unknown option '" + args[i] + "' (--from K, --limit N)");
+                return;
+            }
+            request[args[i].substr(2)] = args[i + 1];
+        }
+        if (args.size() % 2 == 0)
+        {
+            session.SendResponse("Error: '" + args.back() + "' needs a value");
+            return;
+        }
+        const monitoring::Reply reply = monitoring::Call("breakpoint_hits", request);
+        session.SendResponse(BreakpointHitsText(reply));
+        return;
+    }
+    if (args.empty())
+    {
+        session.SendResponse(std::string("Usage: bphits <id> [--from K] [--limit N] [--cpu gs]  |  bphits reset [id]") +
+                             NEWLINE +
+                             "bphits <id>: the breakpoint's hit count and, for one that only counts (--count), its" +
+                             NEWLINE + "per-hit record: frame, T, PC, address and value of each hit kept." + NEWLINE +
+                             "bphits reset: hit counters back to 0 and records emptied (one breakpoint, or all).");
         return;
     }
     if (args.size() > 1)

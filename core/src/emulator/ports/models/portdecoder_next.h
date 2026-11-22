@@ -84,6 +84,7 @@ public:
     /// The DRIVE button (F10 on the board; the host's NMI action): NR #06 bit 4 enables it, one NMI at a time
     bool RequestBoardNmi() override;
     bool GenerateDriveNmi() override;
+    bool NmiAcceptsCause() const override;
     bool BoardHasKempstonJoystick() const override { return true; }
     bool PagingLocked() const override { return IsPagingLocked(); }  // #7FFD bit 5 (zxnext.vhd port_7ffd_locked)
     bool ShadowScreen() const override { return (_context->emulatorState.p7FFD & 0x08) != 0; }
@@ -119,6 +120,9 @@ public:
     void DmaAtMachineCycleEnd(bool m1Next);
     /// Ask at every machine-cycle end while the DMA runs in the burst mode or waits for the M1 after its enable, not otherwise
     void ArmDmaBusTurn(bool on);
+    /// The first CPU T at which the armed turn can move a byte (Z80NEngine::SetMachineCycleEndTurnNotBefore): the burst wait's end
+    /// in this frame's CPU T, 0 (every machine-cycle end asked) whenever that is not known
+    void UpdateDmaTurnNotBefore();
     uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
 

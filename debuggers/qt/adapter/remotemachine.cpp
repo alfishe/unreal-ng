@@ -207,6 +207,7 @@ struct Breakpoint {
     int id = 0;
     unsigned int address = 0;
     bool run_to = false;
+    std::string condition;  // canonical (Unreal) form; empty: none
 };
 
 class RemoteMachine;
@@ -480,6 +481,7 @@ public:
         for (unsigned int a : get_breakpoints()) remove_breakpoint(a);
     }
     std::vector<unsigned int> get_breakpoints() override;
+    std::string breakpoint_condition(unsigned int address) override;
     std::vector<ecatshim::AddressWindow> get_windows() override;
     void set_pages(ecatshim::AddressableDevice * ram, ecatshim::AddressableDevice * rom, const ZxPaging &paging)
     {
@@ -894,7 +896,8 @@ public:
                 if (b.value("type").toString() != "memory" || !b.value("execute").toBool() || b.contains("address_end"))
                     continue;
                 l.list.push_back(Breakpoint{b.value("id").toInt(), (unsigned int)b.value("address").toInt(),
-                                            b.value("group").toString() == kRunToGroup});
+                                            b.value("group").toString() == kRunToGroup,
+                                            b.value("condition").toString().toStdString()});
             }
         }
         return l.list;
@@ -1529,6 +1532,18 @@ void RemoteZ80::remove_breakpoint(unsigned int address)
     for (const Breakpoint &b : m_m->breakpoints())
         if (!b.run_to && b.address == (address & 0xFFFF)) m_m->http().json("DELETE", m_m->base() + "/breakpoints/" + QString::number(b.id));
     m_m->breakpoints_changed();
+}
+
+std::string RemoteZ80::breakpoint_condition(unsigned int address)
+{
+    // As the embedded machine: any of the address's breakpoints holds; one without a condition always
+    std::string condition;
+    for (const Breakpoint &b : m_m->breakpoints()) {
+        if (b.run_to || b.address != (address & 0xFFFF)) continue;
+        if (b.condition.empty()) return {};
+        condition += (condition.empty() ? "(" : " || (") + b.condition + ")";
+    }
+    return condition;
 }
 
 std::vector<unsigned int> RemoteZ80::get_breakpoints()

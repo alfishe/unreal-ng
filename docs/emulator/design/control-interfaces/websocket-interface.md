@@ -318,7 +318,7 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   (`{condition, section, frame, t, elapsed, net, interrupts}`): the [section timer](command-interface.md#55c-section-timer)
   was armed, disarmed or its results dropped, or a break condition stopped the machine at the exit of a slow pass
   (the pass that met it; the `paused` with `reason: "breakpoint"` follows). Only a stop that took place is sent: a
-  run that skips breakpoints (`run_frames`) sends none.
+  run that skips breakpoints (`run_frames` without `"breakpoints": true`) sends none.
 
 ```json
 ← {"t":"debug.events","op":"event","event":"section_timer_break","condition":"Work>834","section":"Work","frame":19,"t":52998,"elapsed":871,"net":834,"interrupts":1,"seq":52,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}

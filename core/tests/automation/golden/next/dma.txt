@@ -34,3 +34,4 @@ interrupt_enables:
   nr_cc: 0x00
   nr_cd: 0x00
   nr_ce: 0x00
+zxnddma: false

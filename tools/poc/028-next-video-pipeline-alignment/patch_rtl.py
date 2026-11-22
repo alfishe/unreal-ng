@@ -307,6 +307,16 @@ for f in sorted(files):
                  "      cpu_d_i           => spr_cpu_d,")):
             assert text.count(old) == 1, old
             text = text.replace(old, new, 1)
+        for old, new in (
+                ("""         elsif port_fe_wr = '1' and bus_iorq_ula = '0' then
+            port_fe_reg <= cpu_do(4 downto 0);""",
+                 """         elsif t_fe_we = '1' then
+            port_fe_reg <= t_fe_val;
+         elsif port_fe_wr = '1' and bus_iorq_ula = '0' then
+            port_fe_reg <= cpu_do(4 downto 0);"""),
+                ("      i_timing_pentagon       => machine_timing_pentagon,", "      i_timing_pentagon       => machine_timing_pentagon or t_pent,")):
+            assert text.count(old) == 1, old
+            text = text.replace(old, new, 1)
         old = """         elsif nr_69_we = '1' then
             port_123b_layer2_en <= nr_wr_dat(7);
          end if;"""
@@ -316,7 +326,7 @@ for f in sorted(files):
         j = text.index("\nbegin\n", i)
         text = text[:j] + ("\n   signal spr_cpu_d : std_logic_vector(7 downto 0);\nbegin\n"
                            "   spr_cpu_d <= t_p_dat when (t_p57_we or t_p5b_we or t_p303b_we) = '1' else cpu_do;\n"
-                           "   p_hc <= std_logic_vector(hc);\n   p_vc <= std_logic_vector(vc);\n"
+                           "   p_hc <= std_logic_vector(hc);\n   p_cpu_clk <= i_CLK_CPU;\n   p_vc <= std_logic_vector(vc);\n"
                            "   p_dbg(0) <= tm_pixel_en; p_dbg(1) <= tm_pixel_en_1; p_dbg(2) <= tm_en_1; p_dbg(15 downto 8) <= tm_pixel;\n") \
                + text[j + len("\nbegin\n"):]
     elif base == "sprites.vhd":

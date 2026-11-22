@@ -42,6 +42,13 @@ public:
     virtual void onFrameEnd() {}
 
     /// <summary>
+    /// Called when the CPU stops running for now (the end of a direct run, a park of the emulation loop), on the
+    /// thread that drove it, the CPU still held: what the analyzer keeps pending can be closed. TTD replay passes
+    /// included (the analyzer checks EmulatorContext::ttdReplayActive itself)
+    /// </summary>
+    virtual void onRunStop() {}
+
+    /// <summary>
     /// Called when a breakpoint owned by this analyzer is hit
     /// @param address Breakpoint address
     /// @param cpu CPU state at breakpoint

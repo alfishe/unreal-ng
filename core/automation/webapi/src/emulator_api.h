@@ -408,6 +408,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStats, "/api/v1/emulator/{id}/state/audio/gs/stats", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStatsSection, "/api/v1/emulator/{id}/state/audio/gs/stats/{section}",
                   drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmware, "/api/v1/emulator/{id}/state/audio/gs/firmware", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmwareProfiles, "/api/v1/emulator/{id}/state/audio/gs/firmware/profiles",
+                  drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovox, "/api/v1/emulator/{id}/state/audio/covox", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannels, "/api/v1/emulator/{id}/state/audio/channels", drogon::Get);
     // GS control actions (GS design §11.2)
@@ -579,6 +582,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::resetBreakpointHits, "/api/v1/emulator/{id}/breakpoints/hits/reset", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getBreakpointHits, "/api/v1/emulator/{id}/breakpoints/{bp_id}/hits", drogon::Get);
     // Breakpoints by selection (all, an id, a kind, group:<name>), groups, notes (debug tools gaps, use cases D4.5)
     ADD_METHOD_TO(EmulatorAPI::getBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Put);
@@ -766,6 +770,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::memoryAtTTD, "/api/v1/emulator/{id}/ttd/memory-at", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::memoryDiffTTD, "/api/v1/emulator/{id}/ttd/memory-diff", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memorySeriesTTD, "/api/v1/emulator/{id}/ttd/memory-series", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::screenAtTTD, "/api/v1/emulator/{id}/ttd/screen-at", drogon::Post);
     // D40 - the write journal on demand: switch it, build it by replay
     ADD_METHOD_TO(EmulatorAPI::journalTTD, "/api/v1/emulator/{id}/ttd/journal", drogon::Get, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::buildJournalTTD, "/api/v1/emulator/{id}/ttd/journal/build", drogon::Post);
@@ -1027,6 +1033,10 @@ public:
     /// GET /api/v1/emulator/{id}/breakpoints/groups: monitoring::Call `breakpoint_groups` ({groups: [{name, total,
     /// active, ids}]}, the user breakpoints)
     void getBreakpointGroups(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& id) const;
+    /// GET /api/v1/emulator/{id}/breakpoints/{bp_id}/hits?cpu=&from=&limit=: monitoring::Call `breakpoint_hits` (the
+    /// counts and the per-hit record of a breakpoint that only counts; PLAN #122 V4)
+    void getBreakpointHits(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& id,
+                           const std::string& bpId) const;
     /// POST /api/v1/controllers/actions/{action} {instance?, value?}: run it on the instance's actions worker
     void postAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& action) const;
@@ -1585,6 +1595,18 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioGSStatsSection(const drogon::HttpRequestPtr& req,
                                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                      const std::string& id, const std::string& section) const;
+
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/firmware?profile=<id>&object=<name>
+    ///        The firmware objects of the GS slot card through its profile (gsfirmwareobjects.h, gs-debugger §8A.9
+    ///        M1-M3, M7): struct instances bound to a physical page, variables in memory, registers or code
+    void getStateAudioGSFirmware(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/firmware/profiles — the firmware profiles known (built-in and
+    ///        the files of <symbols>/gs/profiles)
+    void getStateAudioGSFirmwareProfiles(const drogon::HttpRequestPtr& req,
+                                         std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/control/audio/gs — body:
     ///        {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",
@@ -2444,6 +2466,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void memoryAtTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void memoryDiffTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void memorySeriesTTD(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void screenAtTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void journalTTD(const drogon::HttpRequestPtr& req,
                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

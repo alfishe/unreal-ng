@@ -17,6 +17,7 @@
 /// Layout: docs/emulator/design/disk-file-systems.md (G+DOS layout, in the unreal-ng repository).
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -55,8 +56,8 @@ public:
 
     explicit GdosFileSystem(DiskImage& image) : _image(image) {}
 
-    /// The disk has the geometry and its directory reads as G+DOS: every used entry has a G+DOS type (1-11; SAM DOS
-    /// types are 16 and up), a first sector in 1-10 and a first track past the directory; an empty directory counts
+    /// The disk has the geometry and its directory reads as G+DOS: every used entry has a G+DOS type (1-11), a first
+    /// sector in 1-10 and a first track past the directory; an empty directory counts
     bool IsGdos(std::string* why = nullptr) const;
 
     /// The used entries in directory order; false with the reason when the directory does not read
@@ -65,6 +66,23 @@ public:
     /// The file's `length` bytes (the tape header cut off), following the sector links. On damage false with the
     /// reason, `data` holding what could be read
     bool Read(const GdosFile& file, std::vector<uint8_t>& data, std::string& error) const;
+
+    /// A file as G+DOS `SAVE` writes it: `tapeType` 0 a program, 1 a number array, 2 a character array, 3 CODE (G+DOS
+    /// types 1-4); the 9-byte tape header (type, length, `start`, `param`, `autostart`) leads the data and is copied
+    /// into the entry. A program's `start` is PROG (23755). An older file of that name is replaced (unless protected).
+    /// Sectors are taken in G+DOS order: the first free ones of the sector map (track 4 sector 1 up, side 0 before
+    /// side 1)
+    bool Write(const std::string& name, uint8_t tapeType, const std::vector<uint8_t>& data, uint16_t start,
+               uint16_t param, uint16_t autostart, std::string& error);
+
+    /// The entry freed (type 0), as G+DOS `ERASE`; a protected file is refused
+    bool Delete(const GdosFile& file, std::string& error);
+
+    /// The entry renamed (1-10 characters, no other file of that name)
+    bool Rename(const GdosFile& file, const std::string& name, std::string& error);
+
+    /// Bits 6 (hidden) and 7 (protected) of the entry's type byte
+    bool SetAttributes(const GdosFile& file, bool hidden, bool protect, std::string& error);
 
     /// The free sectors (1600 less the directory and the used ones)
     uint32_t FreeSectors() const;
@@ -75,6 +93,11 @@ public:
 private:
     const uint8_t* Sector(uint8_t track, uint8_t sector) const;
     bool Entry(uint32_t slot, const uint8_t*& entry) const;
+    /// The 512 bytes written back to the sector (its CRC and the track's dirty flag follow)
+    bool WriteSector(uint8_t track, uint8_t sector, const uint8_t* bytes);
+    /// The entry's 256 bytes changed by `patch` and written back
+    bool PatchEntry(uint32_t slot, const std::function<void(uint8_t*)>& patch, std::string& error);
+    static bool ValidName(const std::string& name, std::string& error);
 
     DiskImage& _image;
 };

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -259,6 +260,74 @@ TEST_F(TimeTravelController_TwoTiers_Test, SwitchIntoAnEvictedBranchOfOneFrameSe
     SwitchIntoEvictedBranch(8);
 }
 
+/// A save reads every evicted segment back (architecture.md §5.4) and writes the whole session: loaded again, every
+/// position gives the state it gave live. Found by the P1.S10 soak (2026-11-21): the dump of a Pentagon and a
+/// Sprinter recording with segments on disk answered "a version's base is not in the session"
+TEST_F(TimeTravelController_TwoTiers_Test, SaveAfterEvictionWritesTheWholeSession)
+{
+    StartWithWindow(16);
+    _emulator->RunNFrames(3);
+    HoldKey(2);
+    _emulator->RunNFrames(35);
+    _ttd->StopRecording();
+    ASSERT_GT(_ttd->GetSessionInfo().evictedToDiskSegments, 4u);
+
+    const std::vector<uint32_t> offsets{0, 30000};
+    const auto before = HashAll(38, offsets);
+    std::stringstream file;
+    std::string error;
+    ASSERT_TRUE(_ttd->SerializeSession(file, error)) << error;
+    ASSERT_TRUE(_ttd->DeserializeSession(file, error)) << error;
+    const auto after = HashAll(38, offsets);
+    for (const auto& [at, hash] : before)
+        EXPECT_EQ(after.at(at), hash) << "frame +" << at.first << " t " << at.second;
+}
+
+/// The same with a branch forked inside a segment that has left memory
+TEST_F(TimeTravelController_TwoTiers_Test, SaveAfterEvictionWithABranch)
+{
+    StartWithWindow(16);
+    _emulator->RunNFrames(40);
+    _ttd->StopRecording();
+    ASSERT_GT(_ttd->GetSessionInfo().evictedToDiskSegments, 4u);
+    ASSERT_TRUE(_ttd->SeekTo({_start + 5, 0}));
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom({_start + 5, 0}));
+    HoldKey(1);
+    _emulator->RunNFrames(20);
+    _ttd->StopRecording();
+    const uint32_t branch = _ttd->ActiveBranch();
+    ASSERT_NE(branch, ttd::kTTDTrunk);
+
+    // The branch's states, its fork segment out of memory again (the read-back cache holds one segment)
+    std::string error;
+    _ttd->SetReadBackCapacity(1);
+    std::map<uint64_t, uint64_t> onBranch, onTrunk;
+    for (uint64_t f = 6; f < 25; f += 3)
+    {
+        ASSERT_TRUE(_ttd->SwitchBranch(branch, ttd::TTDTimePoint{_start + f, 0}, error)) << error;
+        onBranch[f] = StateHash();
+    }
+    for (uint64_t f = 1; f < 40; f += 5)
+    {
+        ASSERT_TRUE(_ttd->SwitchBranch(ttd::kTTDTrunk, ttd::TTDTimePoint{_start + f, 0}, error)) << error;
+        onTrunk[f] = StateHash();
+    }
+
+    std::stringstream file;
+    ASSERT_TRUE(_ttd->SerializeSession(file, error)) << error;
+    ASSERT_TRUE(_ttd->DeserializeSession(file, error)) << error;
+    for (const auto& [f, hash] : onBranch)
+    {
+        ASSERT_TRUE(_ttd->SwitchBranch(branch, ttd::TTDTimePoint{_start + f, 0}, error)) << error;
+        EXPECT_EQ(StateHash(), hash) << "branch frame +" << f;
+    }
+    for (const auto& [f, hash] : onTrunk)
+    {
+        ASSERT_TRUE(_ttd->SwitchBranch(ttd::kTTDTrunk, ttd::TTDTimePoint{_start + f, 0}, error)) << error;
+        EXPECT_EQ(StateHash(), hash) << "trunk frame +" << f;
+    }
+}
+
 /// Without a folder the limit drops the oldest history as before (the journals cut to the new start)
 TEST_F(TimeTravelController_TwoTiers_Test, WithoutAFolderTheLimitDrops)
 {
@@ -272,4 +341,53 @@ TEST_F(TimeTravelController_TwoTiers_Test, WithoutAFolderTheLimitDrops)
     EXPECT_GT(info.evictedCheckpoints, 0u) << "the oldest checkpoints are released";
     EXPECT_EQ(info.evictedToDiskSegments, 0u);
     EXPECT_GT(info.sessionStartFrame, _start) << "the session starts later";
+}
+
+
+/// A recording resumed at the trunk's end after its last segment left memory (the head was on a branch). The resume
+/// cuts there and writes that segment's file again: the segment has to come back first and stay. The P1.S10 soak
+/// (2026-11-21) found it forgotten - its file unknown, every later read back of it failing - and a resume in that
+/// part of the history then cut the trunk instead of forking a branch
+TEST_F(TimeTravelController_TwoTiers_Test, ResumeAtTheEndOfAnEvictedTrunk)
+{
+    // A byte limit below one segment: every segment the head leaves goes to its file (a segment begins at each resume)
+    _ttd->SetShadowRecordingRoot(_root);
+    _ttd->SetHistoryLimit(0, 1);
+    ASSERT_TRUE(_ttd->StartRecording());
+    _start = _context->emulatorState.frame_counter;
+    std::string error;
+    std::map<uint64_t, uint64_t> trunk;
+    for (int cycle = 0; cycle < 7; ++cycle)
+    {
+        // The trunk records on; a branch forks a third of the way back, then the trunk resumes at its end
+        _emulator->RunNFrames(30);
+        const ttd::TTDTimePoint end = _ttd->CurrentPosition();
+        const uint64_t frames = end.frame - _start;
+        for (uint64_t f = frames - 30; f < frames; f += 7)
+        {
+            ASSERT_TRUE(_ttd->SeekTo({_start + f, 0}));
+            trunk[f] = StateHash();
+        }
+        const ttd::TTDTimePoint fork{_start + frames / 3, 0};
+        ASSERT_TRUE(_ttd->SeekTo(fork));
+        ASSERT_TRUE(_ttd->ResumeRecordingFrom(fork)) << "cycle " << cycle;
+        ASSERT_NE(_ttd->ActiveBranch(), ttd::kTTDTrunk) << "cycle " << cycle << ": the resume cut the trunk";
+        HoldKey(1);
+        _emulator->RunNFrames(5);
+        _ttd->StopRecording();
+        ASSERT_TRUE(_ttd->SwitchBranch(ttd::kTTDTrunk, end, error)) << "cycle " << cycle << ": " << error;
+        ASSERT_TRUE(_ttd->ResumeRecordingFrom(end)) << "cycle " << cycle;
+        ASSERT_EQ(_ttd->ActiveBranch(), ttd::kTTDTrunk) << "at its end the trunk goes on";
+    }
+    _ttd->StopRecording();
+    EXPECT_GT(_ttd->GetSessionInfo().evictedToDiskSegments, 3u);
+
+    // Every part of the trunk reads back as it was
+    _ttd->SetReadBackCapacity(1);
+    for (const auto& [f, hash] : trunk)
+    {
+        ASSERT_TRUE(_ttd->SeekTo({_start + f, 0})) << "frame +" << f;
+        EXPECT_EQ(StateHash(), hash) << "frame +" << f;
+    }
+    EXPECT_EQ(_ttd->GetSessionInfo().readBackFailures, 0u);
 }

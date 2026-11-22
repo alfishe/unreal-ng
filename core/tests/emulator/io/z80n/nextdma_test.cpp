@@ -136,6 +136,27 @@ TEST_F(NextDma_Test, BurstModeMovesOneByteAndThePrescalerPacesTheNextOnes)
     EXPECT_EQ(_dma.Run(256, 88), 1u) << "3.5 MHz: 8 CPU clocks to the period, +1 to see the timer, +1 START_DMA, +1 the T80 registers BUSRQ";
 }
 
+// Power-on (a DMA just built, then reset as the board's power-on reset does): the registers dma.vhd does not reset have no initial value
+// in the VHDL, so Xilinx synthesis gives their flip-flops INIT 0 - B -> A, memory, decrement, addresses and length 0
+TEST(NextDmaPowerOn_Test, RegistersWithoutAnInitialValueStartAtZero)
+{
+    NextDma dma;
+    dma.Reset();
+    EXPECT_FALSE(dma.AToB()) << "R0_dir_AtoB_s = 0: B -> A";
+    for (const NextDma::PortView& port : {dma.PortA(), dma.PortB()})
+    {
+        EXPECT_EQ(port.address, 0);
+        EXPECT_FALSE(port.io);
+        EXPECT_EQ(port.step, 0) << "address mode 00: decrement";
+        EXPECT_EQ(port.timing, 1) << "the timing byte's initial value and reset value \"01\"";
+    }
+    EXPECT_EQ(dma.BlockLength(), 0);
+    EXPECT_EQ(dma.Mode(), 1) << "R4_mode_s reset value: continuous";
+    EXPECT_EQ(dma.Prescaler(), 0);
+    EXPECT_EQ(dma.ReadMask(), 0x7F);
+    EXPECT_FALSE(dma.Active());
+}
+
 TEST_F(NextDma_Test, DisableAndResetStopTheTransfer)
 {
     MemoryCopy(0x8000, 0x9000, 100);

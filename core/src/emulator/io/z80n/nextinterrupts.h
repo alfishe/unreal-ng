@@ -51,6 +51,7 @@ public:
         kSourceCount = 14
     };
 
+    static constexpr uint8_t kRegGenerate = 0x20;
     static constexpr uint8_t kRegLineControl = 0x22;
     static constexpr uint8_t kRegLineValue = 0x23;
     static constexpr uint8_t kRegControl = 0xC0;
@@ -81,17 +82,14 @@ public:
     /// bit 0 (inverted) write too
     void SetUlaInterruptDisabled(bool disabled);
 
-    /// A device (CTC channel, UART) requests an interrupt. Ignored while its enable bit is clear
+    /// A device (CTC channel, UART) requests an interrupt. Its status bit is set whatever its enable and the mode (im2_peripheral.vhd
+    /// 160); the request (hardware mode) or the INT pulse (pulse mode) only while its enable bit is set
     void Raise(Source source);
 
     /// The counter line the beam is on now (NR #1E / #1F): the frame position from the ULA interrupt's place
     uint16_t CurrentLine() const;
     /// NR #64: the counter starts at this value at the paper's first line
-    void SetCounterOffset(uint8_t offset)
-    {
-        _counterOffset = offset;
-        _lineStartKnown = false;
-    }
+    void SetCounterOffset(uint8_t offset);
 
     /// NR #C6: the UARTs' interrupt enables (bits 2:0 UART 0, 6:4 UART 1: Tx, Rx on near full only, Rx on a byte)
     uint8_t UartEnables() const { return _enableUart; }
@@ -103,6 +101,9 @@ public:
     /// A mask of sources as names (bit 0 first)
     static std::vector<const char*> SourceNames(uint16_t mask);
     uint16_t PendingMask() const { return _pending; }
+    /// The status bits NR #20 / #C8-#CA read (im2_peripheral.vhd o_int_status = int_status or im2_int_req): the sticky record of every
+    /// request (cleared by the status writes) and the hardware-mode requests until their RETI
+    uint16_t StatusMask() const;
     uint16_t InServiceMask() const { return _inService; }
     uint8_t VectorOf(Source source) const { return static_cast<uint8_t>((_control & 0xE0) | (static_cast<unsigned>(source) << 1)); }
 
@@ -129,6 +130,15 @@ private:
     void Latch(uint32_t baseT);
     bool PulseAt(uint32_t baseT, uint32_t start) const;
     uint16_t Blocked() const;
+    /// The base T-state since the frame counter's zero (the clock the status record of the ULA and line requests follows)
+    uint64_t Now() const;
+    /// The ULA and line requests the beam made since the last call go into the status record. Asked when the status is read or
+    /// cleared and before their enables, positions or the geometry change - never on the per-instruction path
+    void FoldStatus() const;
+    /// Pulse mode: a device request or NR #20 starts an INT pulse of the ULA's length now
+    void StartPulse();
+    /// pulse_int_n = 0 (NR #22 bit 7): the pulse-mode INT is on now
+    bool PulseLow() const;
 
     EmulatorContext* _context;
     NextTiming _timing = {70908, 228, 1845, 36, 1, 128, 64, 136};
@@ -143,6 +153,10 @@ private:
     uint8_t _counterOffset = 0;
     uint16_t _pending = 0;
     uint16_t _inService = 0;
+    // int_status of im2_peripheral.vhd per source (bit = Source). The ULA and line bits are folded in lazily from the beam
+    // position (FoldStatus, up to _statusAt): both are state, mutable because a read brings them up to date
+    mutable uint16_t _status = 0;
+    mutable uint64_t _statusAt = 0;
     uint32_t _lastT = 0;
     // LineStartT's last answer (not state: made again from the fields above, forgotten when one of them is written)
     mutable uint32_t _lineStartT = 0;

@@ -262,6 +262,49 @@ TEST_F(DebuggerCpuTabs_Test, ACardStopBringsItsTabOnceAndATimeMoveDoesNot)
     EXPECT_EQ(tabs.current(), DebugCpuId::Main) << "the main tab stays in front after a move";
 }
 
+/// select_cpu from another front-end (MCP, a script) with the window shown: the card comes to the front, a main CPU
+/// step keeps it there and in the machine's choice (the card follows the main CPU's steps), a main CPU breakpoint
+/// brings the main CPU forward. Runtime: a few frames and steps (~0.05 s)
+TEST_F(DebuggerCpuTabs_Test, AnotherFrontEndsCardStaysInFrontThroughMainSteps)
+{
+    std::shared_ptr<Emulator> machine = Machine("cputabs-follow", "PENTAGON", {{"zxbus.1", "gs"}});
+    ASSERT_NE(machine, nullptr);
+    EmulatorContext* context = machine->GetContext();
+    QTabBar bar;
+    DebuggerCpuTabs tabs(&bar);
+    tabs.setEmulator(machine);
+    ASSERT_EQ(tabs.cpus().size(), 2u);
+    tabs.setActive(true);
+
+    machine->EnableTurboMode();
+    machine->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return context->emulatorState.frame_counter > 2; }));
+    machine->Pause();
+    ASSERT_TRUE(TestWait::For([&] { return machine->IsEmulationParked(); }));
+
+    context->pDebugManager->SelectCpu(DebugCpuId::GS);
+    EXPECT_TRUE(tabs.followStop()) << "the machine's choice comes to the front";
+    EXPECT_EQ(tabs.current(), DebugCpuId::GS);
+
+    const execution::Requester requester{execution::Origin::Internal, {}};
+    const execution::RunReply step = execution::RunControl(machine).Steps(requester, 20);
+    ASSERT_TRUE(step.Ok()) << step.message;
+    EXPECT_FALSE(tabs.followStop()) << "a main CPU step keeps the card in front";
+    EXPECT_EQ(tabs.current(), DebugCpuId::GS);
+    EXPECT_EQ(context->pDebugManager->SelectedCpu(), DebugCpuId::GS) << "and in the machine's choice";
+
+    // Hidden and shown again: the machine's choice still wins over the tab the window had
+    context->pDebugManager->SelectCpu(DebugCpuId::Main);
+    tabs.setActive(false);
+    context->pDebugManager->SelectCpu(DebugCpuId::GS);
+    tabs.select(DebugCpuId::Main);
+    tabs.setActive(true);
+    EXPECT_EQ(tabs.current(), DebugCpuId::GS);
+    EXPECT_EQ(context->pDebugManager->SelectedCpu(), DebugCpuId::GS);
+
+    machine->Stop();
+}
+
 /// The time group with the card's tab in front: Step Back is one card instruction back through the recorded history
 /// (it lands on the instruction before, at the PC the card had there), Step in the past one forward, Run Back the
 /// card's breakpoints; the main CPU's tab steps the main CPU as before. Runtime: 3 recorded frames, a few card seeks
@@ -305,7 +348,8 @@ TEST_F(DebuggerCpuTabs_Test, ACardStepBackLandsOnTheCardsPreviousInstruction)
     front = DebugCpuId::GS;
     tt.refresh();
     EXPECT_TRUE(tt.stepBackAction()->isEnabled());
-    EXPECT_FALSE(tt.stepOverBackAction()->isEnabled()) << "Step Over Back is the main CPU's only";
+    EXPECT_TRUE(tt.stepOverBackAction()->isEnabled()) << "Step Over Back is the card's too";
+    EXPECT_TRUE(tt.stepOverBackAction()->toolTip().contains(QStringLiteral("gs instruction")));
     EXPECT_TRUE(tt.stepBackAction()->toolTip().contains(QStringLiteral("gs instruction")));
     tt.stepBack();
     ttd::TTDCardPosition at = controller->CardPositionNow(DebugCpuId::GS);

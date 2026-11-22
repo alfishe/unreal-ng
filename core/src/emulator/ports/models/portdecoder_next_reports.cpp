@@ -52,6 +52,7 @@ StateNode LayerCaptureNode(EmulatorContext* context)
 
 std::string Hex8(unsigned value) { return StringHelper::Format("0x%02X", value & 0xFFu); }
 std::string Hex16(unsigned value) { return StringHelper::Format("0x%04X", value & 0xFFFFu); }
+std::string Hex24(unsigned value) { return StringHelper::Format("0x%06X", value & 0xFFFFFFu); }
 
 const char* StepName(uint8_t step)
 {
@@ -65,6 +66,43 @@ StateNode DmaPortNode(const NextDma::PortView& port)
     n["type"] = port.io ? "io" : "memory";
     n["step"] = StepName(port.step);
     n["timing"] = int(port.timing);
+    return n;
+}
+
+/// The zxnDDMA part of next_dma (core 3.03.00, zxnddma.gde 2.5): the #DF flags, the full addresses, the 2D block and its position, the
+/// transparent and fill values, the Layer 2 X,Y destination, and the SRAM the board's physical addresses reach
+StateNode DdmaNode(const ::NextDma& dma, const NextMemory& memory, NextBoardIssue issue)
+{
+    const ::NextDma::DdmaView d = dma.Ddma();
+    StateNode n = StateNode::Object();
+    n["physical"] = d.physical;
+    n["two_d"] = d.twoD;
+    n["transparent"] = d.transparent;
+    n["fill"] = d.fill;
+    n["layer2_xy"] = d.layer2Xy;
+    n["hidden"] = d.hidden;
+    n["ext_a"] = Hex8(d.extA);
+    n["ext_b"] = Hex8(d.extB);
+    // the working addresses as the DMA puts them out (22 bits: {extended bits 5:0, address}); outside physical mode only the low 16 count
+    n["src"] = Hex24(dma.Source24());
+    n["dst"] = Hex24(dma.Destination24());
+    n["row_length"] = int(d.rowLength);
+    n["rows"] = int(d.rows);
+    n["stride_a"] = int(d.strideA);
+    n["stride_b"] = int(d.strideB);
+    n["row"] = int(d.row);
+    n["column"] = int(d.column);
+    n["transparent_value"] = Hex8(d.transparentValue);
+    n["fill_value"] = Hex8(d.fillValue);
+    StateNode layer2 = StateNode::Object();
+    layer2["x"] = int(d.layer2X);
+    layer2["y"] = int(d.layer2Y);
+    n["layer2"] = std::move(layer2);
+    StateNode sram = StateNode::Object();
+    sram["board"] = NextBoardIssueName(issue);
+    sram["bytes"] = static_cast<uint64_t>(memory.PhysicalAddressMask()) + 1;
+    sram["range"] = "0x000000-" + Hex24(memory.PhysicalAddressMask());
+    n["sram"] = std::move(sram);
     return n;
 }
 }  // namespace
@@ -103,10 +141,12 @@ StateNode NextDma(EmulatorContext* context)
     // What the source and the destination address hit NOW (memory ports): a transfer into ROM shows here
     const ::NextDma::PortView source = dma.AToB() ? dma.PortA() : dma.PortB();
     const ::NextDma::PortView destination = dma.AToB() ? dma.PortB() : dma.PortA();
+    // (zxnDDMA physical mode: the SRAM behind the 22-bit address, past the MMU)
+    const bool physical = dma.Physical();
     if (!source.io)
-        n["src_kind"] = memory.SlotKind(dma.Source() >> 13);
+        n["src_kind"] = physical ? memory.PhysicalKind(dma.Source24()) : memory.SlotKind(dma.Source() >> 13);
     if (!destination.io)
-        n["dst_kind"] = memory.SlotKind(dma.Destination() >> 13);
+        n["dst_kind"] = physical ? memory.PhysicalKind(dma.Destination24()) : memory.SlotKind(dma.Destination() >> 13);
     n["holds_bus"] = dma.HoldsBus();
     n["wait_until_28"] = static_cast<uint64_t>(dma.WaitEnd());
     const bool nmiHold = decoder->DivMmc().NmiHold() || decoder->Multiface().NmiHold();
@@ -117,6 +157,9 @@ StateNode NextDma(EmulatorContext* context)
     for (const auto& r : kRegs)
         enables[r.key] = Hex8(decoder->Interrupts().ReadNr(r.reg, value) ? value : decoder->Board().Stored(r.reg));
     n["interrupt_enables"] = std::move(enables);
+    n["zxnddma"] = dma.Extended();  // the core has the blitter commands (core 3.03.00, the variant NEXT-DDMA)
+    if (dma.Extended())
+        n["ddma"] = DdmaNode(dma, memory, decoder->Board().Issue());
     return n;
 }
 
@@ -301,6 +344,7 @@ StateNode NextPixel(EmulatorContext* context, const NextPixelQuery& query)
     NextLayer::InspectEnv env;
     env.ram = context->pMemory ? context->pMemory->RAMPageAddress(0) : nullptr;
     env.ramPages = context->pMemory ? static_cast<NextMemory*>(context->pMemory)->InstalledRamPages() : MAX_RAM_PAGES;
+    env.sramTwin = context->pMemory ? static_cast<NextMemory*>(context->pMemory)->SramTwin() : nullptr;
     env.regs = &decoder->Board().Video();
     env.sprites = &decoder->Board().Sprites();
     return NextLayer::InspectPixel(*frame, env, query.x, query.y, query.sub);

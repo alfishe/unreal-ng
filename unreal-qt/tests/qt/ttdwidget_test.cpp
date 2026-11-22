@@ -146,6 +146,37 @@ TEST_F(TtdWidget_Test, TheJournalChoiceReachesTheRecordingAndBuildJournalShowsOn
     EXPECT_TRUE(Status(w).contains(QStringLiteral("No journal"))) << Status(w).toStdString();
 }
 
+// The panel's history limit reaches an instance it starts showing only when the instance has no limit of its own. The
+// P1.S10 soak (2026-11-21) found the window, following another instance after one was deleted, putting "Keep all" over
+// the 128 MB limit a script had started its recording with: the history then grew without bound
+TEST_F(TtdWidget_Test, ShowingAnInstanceKeepsTheLimitItsSessionHas)
+{
+    TtdWidget w;
+    w.setVisibleByUser(true);
+    History(w)->setCurrentIndex(History(w)->findData(QVariant::fromValue<qulonglong>(qulonglong(1) << 30)));
+
+    std::shared_ptr<Emulator> scripted = Machine("ttdwidget-scripted-limit");
+    ASSERT_NE(scripted, nullptr);
+    ASSERT_TRUE(ttd::TTDControl(scripted->GetContext()).Execute({"history-limit", {{"frames", "15000"}}}).Ok());
+    w.updateState(scripted);
+    ttd::TTDSessionInfo info = ttd::TTDSessionRef(scripted->GetContext())->GetSessionInfo();
+    EXPECT_EQ(info.historyLimitFrames, 15000u) << "the script's limit stays";
+    EXPECT_EQ(info.historyLimitBytes, 0u);
+
+    std::shared_ptr<Emulator> plain = Machine("ttdwidget-no-limit");
+    ASSERT_NE(plain, nullptr);
+    w.updateState(plain);
+    EXPECT_EQ(ttd::TTDSessionRef(plain->GetContext())->GetSessionInfo().historyLimitBytes, qulonglong(1) << 30)
+        << "an instance without a limit takes the panel's";
+
+    // A change of the combo is the user's choice for the shown instance: it applies whatever the instance had
+    w.updateState(scripted);
+    History(w)->setCurrentIndex(History(w)->findData(QVariant::fromValue<qulonglong>(qulonglong(2) << 30)));
+    info = ttd::TTDSessionRef(scripted->GetContext())->GetSessionInfo();
+    EXPECT_EQ(info.historyLimitBytes, qulonglong(2) << 30);
+    EXPECT_EQ(info.historyLimitFrames, 0u);
+}
+
 // Dropping a session empties the panel's timeline: the slider's range goes to 0..0, which moves its value and fires
 // valueChanged. That used to reach the panel's own seek, and the seek parked a machine that was running: a resume
 // after a dropped session was followed by a pause

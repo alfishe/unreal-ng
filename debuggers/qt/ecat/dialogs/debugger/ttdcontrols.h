@@ -4,8 +4,10 @@
 // management. Every button is a TTDControl verb through Emulator::ttd_call (in process or over the WebAPI); nothing
 // records unless asked (Branch Here / Continue Rec only).
 // With a sound card's tab in front (gs, ms) the back steps are the card's (gs-debugger design §8): Step Back and the
-// Step of the past (F7) move by card instructions (`step-instruction {cpu, dir}`), Run Back goes to the card's
-// previous breakpoint hit (`reverse-continue {cpu}`); Step Over Back is the main CPU's only. At a card position the
+// Step of the past (F7) move by card instructions (`step-instruction {cpu, dir}`), Step over / Step out of the past
+// (F8 / Ctrl+F8) are the card's steps through the history (`step-instruction {cpu, kind}`; at its end they run on
+// live, D-3), Step Over Back is `reverse-step-over {cpu}`, Run Back goes to the card's previous breakpoint hit
+// (`reverse-continue {cpu}`). At a card position the
 // moment names both CPUs: the card's instruction count and PC, the main CPU's PC and the T-states into it
 
 #pragma once
@@ -64,9 +66,15 @@ public:
     //next instruction" at a card position (", at its instruction boundary" when not inside one); "gs at instruction
     //1200, PC #0A3C" without one; "gs: no instruction counts in this recording" when the recording has none
     static QString describe_card(const QJsonObject &card);
-    //The Step (F7) of the card's tab in the past: one card instruction forward through the history. False when
-    //that is not the case (the main CPU's tab, or not in the past): the window's own step runs
-    bool step_forward();
+    //Run Back's breakpoint conditions as one reverse-continue `condition`, from {address, its condition} (empty: it
+    //stops there whatever holds): "(PC == #8000 && (A == 5)) || (PC == #9000)"; empty when no address has one (the
+    //pcs alone say it all)
+    static std::string run_back_condition(const std::vector<std::pair<unsigned int, std::string>> &breakpoints);
+    //The Step (F7, kind "in"), Step over (F8, "over"), Step out (Ctrl+F8, "out") or Run to the cursor (F4, "to", to
+    //`address`) of the card's tab in the past: the card's step or run through the history (a run to the cursor not
+    //reached in the history says so and moves nothing). False when that is not the case (the main CPU's tab, not in
+    //the past, or the card at the history's end: D-3, it steps on live): the window's own step runs
+    bool step_forward(const std::string &kind = "in", unsigned int address = 0);
     //What the last move said (the branch button's tooltip)
     const QString &last_result() const { return m_last_result; }
 
@@ -105,8 +113,9 @@ public slots:
 private:
     //A move of the card CPU: the verb with `cpu`; an answer that moved nothing (at_start, at_end, no_hit) is said
     //under title. True when it moved
+    //`at_end` given: an at_end answer is not said but set there (the caller steps on live)
     bool card_move(const QString &cpu, const std::string &verb, std::map<std::string, std::string> options,
-                   const QString &title);
+                   const QString &title, bool * at_end = nullptr);
     //A moving verb: the window redraws after it. True when it ran
     bool move(const std::string &verb, std::map<std::string, std::string> options, const QString &title,
               QJsonObject * out = nullptr);

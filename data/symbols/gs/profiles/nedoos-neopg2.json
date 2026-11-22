@@ -1,0 +1,13 @@
+{
+  "id": "nedoos-neopg2",
+  "title": "NeoTracker page 2 overlays (NedoOS ngsplay neopg2.bin)",
+  "note": "page2.a80 at #D000 in RAM page 2 (after #E1): overlays the BIOS copies to #3000; not code a #13 starts",
+  "match": [
+    {
+      "kind": "upload",
+      "addr": "#D000",
+      "length": 7272,
+      "sha256": "5bd768e03fe4ba33126677018317404bcf50228f27f9b84811135b59209889cb"
+    }
+  ]
+}

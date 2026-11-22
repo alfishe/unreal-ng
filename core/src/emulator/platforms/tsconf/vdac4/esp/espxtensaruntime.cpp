@@ -142,6 +142,11 @@ void EspXtensaRuntime::SetThreaded(bool on)
         StopWorker();
 }
 
+void EspXtensaRuntime::SetJit(bool on)
+{
+    _host->SetJit(on);
+}
+
 void EspXtensaRuntime::SetLatency(uint32_t passes)
 {
     Flush();

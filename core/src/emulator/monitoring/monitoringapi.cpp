@@ -60,6 +60,7 @@ namespace
 using Clock = std::chrono::steady_clock;
 /// A verb that is not a topic: the groups with their ids
 constexpr const char* kBreakpointGroups = "breakpoint_groups";
+constexpr const char* kBreakpointHits = "breakpoint_hits";
 
 /// Values a person reads: two decimals (and no churn of the last bits between two equal readings)
 double Round2(double value)
@@ -391,6 +392,73 @@ StateNode BreakpointGroups(Emulator& emulator, DebugCpuId cpu)
             ids.push(static_cast<int64_t>(id));
         groups.push(std::move(entry));
     }
+    return node;
+}
+
+/// One breakpoint's hits (the verb `breakpoint_hits`, GET .../breakpoints/{bp}/hits; PLAN #122 V4): the counts and,
+/// for a breakpoint that only counts, its per-hit record from index `from` on, at most `limit` hits. Read without
+/// holding the CPU
+StateNode BreakpointHits(Emulator& emulator, DebugCpuId cpu, uint16_t id, uint64_t from, uint32_t limit,
+                         std::string& error)
+{
+    EmulatorContext* context = emulator.GetContext();
+    BreakpointManager* manager = context->pDebugManager ? context->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
+    StateNode node = StateNode::Object();
+    if (manager == nullptr)
+    {
+        error = std::string("no breakpoints on cpu ") + DebugCpuName(cpu);
+        return node;
+    }
+    const BreakpointManager::HitLogInfo info = manager->GetHitLog(id, from, limit);
+    if (!info.found)
+    {
+        error = "no breakpoint " + std::to_string(id) + " on cpu " + DebugCpuName(cpu);
+        return node;
+    }
+    node["cpu"] = DebugCpuName(cpu);
+    node["id"] = static_cast<int64_t>(id);
+    node["stop"] = !info.countOnly;
+    node["hit_count"] = static_cast<int64_t>(info.hitCount);
+    if (info.hasCondition)
+        node["match_count"] = static_cast<int64_t>(info.matchCount);
+    if (!info.hasLog)
+    {
+        node["log"] = StateNode();   // null: a breakpoint that stops, or one that keeps no record
+        node["hits"] = StateNode::Array();
+        return node;
+    }
+    const BreakpointHitLog::View& view = info.view;
+    StateNode& log = node["log"];
+    log = StateNode::Object();
+    log["capacity"] = static_cast<int64_t>(view.capacity);
+    log["keep"] = BreakpointManager::HitLogKeepName(view.keep);
+    log["total"] = static_cast<int64_t>(view.total);
+    log["stored"] = static_cast<int64_t>(view.stored);
+    log["dropped"] = static_cast<int64_t>(view.dropped);
+    log["oldest"] = static_cast<int64_t>(view.oldest);
+    StateNode& hits = node["hits"];
+    hits = StateNode::Array();
+    uint64_t index = view.firstIndex;
+    for (const BreakpointHitRecord& r : view.records)
+    {
+        StateNode hit = StateNode::Object();
+        hit["index"] = static_cast<int64_t>(index++);
+        hit["hit"] = static_cast<int64_t>(r.hit);
+        hit["frame"] = static_cast<int64_t>(r.frame);
+        hit["t"] = static_cast<int64_t>(r.t);
+        hit["pc"] = static_cast<int64_t>(r.pc);
+        hit["address"] = static_cast<int64_t>(r.address);
+        if (r.value >= 0)
+            hit["value"] = static_cast<int64_t>(r.value);
+        hit["kind"] = BreakpointManager::HitKindName(r.kind);
+        if (r.cpuTime >= 0)
+            hit["cpu_time"] = r.cpuTime;
+        hits.push(std::move(hit));
+    }
+    node["first_index"] = static_cast<int64_t>(view.firstIndex);
+    node["more"] = view.more;
+    if (view.more)
+        node["next_from"] = static_cast<int64_t>(view.firstIndex + view.records.size());
     return node;
 }
 
@@ -1033,6 +1101,7 @@ const std::vector<std::string>& Verbs()
         all.insert(all.end(), ProcessNames().begin(), ProcessNames().end());
         all.insert(all.end(), InstanceNames().begin(), InstanceNames().end());
         all.push_back(kBreakpointGroups);
+        all.push_back(kBreakpointHits);
         return all;
     }();
     return verbs;
@@ -1076,7 +1145,7 @@ Reply Call(std::string_view verbView, const StateNode& args)
             reply.body[name] = std::move(value);
         return reply;
     }
-    if (!IsInstanceName(verb) && verb != kBreakpointGroups)
+    if (!IsInstanceName(verb) && verb != kBreakpointGroups && verb != kBreakpointHits)
     {
         std::string names;
         for (const std::string& name : Verbs())
@@ -1089,10 +1158,40 @@ Reply Call(std::string_view verbView, const StateNode& args)
     if (!emulator)
         return Fail(404, "Not Found", error.empty() ? "no instance" : error);
     DebugCpuId cpu = DebugCpuId::Main;
-    if (verb == kBreakpointGroups && !DebugManager::ParseCpuName(Text(args, "cpu"), cpu))
+    const bool breakpointVerb = verb == kBreakpointGroups || verb == kBreakpointHits;
+    if (breakpointVerb && !DebugManager::ParseCpuName(Text(args, "cpu"), cpu))
         return Fail(400, "Bad Request", "cpu must be main, gs or ms");
+    StateNode read;
+    if (verb == kBreakpointHits)
+    {
+        // id: the breakpoint; from: the first record index (default 0); limit: hits at most (1..10000, default 100)
+        auto number = [&](const char* name, uint64_t fallback, uint64_t max, uint64_t& out) {
+            const std::string text = Text(args, name);
+            if (text.empty())
+            {
+                out = fallback;
+                return true;
+            }
+            if (text.find_first_not_of("0123456789") != std::string::npos || text.size() > 19)
+                return false;
+            out = std::stoull(text);
+            return out <= max;
+        };
+        uint64_t bp = 0, from = 0, limit = 0;
+        if (Text(args, "id").empty() || !number("id", 0, 0xFFFE, bp))
+            return Fail(400, "Bad Request", "id: the breakpoint's id");
+        if (!number("from", 0, UINT64_MAX / 2, from))
+            return Fail(400, "Bad Request", "from: a record index (0 = the first)");
+        if (!number("limit", 100, 10000, limit) || limit == 0)
+            return Fail(400, "Bad Request", "limit: 1..10000");
+        std::string error;
+        read = BreakpointHits(*emulator, cpu, static_cast<uint16_t>(bp), from, static_cast<uint32_t>(limit), error);
+        if (!error.empty())
+            return Fail(404, "Not Found", error);
+    }
+    else
+        read = verb == kBreakpointGroups ? BreakpointGroups(*emulator, cpu) : ReadInstance(verb, *emulator);
     reply.body["instance"] = id;
-    StateNode read = verb == kBreakpointGroups ? BreakpointGroups(*emulator, cpu) : ReadInstance(verb, *emulator);
     for (auto& [name, value] : read.members)
         reply.body[name] = std::move(value);
     return reply;

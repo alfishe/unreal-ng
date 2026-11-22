@@ -21,7 +21,11 @@ Planned, in this order:
   sampled BUSRQ. POC 036 `dmaprescb` / `dmaburst` / `dmaprescc` / `dmacont` on 48K / 128K / +3: 0 durations differ. `mod_player.nex`
   NEXT-DDMA 3 blocks ahead of NEXT: no SRAM wait at 28 MHz on core 3.03, the init is shorter (audit section "The bus inside an
   instruction, 2026-11-19")
-- [ ] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state
+- [x] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state (2026-11-21):
+  physical addresses wrap in the board's SRAM (`zxnddma.gde` 2.5: Issue 5 `#3FFFFF`, Issue 4 `#1FFFFF`, Issue 2 `#0FFFFF` or `#1FFFFF`
+  with the expansion; `NextSramBytes`, `NextMemory::PhysicalAddressMask`), banks 5 / 7 stay the SRAM side through a wrapped address;
+  `next_dma` gains `zxnddma` + `ddma` (flags, 22-bit addresses, 2D block, values, Layer 2 X,Y, SRAM range) on every plane, the `dma`
+  history the same per block. `NextDdmaBoard_Test`, `NextDdmaReport_Test`; `design-zxnddma.md` section 9
 - [x] Host hard reset on every plane (2026-11-12): `Reset()` is the board's soft reset, `Reset(true)` the power-on (boot ROM + firmware);
   CLI `reset hard`, Python `reset(hard=True)`, Lua `reset{hard = true}`, MCP `emulator_manage {action: reset, hard: true}`, REST / WebSocket
   `POST /reset {"hard": true}`, Qt Run > Hard Reset (Power Cycle); gdb stays soft. `design-boot-and-firmware.md` section 3
@@ -79,8 +83,15 @@ Not planned yet:
 
 - [ ] NR #8F memory mapping modes (Pentagon 512 / 1024 paging through #EFF7): stored only
 - [ ] SPI flash on port #E7 (config mode, 16 MB, a `[NEXT] FlashFile=`): the select is decoded and ignored
-- [ ] The generic `DivMmcPaging` as a `divmmc` slot card (machine reset, TTD blob, the +2A/+3 ROM-3-only automap); the Next has its own
-- [ ] Border colour changes of the CPU (#FE) inside a line: `ScreenNext::UpdateScreen` draws whole lines, only the copper splits one
+- [x] The generic `DivMmcPaging` as a `divmmc` slot card (2026-11-21): the edge card `divmmc` on the 48K / 128K / +2A / +3
+  (UnoDOS 3 shipped, esxDOS by the user's file), the CPLD's two-stage automap latch, reset = /RESET (the map stays, a hard reset
+  clears it), TTD device `DivMmc` 77 + region `divmmc.ram`, `live` state in the slot report. The board has no ROM-3 condition
+  (`divmmc.vhd`): the +2A/+3 ROM-3-only rule is the option `automap=rom3`; divide-divmmc-esxdos.md section 9, `DivMmcCard_Test`. The
+  Next keeps its own
+- [x] Border colour changes of the CPU (#FE) inside a line (2026-11-20): `ScreenNext::SetBorderColor` queues the place where the new
+  colour reaches the output and the line is drawn once with its border in runs (2000 changes a frame: +3.3 %), by the rule POC 028 scenario 54 measured on the RTL (17 clocks after the CPU clock's falling edge, the
+  next 8-pixel cell; the Pentagon timing at once); design-video-timing.md section 6a, `NextBorder*_Test`. The outer border around
+  the grid and the Timex hi-res border do not change mid-line
 - [ ] Sound: the AY through the standard stack's voicing and the `ym2149.vhd` volume table (NextAudio uses the generic AY levels); a test
   of the rendered levels of ABC / ACB / mono (NR #08 bit 5, NR #09 bits 7:5); PT3 players through NextZXOS, the demos' music phase against
   jnext, `zxnext_sfx` / DMA sample play
@@ -88,7 +99,11 @@ Not planned yet:
 - [ ] Tests: an NR #02 hard reset returns to config mode with the boot ROM at 0 (RAM survives, as on the board); Z80N: a masked INT is not
   taken right after EI or between a DD / FD prefix (also DD DD) and its opcode
 - [ ] Host M1 button (the Multiface NMI) in Qt and on the automation planes (`GenerateMultifaceNmi`; today only NR #02 bit 3)
-- [ ] Qt panels (NextREG table, MMU map, sprites, copper, DMA / CTC / IM2) and Next-aware GDB wiring (DeZog DZRP is done)
+- [x] Qt panels (2026-11-19): NextREG, MMU, Copper, Sprites, DMA, CTC / IM2 as tabs beside the PC history of the Embedded debugger
+  (its right pane, always shown, Next tabs on a Next only; the PC history records while its tab is in front) and as side tabs of the eCat debugger (on a Next only); each renders the report the planes
+  serve (`next_regs`, `next_mmu`, `next_copper`, `next_sprites`, `next_dma`, `next`'s `interrupts` / `ctc`), values changed since the
+  last stop lit. The catalog lists `next-regs`, `next-mmu`, `next-copper`, `next-sprites` (Devices tab, `state devices`)
+- [ ] Next-aware GDB wiring (DeZog DZRP is done)
 - [x] Native `.snx` loader (2026-10-26): `LoaderSNA`'s SNX mode (48K = 49179 bytes; 128K = the banks `#7FFD` leaves, then private
   data, counted in the report and not loaded), `SnapshotLauncher` takes the Next for it, every surface lists `.snx`; the tests load
   the release `.snx` directly. With it: `NextRealBoard_Test` follows core 3.02.03 (NR #0A bit 2 reads 0; z80bltst is red under the
@@ -107,13 +122,32 @@ Not planned yet:
 - [x] Media: the esxDOS-only mode (requirements.md Q11); refresh phases.md (2026-10-26: feature `esxdos`, `NextEsxDos`
   serves the API on the SD card's FAT volume without the firmware, esxdos-and-sd.md section 5a, `*NextEsxDos*` tests;
   phases.md carries a status line, stale notes removed)
-- [ ] Reference compares: the NextZXOS welcome-screen border (palette paper entry, bright / flash) against a board or jnext screenshot;
-  the full ZEsarUX `tbblue.c` diff, the wiki pages and the manual (research-fpga-vhdl.md section 23)
-- [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
-- [ ] The `NextState` golden: `testdata/slots/fitted-devices.txt` pins `62:<size>`, so every Next state change regenerates it; switch the
-  `next` block to presence only (`62:var`) or keep regenerating
-- [ ] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data
-  file
+- [x] Reference compares (2026-11-20): the NextZXOS welcome-screen border matches jnext's headless reference pixel for pixel
+  (`(182, 182, 182)`, palette entry 23; bright / flash have no part in a plain border, zxula.vhd 419 / 471), the wiki pages and the
+  manual ([research-reference-compares.md](research-reference-compares.md)), the full ZEsarUX `tbblue.c` diff
+  ([research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md)). Bug candidates, each against the VHDL, #8-#11 fixed 2026-11-20:
+- [x] NextREG read-back of narrow and unknown registers follows the VHDL mux (zxnext.vhd 5881-6285; tbblue diff #1): `kReadMasks` in nextboard.cpp; the stored byte keeps every bit
+- [x] NR #22 bit 7 reads the INT pulse (zxnext.vhd 5991; tbblue diff #2, reference compares #2): pulse mode (the hardware-mode ULA exception, zxnext.vhd 1962, is not modelled)
+- [x] NR #C0 bits 2:1 read the CPU's IM mode (zxnext.vhd 6229; tbblue diff #3)
+- [x] NR #02 bits 3:2 kept when NR #06 refuses the NMI (zxnext.vhd 2090, 3843; tbblue diff #4): set when the cause is accepted (`NmiAcceptsCause`)
+- [x] NR #20 generates interrupts (im2_peripheral.vhd 186-192; tbblue diff #5): whatever the enables
+- [x] Interrupt status set for a disabled source and in pulse mode (im2_peripheral.vhd 160; tbblue diff #6): `_status`; #C8-#CA clear the status only, not a pending request (zxnext.vhd 1952)
+- [x] Boot ROM window 8K mirrored at #2000, writes to SRAM (zxnext.vhd 3199-3204; tbblue diff #7): reads of slots 0-1, writes keep the decode
+- [x] Copper mode 11 restarts at cvc 0, not at the paper top with NR #64 (copper.vhd 80; tbblue diff #8): `NextCopper::RestartClock`, NR #64 lines before the paper
+- [x] Blend modes 110 / 111 and the stencil use the full 3-bit blue (zxnext.vhd 7286-7341; tbblue diff #9): the compositor and the pixel inspector
+- [x] Blend source 00 keeps the ULA mix when NR #68 bit 7 disables the ULA (zxnext.vhd 7100; tbblue diff #10): the VHDL is unambiguous (ula_en only in ula_transparent and the stencil select); a board check is still welcome
+- [x] ULANext full-ink paper / border is the NR #4A colour, not transparent (zxula.vhd 500-525; tbblue diff #11): an opaque ULA pixel, transparent only when NR #4A = NR #14; the paper of a non-solid mask too
+- [x] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
+  (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A): `NextMemory::SramTwin`, saved in the `NextSystemArea` blob
+- [x] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes (2026-11-20, 20
+  interleaved rounds + A/A: N2 cost the classic Debug frames +1.2 % (48K +2.5 %), N3b none; on master the out-of-line
+  `ReadDebugEffects` cost 2-5 %, now forced inline into `MemoryReadDebug`: Debug -2.9 %, Fast unchanged;
+  [ab-n2-n3c-2026-11-20.md](ab-n2-n3c-2026-11-20.md))
+- [x] The `NextState` golden: `testdata/slots/fitted-devices.txt` pinned `62:<size>`, so every Next state change regenerated it; now
+  presence only (`62:var`, 2026-11-20), the layout guarded by the image version and `ttdnextstate_test.cpp` (design-ttd.md section 3)
+- [x] The NextZXOS Browser navigation is written twice (tools/machines/next/browser-drive/drive.py, `NexBrowserRun_Test`): one shared data
+  file. Three copies (browser-drive, `regress.py`, `NexBrowserRun_Test`) now read `testdata/machines/zxnext/browser-navigation.json`
+  (keys, frames, seconds, idle `#0C8F`, the order, the search rule, the run steps per extension); regress pictures unchanged
 - [ ] SPED (the distribution's editor / assembler): blocked, no format documentation
 
 ## History (closed 2026-10-16)
@@ -241,6 +275,7 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 ## Real-board suite V1 on the whole machine (2026-10-09)
 The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked on real boards, photos in the repo) run on the NEXT machine with the state NextZXOS leaves (`#7FFD` = #30, core id 0, ULA palette of the 16 defaults); the same files on ZEsarUX are the second reference (`scratch/v1run.sh`-style loop: bring-up `UNREAL_NEX=<file.snx>`, `UNREAL_NEX_KEYS`). `NextRealBoard_Test` (UNREAL_NEXT_TESTS) pins what is decided:
 - [x] NextReg_defaults: no red cell (was 6): NR #08 bit 7 reads the inverse of the #7FFD lock (and writing 1 unlocks), NR #09 bit 3 reads 0, NR #6E / #6F bit 6 reads 0 and reset to #2C / #0C, ULA palette entries 32-255 repeat the 16 defaults after the firmware; core id 0 after the boot
+- [x] NextReg_defaults "error cell #2C" (2026-11-21) was the checker, not the register: since the 720 x 576 HDMI frame (7f23574ca) the paper starts at (96, 96), and `run-all.py` / `NextRealBoard_Test` still sampled the 640 x 512 grid (paper at 64), two cells up and left, so the red #0A cell read as #2C. NR #2C / #2D / #2E themselves are bright cyan like the board (the program writes #7F and does not test the read back; the read is the Pi's I2S sample, zxnext.vhd 6006-6015). The one red cell is #0A by the VHDL: the program (3.1.5) writes #07 and expects #07, 3.02.03 reads bit 2 as 0 (zxnext.vhd 5912), the LOG shows `03 0A`. Both checkers take the paper origin from the frame (NextPictureWindow::Origin) and expect #0A; tests `NextRealBoard_Test.GridCellIsSampledAtThePaperOfTheHdmiFrame`, `DacMirrorsReadTheI2sSampleNotTheWrite`
 - [x] NextReg #69: 10 of 10 (was 7): bit 6 is bit 3 of #7FFD (shadow screen) both ways, the video state follows the copper per line
 - [x] Z80N: all rows OK at 28 MHz (also `!Z80Nc2`)
 - [x] LayersMixingHiRes: Timex hi-res attribute = bright | paper << 3 | ink through ULANext, border = paper colour

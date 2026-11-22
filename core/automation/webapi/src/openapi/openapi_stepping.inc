@@ -22,13 +22,14 @@
     paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["count"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-         ["count"]["description"] = "Number of instructions to execute";
+         ["count"]["description"] = "Number of instructions to execute: 1..10000000 (more: 400, nothing runs)";
     paths["/api/v1/emulator/{id}/steps"]["post"]["description"] =
         "Runs up to `count` instructions; a breakpoint ends the run early (execution: before its instruction; "
-        "memory, port: after it). `stop` tells how the run ended.";
+        "memory, port: after it). `stop` tells how the run ended. A count out of 1..10000000 is refused (400 with "
+        "count and max), never cut.";
     paths["/api/v1/emulator/{id}/steps"]["post"]["responses"]["200"]["description"] =
-        "count (asked), executed (ran), pc, sp, state and stop {cpu, reason: step | breakpoint, breakpoint_id, "
-        "address, access}";
+        "count (asked), executed / instructions_run (ran), frames_run, tstates_run, frame, t, message, pc, sp, state "
+        "and stop {cpu, reason: step | breakpoint | stopped, breakpoint_id, address, access}";
 
     // The debugger events channel (OpenAPI describes the upgrade request only)
     paths["/api/v1/websocket"]["get"]["summary"] = "Debugger events (WebSocket)";
@@ -64,7 +65,11 @@
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["summary"] = "Run N t-states";
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["description"] =
-        "Run the CPU for exactly N t-states (1 t-state = 1 ULA step / 2 pixels)";
+        "Run the CPU for exactly N t-states (1 t-state = 1 ULA step / 2 pixels), 1..14000000000 in one call (more: "
+        "400 with count and max, nothing runs). On the run timeline shared with run_frames: a run that starts where "
+        "the previous one ended aims at that run's target plus N, so slices end where one run ends (a slice already "
+        "passed by the previous run's last instruction runs nothing). Breakpoints skipped unless \"breakpoints\": "
+        "true. Answers as run_frames.";
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["parameters"][0]["required"] = true;
@@ -72,8 +77,12 @@
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["tstates"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/run_tstates"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-         ["tstates"]["description"] = "Number of t-states to run";
-    paths["/api/v1/emulator/{id}/run_tstates"]["post"]["responses"]["200"]["description"] = "T-states executed";
+         ["tstates"]["description"] = "Number of t-states to run (alias key 'count')";
+    paths["/api/v1/emulator/{id}/run_tstates"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["breakpoints"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/run_tstates"]["post"]["responses"]["200"]["description"] =
+        "count, frames_run, tstates_run, frame, t, stop {cpu, reason: done | breakpoint | stopped, ...}, message, pc, "
+        "sp, state";
 
     paths["/api/v1/emulator/{id}/run_to_scanline"]["post"]["summary"] = "Run to specific scanline";
     paths["/api/v1/emulator/{id}/run_to_scanline"]["post"]["tags"].append("Debug Commands");
@@ -131,7 +140,11 @@
         "Runs at full host speed and leaves the emulator paused. Host audio is held for the run (as for every "
         "direct run: run_frame, run_tstates, run_to_*, step): every sound device still computes its samples "
         "(captures and recordings get them), the speakers get nothing; the hold ends with the run, and resume "
-        "drops any hold left without its reason. GET /audio/mixer host_output shows it (holders.direct_run).";
+        "drops any hold left without its reason. GET /audio/mixer host_output shows it (holders.direct_run). "
+        "1..200000 frames in one call: more is refused (400 with count and max), never cut. Split-independent: "
+        "calls of 30 and 70 frames end at the same t-state and machine state as one call of 100 (the run timeline: a "
+        "run that starts where the previous one ended aims at that run's target plus N frames). Breakpoints skipped "
+        "unless \"breakpoints\": true.";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["required"] = true;
@@ -139,8 +152,12 @@
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["count"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-         ["count"]["description"] = "Number of frames to run (max: 10000). Alias key 'frames' is also accepted.";
-    paths["/api/v1/emulator/{id}/run_frames"]["post"]["responses"]["200"]["description"] = "Frames executed";
+         ["count"]["description"] = "Number of frames to run (1..200000). Alias key 'frames' is also accepted.";
+    paths["/api/v1/emulator/{id}/run_frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["breakpoints"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/run_frames"]["post"]["responses"]["200"]["description"] =
+        "count (asked), frames_run, tstates_run, frame and t where it ended, stop {cpu, reason: done | breakpoint | "
+        "stopped, breakpoint_id, address, access}, message (one line from what ran), pc, sp, state";
 
     // Debug mode
     paths["/api/v1/emulator/{id}/debugmode"]["get"]["summary"] = "Get debug mode state";

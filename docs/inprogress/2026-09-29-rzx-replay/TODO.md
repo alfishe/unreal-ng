@@ -1,5 +1,7 @@
 # TODO — RZX replay integration (2026-09-29)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Status:** R0-R3 (playback) done 2026-09-29; R4 (recording) free for implementation; R5 (TTD interop) possibly later, low priority. PLAN row **#27** (T2).
 
 ## Documents

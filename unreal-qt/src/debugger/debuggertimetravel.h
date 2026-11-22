@@ -7,8 +7,10 @@
 // asked (rule 7).
 // With a sound card's tab in front (debuggercpu.h) the group acts on that card's CPU, as eCat's does (TTD branches
 // debuggers.md §8): Step Back is `step-instruction {cpu, dir: back}`, Run Back `reverse-continue {cpu}` (the card's
-// own breakpoints), the window's Step In in the past `step-instruction {cpu, dir: forward}` (stepForward); Step Over
-// Back is the main CPU's only. At a position on a card's CPU (gs-debugger design §8) the moment names both CPUs - the
+// own breakpoints), Step Over Back `reverse-step-over {cpu}`, the window's Step In / Step Over / Step Out in the past
+// `step-instruction {cpu, dir: forward, kind: in | over | out}`, Run to Cursor `kind: to, pc` (stepForward; at the
+// history's end they run on live,
+// as the main CPU's do: D-3). At a position on a card's CPU (gs-debugger design §8) the moment names both CPUs - the
 // card's instruction count and PC, the main CPU's PC and the T-states the card is into its instruction; without one,
 // the card's tab adds where that card stands
 
@@ -62,6 +64,10 @@ public:
     /// kMaxRunBackPcs addresses. Empty: none
     static std::string RunBackPcs(const BreakpointManager& breakpoints);
     static constexpr size_t kMaxRunBackPcs = 1024;
+    /// The same breakpoints' conditions as one reverse-continue `condition`: "(PC >= #8000 && PC <= #8000 && (A ==
+    /// 5)) || (PC >= #9000 && PC <= #9000)" - a breakpoint without one holds at its addresses. Empty when no enabled
+    /// execution breakpoint has a condition
+    static std::string RunBackCondition(const BreakpointManager& breakpoints);
     /// The moment's card part: "gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next instruction"
     /// for the card the machine stands at a position of (", at its instruction boundary" when not inside one); empty
     /// without a card position
@@ -84,10 +90,12 @@ public:
     bool shown() const { return _shown; }
     /// What the last move said (the moment's tooltip)
     QString lastResult() const { return _lastResult; }
-    /// The window's Step In with a card's tab in front in the recorded past: one card instruction forward through the
-    /// history (rule 3: forward actions there replay). False when it is not for the group (the main CPU in front, live,
-    /// no history): the window steps as before
-    bool stepForward();
+    /// The window's Step In ("in"), Step Over ("over"), Step Out ("out") or Run to Cursor ("to", to @p address) with
+    /// a card's tab in front in the recorded past: the card's step or run through the history (rule 3: forward
+    /// actions there replay; a run to the cursor not reached in the history says so and moves nothing). False when it
+    /// is not for the group (the main CPU in front, live, no history) or the card stands at the history's end (at_end,
+    /// D-3): the window steps the card live as before
+    bool stepForward(const std::string& kind = "in", uint16_t address = 0);
 
 signals:
     /// The machine moved in time: the debugger's views redraw
@@ -108,8 +116,9 @@ private:
               ttd::TTDReply* out = nullptr);
     /// A card's move (eCat's card_move): the verb with `cpu`; an answer that moved nothing (at_start, at_end, no_hit)
     /// is said and moves nothing. True when the machine moved
+    /// `atEnd` given: an at_end answer is not said but set there (the caller steps on live)
     bool cardMove(DebugCpuId cpu, const std::string& verb, std::map<std::string, std::string> options,
-                  const QString& title);
+                  const QString& title, bool* atEnd = nullptr);
     DebugCpuId cpu() const;
     void buildBranchMenu();
     void setShown(bool shown);

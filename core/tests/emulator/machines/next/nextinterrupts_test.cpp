@@ -94,9 +94,13 @@ TEST_F(NextInterrupts_Test, HardwareModeLatchesUntilAcknowledged)
     EXPECT_EQ(ReadReg(0xC8) & 1, 1);
     EXPECT_EQ(_int->AcknowledgeInterrupt(5000), 0x60 | (NextInterruptSource::kUla << 1));
     EXPECT_FALSE(_int->IsIntAsserted(5001)) << "served; the next frame brings the next request";
-    EXPECT_EQ(ReadReg(0xC8) & 1, 0);
+    // im2_peripheral.vhd 160, 180: the status is int_status (sticky until cleared) or im2_int_req (until the RETI)
+    EXPECT_EQ(ReadReg(0xC8) & 1, 1) << "the status stays after the acknowledge";
+    NextReg(0xC8, 0x01);
+    EXPECT_EQ(ReadReg(0xC8) & 1, 1) << "cleared, but the request is in service until its RETI";
     _int->OnReti();
     EXPECT_EQ(_int->InServiceMask(), 0);
+    EXPECT_EQ(ReadReg(0xC8) & 1, 0) << "cleared and served";
     EXPECT_FALSE(_int->IsIntAsserted(100)) << "the frame rolled over";
     EXPECT_TRUE(_int->IsIntAsserted(1846)) << "next frame";
 }
@@ -131,8 +135,13 @@ TEST_F(NextInterrupts_Test, DisabledSourceDoesNotRequest)
     NextReg(0xC5, 0x01);
     _int->Raise(NextInterruptSource::kCtc0);
     EXPECT_TRUE(_int->IsIntAsserted(11));
-    NextReg(0xC9, 0x01);  // write 1 to clear
-    EXPECT_FALSE(_int->IsIntAsserted(12));
+    // zxnext.vhd 1952: a status write clears int_status only; the request (im2_device.vhd S_REQ) waits for its acknowledge
+    NextReg(0xC9, 0x01);
+    EXPECT_TRUE(_int->IsIntAsserted(12)) << "clearing the status does not withdraw the request";
+    EXPECT_EQ(_int->AcknowledgeInterrupt(12), NextInterruptSource::kCtc0 << 1);
+    _int->OnReti();
+    EXPECT_FALSE(_int->IsIntAsserted(13));
+    EXPECT_EQ(ReadReg(0xC9) & 1, 0);
 }
 
 // NR #22 and NR #C4 share their enables (zxnext.vhd 5297, 5610, 3616-3622, 6239): the line interrupt enable is one flop, the ULA one
@@ -584,4 +593,100 @@ TEST_F(NextInterrupts_Test, AChosenInterruptStopsARunningDmaBlockUntilItsReti)
     _ports->StepDma();
     EXPECT_FALSE(d.Active()) << "after the RETI the block ends";
     EXPECT_EQ(d.Counter(), kLength);
+}
+
+// zxnext.vhd 5992: NR #22 bit 7 reads (not pulse_int_n), the pulse-mode INT on now: the ULA's frame pulse (1845, 36 T on the 128K
+// timing), the line pulse, a device's. The hardware IM2 mode raises no pulse (im2_peripheral.vhd 186)
+TEST_F(NextInterrupts_Test, Nr22Bit7ReadsTheIntPulse)
+{
+    _z80->t = 100;
+    EXPECT_EQ(ReadReg(0x22) & 0x80, 0x00);
+    _z80->t = 1845 + 10;
+    EXPECT_EQ(ReadReg(0x22), 0x80) << "the ULA's pulse is on; bits 2:0 as written (reset 0)";
+    _z80->t = 1845 + 36;
+    EXPECT_EQ(ReadReg(0x22) & 0x80, 0x00) << "the pulse is over";
+    NextReg(0xC5, 0x01);
+    _int->Raise(NextInterruptSource::kCtc0);
+    EXPECT_EQ(ReadReg(0x22) & 0x80, 0x80) << "a CTC request pulses the line too";
+    NextReg(0xC0, 0x01);
+    _z80->t = 1845 + 10;
+    EXPECT_EQ(ReadReg(0x22) & 0x80, 0x00) << "hardware IM2 mode: no pulse";
+}
+
+// zxnext.vhd 6230: NR #C0 bits 2:1 read z80_im_mode, the CPU's interrupt mode (im2_control.vhd: 00 IM 0, 01 IM 1, 10 IM 2); the rest
+// is nr_c0_im2_vector & '0' & nr_c0_stackless_nmi & ... & nr_c0_int_mode_pulse_0_im2_1
+TEST_F(NextInterrupts_Test, NrC0ReadsTheCpuInterruptMode)
+{
+    NextReg(0xC0, 0xFF);
+    _z80->im = 0;
+    EXPECT_EQ(ReadReg(0xC0), 0xE9);
+    _z80->im = 1;
+    EXPECT_EQ(ReadReg(0xC0), 0xEB);
+    _z80->im = 2;
+    EXPECT_EQ(ReadReg(0xC0), 0xED);
+    NextReg(0xC0, 0x06);
+    EXPECT_EQ(ReadReg(0xC0), 0x04) << "bits 2:1 are not stored: the write does not set the mode";
+}
+
+// zxnext.vhd 1946-1947 im2_int_unq: an NR #20 write requests the line (bit 7), the ULA (bit 6) and CTC 3-0 (bits 3:0) whatever their
+// enables (im2_peripheral.vhd 172, 186): the status bit, the hardware-mode request, or in pulse mode the INT pulse. NR #20 reads
+// im2_int_status(0) & im2_int_status(11) & "00" & im2_int_status(6 downto 3) (5989)
+TEST_F(NextInterrupts_Test, Nr20GeneratesInterruptsWhateverTheEnables)
+{
+    _z80->t = 100;
+    NextReg(0x22, 0x04);  // the ULA interrupt off, the line off
+    NextReg(0xC8, 0x03);
+    EXPECT_EQ(ReadReg(0x20), 0x00);
+    NextReg(0x20, 0x40);
+    EXPECT_EQ(ReadReg(0x20), 0x40);
+    EXPECT_EQ(ReadReg(0xC8), 0x01) << "the ULA's status bit";
+    EXPECT_TRUE(_int->IsIntAsserted(_z80->t)) << "pulse mode: the INT pulse starts at once";
+    NextReg(0xC8, 0x01);
+    EXPECT_EQ(ReadReg(0x20), 0x00);
+
+    NextReg(0xC0, 0x01);  // hardware IM2, every enable still off
+    NextReg(0x20, 0x81);  // the line and CTC 0
+    EXPECT_EQ(ReadReg(0x20), 0x81);
+    EXPECT_EQ(ReadReg(0xC9) & 0x01, 0x01);
+    EXPECT_TRUE(_int->IsIntAsserted(_z80->t));
+    EXPECT_EQ(_int->AcknowledgeInterrupt(_z80->t), NextInterruptSource::kLine << 1) << "the line outranks CTC 0";
+    _int->OnReti();
+    EXPECT_EQ(_int->AcknowledgeInterrupt(_z80->t), NextInterruptSource::kCtc0 << 1);
+    _int->OnReti();
+    EXPECT_FALSE(_int->IsIntAsserted(_z80->t));
+    EXPECT_EQ(ReadReg(0x20), 0x81) << "served; the status record stays until it is cleared";
+    NextReg(0xC8, 0x02);
+    NextReg(0xC9, 0x01);
+    EXPECT_EQ(ReadReg(0x20), 0x00);
+}
+
+// im2_peripheral.vhd 160: int_status <= int_req or int_unq or (int_status and not clear) - no enable term, and the plain reset only
+// (not the pulse-mode im2_reset_n): a disabled CTC / UART source and every source in pulse mode set their status bit. The ULA and
+// line pulses themselves exist only while enabled (zxula_timing.vhd 551, 577)
+TEST_F(NextInterrupts_Test, StatusIsSetForADisabledSourceAndInPulseMode)
+{
+    _z80->t = 100;
+    // pulse mode (the reset default), CTC 0 and UART 0 Tx not enabled
+    _int->Raise(NextInterruptSource::kCtc0);
+    _int->Raise(NextInterruptSource::kUart0Tx);
+    EXPECT_EQ(ReadReg(0xC9) & 0x01, 0x01);
+    EXPECT_EQ(ReadReg(0xCA) & 0x04, 0x04);
+    _z80->t = 3000;
+    EXPECT_FALSE(_int->IsIntAsserted(_z80->t)) << "disabled: no INT";
+
+    // the ULA's frame pulse in pulse mode: the status is set once the beam passed 1845
+    NextReg(0xC8, 0x03);
+    _z80->t = 1000;
+    EXPECT_EQ(ReadReg(0xC8), 0x00);
+    _z80->t = 1900;
+    EXPECT_EQ(ReadReg(0xC8), 0x01) << "the ULA pulse at 1845 recorded";
+    NextReg(0xC8, 0x01);
+    EXPECT_EQ(ReadReg(0xC8), 0x00);
+    _context->emulatorState.frame_counter++;
+    EXPECT_EQ(ReadReg(0xC8), 0x01) << "the next frame's pulse";
+    NextReg(0xC8, 0x01);
+    NextReg(0x22, 0x04);  // the ULA interrupt off: no pulse, no status
+    _context->emulatorState.frame_counter++;
+    EXPECT_EQ(ReadReg(0xC8), 0x00);
+    EXPECT_EQ(ReadReg(0x22) & 0x80, 0x00);
 }

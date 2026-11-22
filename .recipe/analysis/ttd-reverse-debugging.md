@@ -1,5 +1,7 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Precondition: a recorded session — see [ttd-recording.md](ttd-recording.md).
 `find-last`, `reverse-step` and `reverse-continue` while recording pause the
 recording and answer. The coverage queries answer at any time. Session rules
@@ -33,7 +35,8 @@ These are the "answer the question backwards" primitives:
   bookmark
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *What did the sound card's CPU do before this?* (the General Sound / NeoGS or the MultiSound's GS) → `card_step`
-  with a negative count, `card_reverse_continue` to its breakpoint's previous hit, `card_seek` to an instruction
+  with a negative count, `card_reverse_step_over` back past a card routine, `card_step_over` / `card_step_out`
+  forward through the history, `card_run_to_cursor` to the card's next instruction at an address, `card_reverse_continue` to its breakpoint's previous hit, `card_seek` to an instruction
   count ([TTD on a sound card's CPU](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu))
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
@@ -78,6 +81,10 @@ time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
 time_travel {"action":"card_position"}                          # Card gs: instruction N, PC ...
 time_travel {"action":"card_step","cpu":"gs","count":-5}        # 5 card instructions back (positive: forward)
 time_travel {"action":"card_seek","cpu":"gs","instruction":123456}
+time_travel {"action":"card_reverse_step_over","cpu":"gs"}      # back past the card routine that just returned
+time_travel {"action":"card_step_over","cpu":"gs"}              # over a card CALL, through the history
+time_travel {"action":"card_step_out","cpu":"gs"}               # out of the card routine, through the history
+time_travel {"action":"card_run_to_cursor","cpu":"gs","addr":"0x0A3C"}   # the card's next time at #0A3C (no_hit: never)
 control_execution {"action":"bp_add","address":"0x0A3C","cpu":"gs"}
 time_travel {"action":"card_reverse_continue","cpu":"gs","max_frames":200}   # the card breakpoint's previous hit
 
@@ -325,6 +332,25 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-diff" -H 'Content-Type: appli
 ```
 
 A typical chain: memory-diff narrows "what changed between two frames" to a few ranges. find-last (`space` for video / fast RAM) or reverse-continue then names the instruction behind one of them. MCP: `time_travel` `memory_at` / `memory_diff`. CLI: `ttd memory-at` / `ttd memory-diff`. Lua: `ttd_memory_at{...}`. Python: `emu.ttd_memory_at(...)`.
+
+Every memory-at answer names the moment it read: `moment` `frame_start` ("the start of frame F, before its first instruction"; `at_tinframe` is where the checkpoint's CPU stood, a few T past the boundary, past the instruction that crossed it; the bytes are as the boundary left them, so a write that instruction made after the boundary counts in frame F and shows only in a seek to F or in frame F + 1), `inside_frame` (at `tinframe`) or `now`, and `moment_text` in words.
+
+### memory-series — memory over a frame range in one call
+
+A variable's history (lives, a score, a pointer table) is one call, not a memory-at loop: up to 16 ranges at the start of every frame asked, read in one forward walk of the checkpoints. Each row equals memory-at at that frame. `changes_only` keeps the frames where a range changed; `limit` and `max_bytes` bound the answer, and `next_from_frame` says where to go on.
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-series" -H 'Content-Type: application/json' \
+     -d '{"ranges":"0x5C78:2, ram5:0x1B00:32","from_frame":100,"to_frame":400,"changes_only":true,"format":"hex"}'
+# {"rows":[{"frame":100,"exact":true,"at_tinframe":7,"data":["6500","..."]},{"frame":101,"changed":[0],...}],
+#  "frames_read":301,"pieces_decoded":...,"truncated":false,...}
+```
+
+Space `cpu` (the default) reads Z80 addresses through the paging stored with each checkpoint. A session loaded from a file stores none, so each such frame is read by restoring its checkpoint, the machine put back (`restored_frames`). MCP: `time_travel` `memory_series` (`memory_ranges`, hex by default). CLI: `ttd memory-series --ranges R`. Lua: `ttd_memory_series{ranges = ...}`. Python: `emu.ttd_memory_series(ranges, ...)`.
+
+### screen-at — a past frame's screen
+
+`screen-at` gives the frame's final picture as positioning there shows it (`which: shown`, PNG): the frame is replayed in a sandbox and the machine is put back. `which: normal` / `shadow` gives RAM page 5 / 7 at the frame's end, as a PNG or as bytes (`bitmap`, `attributes`, `raw`). The answer names the screen shown at the frame's start and end and where inside the frame it flipped (`#7FFD` bit 3, sampled at 312 points): a double-buffered game's back buffer is the other screen. The last recorded frame has not ended and is refused. MCP: `time_travel` `screen_at` (an image block). CLI: `ttd screen-at --frame F [--save FILE]`. Lua: `ttd_screen_at{frame = F}`. Python: `emu.ttd_screen_at(F)`.
 
 ## Workflow: crash post-mortem (summary)
 

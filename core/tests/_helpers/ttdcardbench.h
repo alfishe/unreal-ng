@@ -13,6 +13,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
@@ -171,6 +172,56 @@ inline bool Build(Bench& b, Card card, const std::string& model = "PENTAGON")
     }
     b.emulator->RunNFrames(3);
     WriteProgram(b);
+    b.emulator->RunNFrames(1);
+    return true;
+}
+
+/// The card's own program for the step over / step out tests: nested routines in the card's RAM at #4000 (the classic
+/// card's RAM page 1, the NeoGS's RAM page 3), interrupts off, so the card calls and returns all the time (the
+/// firmware right after its boot runs its RAM test without a CALL for frames on end):
+///   #4000 CALL #4010 / #4003 NOP / #4004 JR #4000
+///   #4010 CALL #4020 / #4013 NOP / #4014 RET
+///   #4020 NOP / NOP / NOP / #4023 RET
+inline bool LoadCardRoutines(Bench& b)
+{
+    struct Chunk
+    {
+        uint16_t address;
+        std::vector<uint8_t> bytes;
+    };
+    const Chunk chunks[] = {
+        {0x4000, {0xCD, 0x10, 0x40, 0x00, 0x18, 0xFA}},
+        {0x4010, {0xCD, 0x20, 0x40, 0x00, 0xC9}},
+        {0x4020, {0x00, 0x00, 0x00, 0xC9}},
+    };
+    GeneralSoundCard* card = b.card();
+    for (const Chunk& chunk : chunks)
+        for (size_t i = 0; i < chunk.bytes.size(); i++)
+        {
+            const uint16_t address = static_cast<uint16_t>(chunk.address + i);
+            uint8_t back = 0;
+            if (!card->pokeCardMemory(address, chunk.bytes[i]) || !card->peekCardMemory(address, back) ||
+                back != chunk.bytes[i])
+            {
+                ADD_FAILURE() << "the card's RAM at " << address << " takes no program byte";
+                return false;
+            }
+        }
+    Z80CpuRegisters regs{};
+    if (!card->cardRegisters(regs))
+    {
+        ADD_FAILURE() << "no card registers";
+        return false;
+    }
+    regs.pc = 0x4000;
+    regs.sp = 0x7F00;
+    regs.iff1 = regs.iff2 = 0;
+    regs.halted = 0;
+    if (!card->setCardRegisters(regs))
+    {
+        ADD_FAILURE() << "the card's registers take no program start";
+        return false;
+    }
     b.emulator->RunNFrames(1);
     return true;
 }

@@ -31,6 +31,11 @@ uint64_t UnrealMachineFrames(ecatshim::Emulator * e);
 // The Z80 listing decoder without a machine (no labels): the remote machine's
 ecatshim::DisAsm * CreatePlainZ80DisAsm();
 
+// The condition of the main CPU's execution breakpoint at the address (the Unreal condition language; empty: none),
+// as another client sets it (the self-check: eCat has no condition editor). False with the reason when there is none
+bool UnrealMachineSetBreakpointCondition(ecatshim::Emulator * e, unsigned int address, const std::string &condition,
+                                         std::string &error);
+
 // The GUI control plane: the machine's id in the core (the instance its views show)
 std::string UnrealMachineId(ecatshim::Emulator * e);
 // A core action on the machine through the registry (params: a JSON object's text); done runs on context's thread,

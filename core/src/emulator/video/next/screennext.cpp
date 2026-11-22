@@ -57,6 +57,8 @@ void ScreenNext::InitFrame()
     Screen::InitFrame();
     _nextLine = 0;
     _nextX = 0;
+    _border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;  // a state load sets port #FE without a write
+    ClearPendingBorders();
     const bool closed = _passFrameClosed;
     PortDecoder_Next* decoder = Decoder();
     if (closed && decoder)
@@ -200,6 +202,8 @@ uint8_t ScreenNext::ReadSpriteStatus()
 
 void ScreenNext::RestartSpriteFrame()
 {
+    _border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
+    ClearPendingBorders();
     _passFrameClosed = false;
     _passNext = _passes.first;
     _passCursorValid = false;
@@ -638,6 +642,7 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
     NextVideoInputs in;
     in.ram = _context->pMemory->RAMPageAddress(0);
     in.ramPages = static_cast<NextMemory*>(_context->pMemory)->InstalledRamPages();
+    in.sramTwin = static_cast<NextMemory*>(_context->pMemory)->SramTwin();
     in.regs = &board.Video();
     in.sprites = &board.Sprites();
     in.flash = _state && (_state->frame_counter & 0x10);
@@ -651,7 +656,7 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         in.portFf = board.Video().PortFf();
         in.shadowScreen = _state && (_state->p7FFD & 0x08);
         in.layer2Enable = board.Video().Layer2Enabled();
-        in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
+        in.border = _border;
     };
     uint32_t segment[kW];
     // The layer record: a segment that covers the whole line is rendered straight into the frame's rows; a partial one goes through a
@@ -675,10 +680,25 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         const unsigned toX = _nextLine < lineLimit ? kPixels : std::min(xLimit, kPixels);
         const unsigned fromX = _nextX;
         bool refreshed = false;
+        const uint32_t lineAt = _nextLine * kPixels;
+        if (_pendingBorderCount)
+            TakeBordersUpTo(lineAt + fromX);  // the writes that show from this segment's start on
         if (toX > fromX)
         {
             refresh();
             refreshed = true;
+            // the writes that show inside the segment: drawn as runs of the border, one recorded segment each
+            NextBorderChange changes[kPendingBorders];
+            unsigned changeCount = 0;
+            for (unsigned i = 0; i < _pendingBorderCount; i++)
+            {
+                const PendingBorder& p = _pendingBorder[(_pendingBorderHead + i) % kPendingBorders];
+                if (p.at >= lineAt + toX)
+                    break;
+                changes[changeCount++] = {static_cast<uint16_t>(p.at - lineAt), p.colour};
+            }
+            in.borderChanges = changes;
+            in.borderChangeCount = changeCount;
             if (fromX == 0)
             {
                 // the outer border (only the ULA's border is out there): the frame's lines above the grid with its first line, the
@@ -705,8 +725,31 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
             const bool whole = fromX == 0 && toX >= kPixels;
             in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
             if (record)
-                NextVideoRenderer::RecordSegment(*record, _nextLine, fromX, toX, in);
+            {
+                // one recorded segment per border run: the inspector reads the colour of each
+                unsigned runFrom = fromX;
+                for (unsigned i = 0; i < changeCount; i++)
+                {
+                    const unsigned runTo = std::max<unsigned>(changes[i].x, runFrom);
+                    if (runTo > runFrom)
+                        NextVideoRenderer::RecordSegment(*record, _nextLine, runFrom, runTo, in);
+                    runFrom = runTo;
+                    in.border = changes[i].colour;
+                }
+                if (toX > runFrom)
+                    NextVideoRenderer::RecordSegment(*record, _nextLine, runFrom, toX, in);
+                in.border = _border;  // the line is drawn from its start colour
+            }
             NextVideoRenderer::RenderLine(in, _nextLine, segment);
+            in.borderChanges = nullptr;
+            in.borderChangeCount = 0;
+            if (changeCount)
+            {
+                _border = changes[changeCount - 1].colour;
+                in.border = _border;  // the line's right outer border
+                _pendingBorderHead = (_pendingBorderHead + changeCount) % kPendingBorders;
+                _pendingBorderCount -= changeCount;
+            }
             if (shown)
                 std::memcpy(row + fromX, segment + fromX, (toX - fromX) * sizeof(uint32_t));
             if (record && !whole)
@@ -736,6 +779,8 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         if (_nextLine == NextVideoRenderer::kHeight)  // the frame's lines below the grid
             FillOuterRows(fb, frameRowIndex + NextPictureWindow::kScale, kFrameHeight, outer);
     }
+    if (_pendingBorderCount && _nextLine >= NextVideoRenderer::kHeight)
+        TakeBordersUpTo(NextVideoRenderer::kHeight * kPixels);
     if (record && _nextLine >= NextVideoRenderer::kHeight)
         CompleteLayerFrame();
 }
@@ -802,6 +847,110 @@ void ScreenNext::RenderFrameBatch()
 void ScreenNext::RenderOnlyMainScreen()
 {
     RenderLinesUpTo(NextVideoRenderer::kHeight);
+}
+
+int64_t ScreenNext::BorderEffectHalfPixel(int64_t clocks, bool pentagon, unsigned cpuHalfClock)
+{
+    // The paper's first pixel leaves the output 16 pixels (64 clocks) after the ULA's counter zero, the first paper T-state; a pixel is
+    // four clocks, a 14 MHz sub-pixel two. The CPU clock's rising edge (the T-state's start) is 3 clocks after the counter's T-state
+    // boundary; port_fe_border changes on the first falling edge after the write, the output 17 clocks after that, from the next cell
+    // boundary (every 32 clocks from the counter zero) unless the timing is the Pentagon's
+    constexpr int64_t kCpuEdge = 3, kToOutput = 17, kCell = 32, kPaperOut = 64;
+    int64_t out = clocks + kCpuEdge + std::max<int64_t>(1, cpuHalfClock) + kToOutput;
+    if (!pentagon)
+        out = (out >= 0 ? (out + kCell - 1) / kCell : -((-out) / kCell)) * kCell;
+    const int64_t fromPaper = out - kPaperOut;  // clocks from the paper's first pixel at the output
+    const int64_t half = fromPaper >= 0 ? (fromPaper + 1) / 2 : -((-fromPaper) / 2);
+    return static_cast<int64_t>(NextVideoRenderer::kPaperLeft) + half;
+}
+
+void ScreenNext::SetBorderColor(uint8_t color)
+{
+    const uint8_t border = color & 7;
+    const uint8_t latest = _pendingBorderCount ? _pendingBorder[(_pendingBorderHead + _pendingBorderCount - 1) % kPendingBorders].colour : _border;
+    if (border != latest)
+        QueueBorder(border);
+    Screen::SetBorderColor(color);
+}
+
+void ScreenNext::QueueBorder(uint8_t border)
+{
+    uint32_t at = 0;
+    if (!BorderWritePosition(at))
+    {
+        ClearPendingBorders();
+        _border = border;
+        return;
+    }
+    constexpr uint32_t kPixels = NextVideoRenderer::kWidth;
+    // a full queue has no room: draw up to the write's place, as the copper does
+    if (_pendingBorderCount == kPendingBorders)
+        RenderUpTo(at / kPixels, at % kPixels);
+    if (_pendingBorderCount)
+        at = std::max(at, _pendingBorder[(_pendingBorderHead + _pendingBorderCount - 1) % kPendingBorders].at);
+    const uint32_t drawn = std::min<uint32_t>(_nextLine, NextVideoRenderer::kHeight) * kPixels + _nextX;
+    if (at <= drawn)
+    {
+        // the drawing is there already (or ahead, a picture drawn early): the colour holds from where it is
+        TakeBordersUpTo(drawn);
+        _border = border;
+        return;
+    }
+    _pendingBorder[(_pendingBorderHead + _pendingBorderCount) % kPendingBorders] = {at, border};
+    _pendingBorderCount++;
+}
+
+void ScreenNext::TakeBordersUpTo(uint32_t at)
+{
+    while (_pendingBorderCount && _pendingBorder[_pendingBorderHead].at <= at)
+    {
+        _border = _pendingBorder[_pendingBorderHead].colour;
+        _pendingBorderHead = (_pendingBorderHead + 1) % kPendingBorders;
+        _pendingBorderCount--;
+    }
+}
+
+bool ScreenNext::BorderWritePosition(uint32_t& position)
+{
+    if (_turboRenderSkip || !_feature_screenhq_enabled || !FramebufferReady() || !_context || !_context->pCore)
+        return false;  // without ScreenHQ the frame is drawn at its end, with the colour of that moment
+    const uint32_t perLine = _rasterState.tstatesPerLine;
+    if (perLine == 0)
+        return false;
+    const uint32_t first = GridFirstT();
+    const EmulatorState& state = _context->emulatorState;
+    const uint32_t cpuT = _context->pCore->GetZ80()->t;
+    const uint32_t at = state.CpuToBaseT(cpuT);
+    if (at < first)
+        return false;  // the vertical blank before the first visible line: its outer rows are drawn with line 0
+    const unsigned line = (at - first) / perLine;
+    constexpr int64_t kPixels = NextVideoRenderer::kWidth;
+    constexpr unsigned kLines = NextVideoRenderer::kHeight;
+    if (line >= kLines)
+    {
+        RenderUpTo(kLines, 0);  // the grid is done in the colours it had
+        return false;
+    }
+    // the write's 28 MHz clock from the line's first paper pixel: the CPU's own T-state, finer than the base one in turbo
+    const uint64_t multiplier = state.current_z80_frequency_multiplier ? state.current_z80_frequency_multiplier : 1u;
+    constexpr uint64_t kClocksPerTState = 8;
+    const uint64_t writeClock = state.hw_clock_den_applied <= 1 ? static_cast<uint64_t>(cpuT) * kClocksPerTState / multiplier
+                                                                : static_cast<uint64_t>(at) * kClocksPerTState;
+    const uint64_t paperT = first + static_cast<uint64_t>(line) * perLine + _rasterState.screenLineAreaStart;
+    const int64_t clocks = static_cast<int64_t>(writeClock) - static_cast<int64_t>(paperT * kClocksPerTState);
+    const unsigned cpuHalf = static_cast<unsigned>(4 / multiplier);
+    const int64_t half = BorderEffectHalfPixel(clocks, _lastTimingClass == 4, cpuHalf);
+    int64_t pos = static_cast<int64_t>(line) * kPixels;  // half <= 0: from this line's left edge
+    if (half > 0 && half < kPixels)
+        pos += half;
+    else if (half >= kPixels)
+    {
+        // past the grid's right edge: this line ends in the old colour, the next one starts in it up to the change
+        const int64_t next = half - static_cast<int64_t>(perLine) * 4;  // a T-state is 4 sub-pixels
+        pos += kPixels + (line + 1 >= kLines ? 0 : std::clamp<int64_t>(next, 0, kPixels));
+    }
+    position = static_cast<uint32_t>(pos);
+    return true;
 }
 
 void ScreenNext::FillBorderWithColor([[maybe_unused]] uint8_t color)

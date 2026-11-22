@@ -43,6 +43,13 @@ std::string Hex(uint32_t v, int digits)
     return buf;
 }
 
+std::string Hex64(uint64_t v, int digits)
+{
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "#%0*llX", digits, static_cast<unsigned long long>(v));
+    return buf;
+}
+
 std::string TimeText(const TTDTimePoint& t)
 {
     return "f" + std::to_string(t.frame) + "+" + std::to_string(t.tInFrame);
@@ -125,6 +132,119 @@ const char* TTDDiffRegionName(TTDDiffRegion region)
         case TTDDiffRegion::Ram: break;
     }
     return "ram";
+}
+
+void TTDDiffDeviceFields(const TTDStateFieldList& layout, const std::vector<TTDTimeField>& timeFields,
+                         const std::vector<uint8_t>& before, const std::vector<uint8_t>& after, uint32_t limit,
+                         TTDDiffDevice& out)
+{
+    const size_t n = std::max(before.size(), after.size());
+    const size_t common = std::min(before.size(), after.size());
+    auto differs = [&](size_t i) { return i >= common || before[i] != after[i]; };
+    out.described = !layout.empty();
+    out.fields.clear();
+    out.moreFields = 0;
+    out.fieldsChanged = 0;
+    out.countersChanged = 0;
+
+    // Each byte's field: the layout's (the first that covers it), then the time fields over them. A time field that
+    // is a layout field makes it a counter; one inside a larger field (an opaque engine block) is a field of its own
+    std::vector<TTDDiffField> fields;
+    fields.reserve(layout.size() + timeFields.size());
+    std::vector<int32_t> owner(n, -1);
+    for (const TTDStateField& f : layout)
+    {
+        if (f.size == 0 || f.offset >= n)
+            continue;
+        const int32_t index = static_cast<int32_t>(fields.size());
+        TTDDiffField d;
+        d.name = f.name;
+        d.offset = f.offset;
+        d.size = static_cast<uint32_t>(std::min<size_t>(f.size, n - f.offset));
+        d.counter = (f.flags & kStateFieldCounter) != 0;
+        fields.push_back(std::move(d));
+        for (size_t b = f.offset; b < size_t(f.offset) + fields.back().size; ++b)
+            if (owner[b] < 0)
+                owner[b] = index;
+    }
+    for (const TTDTimeField& t : timeFields)
+    {
+        if (t.width == 0 || t.offset >= n)
+            continue;
+        const int32_t at = owner[t.offset];
+        if (at >= 0 && fields[size_t(at)].offset == t.offset && fields[size_t(at)].size == t.width)
+        {
+            fields[size_t(at)].counter = true;
+            continue;
+        }
+        TTDDiffField d;
+        d.name = at >= 0 ? fields[size_t(at)].name + "+" + std::to_string(t.offset - fields[size_t(at)].offset)
+                         : "@" + std::to_string(t.offset);
+        d.offset = t.offset;
+        d.size = static_cast<uint32_t>(std::min<size_t>(t.width, n - t.offset));
+        d.counter = true;
+        const int32_t index = static_cast<int32_t>(fields.size());
+        fields.push_back(std::move(d));
+        for (size_t b = t.offset; b < size_t(t.offset) + fields.back().size; ++b)
+            owner[b] = index;
+    }
+
+    // The bytes that differ, per field; the ones no field covers as ranges (a gap of a few same bytes joins them)
+    constexpr size_t kUnnamedGap = 3;
+    std::vector<TTDDiffField> unnamed;
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (!differs(i))
+            continue;
+        if (owner[i] >= 0)
+        {
+            ++fields[size_t(owner[i])].changed;
+            continue;
+        }
+        if (!unnamed.empty() && i - (unnamed.back().offset + unnamed.back().size) <= kUnnamedGap)
+            unnamed.back().size = static_cast<uint32_t>(i + 1 - unnamed.back().offset);
+        else
+        {
+            TTDDiffField d;
+            d.name = "@" + std::to_string(i);
+            d.offset = static_cast<uint32_t>(i);
+            d.size = 1;
+            unnamed.push_back(std::move(d));
+        }
+        ++unnamed.back().changed;
+    }
+
+    std::vector<TTDDiffField> changed;
+    for (TTDDiffField& f : fields)
+        if (f.changed)
+            changed.push_back(std::move(f));
+    for (TTDDiffField& f : unnamed)
+        changed.push_back(std::move(f));
+    std::stable_sort(changed.begin(), changed.end(), [](const TTDDiffField& a, const TTDDiffField& b) {
+        return a.counter != b.counter ? !a.counter : a.offset < b.offset;
+    });
+    auto value = [](const std::vector<uint8_t>& v, const TTDDiffField& f) {
+        uint64_t x = 0;
+        for (uint32_t k = 0; k < f.size; ++k)
+            x |= uint64_t(f.offset + k < v.size() ? v[f.offset + k] : 0) << (8 * k);
+        return x;
+    };
+    for (TTDDiffField& f : changed)
+    {
+        (f.counter ? out.countersChanged : out.fieldsChanged)++;
+        if (out.fields.size() >= limit)
+        {
+            ++out.moreFields;
+            continue;
+        }
+        if (f.size <= 8 && f.offset + f.size <= common)
+        {
+            f.hasValues = true;
+            f.before = value(before, f);
+            f.after = value(after, f);
+        }
+        out.fields.push_back(std::move(f));
+    }
 }
 
 std::string TTDDiffMomentsText(const TTDDiffMomentsQuery& query, const TTDDiffMomentsResult& r)
@@ -217,16 +337,42 @@ std::string TTDDiffMomentsText(const TTDDiffMomentsQuery& query, const TTDDiffMo
     }
     if (s & kDiffDevices)
     {
-        if (r.devices.empty())
+        if (r.devices.empty() && r.moreDevices == 0)
             text += "devices: same\n";
         else
         {
-            text += "devices:";
+            const size_t changed = r.devices.size() + r.moreDevices;
+            text += "devices: " + std::to_string(changed) + " changed";
+            if (r.devicesCountersOnly)
+                text += " (" + std::to_string(r.devicesCountersOnly) + " only counters)";
+            text += ", " + std::to_string(r.devicesSame) + " same:\n";
             for (const TTDDiffDevice& d : r.devices)
-                text += " " + d.name + " " + std::to_string(d.changed) + "/" + std::to_string(d.bytes) + ";";
+            {
+                text += "  " + d.name + " " + std::to_string(d.changed) + "/" + std::to_string(d.bytes) + " byte(s)";
+                text += d.CountersOnly() ? ", only counters:" : ":";
+                std::string counters;
+                for (const TTDDiffField& f : d.fields)
+                {
+                    if (f.counter)
+                    {
+                        counters += (counters.empty() ? " " : ", ") + f.name;
+                        continue;
+                    }
+                    text += " " + f.name;
+                    if (f.hasValues)
+                        text += " " + Hex64(f.before, int(f.size) * 2) + "->" + Hex64(f.after, int(f.size) * 2);
+                    else
+                        text += " " + std::to_string(f.changed) + "/" + std::to_string(f.size) + " byte(s)";
+                    text += ";";
+                }
+                if (!counters.empty())
+                    text += (d.CountersOnly() ? "" : " counters:") + counters + ";";
+                if (d.moreFields)
+                    text += " +" + std::to_string(d.moreFields) + " more;";
+                text.back() = '\n';
+            }
             if (r.moreDevices)
-                text += " +" + std::to_string(r.moreDevices) + " more;";
-            text.back() = '\n';
+                text += "  +" + std::to_string(r.moreDevices) + " more device(s)\n";
         }
     }
     if (s & kDiffBetween)
@@ -524,30 +670,55 @@ TTDDiffMomentsResult TimeTravelController::QueryDiffMoments(const TTDDiffMoments
     // ---- devices ----
     if (sections & kDiffDevices)
     {
+        // Field by field where the device names them (TTDDescribeFields); those whose counters alone moved after
+        // the others, so the limit keeps the devices where something happened
         const std::vector<TTDRegistryEntry>& entries = _peripherals.Entries();
+        std::vector<TTDDiffDevice> changed;
+        std::vector<TTDDiffDevice> countersOnly;
         for (size_t d = 0; d < entries.size() && d < a.devices.size() && d < b.devices.size(); ++d)
         {
             const std::vector<uint8_t>& x = a.devices[d];
             const std::vector<uint8_t>& y = b.devices[d];
-            uint32_t changed = 0;
+            uint32_t bytes = 0;
             const size_t n = std::min(x.size(), y.size());
             for (size_t i = 0; i < n; ++i)
-                changed += x[i] != y[i];
-            changed += static_cast<uint32_t>(std::max(x.size(), y.size()) - n);
-            if (changed == 0)
+                bytes += x[i] != y[i];
+            bytes += static_cast<uint32_t>(std::max(x.size(), y.size()) - n);
+            if (bytes == 0)
             {
                 ++result.devicesSame;
                 continue;
             }
-            if (result.devices.size() >= limit)
-            {
-                ++result.moreDevices;
-                continue;
-            }
+            const TTDSerializable* device = entries[d].device;
+            TTDDiffDevice dev;
             const std::string& instance = entries[d].key.instance;
-            result.devices.push_back({instance.empty() ? entries[d].device->TTDDeviceName() : instance,
-                                      static_cast<uint32_t>(std::max(x.size(), y.size())), changed});
+            dev.name = instance.empty() && device ? device->TTDDeviceName() : instance;
+            dev.bytes = static_cast<uint32_t>(std::max(x.size(), y.size()));
+            dev.changed = bytes;
+            TTDStateFieldList layout;
+            std::vector<TTDTimeField> timeFields;
+            if (device)
+            {
+                device->TTDDescribeFields(layout);
+                timeFields = device->TTDDescribe().timeFields;
+            }
+            TTDDiffDeviceFields(layout, timeFields, x, y, limit, dev);
+            if (dev.CountersOnly())
+            {
+                ++result.devicesCountersOnly;
+                countersOnly.push_back(std::move(dev));
+            }
+            else
+                changed.push_back(std::move(dev));
         }
+        for (std::vector<TTDDiffDevice>* list : {&changed, &countersOnly})
+            for (TTDDiffDevice& dev : *list)
+            {
+                if (result.devices.size() >= limit)
+                    ++result.moreDevices;
+                else
+                    result.devices.push_back(std::move(dev));
+            }
     }
 
     // ---- between ----

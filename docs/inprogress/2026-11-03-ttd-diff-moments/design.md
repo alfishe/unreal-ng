@@ -34,9 +34,21 @@ Two seeks: each costs a checkpoint restore and less than one frame of replay.
   (a device, DMA, a tool edit, or a barrier in between that the search does not cross).
 - **screen:** the bytes of the picture at the second moment that differ, split into pixels and attributes, whether
   the shown page switched, the border colour at both moments.
-- **devices:** each registered device whose state image differs, with its size and the bytes that differ; the count
-  of the same ones. A raw byte count, not decoded: it says which devices to look at. A device with running counters
-  (the AY's tone, noise and envelope phases) differs at almost any two moments, even with no register written.
+- **devices:** each registered device whose state image differs, with its size, the bytes that differ and the fields
+  that differ inside it (2026-11-21, the "DM limit"); the count of the same ones. A device names its blob's fields
+  with `TTDSerializable::TTDDescribeFields` (name, offset, size, flags; asked only by queries, never per frame); the
+  diff is generic over that list (`TTDDiffDeviceFields`): each field whose bytes differ, with both values when it is 8
+  bytes or less (little endian); bytes no field covers as `@offset` ranges (gaps of up to 3 same bytes joined), so a
+  device that names nothing still says where it changed. A field flagged `kStateFieldCounter` is free-running (the
+  AY's tone / noise / envelope counters and outputs, the LFSR, render phases and cursors, the WD1793's clocks,
+  delays and index pulses, a drive's rotation and motor countdown, the Covox's idle countdowns); every declared time
+  field (`TTDDeviceDescriptor::timeFields`) is one too, whatever the layout says - one inside a larger field (an
+  opaque engine block) becomes a field of its own (`engine+8`). Counters are listed after the other fields; a device
+  whose counters alone differ says `only counters` and is listed after the devices where something else changed, so
+  the `limit` keeps the informative ones (`counters_only` counts them). Described so far: AY-3-8912 (and TurboSound's
+  two, `ay0.` / `ay1.`), the TSFM (`fm0.` / `fm1.`: ymfm's registers and status as data, its operators,
+  envelope and clock counters as counters, the SSG halves `fm0.ssg.`), WD1793 with its four drives (`fdd[n].`), the +D card (its WD1772 as `fdc.`), Covox. Others
+  show `@offset` ranges and their time fields as counters until they describe themselves.
 - **between:** the frames and T between the moments, the keys held at the earlier one and pressed / released in
   between (the input journal), the markers in between (external events, bookmarks), the first replay barrier.
 
@@ -46,7 +58,7 @@ writer search runs over the stretch between them either way.
 ## The reply
 
 JSON (WebAPI, Lua, Python): `from`, `to`, `backwards`, `registers[]`, `latches[]`, `slots[]` (`slotMap` in C++: `slots` is a Qt macro), `memory {changed,
-pages, ranges[], more}`, `screen`, `devices {changed[], more, same}`, `between {frames, t, keys_held[], keys[],
+pages, ranges[], more}`, `screen`, `devices {changed[] {name, bytes, changed, described, counters_only, fields_changed, counters_changed, fields[], more_fields}, more, same, counters_only}`, `between {frames, t, keys_held[], keys[],
 more_keys, markers[], barrier}`, `writer_searches`, `ms`, and `text` with `text=true`. MCP and CLI show the text:
 
 ```text
@@ -62,7 +74,11 @@ devices: ay-socket.tsfm 51/2008
 3 writer search(es), 7.7 ms
 ```
 
-(Green Beret in play, one frame, from the live run in [plan.md](plan.md).)
+(Green Beret in play, one frame, from the live run in [plan.md](plan.md). Since 2026-11-21 the devices part is one
+line per device with its fields; test D12 on a Pentagon with the TSFM, after the program wrote R0, R7 and R8:
+`devices: 2 changed (1 only counters), 8 same:`, then
+`  ay-socket.tsfm 88/2008 byte(s): ... fm0.ssg.R7 #00->#3E; fm0.ssg.R8 #00->#0F; ...; counters: sample_phase, decimator_phases, fm0.clock_phase; +26 more` and
+`  covox 4/9 byte(s), only counters: idle_frames[0], idle_frames[1], idle_frames[2], idle_frames[3]`.)
 
 ## Costs
 

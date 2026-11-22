@@ -105,6 +105,7 @@
 // defined in the emulator headers; here we only need pointer types.)
 class EmulatorContext;
 class Memory;
+class PortDecoder;
 struct Z80State;
 struct EmulatorState;
 namespace ttd { class TTDDirtyTracker; class TimeTravelEngine; }
@@ -429,9 +430,11 @@ private:
     /// bound to it; nothing of the current session changes
     /// The load from any byte source (a file, memory)
     bool DeserializeSessionFrom(const ITTDByteSource& source, std::string& err);
+    /// @p bind false: read the file alone, nothing checked against or bound to a machine (a file's timeline, read
+    /// by a controller of its own with no machine, QueryTimelineInFile)
     std::unique_ptr<TimeTravelEngine> LoadEngineSession(const ITTDByteSource& source, TTDSessionFacts& facts,
                                                         std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks,
-                                                        std::string& err);
+                                                        std::string& err, bool bind = true);
     /// Make @p loaded the session: the side table, the controller's journals and indexes from it
     /// A loaded file's branches (TTD branches P2): per branch line its record, coverage and bookmarks, the
     /// session's branch state; LoadEngineSession fills it, CommitLoadedSession builds the tree from it
@@ -443,6 +446,16 @@ private:
         std::vector<uint8_t> state;
     };
     LoadedBranches _loadedBranches;
+    /// What a timeline is read against: the port map, the frame rate, the model (QueryTimeline: this machine's;
+    /// QueryTimelineInFile: the recorded model's). @p portsMissing: why there is no port map (`missing` names it)
+    struct TimelineMachine
+    {
+        const PortDecoder* ports = nullptr;
+        double fps = 50.0;
+        MEM_MODEL model = MM_PENTAGON;
+        std::string portsMissing;
+    };
+    TTDTimelineResult QueryTimelineOn(const TTDTimelineOptions& options, const TimelineMachine& machine) const;
     /// The loaded file's branches into the tree and their controller lines, each built by @p buildLine on its
     /// own lineage; the saved active branch becomes the active one
     void CommitLoadedBranches(const std::function<void(const std::vector<uint8_t>&)>& buildLine);
@@ -1297,30 +1310,30 @@ private:
     ///
     /// Read, Execute and Write searches reach the replay loop (a Write only
     /// for frames outside the write journal's segments; Io answers from the
-    /// port journal), and pruning is sound only when the
-    /// query's Z80 address range collapses to one non-wrapping offset interval
-    /// inside a 16 KB page. A range spanning a page boundary, or wider than a
-    /// page, could match any offset, so it is left unpruned rather than
-    /// approximated.
-    /// May frame `frame` hold an access q matches (CanPruneByCoverage first): the coverage keys name the byte's true
-    /// offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no known half asks both halves
-    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
-
+    /// port journal). Any non-empty address range prunes: its Z80 addresses map
+    /// to in-page offsets (CoverageOffsets) - one interval inside a 16 KB page,
+    /// two for a range that wraps a page boundary, every offset for a range of
+    /// 16 KB or more (then only a frame with no access of that kind, or none on
+    /// the query's page, is skipped).
     inline bool CanPruneByCoverage(const TTDSearchQuery& q) const
     {
         if (!_enableCoverageIndex)
             return false;
         if (q.access != TTDAccessType::Read && q.access != TTDAccessType::Execute && q.access != TTDAccessType::Write)
             return false;
-        if (q.addrTo < q.addrFrom)
-            return false;
-        if (static_cast<uint32_t>(q.addrTo - q.addrFrom) >= 0x4000u)
-            return false;  // Wider than a page — every offset is possible.
-
-        // Reject ranges that wrap across a 16 KB boundary: their offsets are two
-        // disjoint intervals, which FrameMayContain does not model.
-        return (q.addrFrom & 0x3FFF) <= (q.addrTo & 0x3FFF);
+        return q.addrTo >= q.addrFrom;
     }
+
+    /// @brief Add the in-page offsets (and the page) q's address range may touch to @p out.
+    ///
+    /// The coverage keys name the byte's true offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no
+    /// known half asks both halves. A wrapping range is its two offset intervals; 16 KB or more is every offset.
+    void CoverageOffsets(const TTDSearchQuery& q, TTDCoverageOffsetSet& out) const;
+
+    /// May frame `frame` hold an access q matches (CanPruneByCoverage first)
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
+    /// The same for offsets built once (CoverageOffsets): one decode of the frame for any number of them
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDCoverageOffsetSet& set) const;
 
 public:
 
@@ -1442,6 +1455,15 @@ public:
     /// a fact it cannot give is named in `missing`
     TTDTimelineResult QueryTimeline(const TTDTimelineOptions& options) const;
 
+    /// @brief The timeline of a .ttd file on disk without loading it (TD-5 file): the file is read into a session
+    /// of its own, held by a controller with no machine, exactly as a load builds it, and the same query runs there
+    /// - so the answer is the one `timeline` gives after loading the file. This instance's session and machine are
+    /// not touched. @p branch (an id, a GUID or a name; empty: the branch the file saved as active) picks the line.
+    /// The port map and the frame rate are this instance's when it is of the recorded model; another model leaves
+    /// `ports` in `missing` (the file does not hold its port map) and counts 50 frames a second
+    TTDTimelineResult QueryTimelineInFile(const std::string& path, const TTDTimelineOptions& options,
+                                          const std::string& branch = {}) const;
+
     /// @brief The cause chain (docs/inprogress/2026-11-02-ttd-cause-chain): where the value of a memory byte or a
     /// register at a moment came from, as a tree of links back to constants, port reads and the session's initial
     /// memory. Replays the frames it needs with the instruction and bus hooks and puts the machine back exactly
@@ -1531,6 +1553,26 @@ public:
     /// before the card's count now, replaying at most @p maxFrames frames backwards; none: the machine stays and the
     /// answer says so (NoHit, NoBreakpoints)
     ttd::TTDCardMoveResult ReverseContinueCard(DebugCpuId cpu, uint64_t maxFrames = kCardReverseMaxFrames);
+    /// The card's step over back (the debuggers' Shift+F8 on a card's tab), as ReverseStepOver on the main CPU: one
+    /// card instruction back, but when that instruction is a return (RET, RET cc taken, RETI, RETN) that lifted the
+    /// card's stack to where it is now, back past the whole routine to the newest card instruction at this stack level
+    /// before it (the CALL / RST that entered it, or the instruction an interrupt came after). Found by replaying
+    /// frames backwards with the card's SP at each boundary, at most kCardReverseMaxFrames; out of reach the card
+    /// stays on the return (callOutOfReach)
+    ttd::TTDCardMoveResult ReverseStepOverCard(DebugCpuId cpu);
+    /// The card's step over or step out (@p over false) through the recorded past (the debuggers' F8 / Ctrl+F8 on a
+    /// card's tab in the past): the step a live card step (RunControl::CardStep) would take from where the card
+    /// stands, found by replaying forward with the card's registers at each boundary (GSCardTarget::ScanStep). The
+    /// card's own stopping breakpoints end it first, as live. A step that does not end in the history goes to the
+    /// history's end (historyEnd: the next step runs on live); at the end already: AtEnd, nothing moved
+    ttd::TTDCardMoveResult StepCardForward(DebugCpuId cpu, bool over);
+    /// The card's run to the cursor through the recorded past (the debuggers' F4 on a card's tab in the past): the
+    /// first card instruction at @p address after the one the card stands at (the instruction at the card's PC runs
+    /// first, as a live run to the cursor, RunControl::CardStep "to"), found by replaying forward from the card's
+    /// position (GSCardTarget::ScanStep To), at most @p maxFrames frames. The card's stopping breakpoints end it
+    /// first, as live (stoppedByBreakpoint). Not reached in the history, or in the frames searched (truncated): NoHit,
+    /// nothing moved and the live machine untouched; at the history's end already: AtEnd (the run is a live one)
+    ttd::TTDCardMoveResult RunCardToCursor(DebugCpuId cpu, uint16_t address, uint64_t maxFrames = kCardReverseMaxFrames);
     /// Every card CPU's readout for a poll from another thread (the position and status verbs): the card position as
     /// its move published it, the other cards where they stand (read as CurrentPosition reads the main CPU, never
     /// parking the machine)
@@ -1632,6 +1674,30 @@ public:
     /// windows' mapping. Replays there silently and puts the machine back exactly where it stood (like a frame
     /// cache build). Fails on a replay barrier before the point, or a point outside the history.
     TTDCpuView ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length);
+
+    /// @brief Memory over many frames in one walk (memory-series, PLAN #122 S1): each range as at the start of each
+    /// asked frame, the same bytes memory-at reads there (frame, tinframe 0). The checkpoints are walked forward
+    /// once: a piece's version follows the recorded changes, and a piece is decoded only when its version changed.
+    /// CPU ranges read the mapped pages from the store where the checkpoint holds the CPU's windows; elsewhere (a
+    /// session loaded from a file, the Next's 8K slots) the checkpoint is restored and read through the mapping,
+    /// and the machine is put back exactly where it stood. Frames outside the history are refused.
+    TTDSeriesResult ReadMemorySeries(const TTDSeriesQuery& query);
+    /// Whether ReadMemorySeries will restore checkpoints for @p query (CPU ranges over checkpoints without stored
+    /// windows): the caller parks a running machine first. False on any doubt the series refuses anyway
+    bool MemorySeriesRestores(const TTDSeriesQuery& query);
+
+    /// The sample points per frame ReadScreenAt looks for a change of the shown screen at
+    static constexpr uint32_t kScreenAtSamples = 312;
+    /// @brief One past frame's picture and screens (screen-at, PLAN #122 V2): its final picture (equal to what a
+    /// live machine showed when the frame ended), the screen shown at its start and end and where inside it the
+    /// shown screen changed, and the normal / shadow screen bytes at its end. Replays the frame silently and puts the
+    /// machine back exactly where it stood (its picture included). The frame must have ended inside the history.
+    TTDScreenAtResult ReadScreenAt(uint64_t frame);
+
+    /// @brief Where the CPU stood at the checkpoint of @p frame (the frame's start): {frame, the T-states past the
+    /// boundary the instruction that crossed it ran into the frame}, in TTD units. False when no checkpoint starts
+    /// that frame on the active lineage
+    bool CheckpointMoment(uint64_t frame, TTDTimePoint& at);
 
     /// @brief ReverseContinue with bounds, a page filter and the all mode.
     ///
@@ -1748,6 +1814,8 @@ public:
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
     inline uint16_t GetModelRamPages() const { return _modelRamPages; }
+    /// Dirty RAM pages at or past GetModelRamPages() the captures of this session met (not recorded; should be 0)
+    inline uint64_t GetPagesBeyondBound() const { return _pagesBeyondBound; }
 
     /// Devices fitted but deliberately not recorded: the loaded file's when the
     /// session came from one, else the live registry's
@@ -1827,6 +1895,10 @@ private:
     /// the capture mapped, their pages decoded, the machine untouched. False where only a replay can tell (no
     /// window map, a window outside the stored regions and ROM, a point past the checkpoint)
     bool ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view);
+    /// A memory series' frames made concrete: the history's bounds for fromStart / toEnd, @p first / @p last the
+    /// active lineage's first and last checkpoint frames. False with @p error when there is no history or a frame
+    /// asked lies outside it
+    bool ResolveSeriesQuery(TTDSeriesQuery& query, uint64_t& first, uint64_t& last, std::string& error);
 
 
     /// @brief Internal seek implementation without the Recording-state guard.
@@ -1850,7 +1922,20 @@ private:
     /// The move itself (SeekToCardInstruction's body, inside an operation)
     void CardSeekInternal(DebugCpuId cpu, uint64_t instruction, uint64_t hint, ttd::TTDCardMoveResult& result);
     /// The card's count where the machine stands, the card run up to the main CPU's moment when no card position
-    bool CardCountNow(DebugCpuId cpu, uint64_t& count);
+    bool CardCountNow(DebugCpuId cpu, uint64_t& count, uint16_t* sp = nullptr);
+    /// A forward card move through the past found by a replay scan (StepCardForward, RunCardToCursor)
+    enum class CardForward : uint8_t
+    {
+        Over,
+        Out,
+        To,
+    };
+    ttd::TTDCardMoveResult CardForwardScan(DebugCpuId cpu, CardForward kind, uint16_t address, uint64_t maxFrames);
+    /// SeekToCardInstruction's body. @p backToHistory: a move back (a step back, a step over back) from a card that
+    /// stands past the history's end (it stepped on live, unrecorded, D-3) lands at the history's newest card
+    /// instruction when @p instruction is past it too (historyEnd), as the main CPU's step back from there lands on
+    /// the last recorded instruction
+    ttd::TTDCardMoveResult SeekCardImpl(DebugCpuId cpu, uint64_t instruction, bool backToHistory);
     /// Before the machine runs: the card's state as the main boundary's seek left it, the card position dropped
     void LeaveCardStand();
     /// A RestoreLiveState put the card's blob back without its regions: the card position's copy again
@@ -1981,6 +2066,8 @@ private:
     bool _walkingTrailBack = false;
     /// The active branch changes from @p left: onto the trail (not twice in a row, at most kBranchTrailMax)
     void LeaveBranch(uint32_t left);
+    /// The moment the lineages of lines @p a and @p b part (their history is the same up to it); none for one lineage
+    std::optional<TTDTimePoint> LineagesPartAt(uint32_t a, uint32_t b) const;
     /// The trail's last live branch other than the active one; kTTDNoBranch: none
     uint32_t PreviousOnTrail() const;
     /// The active lineage as the bookmark readers see it: a copy under its own lock, so a read while recording
@@ -2256,6 +2343,8 @@ private:
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
         /// The card position the caller stood at (a read that replays elsewhere comes back to it)
         std::shared_ptr<CardStand> cardStand;
+        /// The derived state of the histories that follow time travel (history::ITimeFollower)
+        std::vector<std::vector<uint8_t>> historyFollowers;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -2565,6 +2654,9 @@ private:
     /// machine has 3 pages but uses page numbers {0, 2, 5}, so its bound is 6
     /// and three slots inside the range stay unused. See ResolveModelRamPages().
     uint16_t _modelRamPages = 0;
+    /// Dirty pages at or past _modelRamPages a capture met this session (the bound is wrong for the model: those
+    /// writes are not recorded). Warned once; zero on every model the tests sweep
+    uint64_t _pagesBeyondBound = 0;
 
     /// Latches the first "dirty page outside the captured range" warning so a
     /// mis-sized model reports once per session instead of every frame.

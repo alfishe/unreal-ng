@@ -64,10 +64,10 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         if (_engine)
             _engine->SetStacklessNmi(on, _interrupts.get());
     };
-    _ctc.onInterrupt = [this](unsigned channel) {
-        _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
-    };
+    // ZC/TO is the CTC's interrupt request (zxnext.vhd 1941 ctc_zc_to), whatever the channel's enable: the status bit records it, the
+    // controller requests (or pulses) only while the channel's interrupt is on (Raise checks ctc_int_en)
     _ctc.onZeroCount = [this](unsigned channel) {
+        _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
         // joy_iomode_pin7, mode 01: ZC/TO(3) toggles the pin; with NR #0B bit 0 clear it only goes from 0 to 1 and stays
         const uint8_t nr0b = _board->Stored(0x0B);
         if (channel == 3 && (nr0b & 0x30) == 0x10 && ((nr0b & 0x01) || !_joyPin7))
@@ -254,6 +254,20 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         r.length = dma.BlockLength();
         r.mode = dma.Mode();
         r.restart = dma.AutoRestart();
+        if (dma.Extended())
+        {
+            const NextDma::DdmaView d = dma.Ddma();
+            r.ddma = true;
+            r.flags = static_cast<uint8_t>((d.physical ? 0x01 : 0) | (d.twoD ? 0x02 : 0) | (d.transparent ? 0x04 : 0) | (d.fill ? 0x08 : 0) |
+                                           (d.layer2Xy ? 0x10 : 0) | (d.hidden ? 0x20 : 0));
+            r.sourceExt = dma.AToB() ? d.extA : d.extB;
+            r.destinationExt = dma.AToB() ? d.extB : d.extA;
+            r.rowLength = d.rowLength;
+            r.rows = d.rows;
+            r.value = d.fill ? d.fillValue : d.transparentValue;
+            r.layer2X = d.layer2X;
+            r.layer2Y = d.layer2Y;
+        }
         _dmaHistory.Push(r);
     });
     _uart.SetHistory(&_uartHistory, [context = _context](uint64_t& frame) {
@@ -1201,8 +1215,9 @@ void PortDecoder_Next::BindDma()
     };
     // zxnDDMA physical mode: the SRAM direct, no MMU, and the Layer 2 destination's bank and resolution
     bus.readPhysical = [this](uint32_t address) {
-        // the same wait for a read of the SRAM; the bank 7 block RAM has its own port (SRAM #040000 + 7 x #4000 = #05C000)
-        if (Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
+        // the same wait for a read of the SRAM: a physical address is always the SRAM (banks 5 and 7 too: their SRAM side, not the
+        // block RAM the MMU reaches)
+        if (Mem().SramWait28())
             _context->pCore->GetZ80()->InsertWaitStates(1);
         return Mem().PhysicalRead(address);
     };
@@ -1542,6 +1557,8 @@ void PortDecoder_Next::StepDma()
     const bool turns = _dma.Active() && _dma.Mode() == 2;
     if (turns != _dmaBusTurnArmed) [[unlikely]]
         ArmDmaBusTurn(turns);
+    if (_dmaBusTurnArmed)
+        UpdateDmaTurnNotBefore();
     NoteDmaActivity();
 }
 
@@ -1563,8 +1580,33 @@ void PortDecoder_Next::DmaAtMachineCycleEnd(bool m1Next)
     // START_DMA), and the T80 gives it at the end of the machine cycle running then (POC 036 `dmaprescb`: inside DJNZ after its M1, its
     // displacement read or its internal cycle). The same rule as between instructions (StepDma): the DMA's cycles become the CPU's waits
     if (!_dma.Active() || !_dma.Waiting() || _dma.HoldsBus() || Now28() < _dma.WaitEnd())
+    {
+        UpdateDmaTurnNotBefore();
         return;
+    }
     StepDma();
+}
+
+void PortDecoder_Next::UpdateDmaTurnNotBefore()
+{
+    // Now28() = t_states * 8 + t * 8 / multiplier (a power of two up to 8, the Next's 3.5 / 7 / 14 / 28 MHz): the first t whose Now28()
+    // reaches the wait's end. The answer of the full check is the same at every machine-cycle end before it (Now28() < WaitEnd())
+    if (!_engine)
+        return;
+    uint32_t notBefore = 0;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
+    if (!_dmaAfterM1 && _dma.Active() && _dma.Waiting() && !_dma.HoldsBus() && (multiplier & (multiplier - 1)) == 0 && multiplier <= 8)
+    {
+        const uint64_t base = static_cast<uint64_t>(_state->t_states) * 8;
+        const uint64_t end = _dma.WaitEnd();
+        const uint64_t perT = 8u / multiplier;  // clocks of 28 MHz per CPU T
+        if (end > base)
+        {
+            const uint64_t t = (end - base + perT - 1) / perT;
+            notBefore = t > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(t);
+        }
+    }
+    _engine->SetMachineCycleEndTurnNotBefore(notBefore);
 }
 
 void PortDecoder_Next::ArmDmaBusTurn(bool on)
@@ -2206,6 +2248,11 @@ bool PortDecoder_Next::GenerateDriveNmi()
     return true;
 }
 
+bool PortDecoder_Next::NmiAcceptsCause() const
+{
+    return !_multiface->NmiHold() && !_divMmc->NmiHold();
+}
+
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
     return RaiseMultifaceNmi("m1_button");
@@ -2229,7 +2276,7 @@ void PortDecoder_Next::IoTrap(uint16_t port, bool write, uint8_t value)
     if (write && (low == 0xF1 || low == 0xF9) && PortEnabled(18))
         return;
     // the cause and the byte are taken while no NMI is on its way (nmi_accept_cause: the state machine idle or fetching)
-    if (!_multiface->NmiHold() && !_divMmc->NmiHold())
+    if (NmiAcceptsCause())
         _board->LatchIoTrap(cause, write, value);
     RaiseMultifaceNmi("io_trap");  // nmi_sw_gen_mf: the same assertion as the M1 button, behind NR #06 bit 3
 }

@@ -1,5 +1,7 @@
 # TODO — GS/NeoGS card-CPU debugger
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Requirements rev. 3 and design rev. 2 (2026-09-28): NeoGS in master, NeoGS target moved to phases 1-2, front-ends handed to the [debugger model](../2026-09-28-debugger-model/). (#44, the thread-safe GS control path, landed in `8dacbc82`.)
 
 Plan: [PLAN.md](../PLAN.md) #45 (T2).
@@ -149,7 +151,7 @@ fixed RAM window, 3: high ROM at `#C000`).
    - Done (uncommitted, worktree `scratch/wt-gs-firmware`): store and bundles as in design §6.2 "As built", `cpu`
      on every plane, card breakpoint conditions by name, tests `GSCardTarget_Test.TheFirmwareSymbolsNameTheCardsCode`,
      `TheMachinesCardLoadsItsFirmwareSymbols`, `McpTools_Test.ManageSymbols_Cpu_NamesTheCardsLabels`. The label byte
-     check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, NeoGS (N5), Qt card labels.
+     check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, Qt card labels. NeoGS (N5) done (uncommitted): see item 11.
 2. [x] **Firmware profiles (F2).** `GSFirmwareProfile` tables for v1.04 / v1.05a / v1.05b from `COMTAB` / `COMTABH`,
    selected by the ROM image SHA-256; the card names its firmware; self-check test: every non-stub handler in the
    ROM's tables has a named command.
@@ -161,20 +163,126 @@ fixed RAM window, 3: high ROM at `#C000`).
    - Done: the device history `<slot>.commands` (every plane through the history verbs; the stream file is the
      export), fed by LLE, LW and NeoGS, owned by `SoundManager` / the MultiSound card; four anomalies;
      `GSCommandLog_Test`, `BM_GSCommandLog_HostTraffic_*`, MCP `test_the_command_log_is_a_device_history`. Design
-     §6.3 "As built". Left: TTD seek cut-off (D3), card-side hooks, block destinations of uploads.
+     §6.3 "As built". Left: card-side hooks, block destinations of uploads.
+   - D3 done (2026-11-20, worktree `scratch/wt-ttd-d3`): the log follows time travel (`history::ITimeFollower`,
+     `DeviceHistory::Rewind` / `Truncate`): a move holds the entries after the moment back, a move forward brings
+     them back, a live run from the past logs anew, a branch switch keeps the shared past; the decoder follows the
+     machine (frame-start marks, replay decodes without logging). Design §6.3 "TTD (D3)"; tests
+     `GSCommandLog_Test.Ttd*`, `DeviceHistory_Test.Rewind*` / `Truncate*`.
 4. [x] **Protocol state and send with decoding (F3, F6).**
    - Done: `GSProtocolState` from the command log's decoder (`protocol` in the GS report), `GSHostDriver` (the
      debugger's send: each byte when the mailbox allows it, replies read, decoded; TTD input `GSReadData`), CLI /
      WebAPI / MCP / Lua / Python, `GSHostDriver_Test`. Design §6.4 "As built". Left: firmware objects (F5, phase
      6), a MultiSound card's send, Qt.
-5. [ ] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
+5. [x] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
    - 5a done (17c5a3e40): the boards and the SD board over `sd.ngs`, design §6.5.
    - 5b done (bbe0ec4aa, 2026-11-18): the statistics block, the `gs_stats` board, every plane; design §6.6,
      neogs-automation-design.md §10. Checked: `core-tests` (GS, NeoGS, boards, MCP filters), `unreal-qt` zero
      warnings, live `test_gs_debugger.py` 15/15; A/B benchmarks on .20 in neogs-automation-design.md §10 (frames
-     unchanged, +0.5 ns per host `OUT`). Left: the gcc check.
+     unchanged, +0.5 ns per host `OUT`). Landed 628936545 (2026-11-18). Left: the gcc check (batched).
 
-## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), not landed
+### Phase 4, revision 3 additions (M1-M8, AU6, the F4 extensions; design §8A.8-§8A.10) — branch `gs-firmware`
+
+Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design §10).
+
+6. [x] **Profile schema 2 (M1, M2, M6, M7).** Profiles as JSON files (`data/symbols/gs/profiles/`), the built-in tables in
+   the same structure: `match` (ROM / upload digests), `dispatch`, per-command `handshake`, `structs`, `instances`
+   bound to a physical page, `variables` (register in a PC range, SMC operand). Firmware objects read through
+   `peekPage` on every plane (the data side of M3 and F5).
+   Done (uncommitted): `gsfirmwareobjects.h`, `cardRamPage`, WebAPI `/state/audio/gs/firmware[/profiles]`, CLI
+   `gs firmware`, MCP `audio_gs_firmware[.<object>]`, Lua / Python `gs_firmware`; design §8A.9 "As built".
+7. [ ] **F4 extensions.** `reply_read_without_poll`, `data_before_command`, `command_while_busy`,
+   `card_reply_stall`, `stale_reply_drain`, `upload_over_running_code`, `command_rejected_in_state`; the handshake
+   (M6) suppresses legal firmware-specific ones; the same flags on LW (W4).
+   Done (uncommitted): the host status-read hook on LLE / LW / NeoGS; handshake `ack`, `barrier`, `strobe`,
+   `replyWait`, `exit`; profile `modes`, `unsolicitedReplies`; design §6.3. Left: an A/B of the status-read hook
+   (P2), batched with the next .20 run.
+8. [ ] **Profiles for uploaded code (M5).** The `#14` upload hashed as it arrives, `#13` pushes the matching
+   profile, a card reset pops to the ROM's, the decoder asks the stack top-down; an unknown upload logged with its
+   address, length and digest. Profiles: GP `gscode.bin`, the kernel's `ngssd.bin`, NeoTracker `ngsldr` / `ngsdrv`
+   / `neopg2`.
+   Done (uncommitted): `GSCommandLog::Uploads()` (also `uploads` in the protocol state), the profile stack with
+   `extends`, upload matches that cover a prefix (the kernel's padded 768 bytes), five NedoOS profiles in
+   `data/symbols/gs/profiles/`, the blobs in `testdata/software/nedoos/card-code/`. The `#1E` sector transfer with its
+   `#BB` strobes (M12): the profile transfer `sectors` (design §6.3), done with V-5.
+9. [x] **Dispatch view and unknown commands (M4, AU6).** The dispatch table read and compared with the ROM / upload
+   baseline (patched entries named with their upload); the dispatch PC as a probe filling `card_pc` /
+   `card_label`; the unknown-command set with counts (LW default branch, LLE `unknownStub`).
+10. [x] **Generator (M8).** `tools/gsfirmware/profile_from_source.py`: commands from `COMTAB` / `COMTABH`, structs
+    from `STRUCT … ENDS` and `EQU` blocks, symbols; the v1.05a profile regenerated equals the committed one (a test).
+    Done (uncommitted, items 9-10): `dispatch` in the firmware objects read (handler, ROM baseline, `patched_by`,
+    `unknown`), `highFrom`, `stock_split` in JSON; `card_pc` / `card_label` from the table at the command write (no
+    per-instruction probe); `UnknownCommands()` in the log; the generator with `gs105a.profile.json` and its check.
+    Design §8A.9 "As built" (items 8-10).
+11. [x] **Validation scenarios V-1 to V-6 (§8A.10).** NedoOS fixtures in `testdata/software/nedoos/` (README with the
+    revision), `gs_nedoos_scenarios_test.cpp` against golden logs; the `SSTAT.MCRDY` polling and host `IN (#0F)`
+    accuracy checks.
+    Progress (uncommitted): the test boots NedoOS on the ZX-Evo from a host folder (long tier); V-1 gstest passes on
+    the classic GS against `testdata/software/nedoos/golden/v1-gstest.txt`. It found and closed: the stock test mode
+    (`selects` / `leaveFrom`), the `#F4` value poll (`valuePoll`), a transfer stall counted before the card took its
+    command. V-2 passes: GP plays a `.mod` on the stock firmware to its end (`v2-gp-mod.txt`: one 61902-byte block,
+    `#60` every frame, the position falls, `#F3`), and Esc during the load sends `#F4` after the first 32 KB chunk
+    (`v2-gp-cancel.txt`; one `command_while_busy`, as F4 names it). A 128 KB card: with the ZX-Evo's 512 KB the stock
+    RAM test takes 127 frames and GP gives up on the card after 50 (gshardreset), as on such a board. Keys go in as
+    PS/2 keys: NedoOS for the ZX-Evo (`PS2KBD=1`) reads the AVR's PS/2 log, not the matrix. The module needs an 8.3
+    name (`afterwr2.mod`): GP does not open a longer one from its command line. V-3 passes: GP streams an 8 s MP3
+    on the NeoGS (`v3-gp-mp3.txt`): both streamer uploads select `nedoos-gp-gscode`, the data is one host data
+    stream block (new profile flag `hostDataStream`, design §6.3; 162970 bytes with the padding), `#01` every frame,
+    12 MHz while streaming and 20 MHz after `#00` (six clock switches), timer interrupts, no anomalies (GP reads
+    `#01` at once: no `card_reply_stall` in this run). `SoundChip_NeoGS::counters()` for the test. V-4 passes:
+    ngsplay loads an S3M through the NeoTracker BIOS (`v4-ngsplay-s3m.txt`): the uploads to `#5100`, `#0000` and
+    `#D000` select `nedoos-ngsldr`, `nedoos-neotracker`, `nedoos-neopg2`; two jumps, the barrier `#00`, the `#E8`
+    header as one block, `#E9` / `#EA` until done, `#E2`, `#E3`, `#E4` on [S] in PlayCykl, no anomalies. The release
+    ngsplay never sent its `#E6` status poll in 3,000 frames after the autostart, though its loop took keys. It fixed the
+    NeoTracker profile (`#E2` / `#E3` take module and sample / order, `#E8` `block256`, `#EA` the new
+    `block_pages`) and the decoder, which ended a `block256` only at the next command.
+    N5 (uncommitted): the NeoGS sources (NedoPC SVN r193) in `materials/neogs/ngs-firmware/`; `markup_symbols.py`
+    rebuilds the main ROM with asl byte for byte and writes `neogs.map`, the `gs:neogs` bundle and `NEOGS-VS-GS.md`;
+    the built-in profile `neogs` (v1.05a's tables, the same handlers) with `firmwarePage` (RAM pages 0-1 on NeoGS).
+    Design §6.2 "As built (N5)". V-5 passes (`v5-kernel-ngssd.txt`, P2666 + NeoGS via `GeneralSoundFitScope`): needed the P2666 decoder to pass
+    the GS mailbox (`#33` / `#B3` / `#BB`, low byte) to a ZX-BUS card (read mux row 13, every write). The release
+    kernel hangs on the real board as well, a NedoOS bug: its NGS SD driver (`src/kernel/ngssddrv.asm`, `ISDD3`
+    installer upload and `SDWRSN2` sector write) sends with `LD BC,GSDAT` : `OUTI`, so B counts down on A15..A8, and
+    `#E0B3`..`#EFB3` match the board's `#EFF7` decode (`A15..13 = 111`, `A12 = 0`, `A5 = 1`, `A3 = 0`, `A0 = 1`,
+    PaE.vhd:1280). After the installer `#EFF7` holds `#8F` (RAM 0 at `#0000`), and the next ISR's call into the DOS ROM
+    through `#3D2F` runs RAM and ends at `#0000`. The emulator matches the VHDL. The test boots the same kernel rebuilt
+    from source with `INC B` before each `OUTI` (`testdata/machines/p2666/software/nedoos/kernel-ngsfix/`, recipe
+    `.recipe/software/nedoos-build.md`, `tools/nedoos/kernel.sh`; the unpatched build equals the release in every
+    code byte). The log shows the installer upload and jump (`nedoos-ngssd`), `#1E` init (`#77`), then the sector reads
+    of the MBR, the boot sector, the root directory and the file, each `sector read: 512 bytes` with its `#77` status
+    (M12: profile transfer `sectors`, the `#BB` strobes inside it), no anomalies; `type n:/ngssd.txt` prints the file.
+    A relative `n:ngssd.txt` fails ("Wrong file"): a NedoOS process has one current directory cluster for all drives
+    (`app.dircluster`), so it searched `M:/bin`'s cluster on drive N. For the `IN (#0F)` check: INSTSDD's host
+    `IN (C)` of `#000F` read something other than `#FF` on the P2666 (value and source not checked yet), so it took
+    NEOGSINIT.
+    V-6 passes (`GSNedoOsMoonRabbit_Test.V6MoonRabbitStreamsAModFromTheNetwork`, golden `v6-moon-rabbit-mod`):
+    Moon Rabbit (`mrfue`, ZX-Evo UART + GS) on the ZX-Evo with `ComPort=AT` opens a `.mod` row of its home page, a
+    scripted gopher server behind the virtual network sends the module, and Moon Rabbit streams the network's bytes
+    into the stock firmware: `#F3`, `#30`, `#D1`, one `module upload: 61902 bytes` over more than 100 frames, `#D2`,
+    data 1, `#31`, then `#60` from the play loop (`player/mod-processor.asm`, about every other frame), no anomalies.
+    The test takes the ESP's power-up lines at the ERS menu (RTS up, FIFO reset), as a terminal session before Moon
+    Rabbit would: the AVR holds RTS off from its start, the flow-controlled ESP keeps "ready" / WIFI CONNECTED /
+    WIFI GOT IP (38 bytes) until Moon Rabbit's init raises RTS after its FIFO reset, they flood the 16-byte FIFO while
+    it sends `ATE0`, the OK is lost and `checkOkErr` waits for ever (it does not resync).
+    MCRDY (`GSNedoOsGp_Test.V3GpWithMcrdyPollingPlaysAnMp3OnNeoGs`): GP rebuilt from source at d1d011f8 (byte for
+    byte the release) with the polling loop its TODO says fails in UnrealSpeccy (`in a,(SSTAT): and M_MCRDY: jr z`)
+    inside `noper`, padded to the delay's 19 bytes (`testdata/software/nedoos/gp-mcrdy/`: `gp.plr`, the patch; 8 bytes
+    differ), plays the MP3 to its end on the NeoGS: the decoder gets its SCI setup and the whole file.
+    `IN (#0F)` (`gs_hostport0f_test.cpp`): no card answers it (the NeoGS FPGA decodes only `#B3` / `#BB` / `#33`,
+    `fpga/current/zxbus/zxbus.v:217-223`), the value is the machine's and the same without a card, with NeoGS and with
+    the classic GS: `#FF` on the Pentagon, ZX-Evo (BaseConf, TS-Conf), ATM 2 / 2+, 128K (the floating bus in the
+    border), Scorpion; `#25` on the P2666 and `#84` on the Profi, both powering up in DOS, where `#0F` is the VG93's
+    status. The P2666 kernel's INSTSDD reads it so (DOS on, PC `#10D0`): its NeoGS test passes with or without a card,
+    and without one the `#F3` wait ends the probe.
+
+### Phase 5 (U1, U1a, U2, B3; design §10) — the GUI skin
+
+12. [ ] **Main debugger** per [gui-main-debugger.md](../2026-09-28-debugger-model/gui-main-debugger.md), its
+    acceptance checklist.
+13. [ ] **Card debugger** per [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md) (GS, then
+    NeoGS): two Qt windows paused together, its acceptance checklists.
+
+## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 
 Owner decision 2026-11-17: either CPU is stepped both ways; the other CPU is computed by replay from the nearest
 checkpoint; the main CPU is shown at its last completed instruction plus a T offset; a run first lets the main CPU
@@ -205,6 +313,43 @@ reach its boundary.
   `LastStop().serial`; a move in time does not. Guiplane: `debugger.select_cpu {cpu}`, `cpu` / `cpus` in the
   `debugger` state, `cpu` in the views'. Code: `unreal-qt/src/debugger/debuggercpu.cpp`. Tests:
   `DebuggerCpuTabs_Test` (unreal-qt-tests).
+- [x] The card tab's open ends (2026-11-19, landed 61276899f / 065836119):
+  - Labels: the card's own `LabelManager` (`DebugManager::GetLabelManager(cpu)`) in the Embedded memory view's
+    tooltip and Label Manager, and in eCat's card disassembly (`Z80DisAsm` with the card's labels); no markup and no
+    main CPU labels on a card's tab.
+  - Step over back on the card: `TimeTravelController::ReverseStepOverCard` (one card instruction back, or past the
+    whole routine when that instruction is a return that lifted the stack to the level now: a replay scan
+    backwards with the card's SP at each boundary, `GSCardTarget::ScanStackLevel`, at most 1000 frames; out of
+    reach the card stays on the return, `call_out_of_reach`). `reverse-step-over {cpu}` on every plane
+    (CLI `ttd reverse-step-over --cpu`, Lua / Python `ttd_card_reverse_step_over`, MCP `card_reverse_step_over` and
+    `reverse_step_over` with `cpu`, REST / WebSocket). Shift+F8 on the card's tab in both debuggers.
+  - Step over / step out forward in the past: `TimeTravelController::StepCardForward` (a forward replay scan that
+    decides each card boundary as a live card step does, `GSCardTarget::ScanStep`; the card's breakpoints end it
+    first; not ended in the history: to its end, `history_end`; 1000 frames at most, `truncated`).
+    `step-instruction {cpu, kind: over | out}` on every plane (CLI `ttd si-forward --cpu gs --over` / `--out`,
+    Lua / Python `ttd_card_step_over` / `ttd_card_step_out`, MCP `card_step_over` / `card_step_out`). F8 /
+    Ctrl+F8 on the card's tab in the past in both debuggers.
+  - F7 / F8 / Ctrl+F8 at the history's end (`at_end`) run the card's live step, unrecorded (D-3, as the main CPU).
+  - [x] Run to cursor (F4) on a card's tab in the past (2026-11-20). **As built:**
+    `TimeTravelController::RunCardToCursor`, the same forward replay scan as the step over / out
+    (`CardForwardScan`, `GSCardTarget::ScanStep` with `StepKind::To` and the cursor): the card's first boundary at
+    the cursor after its position; its breakpoints end it first; not reached in the history or in `max_frames`
+    (default 1000) frames: `no_hit`, nothing moved, the live machine untouched (`truncated` when the frame limit
+    ended the search); at the history's end `at_end` and the debuggers run the live card run. `step-instruction
+    {cpu, kind: to, pc, max_frames}` on every plane (CLI `ttd si-forward --cpu gs --to <pc> [--max-frames N]`, Lua /
+    Python `ttd_card_run_to_cursor`, MCP `card_run_to_cursor` with `addr`, REST / WebSocket, OpenAPI); the reply adds
+    `cursor` and `hit`. F4 on the card's tab in both debuggers.
+  - [x] Moves right after a live card step at the history's end (D-3, 2026-11-20): they were refused (409) while the
+    machine stood inside the card's run; now the machine leaves it first (`Emulator::LeaveCardRun`, TTD branches
+    debuggers.md §7). A card step back from past the history's end lands at the history's newest card instruction
+    (`history_end`).
+  - Tests: `TTD_CardReverseStepOver_*`, `TTD_CardStepForward_*`, `TTD_CardRunToCursor_*` (trace oracles: the recording's own card PC / SP at
+    every boundary), `TTDControl_CardPositions_Test`, `CliTTDCards_Test`, Lua, MCP and OpenAPI tests,
+    `DebuggerTimeTravelCard_Test.TheCardsTabStepsOverBackAndThroughThePast`, `unreal-debugger --self-check`, live
+    `test_ttd_card_oracle.py` (step over back against single steps back, step over / out against single steps
+    forward). The firmware right after its boot (the classic card's RAM test, the NeoGS's command wait loop) runs
+    no CALL for frames on end, so these tests give the card nested routines of its own in its RAM, interrupts off
+    (`ttdtest::LoadCardRoutines`, the live script's `plant_card_routines`).
 
 ### Later
 

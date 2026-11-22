@@ -1,7 +1,7 @@
 {
   "format": "unreal-symbols-manifest",
   "version": 1,
-  "note": "General Sound card firmware labels for the card CPU's store (gs, ms): a bundle applies when the card ROM's page 0 has the listed SHA-256; the map's ROM0 / ROM1 are the card's ROM pages.",
+  "note": "General Sound card firmware labels for the card CPU's store (gs, ms): a bundle applies when the card ROM's page (page 0; NeoGS: flash page 4) has the listed SHA-256; the map's ROM0 / ROM1 are the card's ROM pages, NeoGS's RAM0 / RAM1 the RAM pages its loader copies them to.",
   "bundles": [
     {
       "id": "gs:gs104",
@@ -38,6 +38,18 @@
         ]
       },
       "note": "data/rom/gs105b.rom, image SHA-256 9948ec9617365fb1913b0c56e00d5f6b6a36084875cca16debae270a4c6e6adf"
+    },
+    {
+      "id": "gs:neogs",
+      "title": "NeoGS firmware v1.11",
+      "file": "neogs.map",
+      "match": {
+        "page": 4,
+        "page_sha256": [
+          "7decef1ec3afe8d6eec52371f89b650afaaecbc527fa80c47bbb1ea67603e3f1"
+        ]
+      },
+      "note": "data/rom/neogs/full_ngs.rom: the main ROM at flash #10000 (the copy the loader runs from RAM pages 0-1), image SHA-256 73c3342a2cb37171e4c5b7147283157ee48116c056c1d02c48c7e6e11245c678"
     }
   ]
 }

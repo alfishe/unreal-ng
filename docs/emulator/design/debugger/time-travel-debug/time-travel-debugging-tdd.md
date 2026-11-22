@@ -1,5 +1,7 @@
 # Time-Travel Debugging (TTD) — Technical Design Document
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](README.md)
+
 | | |
 |---|---|
 | **Status** | Built. The engine `ttd::TimeTravelEngine`, driven by `ttd::TimeTravelController`, is the only implementation; [§0](#0-as-built-2026-10-31) says what was built. Sections 1-17 are the design as written, with notes where the build differs |

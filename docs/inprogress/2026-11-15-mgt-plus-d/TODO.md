@@ -3,7 +3,10 @@
 Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18): the card, the autostart, the
 `48K-PLUSD` / `128K-PLUSD` machines in the Sinclair family of the Qt and handheld menus, the recipe
 `.recipe/machines/plusd.md`. 2026-11-19: P5.2 (the `basic` param on every plane, the MCP `inspect_state fdc` text
-for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). P5.1, P5.4, P5.5, P6.1 done. Open: P5.3 (gcc / MSVC / MinGW, batched).
+for the card). P5.1, P5.4 (overlay only while paged in, card FDCs stepped behind a sleep flag), P5.5 done, landed
+e4399ec70 (2026-11-19); G+DOS writes (P4.6) 9761657f2. Build checks are left to the GitHub CI / Release runs.
+2026-11-20: P7 DISCiPLE (the card `disciple` on the +D's code, `48K-DISCIPLE` / `128K-DISCIPLE`, the GDOS 3d system
+disk `data/boot/disciple/gdos-3d-system.mgt`). P0.6 closed 2026-11-20: no chip to dump, no public dump; H-1, H-2, H-3, H-5 stay as decided.
 
 ## Phases
 
@@ -18,12 +21,11 @@ for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). P5.
   sha256 `ba1582991bed6c7c`), so no configuration byte differs; the disk adds CONFIG's own four files.
   `PlusDSystemDisk_Test.CatListsDisk`: `RUN` loads `+SYS` (banner `G+DOS2a`), `CAT 1` lists the five files (1 s)
 - [x] P0.5 Not needed: `plusdautostart_test.cpp` writes its work disks itself (`GdosDisk`: the system disk plus a
-  BASIC `BORDER n` loop, or CODE only), one per plan. Was: fixture work disks into `testdata/machines/plusd/`. Candidates (catalog pool sha256 prefixes):
-  `+SYS` + `AUTO`: Super Mario Fruit Machine 2 `a9735f4a40b5`; `+SYS` only: Chase H.Q. `e87f1e4e2462`; no DOS + `Loader`:
-  Quann Tulla (classified list); no DOS + `AUTO*`: Doom Pit `5d5fe503c848`; one 48K snapshot: Behind Closed Doors 5
-  `299cfbfcdde2`; several snapshots: Return of the Roach `acf98bef8054`; CODE only: Черный Ворон. No +D disk in the corpus
-  holds only a 128K snapshot: that fixture is written by the emulator (`SAVE` of a type 9 file via the snapshot button)
-- [ ] P0.6 PAL equations of `alice_pal20l8.ic4` if the dump can be found: settles H-1, H-2, H-3, H-5
+  BASIC `BORDER n` loop, or CODE only), one per plan. Was: fixture work disks into `testdata/machines/plusd/`; a
+  128K-snapshot disk is written by the emulator (`SAVE` of a type 9 file via the snapshot button)
+- [x] P0.6 PAL equations of `alice_pal20l8.ic4`: closed 2026-11-20 without a dump (the owner has no chip, none is
+  published); H-1, H-2, H-3, H-5 keep the answers in hardware-reference.md (Fuse traps, paged out after reset, full
+  low byte, MAME drive select), each a one-line change if a dump turns up
 
 ### P1: WD1772 variant and two controllers
 - [x] P1.1 `WdVariant`, constructor with ports / drives from the caller; register-level `ReadRegister` / `WriteRegister`.
@@ -42,7 +44,7 @@ for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). P5.
   Found on the way (pre-existing, not +D): every Beta FDD has `_driveID` 0 (no setter), so `BeforeImageGrow` of drives
   B-D goes to `fdd.a` and `NC_FDD_DISK_INSERTED/EJECTED` name drive 0
 - [x] P1.5 Tests: `wd1772_test.cpp` (11), `FloppyDriveSlot_Test.CardDriveHasItsOwnSlot`; FDC / FDD / slot / media / TTD /
-  autostart / state transfer filters: 586 passed, 5 skipped (2026-11-16). Full suite and gcc check at the end of the work
+  autostart / state transfer filters: 586 passed, 5 skipped (2026-11-16). Full suite at the end of the work
 
 ### P2: the card
 - [x] P2.1 `Function::DiskMgt` (`disk.mgt`), `CardDef plusd` (edge bus, needs `/RDROM /M1 /NMI`, claims `00FF` on
@@ -96,6 +98,12 @@ for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). P5.
 - [x] P4.1 `unrealdisk::GdosFileSystem` (`gdosfs.h/.cpp`): directory (80 entries, type, hidden / protected, name,
   sectors, first sector, the 9-byte tape header), `Read` along the sector links (510 data bytes each, header
   stripped), free sectors; read-only `DiskFs` volume `gdos` (probed before +3DOS). Tests `GdosFs_Test.*` (3)
+- [x] P4.6 (2026-11-19) G+DOS writes in unreal-disk: `GdosFileSystem::Write` / `Delete` / `Rename` /
+  `SetAttributes` as G+DOS `SAVE` / `ERASE` / `RENAME` / `PROTECT`, `HIDE` (tape header in the entry and before the
+  data, first free sectors in map order); the `gdos` volume writable, so `zxdisk put / rm / mv / attrib` and the
+  media verbs `write` / `delete` / `rename` / `attrib` take G+DOS disks. Layout: `disk-file-systems.md`, G+DOS
+  layout. Tests `GdosFs_Test.WriteCodeAfterTheLastFile`, `DiskFsPutReplaceRenameProtectDelete`, `WriteOnABlankDisk`;
+  `PlusDAutostart_Test.RunsAProgramWrittenByTheDiskTool` (G+DOS in the emulator loads and runs a written program)
 - [x] P4.2 `PlusDAutostart` (`slots/cards/plusd/plusdautostart.*`), owned by `DiskAutostart`, stepped at the frame
   end by `MainLoop`. Plans `run` / `run+load` / `system-disk+load` / `mount` and the start command as in
   [autostart.md §3](autostart.md#3-the-autostart-plan). "DOS loaded": the whole `+SYS` body seen at the +D RAM's
@@ -105,90 +113,21 @@ for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). P5.
 - [x] P4.3 `LoadDisk` / `AutostartDisk` of an `.mgt` go to `fdd.plusd1` / `plusd2`; no +D: refused, naming
   `48K-PLUSD`, `128K-PLUSD` and the edge slot (D-3); a drive other than 1 / 2: refused. `LoadDisk_ByExtension` no
   longer mounts MGT in a Beta drive
-- [x] P4.4 Corpus (2026-11-17): `PlusDAutostart_Corpus.AllImages` (skipped unless `UNREAL_PLUSD_CORPUS` = the
-  classified TSV and `UNREAL_PLUSD_POOL` = pool/images; table to `UNREAL_PLUSD_CORPUS_OUT`). Machine: 128K when the
-  disk holds a type 9 snapshot, else 48K, both with the card in `edge.1`; 100 frames, autostart, steps, then until the
-  +D stays paged out 50 frames (at most 4000), 100 frames sampled. Nothing tuned per title. 243 images, 7 min:
-
-  | Plan | Images | Steps ok | Running after | Not running |
-  |---|---|---|---|---|
-  | `run` | 19 | 19 | 12 | 5 G+DOS text on screen, 2 still in G+DOS |
-  | `run+load` | 8 | 8 | 6 | 1 G+DOS report, 1 still in G+DOS |
-  | `system-disk+load` | 215 | 215 | 214 | 1 back at the copyright |
-  | `mount` | 1 | - | - | CODE only (Черный Ворон), as designed |
-  | **all** | **243** | **242** | **232** | **11** |
-
-  Load to settle (frames after the start command, +D paged out for good): median 197, p90 292, max 2139; G+DOS
-  reads about one sector per revolution, so long adventures take 10-40 s. Before the editor wait of P4.2 five
-  `AUTO*` disks without `+SYS` (Doom Pit, Seto Taisho x2, Sophia x2) ran only by chance (the swap came before the
-  ROM looked for `AUTO*`) and were reported failed.
-
-- [x] P4.5 (2026-11-18) The ones that did not run, then every image on three configurations. Fixes found on the way,
-  none per title:
+- [x] P4.4 `PlusDAutostart_Image.One` (skipped unless `UNREAL_PLUSD_ONE` names an `.mgt`; `UNREAL_PLUSD_MODEL`,
+  `UNREAL_PLUSD_BASIC`): the autostart of one disk with the steps, the BASIC position and the screen every 250
+  frames, for a closer look at a disk that does not start. Before the editor wait of P4.2 an `AUTO*` disk without
+  `+SYS` ran only by chance (the swap came before the ROM looked for `AUTO*`).
+- [x] P4.5 (2026-11-18) Fixes found on the way, none per title:
   - **The 128K reset**: the autostart reset into whatever `RESET=` said (48 BASIC by default), so on a 128K every work
     saw a 48K. Now it resets into the machine's BASIC (128K menu, then `128 BASIC`); `AutostartDisk(..., basic)`
     takes `48` / `128` ([autostart.md, the BASIC of the reset](autostart.md#the-basic-of-the-reset)). H-7 settled.
-  - **"Loading ended"** in the corpus run is now the WD1772 idle (not busy, the motor off) for 300 frames, not the
-    +D paged out: the +D traps KEY-SCAN, so a BASIC `INKEY$` menu (the Zenobi part pickers) keeps paging it in.
-    300 frames, so a loader's `PAUSE` between two loads is not taken for the end.
-  - The "G+DOS Modified Bootloader" disks show a banner, `PAUSE 160`, then load: they run.
-
-  `PlusDAutostart_Corpus.AllImages` on `48K` (48 BASIC), `128K` (128 BASIC) and `128K/48` (a 128K in 48 BASIC), the
-  card in `edge.1`; verdict from the screen: a BASIC report, the copyright (reset), the FDC still busy (in-dos), else
-  running. Columns `min` (the first config it runs on), `runs_on`, `fails_on`. 243 images, 47 min:
-
-  | Config | Running | Reset | Report | Not started |
-  |---|---|---|---|---|
-  | 48K | 217 | 19 | 6 | 1 |
-  | 128K | 241 | 0 | 1 | 1 |
-  | 128K/48 | 237 | 0 | 5 | 1 |
-
-  Tags: `min 48K` 217 (run on all three), `min 128K` 24, none 2. The 26 that do not run everywhere, each checked
-  on the disk: 18 load a 128K snapshot (type 9), 2 are Chase H.Q.'s 128K version, 4 need 128 BASIC (`SAVE !` on the
-  RAM disk, `PLAY` strings, 128K paging from BASIC), 1 mounts only (CODE, Черный Ворон):
-
-  | Title | Image | min | runs_on | not running |
-  |---|---|---|---|---|
-| Chase H.Q. | `8186c971f5f2` | 128K | 128K 128K/48 | 48K: reset |
-| Horrorscope | `308f006dc3a3` | 128K | 128K 128K/48 | 48K: reset |
-| The Krazy Kartoonist Kaper | `547378eb87d7` | 128K | 128K 128K/48 | 48K: reset |
-| Stranded | `d460b9d7055b` | 128K | 128K 128K/48 | 48K: reset |
-| Alien-B | `19e7748619bc` | 128K | 128K | 48K: report `4 Out of memory, 60:1`; 128K/48: report `C Nonsense in BASIC, 60:1` |
-| Plus D Blue Peter | `c9b838fced80` | 128K | 128K | 48K: report `C Nonsense in BASIC, 60:1`; 128K/48: report `C Nonsense in BASIC, 60:1` |
-| The Lost Twilight | `a200d9ead285` | 128K | 128K 128K/48 | 48K: reset |
-| (EN)(128K)[p] | `746ee6443593` | 128K | 128K 128K/48 | 48K: report `4 Out of memory, 140:3` |
-| Rhyme Cryme | `0a8707b53298` | 128K | 128K 128K/48 | 48K: reset |
-| The Apprentice | `5b348bdc2fdc` | 128K | 128K 128K/48 | 48K: reset |
-| The Final Chorus | `8bf4574d3650` | 128K | 128K 128K/48 | 48K: reset |
-| The Bardic Rite | `0ce57291f17c` | 128K | 128K 128K/48 | 48K: reset |
-| Leopold the Minstrel | `33a728a11144` | 128K | 128K 128K/48 | 48K: reset |
-| Murder - He Said | `76030848ec2c` | 128K | 128K 128K/48 | 48K: reset |
-| Super Mario Fruit Machine 2 | `a9735f4a40b5` | none | - | 48K: report `C Nonsense in BASIC, 200:1`; 128K: report `0 OK, 200:1`; 128K/48: report `C Nonsense in BASIC, 200:1` |
-| The Gods of War | `4708344d6758` | 128K | 128K 128K/48 | 48K: reset |
-| Knight Life | `abd63f30dd7c` | 128K | 128K 128K/48 | 48K: reset |
-| Stalker | `4ba205e2a746` | 128K | 128K 128K/48 | 48K: reset |
-| POKE for ZX | `99f80666cb81` | 128K | 128K | 48K: report `C Nonsense in BASIC, 290:1`; 128K/48: report `C Nonsense in BASIC, 290:1` |
-| Jigsaw | `079f3e4bee07` | 128K | 128K | 48K: report `C Nonsense in BASIC, 20:2`; 128K/48: report `C Nonsense in BASIC, 20:2` |
-| The Beast | `23b6cd0cfd43` | 128K | 128K 128K/48 | 48K: reset |
-| Черный Ворон | `ac123c4c724d` | none | - | 48K: not-started `Autostart: no program to start - mou`; 128K: not-started `Autostart: no program to start - mou`; 128K/48: not-started `Autostart: no program to start - mou` |
-| Murder Mystery Weekend | `b6672044662d` | 128K | 128K 128K/48 | 48K: reset |
-| The Khangrin Plans | `a598fef03eac` | 128K | 128K 128K/48 | 48K: reset |
-| The Thirty-Nine Steps | `df02a394c3c8` | 128K | 128K 128K/48 | 48K: reset |
-| The Pendant of Logryn | `0e015504a91a` | 128K | 128K 128K/48 | 48K: reset |
-
-  Closed, not an emulator bug: **Super Mario Fruit Machine 2** checks `PEEK 23611 = 221` (FLAGS) at line 10 and says
-  "128K game in 48K mode" otherwise. Ours: 204 in 48 BASIC, 220 in 128 BASIC (bit 0, "no leading space", differs).
-  MAME 0.289 (`spec128 -exp plusd`, the same ROMs and `plusd_g.rom` CRC 569f7e55, 128 BASIC, `RUN`) stops the same
-  way: "EPIC FAIL!" and `0 OK, 200:1`; on `spectrum -exp plusd` it says `C Nonsense in BASIC, 200:1` as ours does.
-  The check in the disk fails on this ROM + GDOS; with line 10 removed the game runs on the 128K.
 
 ### P5: docs, planes, platforms
 - [x] P5.1 Docs and recipes of design.md §11: `docs/features/slots.md` and `media.md`, `.recipe/machines/slots.md`,
   `.recipe/media/insert-disk.md` and `load-snapshot.md`, `.recipe/run/autostart-disk.md`, the device-history table,
   the `UNREAL_PLUSD_*` test variables in `docs/emulator/environment-variables.md`
 - [x] P5.2 All planes for the new fields / actions (`basic` on REST, WebSocket, MCP, CLI, Python, Lua, `media.open`); MCP live block `test_plusd.py`
-- [ ] P5.3 Build zero warnings; `docker/linux/build.sh --test`; MSVC / MinGW
-- [x] P5.4 A/B benchmark (test-plan §7; results there). The card as landed cost a 48K without it about 3 % (the
+- [x] P5.4 A/B benchmark (test-plan §6; results there). The card as landed cost a 48K without it about 3 % (the
   per-step loop over card FDCs) and kept its bus overlay on for good (48K-PLUSD idle +13.6 % over 48K). Fixed: the
   overlay is installed only while the card is paged in, and `MainLoop` steps card FDCs behind one flag that follows
   their sleep (`WD1793::setSleeping` -> `EmulatorContext::RefreshCardFdcWork`). After: 48K without the card at the
@@ -201,12 +140,16 @@ for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). P5.
   The TSFM in the AY socket of `48K-PLUSD` is the shipped 48K's `[SLOTS]` (a retrofitted AY interface), and
   `fdd.a`-`fdd.d` are the machine's Beta drives as on every 48K: neither comes from the card
 
-### P6: catalog hand-over
-- [x] P6.1 Note for zx-software-catalog ([catalog-handover.md](catalog-handover.md); moving `classify_mgt.py` is the catalog session's):: 48K / 128K + Plus D, SAM `skip:not-zx-format` (38), verdict from `plan`; move `classify_mgt.py` there
-
-### P7 (later, D-4): DISCiPLE
-- [ ] P7.1 Card `disciple` on the same code: ports, traps `0001/0008/0066/028E`, inhibit, `/DDEN`, Kempston on `1F`
-- [ ] P7.2 GDOS 3d boot test
+### P7 (D-4, done 2026-11-20): DISCiPLE
+- [x] P7.1 Card `disciple` on the same code (`PlusDCard::Model::Disciple`): ports `1B/5B/9B/DB`, `1F` (latch, Kempston
+  bits 0-4), `7B` RAM / ROM swap, `BB` paging, `FB` printer, `3B` ignored; traps `0001/0008/0066/028E`; slot option
+  `inhibit`; `/DDEN` through `WD1793::setDensityLine`; the 35 T hold-off after `/RESET` (S-MAME `m_reset_delay`);
+  TTD device 76; `.z80` byte 83 = 0 / 1 loads and saves it; SZX has no DISCiPLE block; the autostart looks for `SYS*`
+  (`DiscipleCard_Test`, `PlusDAutostart_Plan.DiscipleLooksForSys`, `PlusDAutostart_Test.DiscipleBootsGdos3dThenTheWork`)
+- [x] P7.2 GDOS 3d boot test: CONFIG from the GDOS 3d tape writes `data/boot/disciple/gdos-3d-system.mgt`
+  (deterministic, README with the recipe); `DiscipleSystemDisk_Test.BootsGdos3d` / `BootsGdos3dOn128K`: RUN loads
+  `SYSTEM 3d`, `CAT 1` lists the disk on a 48K and from 128 BASIC (GDOS ends with the report `O.K. GDOS 3, 0:1`,
+  which the 128 editor clears on the next key)
 
 ## Open hardware items
 
@@ -218,7 +161,7 @@ H-1 ... H-8 in [hardware-reference.md](hardware-reference.md#open-items).
 - D-2 The system disk is written by the emulator from the Plus D System Tape v2a (`CONFIG` with default answers);
   S-DISK serves only as a comparison. P0.4 therefore runs after P2.
 - D-3 A `.mgt` on a machine without a +D is refused with a hint naming the presets; no automatic model switch.
-- D-4 DISCiPLE later: P7 is not part of this work.
+- D-4 DISCiPLE later: P7, done after the +D (2026-11-20).
 
 ## Other emulators checked
 

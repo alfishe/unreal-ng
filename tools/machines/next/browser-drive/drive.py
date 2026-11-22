@@ -15,11 +15,23 @@ STEP is one of
 
 "Idle" is the NextZXOS key-wait loop: the CPU halted at #0C8F. The Browser remembers the directory it was last in (on the card:
 the user's NextZXOS state), so `browser` can open anywhere - start with `go:` the names of the path from the folder shown.
+The keys, hold frames and waits come from testdata/machines/zxnext/browser-navigation.json (navigation.py), shared with
+regress.py and NexBrowserRun_Test.
 
 Example, run the base Copper real-board test:
     drive.py boot space browser go:tests go:base go:copper enter
 """
-import argparse, json, os, re, sys, time, urllib.request
+import argparse, base64, hashlib, io, json, os, sys, time, urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import navigation as nav  # noqa: E402
+
+
+def paper(im, left, top, right, bottom):
+    """A box given in paper pixels (the 256 x 192 paper at 2x: 512 x 384) as a crop box of the captured frame, whatever its border
+    (640 x 480 with a 64-pixel border, 720 x 576 with the full one)"""
+    x0, y0 = (im.size[0] - 512) // 2, (im.size[1] - 384) // 2
+    return (x0 + left, y0 + top, x0 + right, y0 + bottom)
 
 
 class Machine:
@@ -35,66 +47,84 @@ class Machine:
     def tap(self, key, frames=6):
         self.call('/%s/keyboard/tap' % self.id, {'key': key, 'frames': frames})
 
+    def combo(self, keys, frames=6):
+        self.call('/%s/keyboard/combo' % self.id, {'keys': keys, 'frames': frames})
+
     def idle(self, settle=1.0, timeout=60):
         """Wait until the CPU waits for a key (halted in NextZXOS's loop at #0C8F)"""
         time.sleep(settle)
         end = time.time() + timeout
         while time.time() < end:
             regs = self.call('/%s/registers' % self.id)
-            if regs['interrupt']['halted'] and regs['special']['pc'] == 0x0C8F:
+            if regs['interrupt']['halted'] and regs['special']['pc'] == nav.IDLE_PC:
                 return True
             time.sleep(0.25)
         return False
 
+    def step(self, step, chars=0):
+        """One step of browser-navigation.json (a name or a step object)"""
+        return nav.realtime_step(self, step, chars)
+
     def root(self):
         """EDIT goes up a directory: press it until the Browser is at the card's root"""
         for _ in range(8):
-            self.tap('edit')
-            self.idle(0.6)
+            self.step('up')
 
-    def reach(self, folder, name, runs=False):
-        """Put the cursor on `name` of the directory shown (host path `folder`) and press ENTER. The Browser's order is '.' '..' then the
-        names case-insensitively; the search (H) takes the shortest unique prefix of letters and digits, any other name is reached by
-        counting down from the top. runs=True: the entry is a program, do not wait for the key-wait loop afterwards"""
-        entries = ['.', '..'] + sorted(os.listdir(folder), key=lambda n: n.lower())
-        lower = [e.lower() for e in entries]
-        safe = re.match(r'^[A-Za-z0-9]+', name)
-        if safe:
-            text = safe.group(0).lower()
-            for length in range(1, len(text) + 1):
-                if sum(e.startswith(text[:length]) for e in lower) == 1:
-                    self.tap('h')
-                    time.sleep(0.3)
-                    self.call('/%s/keyboard/type' % self.id, {'text': name[:length], 'delay_frames': 5})
-                    time.sleep(0.4 + 0.12 * length)
-                    self.idle(0.3)
-                    self.tap('enter')  # accept the search
-                    time.sleep(0.3)
-                    break
-            else:
-                self._count_down(entries.index(name))
-        else:
-            self._count_down(entries.index(name))
-        self.tap('enter')  # open / run the entry
-        if not runs:
-            self.idle(1.2)
+    def screen(self):
+        from PIL import Image
+        data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (self.base, self.id)))
+        return Image.open(io.BytesIO(base64.b64decode(data['data']))).convert('RGB')
 
-    def _count_down(self, index):
-        for _ in range(index):
-            self.tap('down', 4)
-            time.sleep(0.12)
+    def search_line_sig(self):
+        """The Browser's bottom prompt line (Search: <text>) as a hash: it changes when typed text arrives"""
+        im = self.screen()
+        return hashlib.md5(im.crop(paper(im, 0, 354, 512, 370)).tobytes()).hexdigest()
+
+    def type_search(self, text):
+        """H, the text, ENTER. A typed text can fail to arrive (the Search prompt stayed empty and the next ENTER opened the wrong
+        entry). The prompt line has a blinking cursor, so "did it change" compares against BOTH blink states taken before typing; the
+        text is typed again only when the prompt still equals one of them after a settle time (typing twice leaves doubled letters:
+        never retype on a doubt)"""
+        self.step('search')
+        self.idle(0.3)
+        before = set()
+        for _ in range(6):  # a few frames apart: both blink phases
+            before.add(self.search_line_sig())
+            time.sleep(0.15)
+        for attempt in range(2):
+            self.call('/%s/keyboard/type' % self.id, {'text': text, 'delay_frames': nav.STEPS['type']['delay']})
+            self.step('type', len(text))
+            shots = {self.search_line_sig() for _ in range(4) if time.sleep(0.12) is None}
+            if not (shots & before):
+                break
+        self.step('accept')  # the cursor stays on the match; the Browser has taken the search before the next ENTER
+
+    def reach(self, folder, name, root=False):
+        """Put the Browser's cursor on `name` of the directory shown (host path `folder`; root: the card root, no '.' / '..') by the
+        search with the shortest unique prefix, or by counting down from the top (browser-navigation.json, search)"""
+        listing = nav.entries(folder, root)
+        prefix = nav.search_prefix(listing, name)
+        if prefix:
+            self.type_search(prefix)
+            return 'search:' + prefix
+        for _ in range(listing.index(name)):
+            self.step('down')
+        return 'down:%d' % listing.index(name)
+
+    def run_file(self, name, between=None):
+        """Run the file `name` under the cursor (its extension's run steps); between(step) is called after each step"""
+        for step in nav.run_steps(name):
+            self.step(step)
+            if between:
+                between(step)
 
     def search(self, name, runs=False):
-        self.tap('h')
-        time.sleep(0.3)
-        self.call('/%s/keyboard/type' % self.id, {'text': name, 'delay_frames': 5})
-        time.sleep(0.4 + 0.12 * len(name))
-        self.idle(0.3)
-        self.tap('enter')  # accept the search
-        time.sleep(0.3)
-        self.tap('enter')  # open the entry found
-        if not runs:  # a program that runs never comes back to the key-wait loop
-            self.idle(1.2)
+        """go:<name>: search for the typed text, then open the entry found (a directory) or run it (runs=True: no idle wait)"""
+        self.type_search(name)
+        if runs:
+            self.tap('enter')
+        else:
+            self.step('open')
 
 
 def main():
@@ -105,13 +135,11 @@ def main():
     machine = Machine(args.port)
     for step in args.steps:
         if step == 'boot':
-            ok = machine.idle(2.5)
+            ok = machine.step('boot')
         elif step == 'space':
-            machine.tap('space')
-            ok = machine.idle(2)
+            ok = machine.step('menu')
         elif step == 'browser':
-            machine.tap('b')
-            ok = machine.idle(2.5)
+            ok = machine.step('browser')
         elif step.startswith('go:'):
             machine.search(step[3:])
             ok = True
@@ -122,8 +150,7 @@ def main():
             machine.root()
             ok = True
         elif step == 'break':
-            machine.tap('break')
-            ok = machine.idle(1)
+            ok = machine.step('back')
         elif step == 'status':
             print(json.dumps(machine.call('/%s/state/next' % machine.id)['machine'], indent=1))
             ok = True

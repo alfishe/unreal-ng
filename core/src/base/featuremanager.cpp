@@ -754,6 +754,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kEspJit,
+                     Features::kEspJitAlias,
+                     Features::kEspJitDesc,
+                     true,  // ON by default - the interpreter is the fallback
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     registerFeature({Features::kLowLatency,
                      Features::kLowLatencyAlias,
                      Features::kLowLatencyDesc,

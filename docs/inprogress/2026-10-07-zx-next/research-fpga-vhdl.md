@@ -149,7 +149,7 @@ copper address, NR `#62` bits 7:6 are the copper mode.
 | `#018000-#01BFFF` | 16K | alternate ROM 0 (128K) |
 | `#01C000-#01FFFF` | 16K | alternate ROM 1 (48K) |
 | `#020000-#03FFFF` | 128K | DivMMC RAM (16 x 8K banks) |
-| `#040000-#05FFFF` | 128K | ZX Spectrum RAM (MMU pages 0-15; page `#0A/#0B` = bank 5, `#0E/#0F` = bank 7) |
+| `#040000-#05FFFF` | 128K | ZX Spectrum RAM (MMU pages 0-15; page `#0A/#0B` = bank 5, `#0E/#0F` = bank 7). Pages `#0A`, `#0B`, `#0E` exist twice: the MMU reaches an FPGA block RAM instead (the ULA's), Layer 2 and NR `#04` this SRAM |
 | `#060000-#07FFFF` | 128K | extra RAM |
 | `#080000-#1FFFFF` | 3 x 512K | extra IC RAM (1st at `#080000`, 2nd at `#100000`, 3rd at `#180000`), if fitted |
 
@@ -159,7 +159,9 @@ earlier boards have two chips; a smaller RAM population simply leaves the upper 
 of the page sum overflowing bit 8 decide RAM vs ROM, so reads from a page past the populated RAM are the
 board's concern, not a decode rule).
 
-- The boot ROM (`bootrom.vhd`, 8K, `ADDR` 13 bits) is mapped at `#0000-#1FFF` while `bootrom_en = 1`; it is
+- The boot ROM (`bootrom.vhd`, 8K, `ADDR` 13 bits = `cpu_a(12:0)`) answers every read of `#0000-#3FFF` while `bootrom_en = 1`
+  (its 8K at `#0000` and again at `#2000`, ahead of the MMU, Multiface, DivMMC and Layer 2: `cpu_di`'s first choice, `zxnext.vhd`
+  1856-1857); writes take the decode under it (NR `#04`'s bank in config mode, 3044-3050). It is
   switched on by a reset in config mode and off by **any write to NR `#03`** (`bootrom_en <= '0'`). The 8192 bytes
   are in the VHDL as a plain byte array and can be extracted by a script (MD5 `8c4f0c1b77db8de9ed857f2c873250b8`
   at this commit). The `tbblue_loader.rom` that ships inside ZEsarUX is a **different, older** image (6822 of
@@ -458,6 +460,9 @@ Full treatment with the esxDOS flow: [esxdos-and-sd.md](esxdos-and-sd.md). Facts
 
 ## 22. Differences found against ZEsarUX (`machines/tbblue.c`, commit `2d8dba1`) and MAME
 
+The full read-through of `tbblue.c` against the FPGA and unreal-ng, with the unreal-ng bug candidates it found:
+[research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md).
+
 | Item | FPGA (this note) | ZEsarUX | Action |
 |:--|:--|:--|:--|
 | Copper modes (NR `#62` bits 7:6) | `01` from index 0 and loop, `10` from the last point and loop, `11` from 0 and restart at (0,0); 1024 x 16-bit entries, the 10-bit address wraps; same value written again does not restart; one instruction per 28 MHz clock; WAIT compares `hcount >= H*8 + 12` | modes named "run", "loop", "loop reset", "VBI"; `copper_pc` steps over `TBBLUE_COPPER_MEMORY`; the comment still says "stop at last address"; cost per MOVE 2 T and WAIT 1 T in CPU T-states | follow the FPGA; test with Tests/base/Copper |
@@ -471,11 +476,14 @@ Full treatment with the esxDOS flow: [esxdos-and-sd.md](esxdos-and-sd.md). Facts
 
 Multiface internals (paged-in view, `mf_is_active`), the Pi GPIO / I2S block, the expansion bus control
 (`nr_80`-`nr_8a`, `i_BUS_*`), the hdmi path (not needed), `membrane.vhd` scan timing and `membrane_stick.vhd`,
-the keymap RAM format, the remaining NextREG read-back table (`port_253b_dat` multiplexer at `zxnext.vhd`
-~5800-6300), and `ym2149.vhd`'s exact volume table. ZEsarUX `tbblue.c` (9005 lines) was sampled (reset, boot,
-copper, sprites, contention), not read through. CSpect is closed source. NextZXOS itself is a binary distribution; the
+the keymap RAM format, and `ym2149.vhd`'s exact volume table. The NextREG read-back table (`port_253b_dat`
+multiplexer, `zxnext.vhd` 5881-6285) and ZEsarUX `tbblue.c` (9005 lines) were read through on 2026-11-20:
+[research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md) (its coverage section lists the few helper and
+renderer ranges left out). CSpect is closed source. NextZXOS itself is a binary distribution; the
 parts that matter for the machine (the card driver in ROM page 2 and the DivMMC ROM) were disassembled from the
 shipped images ([esxdos-and-sd.md](esxdos-and-sd.md)).
+
+The welcome-screen border against jnext and the wiki / manual against the VHDL: [research-reference-compares.md](research-reference-compares.md).
 
 ## 24. Core version history that matters for emulation (`changelog.md`, 3.00 to 3.02.03)
 

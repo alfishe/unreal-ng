@@ -88,17 +88,22 @@ try:
         call('DELETE', f"/emulator/{e['id']}")
     tree = call('GET', '/emulator/machines')['families']
 
-    # What to walk: a family of one machine with several sizes, a family of several machines one of which has several
-    # sizes, a machine of one size in such a family to start (a variant when there is one)
-    single = next((f for f in tree if len(f['machines']) == 1 and len(f['machines'][0]['ram_sizes_kb']) > 1), None)
-    multi = next((f for f in tree if len(f['machines']) > 1 and any(len(m['ram_sizes_kb']) > 1 for m in f['machines'])), None)
+    # What to walk, whatever the catalog holds: families of several machines with a machine of several sizes (the
+    # first to walk, a second to start in), a machine of one size in such a family to start (a variant when there is
+    # one), and a family of one machine with several sizes (its sizes come at once) when the catalog has one
+    multis = [f for f in tree if len(f['machines']) > 1 and any(len(m['ram_sizes_kb']) > 1 for m in f['machines'])]
     fixed = [(f, m) for f in tree if len(f['machines']) > 1 for m in f['machines'] if len(m['ram_sizes_kb']) == 1]
     fixed.sort(key=lambda fm: fm[1]['kind'] != 'variant')
-    if not (single and multi and fixed):
-        sys.exit('the catalog lacks a family shape this check walks')
+    single = next((f for f in tree if len(f['machines']) == 1 and len(f['machines'][0]['ram_sizes_kb']) > 1), None)
+    if not multis or not fixed:
+        sys.exit('the catalog has no family of several machines with one of several RAM sizes')
+    multi = multis[0]
     sized = next(m for m in multi['machines'] if len(m['ram_sizes_kb']) > 1)
-    start = single['machines'][0]
+    start_f = single or (multis[1] if len(multis) > 1 else multi)
+    start = next(m for m in start_f['machines'] if len(m['ram_sizes_kb']) > 1)
     start_kb = start['ram_sizes_kb'][-1]
+    print(f"walks {multi['title']} / {sized['title']}, starts in {start_f['title']} / {start['title']} {start_kb}K"
+          + ('' if single else ' (no family of one machine with several sizes in this catalog)'), flush=True)
     call('POST', '/emulator/start', {'model': start['name'], 'ram_size': start_kb})
 
     target = None
@@ -157,7 +162,7 @@ try:
     check(f'Model row: {title(start, start_kb)}', model_value(st) == title(start, start_kb), model_value(st))
     st = g('handheld.accept')
     check('families: one row each, "›" where a level follows', rows(st) == fam_rows, rows(st))
-    check('the cursor is on the running family', at(st) == family_row(single), at(st))
+    check('the cursor is on the running family', at(st) == family_row(start_f), at(st))
 
     st = choose(st, family_row(multi))
     want = ['..  Model'] + [m['title'] + ('  ›' if len(m['ram_sizes_kb']) > 1 else '') for m in multi['machines']]
@@ -184,12 +189,16 @@ try:
     check('B on the machines goes to the families, back on the family', pick(st).get('title') == 'Model' and at(st) == family_row(multi),
           (pick(st).get('title'), at(st)))
 
-    st = choose(st, family_row(single))
-    want = ['..  Model'] + [ram_label(kb) for kb in start['ram_sizes_kb']]
-    check(f'{single["title"]} (one machine): "..", then the sizes, no "."', rows(st) == want, rows(st))
+    st = choose(st, family_row(start_f))
+    if single:
+        want = ['..  Model'] + [ram_label(kb) for kb in start['ram_sizes_kb']]
+        check(f'{single["title"]} (one machine): "..", then the sizes, no "."', rows(st) == want, rows(st))
+    else:
+        check('the cursor is on the running machine', at(st) == start['title'] + '  ›', at(st))
+        st = choose(st, start['title'] + '  ›')
     check('the cursor is on the running size', at(st) == ram_label(start_kb), at(st))
-    st = choose(st, '..  Model')
-    check('".." there goes to the families', pick(st).get('title') == 'Model', pick(st).get('title'))
+    st = choose(st, '..  Model' if single else '.   Model')
+    check('back to the families from the running machine', pick(st).get('title') == 'Model', pick(st).get('title'))
 
     f, m = fixed[0]
     st = choose(st, family_row(f))

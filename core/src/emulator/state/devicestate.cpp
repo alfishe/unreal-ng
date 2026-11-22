@@ -1491,15 +1491,24 @@ StateNode WdControllerNode(const WD1793& fdc, const char* controller)
     return ret;
 }
 
-/// A card's disk interface (the MGT +D): its WD1772, its paging state and its drives by media slot
+/// A card's disk interface (the MGT +D or DISCiPLE): its WD1772, its paging state and its drives by media slot
 StateNode PlusDNode(const PlusDCard& card, EmulatorContext* context)
 {
     const WD1793& fdc = *card.Fdc();
-    StateNode ret = WdControllerNode(fdc, "WD1772 (MGT +D)");
+    const std::string controller = std::string("WD1772 (") + card.DisplayName() + ")";
+    StateNode ret = WdControllerNode(fdc, controller.c_str());
     ret["card"] = card.Def().id;
     ret["slot"] = card.SlotId();
     ret["paged"] = card.IsPaged();
     ret["control_register"] = int(card.Control());
+    if (card.IsDisciple())
+    {
+        // RAM at #0000 after a write to #7B; the paging hold-off after /RESET; the inhibit button
+        ret["memory_swapped"] = card.IsMemorySwapped();
+        ret["reset_hold"] = card.IsResetHeld();
+        ret["inhibit"] = card.IsInhibited();
+        ret["single_density"] = (card.Control() & PlusDCard::kDiscipleControlSingleDensity) != 0;
+    }
     // The printer port: no printer is connected; the strobe pulses the guest made are counted
     StateNode printer = StateNode::Object();
     printer["data_latch"] = int(card.PrinterData());
@@ -1515,7 +1524,7 @@ StateNode PlusDNode(const PlusDCard& card, EmulatorContext* context)
             selected = int(d);
         StateNode drive = StateNode::Object();
         drive["index"] = int(d);
-        drive["media_slot"] = PlusDCard::kDriveSlotIds[d];
+        drive["media_slot"] = card.DriveSlotId(d);
         drive["present"] = fdd != nullptr;
         if (fdd != nullptr)
         {
@@ -1598,7 +1607,8 @@ StateNode Fdc(EmulatorContext* context)
             return P2666BetaDiskNode(context, *ramDisk, p2666->BoardEdge());
     }
 
-    // A card's controller is the machine's disk controller when the board has no Beta 128 of its own (48K-PLUSD)
+    // A card's controller is the machine's disk controller when the board has no Beta 128 of its own (48K-PLUSD,
+    // 48K-DISCIPLE)
     const std::vector<const PlusDCard*> cards = CardDiskInterfaces(context);
     if (!cards.empty() && !context->config.trdos_present)
         return PlusDNode(*cards.front(), context);

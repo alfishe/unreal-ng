@@ -107,8 +107,10 @@ public:
     static constexpr uint16_t kBootRomPage = MAX_ROM_PAGES - 1;
     static constexpr uint16_t kSystemAreaPages = 16;
     static constexpr uint32_t kBootRomSize = 0x2000;
-    /// Machine type 000 is config mode: the boot ROM (while enabled) and the NR #04 bank show at #0000 instead of
-    /// the personality ROM, and both are writable system memory
+    /// Machine type 000 is config mode: the NR #04 bank shows at #0000-#3FFF instead of the personality ROM, writable. While the boot
+    /// ROM is on, every READ of #0000-#3FFF is the boot ROM, its 8K at #0000 and again at #2000, ahead of the MMU, Multiface, DivMMC and
+    /// Layer 2 (zxnext.vhd 1856-1857, bootrom addressed by cpu_a(12:0), 3199-3204); WRITES take the decode below it as if it were off
+    /// (the NR #04 bank in config mode, 3044-3050: the firmware fills the system area under the running boot ROM)
     void SetConfigMode(bool on);
     bool InConfigMode() const { return _configMode; }
     void SetBootRomEnabled(bool on);
@@ -168,10 +170,37 @@ public:
     /// slots take nothing, Layer 2's write mapping and the DivMMC / Multiface views apply, and the odd and even 8K slots of a 16K
     /// window may show unrelated pages. Breakpoints do not see it; the TTD dirty pages and the video flag are kept
     void DmaWrite(uint16_t addr, uint8_t value);
-    /// zxnDDMA physical mode (no MMU): a byte of the 4 MB SRAM, #000000-#03FFFF the system area (ROM pages), #040000 + 16K x bank the RAM.
-    /// A RAM bank the board does not have, and banks 5 and 7 (block RAM: the SRAM behind them is not what the ULA shows), read #FF and ignore writes
+    /// zxnDDMA physical mode (no MMU): a byte of the SRAM, #000000-#03FFFF the system area (ROM pages), #040000 + 16K x bank the RAM.
+    /// The address wraps in the board's SRAM (PhysicalAddressMask: NextSramBytes of the issue). Banks 5 and the first 8K of bank 7 are
+    /// their SRAM side (SramTwin: not what the ULA shows). A RAM bank the machine does not have (beyond config.ramsize) reads #FF and
+    /// ignores writes
     uint8_t PhysicalRead(uint32_t address);
     void PhysicalWrite(uint32_t address, uint8_t value);
+    /// The SRAM address lines of the board: #3FFFFF (Issue 5), #1FFFFF (Issue 4, Issue 2 with the expansion), #0FFFFF (Issue 2)
+    uint32_t PhysicalAddressMask() const { return _sramMask; }
+    /// What a physical address reaches, for reports: "system area", "ram", "ram (sram side)" (banks 5 / 7), "not fitted"
+    const char* PhysicalKind(uint32_t address) const;
+
+    /// region <The SRAM side of banks 5 and 7>
+    /// Banks 5 and 7 exist twice on the board (zxnext.vhd 2961-2962, 3039-3041, 3061-3063, 6562-6702). The ULA's 16K bank 5 (8K pages
+    /// #0A, #0B) and the first 8K of bank 7 (page #0E) are FPGA block RAM: the CPU and the DMA (which drives the CPU's bus) reach them
+    /// through the MMU and the 128K paging, the ULA, LoRes and the tilemap read them, and such an access never reaches the SRAM
+    /// (sram_pre_active is 0, the data is cpu_bank5_do / cpu_bank7_do). The SRAM holds the same three pages too: Layer 2's display fetch
+    /// (o_RAM_B_ADDR), its #123B read / write mapping (sram_bank5 <= '0'), the NR #04 config mapping and the zxnDDMA physical addresses
+    /// reach those, and nothing writes both. Page #0F (the second 8K of bank 7) is SRAM only: one instance.
+    /// RAMPageAddress(5) / (7) hold what the CPU sees (the block RAM, and #0F); the SRAM side of #0A, #0B, #0E is this 24K twin, in
+    /// the cache area of the buffer (the Next has no cache), saved by TTD with the system area (TTDNextSystemArea)
+    static constexpr uint32_t kSramTwinBytes = 3 * kSlotSize;
+    static_assert(kSramTwinBytes <= static_cast<uint32_t>(MAX_CACHE_PAGES) * PAGE_SIZE, "the SRAM twin lives in the cache area");
+    /// Where in the twin the SRAM side of an 8K RAM page is, or -1 for a page with a single instance
+    static constexpr int SramTwinOffset(unsigned page8k)
+    {
+        return page8k == 0x0A ? 0 : page8k == 0x0B ? static_cast<int>(kSlotSize) : page8k == 0x0E ? static_cast<int>(2 * kSlotSize) : -1;
+    }
+    uint8_t* SramTwin() { return _cacheBase; }
+    /// The SRAM's view of an 8K RAM page (MMU numbering): its offset in the buffer, the twin for #0A, #0B and #0E
+    uint32_t SramPageOffset(unsigned page8k) const;
+    /// endregion
 
     /// Debugger / test pokes into the slot an address falls in (the base DirectWrite sees the 16K windows)
     void PokeSlot(uint16_t addr, uint8_t value);
@@ -208,6 +237,7 @@ private:
     bool _bootRom = false;
     bool _bootRomLoaded = false;
     uint8_t _cfgBank = 0;
+    uint32_t _sramMask = 0x1FFFFF;  // the SRAM address lines (NextSramBytes - 1): what a zxnDDMA physical address wraps in
     const char* _kind[kSlots] = {};
     uint32_t _readOff[kSlots] = {};
     uint32_t _writeOff[kSlots] = {};

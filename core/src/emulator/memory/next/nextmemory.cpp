@@ -6,6 +6,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/z80n/nextboardissue.h"
 #include "emulator/video/ulacontention.h"
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -24,6 +25,9 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
     _ttdSlots8k = _ttdKeys;     // TTD names a byte per 8K slot (TtdKeyOf)
     _readSlots8k = _readOff;    // and the CPU time profile its cells (ExecPhysOffset)
     _toolWriteRedirect = true;  // and DirectWriteToZ80Memory writes through it
+    std::memset(SramTwin(), 0, kSramTwinBytes);  // a shared segment may be an old one
+    if (_context)
+        _sramMask = NextSramBytes(static_cast<NextBoardIssue>(_context->config.next_board_issue), _context->config.ramsize) - 1;
     ResetMmu();
 }
 
@@ -148,7 +152,7 @@ MemoryPageDescriptor NextMemory::MapZ80AddressToPhysicalPage(uint16_t address)
         result.addressInPage = static_cast<uint16_t>(offset % PAGE_SIZE);
     }
     else
-        result.addressInPage = static_cast<uint16_t>(address & 0x3FFF);  // the trash page: no page (DivMMC and Multiface memory is in the ROM pages)
+        result.addressInPage = static_cast<uint16_t>(address & 0x3FFF);  // the trash page or the SRAM side of banks 5 / 7 (SramTwin): no page
     return result;
 }
 
@@ -185,20 +189,19 @@ void NextMemory::DmaWrite(uint16_t addr, uint8_t value)
 
 uint8_t NextMemory::PhysicalRead(uint32_t address)
 {
-    address &= 0x3FFFFF;
+    address &= _sramMask;  // the board's SRAM address lines: Issue 4 drops bit 21, Issue 2 bit 20 too (without the expansion)
     constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
     if (address < kSystemBytes)
         return ROMPageHostAddress(static_cast<uint8_t>(address / PAGE_SIZE))[address % PAGE_SIZE];
     const uint32_t offset = address - kSystemBytes;
-    const unsigned bank = offset / PAGE_SIZE;
-    if (bank >= InstalledRamPages() || bank == 5 || bank == 7)
+    if (offset / PAGE_SIZE >= InstalledRamPages())
         return 0xFF;
-    return RAMPageAddress(static_cast<uint16_t>(bank))[offset % PAGE_SIZE];
+    return _memory[SramPageOffset(offset / kSlotSize) + (offset & (kSlotSize - 1))];  // the SRAM side of banks 5 and 7
 }
 
 void NextMemory::PhysicalWrite(uint32_t address, uint8_t value)
 {
-    address &= 0x3FFFFF;
+    address &= _sramMask;
     constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
     if (address < kSystemBytes)
     {
@@ -207,11 +210,24 @@ void NextMemory::PhysicalWrite(uint32_t address, uint8_t value)
     }
     const uint32_t offset = address - kSystemBytes;
     const unsigned bank = offset / PAGE_SIZE;
-    if (bank >= InstalledRamPages() || bank == 5 || bank == 7)
+    if (bank >= InstalledRamPages())
         return;
-    RAMPageAddress(static_cast<uint16_t>(bank))[offset % PAGE_SIZE] = value;
-    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
+    const unsigned page8k = offset / kSlotSize;
+    _memory[SramPageOffset(page8k) + (offset & (kSlotSize - 1))] = value;  // banks 5 and 7: the SRAM side, not the ULA's block RAM
+    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr && SramTwinOffset(page8k) < 0)
         _ttdDirtyTracker->MarkDirty(static_cast<ttd::PhysPage>(bank));
+}
+
+const char* NextMemory::PhysicalKind(uint32_t address) const
+{
+    address &= _sramMask;
+    constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
+    if (address < kSystemBytes)
+        return "system area";
+    const uint32_t offset = address - kSystemBytes;
+    if (offset / PAGE_SIZE >= InstalledRamPages())
+        return "not fitted";
+    return SramTwinOffset(offset / kSlotSize) >= 0 ? "ram (sram side)" : "ram";
 }
 
 void NextMemory::PokeSlot(uint16_t addr, uint8_t value)
@@ -431,12 +447,19 @@ unsigned NextMemory::InstalledRamPages() const
     return std::min<unsigned>({pages, kAddressableRamPages, static_cast<unsigned>(MAX_RAM_PAGES)});
 }
 
+uint32_t NextMemory::SramPageOffset(unsigned page8k) const
+{
+    const int twin = SramTwinOffset(page8k);
+    if (twin >= 0)
+        return static_cast<uint32_t>(_cacheBase - _memory) + static_cast<uint32_t>(twin);
+    return static_cast<uint32_t>(_ramBase - _memory) + (page8k >> 1) * static_cast<uint32_t>(PAGE_SIZE) + (page8k & 1) * kSlotSize;
+}
+
 void NextMemory::MapSlot(unsigned slot)
 {
     const uint8_t value = _mmu[slot];
     const uint32_t trash = static_cast<uint32_t>(TRASH_MEMORY_OFFSET);
-    const bool bootRomHere = slot == 0 && _configMode && _bootRom && _bootRomLoaded;
-    if (slot < 2 && _mfActive && !bootRomHere)
+    if (slot < 2 && _mfActive)
     {
         // Multiface (zxnext.vhd: sram address #014000 + A13, the ROM half read-only, no DivMMC / Layer 2 / MMU override)
         const uint8_t* mem = ROMPageHostAddress(5) + slot * kSlotSize;
@@ -445,7 +468,7 @@ void NextMemory::MapSlot(unsigned slot)
         _physPage[slot] = ttd::kPhysPageNone;
         _kind[slot] = slot == 0 ? "multiface rom" : "multiface ram";
     }
-    else if (slot < 2 && _divView.mapped && !bootRomHere)
+    else if (slot < 2 && _divView.mapped)
     {
         // DivMMC: slot 0 the ROM (or RAM bank 3 with MAPRAM), slot 1 the selected RAM bank
         const uint8_t* mem;
@@ -462,17 +485,10 @@ void NextMemory::MapSlot(unsigned slot)
         _physPage[slot] = ttd::kPhysPageNone;
         _kind[slot] = (slot == 0 && !_divView.mapram) ? "divmmc rom" : "divmmc ram";
     }
-    else if (MmuIsRom(slot, value) && bootRomHere)
-    {
-        // the boot ROM: read-only
-        _readOff[slot] = static_cast<uint32_t>(ROMPageHostAddress(kBootRomPage) - _memory);
-        _writeOff[slot] = trash;
-        _physPage[slot] = ttd::kPhysPageNone;
-        _kind[slot] = "boot rom";
-    }
     else if (MmuIsRom(slot, value) && _configMode)
     {
-        // config mapping: NR #04's 16K SRAM bank, writable (the firmware loads the ROMs through it)
+        // config mapping: NR #04's 16K SRAM bank, writable (the firmware loads the ROMs through it). zxnext.vhd 3044-3050: the SRAM
+        // address is nr_04_romram_bank & A13, so a RAM bank reached this way is its SRAM side (banks 5 and 7: SramTwin, not the ULA's)
         if (_cfgBank >= kSystemAreaPages && static_cast<unsigned>(_cfgBank - kSystemAreaPages) >= InstalledRamPages())
         {
             // a 16K SRAM bank beyond the installed RAM: nothing answers
@@ -480,11 +496,17 @@ void NextMemory::MapSlot(unsigned slot)
             _physPage[slot] = ttd::kPhysPageNone;
             _kind[slot] = "unmapped";
         }
+        else if (_cfgBank < kSystemAreaPages)
+        {
+            _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(ROMPageHostAddress(_cfgBank) + slot * kSlotSize - _memory);
+            _physPage[slot] = ttd::kPhysPageNone;
+            _kind[slot] = "config bank";
+        }
         else
         {
-            const uint8_t* mem = _cfgBank < kSystemAreaPages ? ROMPageHostAddress(_cfgBank) : RAMPageAddress(_cfgBank - kSystemAreaPages);
-            _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(mem + slot * kSlotSize - _memory);
-            _physPage[slot] = _cfgBank < kSystemAreaPages ? ttd::kPhysPageNone : static_cast<ttd::PhysPage>(_cfgBank - kSystemAreaPages);
+            const unsigned page8k = static_cast<unsigned>(_cfgBank - kSystemAreaPages) * 2 + slot;
+            _readOff[slot] = _writeOff[slot] = SramPageOffset(page8k);
+            _physPage[slot] = SramTwinOffset(page8k) >= 0 ? ttd::kPhysPageNone : static_cast<ttd::PhysPage>(_cfgBank - kSystemAreaPages);
             _kind[slot] = "config bank";
         }
     }
@@ -514,6 +536,7 @@ void NextMemory::MapSlot(unsigned slot)
     }
     else if (value < kRamPages8K && (value >> 1) < InstalledRamPages())
     {
+        // pages #0A, #0B, #0E: the block RAM (RAMPageAddress), not their SRAM side
         const uint8_t* ram = RAMPageAddress(value >> 1) + (value & 1) * kSlotSize;
         _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(ram - _memory);
         _physPage[slot] = static_cast<ttd::PhysPage>(value >> 1);
@@ -525,12 +548,21 @@ void NextMemory::MapSlot(unsigned slot)
         _physPage[slot] = ttd::kPhysPageNone;
         _kind[slot] = "unmapped";
     }
-    if (!(slot < 2 && (_divView.mapped || _mfActive) && !bootRomHere) && !bootRomHere)
+    if (!(slot < 2 && (_divView.mapped || _mfActive)))
         ApplyLayer2(slot);
-    // the 28 MHz read wait: everything but the boot ROM, unmapped slots (sram_pre_active = 0) and the bank 7 BRAM page (#0E)
+    // the 28 MHz read wait: everything but the boot ROM (below), unmapped slots (sram_pre_active = 0) and the bank 7 BRAM page (#0E)
     const char* kind = _kind[slot];
-    _slotSramWait[slot] = std::strcmp(kind, "boot rom") != 0 && std::strcmp(kind, "unmapped") != 0 &&
-                          !(std::strcmp(kind, "ram") == 0 && value == 0x0E);
+    _slotSramWait[slot] = std::strcmp(kind, "unmapped") != 0 && !(std::strcmp(kind, "ram") == 0 && value == 0x0E);
+    if (slot < 2 && _configMode && _bootRom && _bootRomLoaded)
+    {
+        // The boot ROM answers every read of #0000-#3FFF (cpu_di's first choice, zxnext.vhd 1856-1857), its 8K twice (addressed by
+        // cpu_a(12:0), 3199-3204). The decode under it still runs: the write side stays; the dirty page is the one the writes reach.
+        // Its reads keep no 28 MHz wait, as before. Open: sram_req has no bootrom_en term, so the SRAM cycle under the boot ROM would
+        // wait too; with that wait NextFirmware_Test.SeeksOverTheBootGiveTheLiveRunsState diverges (a TTD restore question of its own)
+        _readOff[slot] = static_cast<uint32_t>(ROMPageHostAddress(kBootRomPage) - _memory);
+        _kind[slot] = "boot rom";
+        _slotSramWait[slot] = false;
+    }
 }
 
 /// Layer 2 over the slot the MMU (or the ROM) would show: reads and writes separately
@@ -544,7 +576,8 @@ void NextMemory::ApplyLayer2(unsigned slot)
     const unsigned bank16 = static_cast<unsigned>(_l2View.bank) + (all ? (slot >> 1) : _l2View.segment) + _l2View.offset;
     if (bank16 >= InstalledRamPages())
         return;
-    const uint32_t off = static_cast<uint32_t>(RAMPageAddress(static_cast<uint16_t>(bank16)) + (slot & 1) * kSlotSize - _memory);
+    // the Layer 2 mapping addresses the SRAM (zxnext.vhd 3100-3104, sram_bank5 <= '0'): banks 5 and 7 are their SRAM side
+    const uint32_t off = SramPageOffset(bank16 * 2 + (slot & 1));
     if (_l2View.read)
     {
         _readOff[slot] = off;

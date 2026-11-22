@@ -485,6 +485,19 @@ public:
         (void)page;
         return nullptr;
     }
+    /// The 16K RAM page `page` as mapCardAddress numbers it, mapped or not (firmware objects bound to a physical page,
+    /// gs-debugger design §8A.9 M2); null past the last page or without a CPU
+    virtual const uint8_t* cardRamPage(uint32_t page) const
+    {
+        (void)page;
+        return nullptr;
+    }
+    /// The 16K page `page` (0: low, 1: high) of the firmware the command code runs: the ROM's (cardRomPage) on a GS;
+    /// NeoGS runs its main ROM from RAM pages 0-1 (soundchip_neogs.h). For its SHA-256 (IdentifyGSFirmware)
+    virtual const uint8_t* firmwarePage(uint32_t page) const
+    {
+        return cardRomPage(page);
+    }
     /// The card CPU's full register file; false without a CPU
     virtual bool cardRegisters(Z80CpuRegisters& out) const
     {
@@ -642,6 +655,11 @@ protected:
     {
         if (commandLogOn()) [[unlikely]]
             _commandLog->HostReplyRead(value, automation);
+    }
+    void logHostStatusRead(uint8_t status)
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostStatusRead(status);
     }
     void logHostReset()
     {

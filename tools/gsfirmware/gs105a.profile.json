@@ -1,0 +1,801 @@
+{
+  "id": "gs105a-source",
+  "title": "General Sound firmware v1.05a (generated from the sources)",
+  "generated_by": "tools/gsfirmware/profile_from_source.py",
+  "dispatch": {
+    "kind": "stock_split",
+    "pc": "COMINT",
+    "table": "COMTAB",
+    "tableHigh": "COMTABH",
+    "unknownStub": "COMZ"
+  },
+  "commands": [
+    {
+      "number": "00",
+      "name": "Reset flags command",
+      "handler": "COM00",
+      "handler_address": "#0365"
+    },
+    {
+      "number": "01",
+      "name": "Initialize dac's command",
+      "handler": "COM01",
+      "handler_address": "#036C"
+    },
+    {
+      "number": "02",
+      "name": "Initialize volume control registers",
+      "handler": "COM02",
+      "handler_address": "#0381"
+    },
+    {
+      "number": "03",
+      "name": "Reset volume control registers",
+      "handler": "COM03",
+      "handler_address": "#0390"
+    },
+    {
+      "number": "04",
+      "name": "Set current channel",
+      "handler": "COM04",
+      "handler_address": "#039E"
+    },
+    {
+      "number": "05",
+      "name": "Set volume of current channel",
+      "handler": "COM05",
+      "handler_address": "#03A8"
+    },
+    {
+      "number": "06",
+      "name": "Output byte to cur channel",
+      "handler": "COM06",
+      "handler_address": "#03BB"
+    },
+    {
+      "number": "07",
+      "name": "Output byte to cur channel with volume control",
+      "handler": "COM07",
+      "handler_address": "#03D0"
+    },
+    {
+      "number": "09",
+      "name": "Set phisical volume of channel",
+      "handler": "COM09",
+      "handler_address": "#03F3"
+    },
+    {
+      "number": "0A",
+      "name": "Output byte to channel",
+      "handler": "COM0A",
+      "handler_address": "#0407"
+    },
+    {
+      "number": "0B",
+      "name": "Output byte to channel with volume control",
+      "handler": "COM0B",
+      "handler_address": "#041F"
+    },
+    {
+      "number": "0C",
+      "name": "Output to all channels",
+      "handler": "COM0C",
+      "handler_address": "#0444"
+    },
+    {
+      "number": "0D",
+      "name": "Output bytes to channels",
+      "handler": "COM0D",
+      "handler_address": "#046E"
+    },
+    {
+      "number": "0E",
+      "name": "Go in covox mode",
+      "handler": "COM0E",
+      "handler_address": "#0497"
+    },
+    {
+      "number": "0F",
+      "name": "Go in stereo covox mode",
+      "handler": "COM0F",
+      "handler_address": "#04AE"
+    },
+    {
+      "number": "10",
+      "name": "Output to port",
+      "handler": "COM10",
+      "handler_address": "#0511"
+    },
+    {
+      "number": "11",
+      "name": "Input from port",
+      "handler": "COM11",
+      "handler_address": "#0522"
+    },
+    {
+      "number": "12",
+      "name": "Out to page register",
+      "handler": "COM12",
+      "handler_address": "#052E"
+    },
+    {
+      "number": "13",
+      "name": "Jump to adress",
+      "handler": "COM13",
+      "handler_address": "#0537"
+    },
+    {
+      "number": "14",
+      "name": "Receive block",
+      "handler": "COM14",
+      "handler_address": "#0545"
+    },
+    {
+      "number": "15",
+      "name": "Transmit block",
+      "handler": "COM15",
+      "handler_address": "#0594"
+    },
+    {
+      "number": "16",
+      "name": "Put byte",
+      "handler": "COM16",
+      "handler_address": "#05FE"
+    },
+    {
+      "number": "17",
+      "name": "Get byte",
+      "handler": "COM17",
+      "handler_address": "#0617"
+    },
+    {
+      "number": "18",
+      "name": "Set memory pointer",
+      "handler": "COM18",
+      "handler_address": "#062A"
+    },
+    {
+      "number": "19",
+      "name": "Put byte to memory pointer",
+      "handler": "COM19",
+      "handler_address": "#063A"
+    },
+    {
+      "number": "1A",
+      "name": "Get byte from memory pointer",
+      "handler": "COM1A",
+      "handler_address": "#0642"
+    },
+    {
+      "number": "1B",
+      "name": "Increment pointer",
+      "handler": "COM1B",
+      "handler_address": "#064A"
+    },
+    {
+      "number": "1C",
+      "name": "Put byte to system area",
+      "handler": "COM1C",
+      "handler_address": "#0650"
+    },
+    {
+      "number": "1D",
+      "name": "Get byte from system area",
+      "handler": "COM1D",
+      "handler_address": "#0662"
+    },
+    {
+      "number": "20",
+      "name": "Get memory size",
+      "handler": "COM20",
+      "handler_address": "#C2A4"
+    },
+    {
+      "number": "21",
+      "name": "Get size of free space",
+      "handler": "COM21",
+      "handler_address": "#C2C9"
+    },
+    {
+      "number": "22",
+      "name": "COM22",
+      "handler": "COM22",
+      "handler_address": "#C2F2"
+    },
+    {
+      "number": "23",
+      "name": "COM23",
+      "handler": "COM23",
+      "handler_address": "#C2FD"
+    },
+    {
+      "number": "2A",
+      "name": "COM2A",
+      "handler": "COM2A",
+      "handler_address": "#C305"
+    },
+    {
+      "number": "2B",
+      "name": "COM2B",
+      "handler": "COM2B",
+      "handler_address": "#C329"
+    },
+    {
+      "number": "2C",
+      "name": "COM2C",
+      "handler": "COM2C",
+      "handler_address": "#C34D"
+    },
+    {
+      "number": "2D",
+      "name": "COM2D",
+      "handler": "COM2D",
+      "handler_address": "#C371"
+    },
+    {
+      "number": "2E",
+      "name": "COM2E",
+      "handler": "COM2E",
+      "handler_address": "#C395"
+    },
+    {
+      "number": "2F",
+      "name": "COM2F",
+      "handler": "COM2F",
+      "handler_address": "#C3B9"
+    },
+    {
+      "number": "30",
+      "name": "COM30",
+      "handler": "COM30",
+      "handler_address": "#C3DF"
+    },
+    {
+      "number": "31",
+      "name": "COM31",
+      "handler": "COM31",
+      "handler_address": "#C40B"
+    },
+    {
+      "number": "32",
+      "name": "COM32",
+      "handler": "COM32",
+      "handler_address": "#C4A5"
+    },
+    {
+      "number": "33",
+      "name": "COM33",
+      "handler": "COM33",
+      "handler_address": "#C4B4"
+    },
+    {
+      "number": "34",
+      "name": "COM34",
+      "handler": "COM34",
+      "handler_address": "#C4D3"
+    },
+    {
+      "number": "35",
+      "name": "COM35",
+      "handler": "COM35",
+      "handler_address": "#C4E0"
+    },
+    {
+      "number": "36",
+      "name": "COM36",
+      "handler": "COM36",
+      "handler_address": "#C504"
+    },
+    {
+      "number": "37",
+      "name": "COM37",
+      "handler": "COM37",
+      "handler_address": "#C50B"
+    },
+    {
+      "number": "38",
+      "name": "COM38",
+      "handler": "COM38",
+      "handler_address": "#C540"
+    },
+    {
+      "number": "39",
+      "name": "COM39",
+      "handler": "COM39",
+      "handler_address": "#C61E"
+    },
+    {
+      "number": "3A",
+      "name": "COM3A",
+      "handler": "COM3A",
+      "handler_address": "#C8F6"
+    },
+    {
+      "number": "3B",
+      "name": "COM3B",
+      "handler": "COM3B",
+      "handler_address": "#C657"
+    },
+    {
+      "number": "3C",
+      "name": "COM3C",
+      "handler": "COM3C",
+      "handler_address": "#C657"
+    },
+    {
+      "number": "3D",
+      "name": "COM3D",
+      "handler": "COM3D",
+      "handler_address": "#C664"
+    },
+    {
+      "number": "3E",
+      "name": "COM3E",
+      "handler": "COM3E",
+      "handler_address": "#C52C"
+    },
+    {
+      "number": "3F",
+      "name": "COM3F",
+      "handler": "COM3F",
+      "handler_address": "#C688"
+    },
+    {
+      "number": "40",
+      "name": "COM40",
+      "handler": "COM40",
+      "handler_address": "#C688"
+    },
+    {
+      "number": "41",
+      "name": "COM41",
+      "handler": "COM41",
+      "handler_address": "#C6B2"
+    },
+    {
+      "number": "42",
+      "name": "COM42",
+      "handler": "COM42",
+      "handler_address": "#C6CA"
+    },
+    {
+      "number": "45",
+      "name": "COM45",
+      "handler": "COM45",
+      "handler_address": "#C6E0"
+    },
+    {
+      "number": "46",
+      "name": "COM46",
+      "handler": "COM46",
+      "handler_address": "#C6F6"
+    },
+    {
+      "number": "47",
+      "name": "COM47",
+      "handler": "COM47",
+      "handler_address": "#C70C"
+    },
+    {
+      "number": "48",
+      "name": "COM48",
+      "handler": "COM48",
+      "handler_address": "#C722"
+    },
+    {
+      "number": "49",
+      "name": "COM49",
+      "handler": "COM49",
+      "handler_address": "#C73F"
+    },
+    {
+      "number": "50",
+      "name": "COM50",
+      "handler": "COM50",
+      "handler_address": "#C763"
+    },
+    {
+      "number": "60",
+      "name": "COM60",
+      "handler": "COM60",
+      "handler_address": "#C88A"
+    },
+    {
+      "number": "61",
+      "name": "COM61",
+      "handler": "COM61",
+      "handler_address": "#C892"
+    },
+    {
+      "number": "62",
+      "name": "COM62",
+      "handler": "COM62",
+      "handler_address": "#C89A"
+    },
+    {
+      "number": "63",
+      "name": "COM63",
+      "handler": "COM63",
+      "handler_address": "#C8B3"
+    },
+    {
+      "number": "64",
+      "name": "COM64",
+      "handler": "COM64",
+      "handler_address": "#C8AD"
+    },
+    {
+      "number": "65",
+      "name": "COM65",
+      "handler": "COM65",
+      "handler_address": "#C401"
+    },
+    {
+      "number": "66",
+      "name": "COM66",
+      "handler": "COM66",
+      "handler_address": "#C8CF"
+    },
+    {
+      "number": "67",
+      "name": "COM67",
+      "handler": "COM67",
+      "handler_address": "#C8D7"
+    },
+    {
+      "number": "68",
+      "name": "COM68",
+      "handler": "COM68",
+      "handler_address": "#C8DF"
+    },
+    {
+      "number": "69",
+      "name": "COM69",
+      "handler": "COM69",
+      "handler_address": "#C8E7"
+    },
+    {
+      "number": "6A",
+      "name": "Set player mode",
+      "handler": "Patch2",
+      "handler_address": "#1A5C"
+    },
+    {
+      "number": "6B",
+      "name": "Set minimal loop length",
+      "handler": "Patch5",
+      "handler_address": "#1A9E"
+    },
+    {
+      "number": "80",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "81",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "82",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "83",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "84",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "85",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "86",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "87",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "88",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "89",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "8A",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "8B",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "8C",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "8D",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "8E",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "8F",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "90",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "91",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "92",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "93",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "94",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "95",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "96",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "97",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "98",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "99",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "9A",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "9B",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "9C",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "9D",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "9E",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "9F",
+      "name": "COM80",
+      "handler": "COM80",
+      "handler_address": "#C91D"
+    },
+    {
+      "number": "A0",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A1",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A2",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A3",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A4",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A5",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A6",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A7",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A8",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "A9",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "AA",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "AB",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "AC",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "AD",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "AE",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "AF",
+      "name": "COMA0",
+      "handler": "COMA0",
+      "handler_address": "#C984"
+    },
+    {
+      "number": "F0",
+      "name": "COMF0",
+      "handler": "COMF0",
+      "handler_address": "#066F"
+    },
+    {
+      "number": "F3",
+      "name": "COMF3",
+      "handler": "COMF3",
+      "handler_address": "#0679"
+    },
+    {
+      "number": "F4",
+      "name": "COMF4",
+      "handler": "COMF4",
+      "handler_address": "#067E"
+    },
+    {
+      "number": "F5",
+      "name": "COMF5",
+      "handler": "COMF5",
+      "handler_address": "#0683"
+    },
+    {
+      "number": "F6",
+      "name": "COMF6",
+      "handler": "COMF6",
+      "handler_address": "#069B"
+    },
+    {
+      "number": "F7",
+      "name": "COMF7",
+      "handler": "COMF7",
+      "handler_address": "#06B0"
+    },
+    {
+      "number": "FA",
+      "name": "Test command",
+      "handler": "COMFA",
+      "handler_address": "#06B9"
+    }
+  ],
+  "symbolFile": "gs105a.map"
+}

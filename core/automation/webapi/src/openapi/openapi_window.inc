@@ -262,7 +262,8 @@
               "with the same matrix (zxnext on a Pentagon), or true; left out or false = the picture only");
         field("codec", "string", "prores (ProRes 4444, the default), h264 or h265 (4:4:4 through ffmpeg)");
         field("hardware", "boolean",
-              "h264 / h265 on the GPU's encoder (macOS VideoToolbox, no ffmpeg, 4:2:0 / H.265 4:2:2); default false");
+              "h264 / h265 on the GPU's encoder (macOS VideoToolbox, no ffmpeg, 4:2:0 / H.265 4:2:2; elsewhere "
+              "ffmpeg's NVENC or Linux VA-API, 4:4:4 where the card has it); default false");
         field("engine", "string",
               "native (default: hardware h264 / h265 and prores by the Mac's own writer) or ffmpeg (always ffmpeg: "
               "with hardware its GPU encoder, found by probing)");

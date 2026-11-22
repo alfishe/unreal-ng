@@ -1,5 +1,7 @@
 # TTD fixture corpus
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Recorded `.ttd` sessions from real emulator runs.
 
 - **`engine/`**: the corpus, recorded by the engine (the application's only

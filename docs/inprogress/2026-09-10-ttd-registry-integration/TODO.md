@@ -1,5 +1,7 @@
 # TODO — TTD peripheral registry integration (2026-09-10)
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 **Status:** closed 2026-10-30 — Phase 1 (blocking bug fixes) done; Phases 2–5
 were about v1's capture path (its blob vectors), which was deleted with v1
 (TTD v2 migration, Phase 6). The engine's device table (migration Phase 2) and

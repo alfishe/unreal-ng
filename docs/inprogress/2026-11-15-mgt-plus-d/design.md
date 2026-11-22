@@ -45,7 +45,7 @@ edge.1.drive2 = 3.5-80-ds
 ```
 
 A preset is a `machinevariants.cpp` entry (`48K-PLUSD`, `128K-PLUSD`, like `48K-BETA128`) so that the model list,
-the Qt menu, `emulator/models` and the catalog can name it. Any other machine with an edge connector can take the card
+the Qt menu, `emulator/models` and the automation can name it. Any other machine with an edge connector can take the card
 through `[SLOTS]` or `slots set` at run time; the fit is the slot manager's (§3).
 
 ROMs: `data/rom/gdos-pd.rom` is already in the tree (G+DOS v1a, CRC32 `569F7E55`, unused today) and stays where it is;
@@ -185,7 +185,7 @@ Design:
 4. **Inspection.** `DeviceState` gets one report per controller (`fdc.beta`, `fdc.plusd`), registers, drive,
    side, motor, spin-up, the latch and the page state; `inspect_state` aspect `fdc` lists both.
 5. **Fast disk.** `DiskFastLoad` stays Beta-only in this work; the +D runs at the real rate, turbo speeds it up.
-   (A +D fast path is a later item, not needed for the catalog: a G+DOS boot is ~3 s of emulated time.)
+   (A +D fast path is a later item: a G+DOS boot is ~3 s of emulated time.)
 
 ## 6. Media and formats
 
@@ -202,8 +202,8 @@ Design:
 
 | Item | Design |
 |---|---|
-| `.z80` v2/v3 modes 3 / 6 | load as 48K / 128K **with** the +D card when the machine can take it (`switch_model` rules as today); `mgtROM` (byte 59: paged) and `mgtType` (byte 83: 0 Disciple+Epson, 1 Disciple+HP, 16 +D) applied; Disciple types answered with "DISCiPLE not supported" until P7. Saving: written when the card is present |
-| SZX `PLSD` | read and written: flags (paged, seek direction), control latch, FDC registers, 8 KB RAM, ROM type / custom ROM; `PDSK` (disk names) read as a hint only |
+| `.z80` v2/v3 modes 3 / 6 | load as 48K / 128K **with** the +D card when the machine can take it (`switch_model` rules as today); `mgtROM` (byte 59: paged) and `mgtType` (byte 83: 0 Disciple+Epson, 1 Disciple+HP, 16 +D) applied; Disciple types load with the `disciple` card (P7; byte 83 kept, a +D machine logs the mismatch). Saving: written when the card is present, byte 83 = 16 (+D) or 0 (DISCiPLE) |
+| SZX `PLSD` | read and written: flags (paged, seek direction), control latch, FDC registers, 8 KB RAM, ROM type / custom ROM; `PDSK` (disk names) read as a hint only. A DISCiPLE is not written (SZX has no block for it) and ignores a `PLSD` |
 | TTD | `PlusDCardTtd` via `CollectTtdDevices` (new `TTDDeviceType` >= 66, see the TTD device key rule): page state, latch, RAM, printer latch; the WD state through the existing WD serializer with the variant in its header |
 | Session save | the card is part of the slot plan; media through the manager |
 
@@ -224,14 +224,13 @@ menu and the status bar disk LED per controller; `Snapshot button (+D)` action. 
 
 | Phase | Content | Done when |
 |---|---|---|
-| P0 | Data: ROM folder and hashes, WD177x data sheet in `docs/WD1793/datasheeets/`, corpus list (`classify_mgt.py` output) as test inventory | files in place, hashes in `README.md` |
+| P0 | Data: ROM folder and hashes, WD177x data sheet in `docs/WD1793/datasheeets/` | files in place, hashes in `README.md` |
 | P1 | `WD1793` variant `Wd1772`; register-level ports; drives owned by the caller; controller list in the main loop | FDC unit tests for 1772 rules green; all Beta tests and a TR-DOS TTD round trip unchanged |
 | P2 | `PlusDCard`: claims, overlay, M1 hook, latch, two drive slots, presets `48K-PLUSD` / `128K-PLUSD`, `DeviceState` | G+DOS boots from the clean system disk on 48K and 128K; `CAT 1` lists the disk |
 | P3 | NMI button action, printer port, TTD serializer, SZX `PLSD`, `.z80` modes 3 / 6 | snapshot button saves a 48K snapshot to disk and it loads back; TTD seek round trip during a disk read |
-| P4 | Autostart (+D branch), the emulator's system disk, `load_software` routing, results | the 243 +D works of the corpus: autostart runs on all, results tabulated |
-| P5 | Docs and recipes (list in §11), slots matrix regenerated, MCP live scripts, gcc / MSVC builds | review checklist of `new-platform-guidelines.md` §6 all "yes" |
-| P6 | Catalog hand-over ([autostart.md §5](autostart.md#5-the-catalog-zx-software-catalog)) | the catalog re-runs the 281 rows |
-| P7 (later, D-4) | DISCiPLE: ports `1B/5B/9B/DB`, `1F` (control, Kempston), `3B` network, `7B` boot, `BB` page, `FB` printer; traps `0001/0008/0066/028E`; inhibit; GDOS 3d ROM (`data/rom/gdos.rom`) | GDOS 3d boots |
+| P4 | Autostart (+D branch), the emulator's system disk, `load_software` routing, results | the autostart plans run on the test disks and the system disk |
+| P5 | Docs and recipes (list in §11), slots matrix regenerated, MCP live scripts | review checklist of `new-platform-guidelines.md` §6 all "yes" |
+| P7 (later, D-4) | DISCiPLE: ports `1B/5B/9B/DB`, `1F` (control, Kempston), `3B` network, `7B` boot, `BB` page, `FB` printer; traps `0001/0008/0066/028E`; inhibit; GDOS 3d ROM (`data/rom/gdos.rom`) | GDOS 3d boots (done 2026-11-20: the same `PlusDCard` with `Model::Disciple`, hardware-reference.md §9) |
 
 ## 11. Documentation to update (P5)
 
