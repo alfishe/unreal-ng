@@ -95,6 +95,16 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   x2 5.6 -> 0.19 ms, x3 12.6 -> 0.57 ms, x4 22.4 -> 0.35 ms (clang arm64 / x86_64: 5-24x). Live 8 s recordings on an
   RTX 4090, 3 interleaved rounds: at x4 the old encoder kept 236-316 frames (29-39 fps), the new one 392-394
   (48.8 fps, every frame); at x2 and x3 both keep every frame; the first decoded frames are the same.
+- ~~Window recorder (ffmpeg and VideoToolbox paths): a fresh frame image per picture, a scalar red/blue swap~~ done
+  2026-11-22. The swap loop read `picture.width()` in its condition; every `uint32_t` store may alias the image, so
+  the width was reloaded and the loop stayed scalar. A local width vectorizes it. The ffmpeg path composed into a new
+  4K `QImage` every picture (page faults); two reused buffers now hold the picture being composed and the last one
+  sent (the still-screen `memcmp` stays). Microbenchmark, 4K, 3 interleaved rounds, swap on 4 threads / on one:
+  M1 Ultra clang 5.2 / 16-42 -> 1.2 / 2 ms; i7-11850H gcc 15 12.7 / 29 -> 4.9 / 7.1 ms; Ryzen MSVC 4.4 / 16.8 ->
+  2.4 / 3.1 ms; filling a reused image 2.0 ms against 4.1 fresh (MSVC). Live on Linux (xvfb, stepped 4K libx264,
+  5 interleaved rounds of 200 frames): the same decoded frames (framemd5) in both builds, no slower; the stepped
+  call runs at the real-time pace either way. Transport to ffmpeg measured apart: POC 054 (the macOS FIFO is the
+  4K limit, a unix socket moves 10x more).
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
