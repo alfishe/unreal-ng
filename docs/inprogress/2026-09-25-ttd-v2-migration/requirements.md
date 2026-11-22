@@ -221,6 +221,39 @@ Release build), reference workloads of §5.3.
   **Measured** (Phase 0, Step 2): seek p99 ≤ 3.8 ms on every configuration of
   the full matrix, 3.46 ms on the heaviest 10-minute session, so Phase 0,
   Step 4 was dropped ([v0b-benchmark-results.md](v0b-benchmark-results.md) §3).
+  **Measured on long sessions** (P1.S10 follow-up, 2026-11-21): the soak found
+  seeks of 10-23 s at 239k frames. The benchmarks had missed it: they ran
+  10-minute sessions without a recording folder, without the write journal
+  and pause / resume cycles, with nothing evicted, and no length scaling. The
+  causes were costs that grew with the session: each pause rewrote the whole
+  write journal and the whole coverage index into the folder, the memory
+  report walked every checkpoint, and the timeline decoded the whole journal
+  and read every evicted segment back. Fixed. The
+  measurement is `TTDSeekScaling_Test.Measure` (`ttdseekscaling_test.cpp`: a
+  Pentagon writing 8 K bytes a frame, with journal, folder, 15,000-frame
+  window and a pause and seek per cycle, lengths by
+  `UNREAL_TTD_SEEK_SCALING`); the guards are `TTDSeekScaling_Folder_Test`
+  (short tier) and its `LongSession` (500 and 2,000 frames: the pause and the
+  median seek do not follow the length; `UNREAL_LONG_TESTS=1`). Measured (20-core Mac at load 50-120, so tails are
+  noisy), 10k / 50k / 100k / 240k frames, before -> after:
+  - pause + first seek: 652 / 2,423 / 4,532 / 10,990 ms -> 5.2 / 4.8 / 6.6 /
+    19 ms;
+  - seek inside the window, frame-aligned: p50 1.45 / 1.45 / 1.55 / 1.74 ms,
+    p95 ≤ 3.4 ms (PR-7 holds). About 0.9-1.0 ms of each is composing the
+    picture (the run to the frame end); the restore itself is 0.5-0.8 ms. PR-6's
+    p50 ≤ 1 ms holds for the restore but not with the picture;
+  - seek into an evicted segment (read back from its file, a 4-segment
+    cache): p50 5.1-5.8 ms at 50k-100k, 7-11 ms at 240k. The disk read is
+    about 5 % of it; zstd decode about 25 %, import 22 %, validation and the
+    full tables 34 %. PR-5 holds inside memory, not for a seek into evicted
+    history;
+  - timeline: 735 / 3,155 / 6,485 / 16,090 ms -> 8.5 / 78 / 154 / 367 ms
+    (71 ms at 240k without port facts). With coverage on, 10k / 50k / 240k:
+    348 / 1,338 / 13,276 ms -> 31 / 184 / 1,924 ms (the last at load 115:
+    port facts about half of it, this harness reads `#FE` thousands of times
+    a frame; the coverage counts 15 %);
+  - a pause with coverage writes the coverage blocks sealed since the last
+    pause: 0.4-0.5 s after 240k frames without one (89 MB).
 
 ### 3.3 Storage efficiency
 

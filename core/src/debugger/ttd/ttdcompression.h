@@ -72,7 +72,17 @@ inline std::vector<uint8_t> Compress(const uint8_t* src, size_t size, int level 
     std::vector<uint8_t>& buffer = (size <= kCompressScratchMax) ? scratch : large;
     if (buffer.size() < bound)
         buffer.resize(bound);
-    const size_t n = ZSTD_compress(buffer.data(), bound, src, size, level);
+    // One context per thread, reused: ZSTD_compress creates and frees one per call, about half of compressing a
+    // small buffer (the coverage summaries, P1.S10 follow-up 2026-11-21). The bytes are the same; the context keeps
+    // its workspace (the largest input's) for the thread's life
+    struct CompressContext
+    {
+        ZSTD_CCtx* ctx = ZSTD_createCCtx();
+        ~CompressContext() { ZSTD_freeCCtx(ctx); }
+    };
+    thread_local CompressContext context;
+    const size_t n = context.ctx ? ZSTD_compressCCtx(context.ctx, buffer.data(), bound, src, size, level)
+                                 : ZSTD_compress(buffer.data(), bound, src, size, level);
     if (ZSTD_isError(n))
     {
         return {};
@@ -95,7 +105,16 @@ inline bool Decompress(const uint8_t* compressed, size_t compressedSize, size_t 
     {
         return false;
     }
-    size_t n = ZSTD_decompress(out, rawSize, compressed, compressedSize);
+    // One context per thread, reused: ZSTD_decompress creates and frees one per call, which was a tenth of a read
+    // back and of a restore's page decodes (P1.S10 follow-up 2026-11-21)
+    struct DecompressContext
+    {
+        ZSTD_DCtx* ctx = ZSTD_createDCtx();
+        ~DecompressContext() { ZSTD_freeDCtx(ctx); }
+    };
+    thread_local DecompressContext context;
+    const size_t n = context.ctx ? ZSTD_decompressDCtx(context.ctx, out, rawSize, compressed, compressedSize)
+                                 : ZSTD_decompress(out, rawSize, compressed, compressedSize);
     if (ZSTD_isError(n))
     {
         return false;

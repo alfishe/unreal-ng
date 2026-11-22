@@ -210,9 +210,12 @@ TEST(TimeTravelEngineSegments_Test, ALoadedSessionContinuesWithItsHolderStreams)
     TTDSessionLoadReport report;
     ASSERT_TRUE(TTDSessionFile::Load(loaded.engine, source, error, &report)) << error;
     EXPECT_TRUE(loaded.engine.IsReadOnly());
-    ASSERT_EQ(report.holderStreams.size(), 2u) << "an empty one is not written";
-    EXPECT_EQ(report.holderStreams[8], (std::vector<uint8_t>{1, 2, 3}));
+    ASSERT_EQ(report.holderStreams.size(), 1u) << "an empty one is not written";
     EXPECT_EQ(report.holderStreams[17], (std::vector<uint8_t>{9}));
+    // The coverage comes as a part (a recording folder holds one per pause), here the whole index: from frame 0
+    ASSERT_EQ(report.coverageParts.size(), 1u);
+    EXPECT_EQ(report.coverageParts[0].first, 0u);
+    EXPECT_EQ(report.coverageParts[0].second, (std::vector<uint8_t>{1, 2, 3}));
     params.holderStreams = {{0x0200, "branch", {1}}};
     TTDMemorySink refused;
     EXPECT_FALSE(TTDSessionFile::Save(live.engine, refused, error, params)) << "0x02xx is reserved for branches";

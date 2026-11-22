@@ -23,6 +23,10 @@ void TTDWriteIndex::Seal()
     b.firstT = _open.front().globalT;
     b.lastT = _open.back().globalT;
     b.count = static_cast<uint32_t>(_open.size());
+    b.memBefore = _memSealed;
+    for (const TTDWriteRecord& r : _open)
+        b.memCount += r.isIo ? 0u : 1u;
+    _memSealed += b.memCount;
     const std::vector<uint8_t> raw = EncodeWriteBlock(_open.data(), b.count);
     b.rawSize = static_cast<uint32_t>(raw.size());
     b.payload = codec::Compress(raw.data(), raw.size());
@@ -36,6 +40,7 @@ const std::vector<TTDWriteRecord>& TTDWriteIndex::Decode(size_t block) const
     if (_cachedBlock != static_cast<int64_t>(block))
     {
         const Block& b = _blocks[block];
+        ++_blocksDecoded;
         std::vector<uint8_t> raw(b.rawSize);
         _cached.clear();
         if (codec::Decompress(b.payload, b.rawSize, raw.data()))
@@ -117,6 +122,30 @@ void TTDWriteIndex::ForEachBackward(uint64_t afterT, uint64_t upToT,
     }
 }
 
+uint64_t TTDWriteIndex::MemoryWritesUpTo(uint64_t globalT) const
+{
+    auto countIn = [globalT](const std::vector<TTDWriteRecord>& records) {
+        uint64_t n = 0;
+        for (const TTDWriteRecord& r : records)
+        {
+            if (r.globalT > globalT)
+                break;
+            n += r.isIo ? 0u : 1u;
+        }
+        return n;
+    };
+    const uint64_t base = _blocks.empty() ? _memSealed : _blocks.front().memBefore;
+    // The first block not wholly at or before globalT: the ones before it count whole, it is decoded
+    const auto it = std::partition_point(_blocks.begin(), _blocks.end(),
+                                         [globalT](const Block& b) { return b.lastT <= globalT; });
+    if (it == _blocks.end())
+        return _memSealed - base + countIn(_open);
+    const size_t index = static_cast<size_t>(it - _blocks.begin());
+    if (it->firstT > globalT)
+        return it->memBefore - base;
+    return it->memBefore - base + countIn(Decode(index));
+}
+
 void TTDWriteIndex::ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const
 {
     for (size_t b = 0; b < _blocks.size(); ++b)
@@ -126,12 +155,32 @@ void TTDWriteIndex::ForEach(const std::function<void(const TTDWriteRecord&)>& vi
         visit(r);
 }
 
+void TTDWriteIndex::ForEachInRange(uint64_t fromT, uint64_t toT,
+                                    const std::function<void(const TTDWriteRecord&)>& visit) const
+{
+    if (toT <= fromT)
+        return;
+    auto scan = [&](const std::vector<TTDWriteRecord>& records) {
+        for (const TTDWriteRecord& r : records)
+            if (r.globalT >= fromT && r.globalT < toT)
+                visit(r);
+    };
+    // The sealed blocks whose span meets the range (they are in time order), then the open block
+    const auto first = std::partition_point(_blocks.begin(), _blocks.end(),
+                                            [fromT](const Block& b) { return b.lastT < fromT; });
+    for (auto it = first; it != _blocks.end() && it->firstT < toT; ++it)
+        scan(Decode(static_cast<size_t>(it - _blocks.begin())));
+    if (!_open.empty() && _open.back().globalT >= fromT && _open.front().globalT < toT)
+        scan(_open);
+}
+
 void TTDWriteIndex::Clear()
 {
     _blocks.clear();
     _open.clear();
     _segments.clear();
     _size = 0;
+    _memSealed = 0;
     _droppedUpTo = 0;
     _cachedBlock = -1;
     _cached.clear();
@@ -180,12 +229,14 @@ void TTDWriteIndex::DropAfter(uint64_t globalT)
         while (!_blocks.empty() && _blocks.back().firstT > globalT)
         {
             _size -= _blocks.back().count;
+            _memSealed = _blocks.back().memBefore;
             _blocks.pop_back();
         }
         if (!_blocks.empty() && _blocks.back().lastT > globalT)
         {
             std::vector<TTDWriteRecord> records = Decode(_blocks.size() - 1);
             _size -= _blocks.back().count;
+            _memSealed = _blocks.back().memBefore;
             _blocks.pop_back();
             for (const TTDWriteRecord& r : records)
                 if (r.globalT <= globalT)

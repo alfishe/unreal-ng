@@ -32,6 +32,8 @@ constexpr uint16_t kCoverage = sessionstream::kCoverage;       ///< 8: the whole
 constexpr uint16_t kBookmarks = sessionstream::kBookmarks;     ///< 12
 /// 18: with branches only - the active branch and the trunk's record (TTD branches P2)
 constexpr uint16_t kBranchState = sessionstream::kHolderFirstFree + 1;
+/// 19: a recording folder's coverage part starts at this frame (U64), before its kCoverage record
+constexpr uint16_t kCoverageFrom = sessionstream::kCoverageFrom;
 }  // namespace holderstream
 
 struct TTDSessionFacts

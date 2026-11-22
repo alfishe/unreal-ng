@@ -3905,7 +3905,8 @@ Emulator::DirectRunResult Emulator::RunNFrames(unsigned frames, bool skipBreakpo
     return result;
 }
 
-Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints, bool onTimeline)
+Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints, bool onTimeline,
+                                               bool stopAtFrameEnd)
 {
     DirectStepScope directStep(*this, "run_tstates");
     CancelPendingStepOver();
@@ -3959,6 +3960,14 @@ Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakp
             result.frames++;
             ranBeforeFrame += static_cast<uint64_t>(limitBefore) - frameStartT;
             frameStartT = 0;
+            if (stopAtFrameEnd)
+            {
+                // The frame is over, whatever was left of the count (a clock slowed inside the frame): the run ends
+                // with the instruction that crossed the frame end, where a live frame ends
+                overshoot = z80.t;
+                reached = true;
+                break;
+            }
             if (targetT >= static_cast<int64_t>(limitBefore))
             {
                 targetT -= limitBefore;

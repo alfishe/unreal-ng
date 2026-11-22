@@ -131,3 +131,54 @@ TEST(TimeTravelEngineHeap_Test, SmallSessionsToo)
         EXPECT_NEAR(reported, measured, measured * 0.05);
     }
 }
+
+/// The per-checkpoint figures are kept summed, not walked at each breakdown (a seek publishes one: the walk grew with
+/// the session, P1.S10 soak 2026-11-21). An engine asked after every frame - through a ring that drops whole segments
+/// and a cut back into the past - reports what one asked only at the end reports (whose sums are one fresh walk)
+TEST(TimeTravelEngineHeap_Test, KeptSumsMatchAFreshWalk)
+{
+    constexpr uint32_t kPieces = 8;
+    std::vector<uint8_t> mem(size_t(kPieces) * ttd::kTTDPieceSize, 3);
+    ttd::TTDRegionDesc ram;
+    ram.name = "ram";
+    ram.pieces = kPieces;
+    ram.bytes = kPieces * ttd::kTTDPieceSize;
+    auto run = [&](ttd::TimeTravelEngine& engine, bool askEachFrame) {
+        std::string error;
+        engine.SetHistoryPolicy({ttd::TTDHistoryMode::Ring, 120, 30});
+        ASSERT_TRUE(engine.BeginSession({ram}, {}, error)) << error;
+        std::vector<uint8_t> local = mem;
+        auto capture = [&](uint64_t f) {
+            ttd::TTDFrameInput in;
+            in.position.frame = f;
+            in.start = f * 69888;
+            const uint32_t piece = static_cast<uint32_t>(f % kPieces);
+            local[size_t(piece) * ttd::kTTDPieceSize + f % 97]++;
+            in.changed.push_back({0, piece, local.data() + size_t(piece) * ttd::kTTDPieceSize});
+            if (f == 0)
+                for (uint32_t k = 1; k < kPieces; ++k)
+                    in.changed.push_back({0, k, local.data() + size_t(k) * ttd::kTTDPieceSize});
+            ASSERT_TRUE(engine.CaptureFrame(in, error)) << error;
+            if (askEachFrame)
+                (void)engine.HeapBreakdown();
+        };
+        for (uint64_t f = 0; f < 400; ++f)
+            capture(f);
+        // A resume from the past: the checkpoints after the cut go
+        const size_t cut = engine.FirstCheckpoint() + 50;
+        const uint64_t cutFrame = engine.Checkpoint(cut)->position.frame;
+        ASSERT_TRUE(engine.TruncateAfter(cut, {0, cutFrame, 0}, error)) << error;
+        if (askEachFrame)
+            (void)engine.HeapBreakdown();
+        for (uint64_t f = cutFrame + 1; f < cutFrame + 200; ++f)
+            capture(f);
+    };
+    ttd::TimeTravelEngine asked, fresh;
+    run(asked, true);
+    run(fresh, false);
+    const ttd::TTDEngineHeapBreakdown a = asked.HeapBreakdown(), b = fresh.HeapBreakdown();
+    EXPECT_EQ(a.checkpoints, b.checkpoints);
+    EXPECT_EQ(a.deviceBlobs, b.deviceBlobs);
+    EXPECT_EQ(a.Total(), b.Total());
+    EXPECT_GT(a.checkpoints, 0u);
+}
