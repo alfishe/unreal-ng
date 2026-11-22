@@ -87,6 +87,14 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   2.1 / 2.3 -> 1.4 / 1.5 -> 1.0; Dizzy 1.1 -> 0.6 / 0.7 -> 0.4 / 0.7 -> 0.5; across-the-edge 10.7 -> 1.3 / 11.6 ->
   1.2 / 7.0 -> 1.0; 16-color noise 48 -> 3.8 / 54 -> 6.3 / 28 -> 3.4; a 1024-color frame (median split) 42 -> 33 /
   49 -> 37 / 30 -> 21. Files 4-49 % smaller; a live 5 s recording records the same frames, 37-50 % smaller.
+- ~~NVENC frames at the native size (`scale` 1..4, not a fixed profile) converted by a scalar loop~~ done 2026-11-21.
+  Only the fixed profiles lent the NVENC input buffer to FrameScaler; the native-size path converted every output
+  pixel (BT.601, nearest scale) into a staging NV12 buffer and copied it into the locked buffer. Now
+  `FrameScaler::ScaleIntoNv12` writes straight into the locked buffer: the same bytes (checked for x1..x5, odd source
+  sizes, a 256-byte pitch), no staging buffer. Per frame, MSVC 2022 on the Windows host: 352x288 x1 1389 -> 46 us,
+  x2 5.6 -> 0.19 ms, x3 12.6 -> 0.57 ms, x4 22.4 -> 0.35 ms (clang arm64 / x86_64: 5-24x). Live 8 s recordings on an
+  RTX 4090, 3 interleaved rounds: at x4 the old encoder kept 236-316 frames (29-39 fps), the new one 392-394
+  (48.8 fps, every frame); at x2 and x3 both keep every frame; the first decoded frames are the same.
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
