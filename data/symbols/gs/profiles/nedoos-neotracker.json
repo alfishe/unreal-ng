@@ -1,0 +1,475 @@
+{
+  "id": "nedoos-neotracker",
+  "title": "NeoTracker BIOS (NedoOS ngsplay ngsdrv.bin)",
+  "note": "ngsbios.a80; commands #20-#DF are never cleared (the command flag stays set); during playback DataToZX sends sync, module, order, row bytes unasked; #F3 / #F4 are not resets here",
+  "symbolFile": "profiles/nedoos-neotracker.map",
+  "unsolicitedReplies": true,
+  "match": [
+    {
+      "kind": "upload",
+      "addr": "#0000",
+      "length": 12303,
+      "sha256": "543eceaa43f1fe9ddccb8c388f769fb3eab1d4bab25f3251b05286d853027e9a"
+    }
+  ],
+  "commands": [
+    {
+      "number": "00",
+      "name": "Reset flags",
+      "handshake": {
+        "barrier": true
+      }
+    },
+    {
+      "number": "01",
+      "name": "Silence"
+    },
+    {
+      "number": "02",
+      "name": "Low volume"
+    },
+    {
+      "number": "03",
+      "name": "High volume"
+    },
+    {
+      "number": "05",
+      "name": "Channel volume (inferred)",
+      "pre": 1,
+      "params": [
+        {
+          "name": "volume",
+          "kind": "volume"
+        }
+      ]
+    },
+    {
+      "number": "13",
+      "name": "Jump to address",
+      "pre": 1,
+      "params": [
+        {
+          "name": "address",
+          "kind": "low"
+        },
+        {
+          "name": "address",
+          "kind": "high"
+        }
+      ]
+    },
+    {
+      "number": "14",
+      "name": "Receive block",
+      "pre": 1,
+      "transfer": "block_upload",
+      "params": [
+        {
+          "name": "length",
+          "kind": "low"
+        },
+        {
+          "name": "length",
+          "kind": "high"
+        },
+        {
+          "name": "address",
+          "kind": "low"
+        },
+        {
+          "name": "address",
+          "kind": "high"
+        }
+      ]
+    },
+    {
+      "number": "15",
+      "name": "Transmit block",
+      "pre": 1,
+      "transfer": "block_download",
+      "params": [
+        {
+          "name": "length",
+          "kind": "low"
+        },
+        {
+          "name": "length",
+          "kind": "high"
+        },
+        {
+          "name": "address",
+          "kind": "low"
+        },
+        {
+          "name": "address",
+          "kind": "high"
+        }
+      ]
+    },
+    {
+      "number": "16",
+      "name": "Poke"
+    },
+    {
+      "number": "17",
+      "name": "Peek",
+      "reply": 1
+    },
+    {
+      "number": "1E",
+      "name": "SD driver (GSDDRV)",
+      "pre": 1,
+      "params": [
+        {
+          "name": "sub-command",
+          "kind": "byte"
+        }
+      ],
+      "post": 5
+    },
+    {
+      "number": "E0",
+      "name": "Set page 2",
+      "pre": 1,
+      "params": [
+        {
+          "name": "page",
+          "kind": "byte"
+        }
+      ]
+    },
+    {
+      "number": "E1",
+      "name": "Set page 3",
+      "pre": 1,
+      "params": [
+        {
+          "name": "page",
+          "kind": "byte"
+        }
+      ]
+    },
+    {
+      "number": "E2",
+      "name": "Init sample",
+      "pre": 1,
+      "params": [
+        {
+          "name": "module",
+          "kind": "byte"
+        },
+        {
+          "name": "sample",
+          "kind": "byte"
+        }
+      ]
+    },
+    {
+      "number": "E3",
+      "name": "Start play",
+      "pre": 1,
+      "params": [
+        {
+          "name": "module",
+          "kind": "byte"
+        },
+        {
+          "name": "order",
+          "kind": "byte"
+        }
+      ],
+      "handshake": {
+        "ack": "data"
+      }
+    },
+    {
+      "number": "E4",
+      "name": "Pause"
+    },
+    {
+      "number": "E5",
+      "name": "Continue"
+    },
+    {
+      "number": "E6",
+      "name": "Status",
+      "reply": 1,
+      "reply_meaning": "PROCESS"
+    },
+    {
+      "number": "E7",
+      "name": "Reinit volumes / BPM"
+    },
+    {
+      "number": "E8",
+      "name": "Start load",
+      "pre": 1,
+      "params": [
+        {
+          "name": "slot",
+          "kind": "byte"
+        }
+      ],
+      "handshake": {
+        "ack": "data"
+      },
+      "transfer": "block256"
+    },
+    {
+      "number": "E9",
+      "name": "Next block",
+      "reply": 5
+    },
+    {
+      "number": "EA",
+      "name": "Load block",
+      "pre": 1,
+      "params": [
+        {
+          "name": "pages",
+          "kind": "byte"
+        }
+      ],
+      "transfer": "block_pages"
+    },
+    {
+      "number": "EB",
+      "name": "Delete module",
+      "reply": 5
+    },
+    {
+      "number": "EC",
+      "name": "Play note"
+    },
+    {
+      "number": "ED",
+      "name": "Stop note (inferred)"
+    },
+    {
+      "number": "EE",
+      "name": "Play without row processing (inferred)"
+    },
+    {
+      "number": "EF",
+      "name": "Peek long",
+      "reply": 1
+    },
+    {
+      "number": "F0",
+      "name": "Save start",
+      "reply": 1
+    },
+    {
+      "number": "F1",
+      "name": "Save block",
+      "reply": 6
+    },
+    {
+      "number": "F2",
+      "name": "Record note"
+    },
+    {
+      "number": "F3",
+      "name": "Play pattern"
+    },
+    {
+      "number": "F4",
+      "name": "Insert pattern"
+    },
+    {
+      "number": "F5",
+      "name": "New module",
+      "reply": 1
+    },
+    {
+      "number": "F6",
+      "name": "Load sample"
+    },
+    {
+      "number": "F7",
+      "name": "Delete"
+    }
+  ],
+  "modes": [
+    {
+      "name": "PlayCykl",
+      "enter": [
+        "E3",
+        "E5"
+      ],
+      "leave": [
+        "E4"
+      ],
+      "accepts": [
+        "E6",
+        "EF",
+        "F2"
+      ]
+    }
+  ],
+  "dispatch": {
+    "pc": "COMINT1",
+    "register": "A",
+    "table": "COMTAB",
+    "entries": 64,
+    "unknownStub": "COMZ",
+    "highFrom": "E0"
+  },
+  "structs": [
+    {
+      "name": "smp",
+      "size": 64,
+      "meaning": "a channel's sample record (MODULE smp)",
+      "fields": [
+        {
+          "name": "Vol_L",
+          "offset": 0,
+          "type": "u8"
+        },
+        {
+          "name": "Vol_R",
+          "offset": 1,
+          "type": "u8"
+        },
+        {
+          "name": "SamplAdr",
+          "offset": 2,
+          "type": "u16"
+        },
+        {
+          "name": "CurPage",
+          "offset": 4,
+          "type": "u8"
+        },
+        {
+          "name": "Nota",
+          "offset": 5,
+          "type": "u8"
+        },
+        {
+          "name": "CurFrac",
+          "offset": 6,
+          "type": "u16"
+        },
+        {
+          "name": "CurAdr",
+          "offset": 8,
+          "type": "u16"
+        },
+        {
+          "name": "PerFrac",
+          "offset": 10,
+          "type": "u16"
+        },
+        {
+          "name": "PerInt",
+          "offset": 12,
+          "type": "u16"
+        },
+        {
+          "name": "PgLoop",
+          "offset": 14,
+          "type": "u8"
+        },
+        {
+          "name": "SmplVol",
+          "offset": 15,
+          "type": "u8"
+        },
+        {
+          "name": "LoopSt",
+          "offset": 16,
+          "type": "u16"
+        },
+        {
+          "name": "PgLeng",
+          "offset": 18,
+          "type": "u8"
+        },
+        {
+          "name": "LastSmp",
+          "offset": 19,
+          "type": "u8"
+        },
+        {
+          "name": "Length",
+          "offset": 20,
+          "type": "u16"
+        },
+        {
+          "name": "ChnVol",
+          "offset": 22,
+          "type": "u8"
+        },
+        {
+          "name": "ChnPan",
+          "offset": 23,
+          "type": "u8"
+        },
+        {
+          "name": "EffJmp",
+          "offset": 24,
+          "type": "u16"
+        },
+        {
+          "name": "GlChVol",
+          "offset": 55,
+          "type": "u8"
+        }
+      ]
+    }
+  ],
+  "instances": [
+    {
+      "struct": "smp",
+      "at": "SamplTabl",
+      "count": 32
+    }
+  ],
+  "variables": [
+    {
+      "name": "KolModule",
+      "at": "#BC04",
+      "page": {
+        "kind": "ram",
+        "page": 1
+      },
+      "meaning": "modules loaded"
+    },
+    {
+      "name": "CurModul",
+      "at": "#BC05",
+      "page": {
+        "kind": "ram",
+        "page": 1
+      },
+      "meaning": "the current module"
+    },
+    {
+      "name": "LastAdr",
+      "at": "#BC06",
+      "size": 2,
+      "page": {
+        "kind": "ram",
+        "page": 1
+      }
+    },
+    {
+      "name": "LastPage",
+      "at": "#BC08",
+      "page": {
+        "kind": "ram",
+        "page": 1
+      }
+    },
+    {
+      "name": "FlagPlay",
+      "at": "#BC0B",
+      "page": {
+        "kind": "ram",
+        "page": 1
+      },
+      "meaning": "playing"
+    }
+  ]
+}

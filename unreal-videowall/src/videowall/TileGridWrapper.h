@@ -30,6 +30,9 @@ public:
     /// Get the underlying widget for layout purposes
     QWidget* widget() const { return _widget; }
 
+    /// The GL grid while GPU rendering is active (its picture is read back from it, not grabbed from widget())
+    TileGridGL* gpuGrid() const { return _useGPU ? _gpuGrid : nullptr; }
+
     /// Returns true if GPU-accelerated rendering is active
     bool isGPUAccelerated() const { return _useGPU; }
 

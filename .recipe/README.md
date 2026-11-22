@@ -258,6 +258,12 @@ call.
 | [peripherals/network.md](peripherals/network.md) | Network adapters: ZXNETUSB (W5300) card, the virtual network (DHCP, DNS, gateway, guest servers), NedoOS setup, state on every interface, what hangs without a card |
 | [peripherals/cmos-rtc.md](peripherals/cmos-rtc.md) | CMOS clock on ATM3 / Profi / Scorpion+SMUC: report, cell read / write on every interface, setting the time, battery files |
 
+### `software/` — building guest software from source
+
+| Recipe | What it covers |
+|:--|:--|
+| [software/nedoos-build.md](software/nedoos-build.md) | NedoOS kernel from source on macOS / Linux (`tools/nedoos/kernel.sh`, presets from `src/mk*.bat`), the tree's sjasmplus and mhmt, the byte check against `release/`, a patched kernel, the distribution (SD card / TRD layout), what the Linux Makefile does not cover |
+
 ### `testing/` — checking and measuring the emulator itself
 
 | Recipe | What it covers |

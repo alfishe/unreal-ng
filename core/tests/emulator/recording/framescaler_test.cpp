@@ -231,6 +231,33 @@ Nv12Frame ReferenceNv12(const std::vector<uint32_t>& src, uint32_t srcW, uint32_
 }
 }  // namespace
 
+TEST(FrameScaler_Test, ScaleInto_EveryWholeFactorAndWidthMatchesThePixelFormula)
+{
+    // The SIMD red / blue swap takes 16 (NEON) or 4 (SSE2) pixels a step and the row expansion has a case per
+    // factor: every factor 1..5 and widths around the steps, against the output pixel computed one by one
+    for (uint32_t k = 1; k <= 5; k++)
+        for (uint32_t w = 1; w <= 37; w += 3)
+            for (bool swap : {false, true})
+            {
+                const uint32_t h = 3;
+                const std::vector<uint32_t> src = TestPicture(w, h);
+                const uint32_t dstW = w * k, dstH = h * k;
+                const size_t stride = static_cast<size_t>(dstW) * 4 + 12;
+                std::vector<uint8_t> dst(stride * dstH, 0x55);
+                ASSERT_TRUE(FrameScaler::ScaleInto(reinterpret_cast<const uint8_t*>(src.data()), w, h, dst.data(),
+                                                   stride, dstW, dstH, swap));
+                for (uint32_t y = 0; y < dstH; y++)
+                    for (uint32_t x = 0; x < dstW; x++)
+                    {
+                        const uint32_t p = src[static_cast<size_t>(y / k) * w + x / k];
+                        const uint32_t expected =
+                            swap ? (p & 0xFF00FF00u) | ((p >> 16) & 0xFFu) | ((p & 0xFFu) << 16) : p;
+                        ASSERT_EQ(PixelAt(dst.data(), static_cast<uint32_t>(stride / 4), x, y), expected)
+                            << "k " << k << " width " << w << " swap " << swap << " at " << x << "," << y;
+                    }
+            }
+}
+
 TEST(FrameScaler_Test, PackedToNv12_BlackWhiteAndRed)
 {
     // 2x2: black, white / red, red: BT.601 limited range
@@ -306,7 +333,9 @@ TEST(FrameScaler_Test, ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte)
     // 1x and 4x3 -> 24x18 an exact 6x (the fast paths)
     const Case cases[] = {{4, 3, 24, 18},  {5, 3, 22, 20},   {7, 5, 32, 24},    {6, 6, 6, 6},
                           {40, 30, 24, 16}, {11, 9, 48, 40},  {352, 288, 384, 216 * 2}, {320, 255, 192, 108},
-                          {352, 288, 200, 120}, {320, 255, 3840 / 4, 2160 / 4}, {8, 8, 18, 12}, {1, 1, 4, 2}};
+                          {352, 288, 200, 120}, {320, 255, 3840 / 4, 2160 / 4}, {8, 8, 18, 12}, {1, 1, 4, 2},
+                          // wide rows for the vector chroma kernel and its tail: odd factors 3 and 5, a fitted 7.2x
+                          {43, 11, 130, 34}, {64, 36, 320, 180}, {29, 13, 210, 94}};
     for (const Case& c : cases)
     {
         const std::vector<uint32_t> src = TestPicture(c.srcW, c.srcH);

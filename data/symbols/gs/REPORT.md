@@ -31,3 +31,11 @@ Labels over changed bytes: `NMILP3`, `SMPMD2f`, `COMM3_`, `Patch6`, `Patch6e`, `
 - Reference build: make_rom.a80
 - Labels: 1396 (1272 in ROM, 124 in the RAM window)
 - The ROM equals the build: yes, byte for byte
+
+## NeoGS firmware v1.11 (`neogs/full_ngs.rom`, flash `#10000`)
+
+- Reference build: main_rom/main_ngs.a80 with asl + p2bin (main_rom/build.bat)
+- Labels: 1378 (1254 in ROM, 124 in the RAM window), run from RAM pages 0-1
+- The ROM equals the build: yes, byte for byte
+- Against GS v1.05a ([NEOGS-VS-GS.md](NEOGS-VS-GS.md)): 1230 same, 14 changed, 10 NeoGS only; 30 GS labels dropped
+- The loader (flash `#00000`, loader_ngs/) is not marked up: it runs at boot only, from the RAM window

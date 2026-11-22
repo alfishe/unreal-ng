@@ -159,6 +159,10 @@ public:
     CardPage mapCardAddress(uint16_t addr) const override;
     uint32_t cardPageCount(CardPage::Kind kind) const override;
     const uint8_t* cardRomPage(uint32_t page) const override;
+    const uint8_t* cardRamPage(uint32_t page) const override;
+    /// RAM pages 0-1 once the main ROM runs (the loader's copy, or NEOGS.ROM from the SD card), else the flash copy
+    /// at FLASH_MAIN_ROM the loader will start
+    const uint8_t* firmwarePage(uint32_t page) const override;
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return _runner.now(); }
     void catchUpToHost() override;
@@ -170,6 +174,8 @@ public:
     double cardUnitsPerSecond() const override { return TICKS_PER_SECOND; }
 
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
+    /// The card's own counters (clock switches, interrupts by source, SD and flash events)
+    const NeoGSCounters& counters() const { return _counters; }
     void resetActivityCounters() override
     {
         _instructionCountOffset += static_cast<int64_t>(_activityCounters.cpuSteps);   // the count goes on
