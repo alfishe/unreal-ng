@@ -32,6 +32,7 @@
 /// Not thread-safe: used on the emulation thread only, like the rest of a
 /// recording's state.
 
+#include <algorithm>
 #include <cstdint>
 #include <istream>
 #include <ostream>
@@ -150,6 +151,28 @@ public:
     bool Get(uint64_t index, TTDPortRecord& out, ReadCache& cache) const;
     bool Get(uint64_t index, TTDPortRecord& out) const { return Get(index, out, _cache); }
 
+    /// One port's accesses inside a run of records (Tally): how many, the first and the last value, and how often bit 4
+    /// (the ULA's beeper / MIC bit of #FE) changed from one of them to the next
+    struct PortTally
+    {
+        uint16_t port = 0;
+        uint8_t first = 0;
+        uint8_t last = 0;
+        uint32_t count = 0;
+        uint32_t bit4Toggles = 0;
+    };
+    /// The records [from, to) as per-port tallies, in record order: a sealed block's summary gives a run of records
+    /// (a frame's, or the part of it in the block) as one call with its ports in the order they first appear; elsewhere
+    /// (the open block, a range that cuts a run, a block without a summary) each record is a call of its own with
+    /// count 1. @p fn(const PortTally* tallies, size_t n) returns false to have a run visited record by record instead
+    /// (a caller that needs the order of two ports inside it). The timeline counts a long session's accesses without
+    /// decoding them (a polling loop reads #FE thousands of times a frame; P1.S10 seek tails, 2026-11-22). False when a
+    /// block does not decode
+    template <typename Fn>
+    bool Tally(uint64_t from, uint64_t to, ReadCache& cache, Fn&& fn) const;
+    /// Blocks Tally decoded since the journal was made (tests)
+    uint64_t BlocksDecoded() const { return _blocksDecoded; }
+
     /// Index of the first record at or after `time` (Size() when none)
     uint64_t LowerBound(const TTDTimePoint& time, ReadCache& cache) const;
     uint64_t LowerBound(const TTDTimePoint& time) const { return LowerBound(time, _cache); }
@@ -198,6 +221,15 @@ public:
     size_t SealedBlockCount() const { return _blocks.size(); }
 
 private:
+    /// A sealed block's tallies (built at seal and at load, not stored in files): a run starts where the record frame
+    /// changes. Left empty when it would not be much smaller than the records (few accesses a frame to many ports)
+    struct Summary
+    {
+        std::vector<uint32_t> runStart;     ///< per run: its first record in the block; then the block's size
+        std::vector<uint32_t> runTallies;   ///< per run: its first tally; then the tallies' count
+        std::vector<PortTally> tallies;
+        bool Empty() const { return runStart.empty(); }
+    };
     struct Block
     {
         uint32_t records = 0;
@@ -205,7 +237,9 @@ private:
         uint64_t lastFrame = 0;   ///< frame of its last record (not stored; recomputed on load)
         uint32_t crc = 0;         ///< CRC32C of the raw layout
         std::vector<uint8_t> compressed;
+        Summary summary;
     };
+    static Summary Summarize(const std::vector<TTDPortRecord>& records);
 
     void Append(const TTDPortRecord& record)
     {
@@ -238,6 +272,7 @@ private:
 
     // Decoded copy of one sealed block (playback reads sequentially)
     mutable ReadCache _cache;
+    mutable uint64_t _blocksDecoded = 0;
 
     uint64_t _valueMismatches = 0;
     uint64_t _divergences = 0;
@@ -246,5 +281,71 @@ private:
     bool _hasFirstDivergence = false;
     Mismatch _firstDivergence;
 };
+
+template <typename Fn>
+bool TTDPortJournal::Tally(uint64_t from, uint64_t to, ReadCache& cache, Fn&& fn) const
+{
+    from = std::max(from, FirstIndex());
+    to = std::min(to, Size());
+    TTDPortRecord rec;
+    auto one = [&](uint64_t k) {
+        if (!Get(k, rec, cache))
+            return false;
+        const PortTally t{rec.port, rec.value, rec.value, 1, 0};
+        fn(&t, size_t{1});
+        return true;
+    };
+    while (from < to)
+    {
+        if (from >= _sealedRecords)
+        {
+            // The open block: its records are at hand
+            for (; from < to; ++from)
+            {
+                const TTDPortRecord& r = _open[static_cast<size_t>(from - _sealedRecords)];
+                const PortTally t{r.port, r.value, r.value, 1, 0};
+                fn(&t, size_t{1});
+            }
+            break;
+        }
+        const uint64_t blockNumber = from / kBlockRecords;
+        const uint64_t blockStart = blockNumber * kBlockRecords;
+        const uint64_t blockEnd = std::min<uint64_t>(to, blockStart + kBlockRecords);
+        const Summary& summary = _blocks[static_cast<size_t>(blockNumber - _droppedBlocks)].summary;
+        uint32_t at = static_cast<uint32_t>(from - blockStart);
+        const uint32_t end = static_cast<uint32_t>(blockEnd - blockStart);
+        if (!summary.Empty())
+        {
+            // The runs [at, end) holds whole; a run it cuts record by record
+            const std::vector<uint32_t>& starts = summary.runStart;
+            size_t run = static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), at) - starts.begin()) - 1;
+            while (at < end)
+            {
+                const uint32_t runEnd = starts[run + 1];
+                if (starts[run] == at && runEnd <= end)
+                {
+                    const uint32_t t0 = summary.runTallies[run];
+                    const uint32_t t1 = summary.runTallies[run + 1];
+                    if (!fn(summary.tallies.data() + t0, static_cast<size_t>(t1 - t0)))
+                        for (uint32_t k = at; k < runEnd; ++k)
+                            if (!one(blockStart + k))
+                                return false;
+                }
+                else
+                    for (uint32_t k = at, stop = std::min(runEnd, end); k < stop; ++k)
+                        if (!one(blockStart + k))
+                            return false;
+                at = std::min(runEnd, end);
+                ++run;
+            }
+        }
+        else
+            for (; at < end; ++at)
+                if (!one(blockStart + at))
+                    return false;
+        from = blockEnd;
+    }
+    return true;
+}
 
 }  // namespace ttd

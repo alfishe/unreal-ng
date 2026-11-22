@@ -381,7 +381,6 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
     std::vector<uint32_t> slotSectors(result.media.size());
     TTDPortJournal::ReadCache readCache;
     TTDPortJournal::ReadCache writeCache;
-    TTDPortRecord rec;
     const TTDEngineCheckpoint* prev = firstIndex > static_cast<int64_t>(firstCp)
                                           ? engine.Checkpoint(static_cast<size_t>(firstIndex) - 1)
                                           : nullptr;
@@ -444,25 +443,40 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
             const TTDPortJournal& reads = engine.BusReads();
             const TTDPortJournal& outs = engine.BusWrites();
             result.portRecords += f.in + f.out;
-            for (uint64_t k = std::max(cp->busReadCursor, reads.FirstIndex()); k < next->busReadCursor; ++k)
-                if (reads.Get(k, rec, readCache))
-                    if (const int16_t d = ports.DeviceOf(rec.port); d >= 0)
-                        ++in[static_cast<size_t>(d)];
+            // Per-port tallies: a sealed block's runs need no decode (a polling loop reads #FE thousands of times a
+            // frame; the decode was half of a long session's timeline)
+            reads.Tally(cp->busReadCursor, next->busReadCursor, readCache,
+                        [&](const TTDPortJournal::PortTally* t, size_t n) {
+                            for (size_t k = 0; k < n; ++k)
+                                if (const int16_t d = ports.DeviceOf(t[k].port); d >= 0)
+                                    in[static_cast<size_t>(d)] += t[k].count;
+                            return true;
+                        });
             uint8_t fe = cp->chipset.pFE;
-            for (uint64_t k = std::max(cp->busWriteCursor, outs.FirstIndex()); k < next->busWriteCursor; ++k)
-                if (outs.Get(k, rec, writeCache))
-                {
-                    const int16_t d = ports.DeviceOf(rec.port);
-                    if (d < 0)
-                        continue;
-                    ++out[static_cast<size_t>(d)];
-                    if (d == ula)
-                    {
-                        ++f.borderOuts;
-                        f.beeperToggles += ((rec.value ^ fe) & 0x10) != 0;
-                        fe = rec.value;
-                    }
-                }
+            outs.Tally(cp->busWriteCursor, next->busWriteCursor, writeCache,
+                       [&](const TTDPortJournal::PortTally* t, size_t n) {
+                           // The beeper's toggles follow the ULA's writes in order: a run writing it through two
+                           // ports is visited record by record
+                           size_t ulaPorts = 0;
+                           for (size_t k = 0; k < n; ++k)
+                               ulaPorts += ula >= 0 && ports.DeviceOf(t[k].port) == ula;
+                           if (ulaPorts > 1)
+                               return false;
+                           for (size_t k = 0; k < n; ++k)
+                           {
+                               const int16_t d = ports.DeviceOf(t[k].port);
+                               if (d < 0)
+                                   continue;
+                               out[static_cast<size_t>(d)] += t[k].count;
+                               if (d == ula)
+                               {
+                                   f.borderOuts += t[k].count;
+                                   f.beeperToggles += (((t[k].first ^ fe) & 0x10) != 0) + t[k].bit4Toggles;
+                                   fe = t[k].last;
+                               }
+                           }
+                           return true;
+                       });
             for (size_t d = 0; d < in.size(); ++d)
                 if (in[d] || out[d])
                 {

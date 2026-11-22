@@ -88,6 +88,10 @@ struct TTDSegmentInfo
     /// Its versions and full tables are in memory; false: evicted, its file in the recording folder holds them
     /// (EvictSegment), read back when a restore needs them (ReadBackSegment)
     bool resident = true;
+    /// Resident: the checkpoints from firstCheckpoint up to here have their versions and full tables (SIZE_MAX:
+    /// all of them). A restore reads back only the file's parts up to the one it needs and one more: on average
+    /// half the segment (P1.S10 seek tails); a restore past them reads the whole segment
+    size_t residentEnd = SIZE_MAX;
     bool readBack = false;           ///< in memory because a restore read it back (the read-back cache)
     uint64_t readBackBytes = 0;      ///< read back: the payload bytes it brought in
     mutable uint64_t lastUse = 0;    ///< read back: the engine's use clock at its last use (the cache's LRU order)
@@ -564,7 +568,8 @@ public:
 
     /// Called when a restore needs segment @p segment of line @p line and it is evicted: the holder reads the
     /// segment's file and hands it to ReadBackSegment. False when it cannot (the restore reports the segment)
-    using SegmentLoader = std::function<bool(uint32_t line, size_t segment)>;
+    /// @p upTo: the checkpoint the restore needs (the loader may read the segment's file up to it; SIZE_MAX: all)
+    using SegmentLoader = std::function<bool(uint32_t line, size_t segment, size_t upTo)>;
     void SetSegmentLoader(SegmentLoader loader) { _segmentLoader = std::move(loader); }
     /// Line @p line's segments (null for a line not held)
     const std::deque<TTDSegmentInfo>* LineSegments(uint32_t line) const
@@ -586,9 +591,14 @@ public:
     /// Bring an evicted segment back from @p pieces (its file's versions): every change record and full table as
     /// before the eviction, holding the same content. The segment joins the read-back cache (readBack). Nothing
     /// changes when @p pieces does not match the segment (a frame or a piece missing)
-    bool ReadBackSegment(uint32_t line, size_t segment, const TTDSegmentPieces& pieces, std::string& error);
+    /// @p prefix: @p pieces may hold only the segment's first checkpoints (ReadSegmentPieces up to a frame): those
+    /// become resident (TTDSegmentInfo::residentEnd), checkpoint @p need among them
+    bool ReadBackSegment(uint32_t line, size_t segment, const TTDSegmentPieces& pieces, std::string& error,
+                         bool prefix = false, size_t need = 0);
     /// ReadBackSegment from the segment's file @p source (TTDSessionFile::ReadSegmentPieces)
-    bool ReadBackSegmentFrom(uint32_t line, size_t segment, const ITTDByteSource& source, std::string& error);
+    /// @p upTo: the checkpoint needed; the file is read up to the part after it (SIZE_MAX: whole)
+    bool ReadBackSegmentFrom(uint32_t line, size_t segment, const ITTDByteSource& source, std::string& error,
+                             size_t upTo = SIZE_MAX);
     /// A read-back segment stays as a window segment (false) or joins the cache again (true)
     void SetSegmentReadBack(uint32_t line, size_t segment, bool readBack);
     /// Segments held on disk only, and their checkpoints, over all lines

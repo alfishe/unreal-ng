@@ -130,6 +130,8 @@ bool TTDRecordingWriter::Collect(TimeTravelEngine& engine)
     {
         if (s.firstCheckpoint <= _first)
             continue;
+        if (_fileEndStreams)
+            _writer->SetFileEndStreams(_fileEndStreams(_segment));
         if (!Close(engine, s.firstCheckpoint))
             return false;
         std::string error;

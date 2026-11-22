@@ -324,10 +324,16 @@ rebuilds the full tables as `CloseRegion` built them (the segment's first table 
 list, each later one derived with the pieces changed since). The result is bit-identical (T-C9). The cache is then
 trimmed to its capacity, never dropping the segment just read.
 
-What a read back costs (P1.S10 follow-up, 2026-11-21, a 240k-frame session): a seek into an evicted segment
-takes 5-11 ms against 1.5-1.7 ms inside memory. The file read is about 5 % of the read back; decoding the
-records about 25 %, importing the pieces 22 %, validation and the full tables 34 % (sorted vectors since, not hash
-maps, and one zstd context per thread). The timeline reads nothing back: a checkpoint's changed pieces are in its
+A restore reads back only the prefix it needs (2026-11-22, P1.S10 seek tails): the loader gets the target
+checkpoint, `ReadSegmentPieces` stops after the file's part that follows it (a part is 50 checkpoints), and the
+segment is resident up to `TTDSegmentInfo::residentEnd` (the end of the checkpoints read). A restore past it reads
+the segment again whole; whatever needs a whole segment (a save, `ReadBackAll`, a segment the window covers again)
+reads it whole. The file is read in one read into a reused buffer (the container index checks every record header,
+a read each before). Before -> after at 240k frames, a seek into an evicted segment p50 / p95: 11.4 / 43 ms ->
+4.1 / 5.5 ms, against 1.2 / 1.4 ms inside memory (`TTDSeekScaling_Test.Measure`; the guard is
+`TTDSeekScaling_Folder_Test.ASeekIntoEvictedHistoryCostsAboutASeekInMemory`, with a long-tier variant on the
+harness's 1,875-frame segments). What is left of it is the decode of the records read (zstd and the crc), the
+validation and the full tables. The timeline reads nothing back: a checkpoint's changed pieces are in its
 change record, and a baseline (which stores every piece) keeps the list of pieces that differ from the checkpoint
 before it, computed at capture (`TTDSegmentInfo::baselineDiff`), so the frames where the picture changed are known
 without the segment (`TTDSeekScaling_Folder_Test.TheTimelineReadsNoEvictedSegmentBack`).

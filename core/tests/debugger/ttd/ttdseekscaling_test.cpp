@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <random>
@@ -37,6 +38,7 @@
 #include "_helpers/testtier.h"
 #include "common/filehelper.h"
 #include "debugger/ttd/engine/ttdrecordingwriter.h"
+#include "debugger/ttd/machinestatehash.h"
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
@@ -272,6 +274,51 @@ TEST_F(TTDSeekScaling_Folder_Test, AFolderAfterPausesHoldsEveryRecordOnce)
     EXPECT_GT(held, 80u);
 }
 
+/// The trunk's files closed while recording carry the coverage index's part since the last one: the first pause after
+/// a long run writes only the blocks open since the last file, not every block since the start (0.4-0.5 s and 89 MB
+/// after 240,000 frames, P1.S10 seek tails). The parts joined are the live index. Runtime: 140 frames recorded with
+/// the journal (~0.4 s)
+TEST_F(TTDSeekScaling_Folder_Test, AFirstPauseWritesTheCoverageSinceTheLastFile)
+{
+    Start(8);
+    _emulator->RunNFrames(140);   // two coverage blocks sealed, 17 files closed
+    PauseAndMeasure();
+    _ttd->StopRecording();
+
+    const std::vector<std::string> files = TrunkFiles(_ttd->ShadowRecordingFolder());
+    ASSERT_GE(files.size(), 15u);
+    ttd::TimeTravelEngine loaded;
+    std::string error;
+    ttd::TTDSessionLoadReport report;
+    ASSERT_TRUE(ttd::LoadRecording(loaded, files, 0, error, &report)) << error;
+    ASSERT_GE(report.coverageParts.size(), 3u) << "a part per file closed after a block was sealed";
+    EXPECT_EQ(report.coverageParts.front().first, 0u);
+    EXPECT_GE(report.coverageParts.back().first, 64u) << "the pause's part starts at the last open block";
+    size_t total = 0;
+    for (const auto& part : report.coverageParts)
+        total += part.second.size();
+    EXPECT_LT(report.coverageParts.back().second.size() * 2, total) << "the pause writes a part, not the index";
+
+    std::vector<uint8_t> joinedBytes = ttd::TimeTravelController::JoinCoverageParts(report.coverageParts);
+    auto joined = std::make_unique<ttd::TTDCoverageIndex>();
+    std::istringstream in(std::string(joinedBytes.begin(), joinedBytes.end()));
+    ASSERT_TRUE(joined->Deserialize(in));
+    const ttd::TTDCoverageIndex& liveCoverage = _ttd->GetCoverageIndex();
+    uint64_t first = 0, lastFrame = 0;
+    ASSERT_TRUE(liveCoverage.CoveredRange(ttd::TTDCoverageKind::Executed, first, lastFrame));
+    size_t held = 0;
+    for (uint64_t f = first; f <= lastFrame; ++f)
+        for (const ttd::TTDCoverageKind kind : {ttd::TTDCoverageKind::Executed, ttd::TTDCoverageKind::Written})
+        {
+            std::vector<ttd::TTDCoverageKey> got, want;
+            const bool has = joined->GetFrameKeys(kind, f, got);
+            ASSERT_EQ(has, liveCoverage.GetFrameKeys(kind, f, want)) << "frame " << f;
+            EXPECT_EQ(got, want) << "frame " << f;
+            held += has;
+        }
+    EXPECT_GT(held, 200u);
+}
+
 /// The timeline counts a range's writes from the index's running counts: the sum is every journaled memory write of
 /// the session, and a query decodes at most a block per range end (before: the whole journal per query, 16 s at
 /// 240,000 frames)
@@ -340,6 +387,105 @@ TEST_F(TTDSeekScaling_Folder_Test, TheTimelineReadsNoEvictedSegmentBack)
     }
     EXPECT_GT(baselines, 10u);
     EXPECT_GT(changed, baselines) << "the loop changes RAM every frame";
+}
+
+namespace
+{
+/// The machine a seek landed on: the CPU's registers and the 128 K of RAM
+uint64_t MachineHash(EmulatorContext* context)
+{
+    const Z80* z80 = context->pCore->GetZ80();
+    const uint16_t regs[] = {z80->pc, z80->sp, z80->af, z80->bc, z80->de, z80->hl, z80->ix, z80->iy};
+    uint64_t h = ttd::HashBytes(reinterpret_cast<const uint8_t*>(regs), sizeof(regs));
+    for (uint16_t page = 0; page < 8; ++page)
+        h = ttd::HashCombine(h, context->pMemory->RAMPageAddress(page), PAGE_SIZE);
+    return h;
+}
+
+/// Seeks into segments evicted to their files against seeks into the resident head segment: @p segmentFrames a
+/// segment (its file in parts of 50 checkpoints), @p frames recorded, a one-segment read-back cache so each seek
+/// into the past reads its segment back. Every seek is checked (the frame replayed against the next checkpoint), and
+/// a frame reached by reading its segment back up to a part lands on the machine reached with the segment read whole
+void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* ttd, uint64_t segmentFrames,
+                                uint64_t frames, int seeks, double& residentMs, double& evictedMs)
+{
+    EmulatorContext* context = emulator->GetContext();
+    ttd->SetShadowRecordingRoot(TestPathHelper::GetUniqueTestScratchPath("ttd-seek-evicted"));
+    ttd->SetHistoryLimit(segmentFrames * 8, 1);   // the byte limit evicts every segment with a complete file
+    ttd->SetReadBackCapacity(1);
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(static_cast<int>(frames));
+    const ttd::TTDTimePoint end = ttd->SessionEndPosition();
+    ASSERT_TRUE(ttd->SeekTo({end.frame - 1, 0}));   // the pause: every completed file is out of memory
+    const ttd::TimeTravelEngine& engine = ttd->GetEngine();
+    const std::deque<ttd::TTDSegmentInfo>& segments = engine.Segments();
+    ASSERT_GE(segments.size(), 3u);
+    ASSERT_GE(engine.EvictedSegments(), 2u);
+    const ttd::TTDSegmentInfo head = segments.back();
+
+    ttd->SetCheckSeeks(true);
+    std::mt19937 rng(0x5EE7);
+    std::vector<double> resident, evicted;
+    const uint64_t loads0 = ttd->GetSessionInfo().readBackLoads;
+    for (int i = 0; i < seeks; ++i)
+    {
+        // Resident: the head segment. Evicted: the segments before, in turn (the cache holds one)
+        const uint64_t near = head.firstFrame + 1 + rng() % (end.frame - 2 - head.firstFrame);
+        const size_t k = static_cast<size_t>(i) % (segments.size() - 1);
+        const uint64_t span = engine.SegmentFrameSpan(0, k);
+        const uint64_t far = segments[k].firstFrame + 1 + rng() % (span - 2);
+        for (const auto& [frame, out] : {std::pair{near, &resident}, std::pair{far, &evicted}})
+        {
+            const Clock::time_point s0 = Clock::now();
+            ASSERT_TRUE(ttd->SeekTo({frame, 0})) << "frame " << frame;
+            out->push_back(Ms(s0, Clock::now()));
+        }
+        if (i < 4)
+        {
+            // The machine of the part read back equals the machine of the whole segment (a seek to the segment's
+            // last frame reads it whole, as the cache holds one segment)
+            const uint64_t part = MachineHash(context);
+            ASSERT_TRUE(ttd->SeekTo({segments[k].firstFrame + span - 1, 0}));
+            ASSERT_TRUE(ttd->SeekTo({far, 0}));
+            EXPECT_EQ(MachineHash(context), part) << "frame " << far << " of segment " << k;
+        }
+    }
+    const ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+    EXPECT_GE(info.readBackLoads - loads0, static_cast<uint64_t>(seeks)) << "each seek into the past reads back";
+    EXPECT_EQ(info.readBackFailures, 0u);
+    EXPECT_GE(info.seekChecks, static_cast<uint64_t>(2 * seeks));
+    EXPECT_EQ(info.seekCheckDivergences, 0u);
+    std::nth_element(resident.begin(), resident.begin() + resident.size() / 2, resident.end());
+    std::nth_element(evicted.begin(), evicted.begin() + evicted.size() / 2, evicted.end());
+    residentMs = resident[resident.size() / 2];
+    evictedMs = evicted[evicted.size() / 2];
+    std::fprintf(stderr, "segment %llu frames: seek median resident %.2f ms, evicted %.2f ms\n",
+                 static_cast<unsigned long long>(segmentFrames), residentMs, evictedMs);
+}
+}  // namespace
+
+/// A seek into history evicted to the disk tier costs about a seek in memory: the segment's file is read up to the
+/// part holding the frame (and one more), not whole, and lands on the same machine (P1.S10 seek tails: 5-11 ms
+/// against 1.5 ms before). Segments of 160 frames (four parts), 360 frames recorded; the bound is loose (CI under
+/// load), the long tier measures segments of the harness's size. Runtime: about 0.8 s
+TEST_F(TTDSeekScaling_Folder_Test, ASeekIntoEvictedHistoryCostsAboutASeekInMemory)
+{
+    _ttd->SetEnableWriteJournal(true);
+    double resident = 0, evicted = 0;
+    SeekEvictedAgainstResident(_emulator, _ttd, 160, 360, 12, resident, evicted);
+    EXPECT_LT(evicted, resident * 3 + 2.0) << "resident " << resident << " ms";
+}
+
+/// Long tier: segments of 1,875 frames (the harness's 15,000-frame window, 38 parts), 4,000 frames recorded.
+/// Runtime: about 10 s
+TEST_F(TTDSeekScaling_Folder_Test, ASeekIntoEvictedHistoryLong)
+{
+    if (!TestTier::Long())
+        GTEST_SKIP() << "long tier (UNREAL_LONG_TESTS=1)";
+    _ttd->SetEnableWriteJournal(true);
+    double resident = 0, evicted = 0;
+    SeekEvictedAgainstResident(_emulator, _ttd, 1875, 4000, 20, resident, evicted);
+    EXPECT_LT(evicted, resident * 2.5 + 1.5) << "resident " << resident << " ms";
 }
 
 /// Long tier: a folder recording with the write journal at N and 4N frames (segments of 250 frames). The first seek

@@ -97,6 +97,11 @@ public:
 
     /// Decode @p id into @p out (4 KB). False when a stored payload is damaged
     bool Decode(TTDPieceId id, uint8_t* out) const;
+    /// Decode @p id into @p inout, which holds version @p have: when one of the two is a difference chain's descendant
+    /// of the other, only the differences between them are applied (an XOR difference turns either way) - a restore
+    /// one checkpoint from the last applies one difference, not the chain. False when they share no chain or that
+    /// is not cheaper than Decode (@p inout untouched), or when a payload is damaged (@p inout undefined)
+    bool DecodeFrom(TTDPieceId id, TTDPieceId have, uint8_t* inout, bool& damaged) const;
 
     Encoding EncodingOf(TTDPieceId id) const { return _versions[id].encoding; }
     uint16_t DepthOf(TTDPieceId id) const { return _versions[id].depth; }

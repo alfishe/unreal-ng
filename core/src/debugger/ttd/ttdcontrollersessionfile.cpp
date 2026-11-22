@@ -570,7 +570,8 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
     _engine = std::move(loaded);
     _shadowEngine = _engine.get();
     _replayEngine = _engine.get();
-    _engine->SetSegmentLoader([this](uint32_t line, size_t segment) { return LoadSegmentFromFile(line, segment); });
+    _engine->SetSegmentLoader(
+        [this](uint32_t line, size_t segment, size_t upTo) { return LoadSegmentFromFile(line, segment, upTo); });
     ApplyHistoryPolicy();
     RegisterScreenshotStream(*_engine);
 

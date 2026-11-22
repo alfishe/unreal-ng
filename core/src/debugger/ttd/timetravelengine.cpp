@@ -1070,6 +1070,9 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
         ForgetSegment(*_line, _line->segments.back());
         _line->segments.pop_back();
     }
+    // A segment read back up to a part holds the checkpoints kept (EnsureResident above): whole now
+    if (_line->segments.back().residentEnd != SIZE_MAX && _line->segments.back().residentEnd > index)
+        _line->segments.back().residentEnd = SIZE_MAX;
 
     // What the later checkpoints carried
     for (TTDMediaSlot& slot : _line->mediaSlots)
@@ -1620,6 +1623,7 @@ bool TimeTravelEngine::EvictSegment(uint32_t line, size_t segment, std::string& 
         --l.readBack;
     }
     seg.resident = false;
+    seg.residentEnd = SIZE_MAX;
     seg.readBackBytes = 0;
     ++l.evicted;
     ForgetMemory();   // an id live memory is known by may stand for other content from now on
@@ -1627,7 +1631,7 @@ bool TimeTravelEngine::EvictSegment(uint32_t line, size_t segment, std::string& 
 }
 
 bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDSegmentPieces& pieces,
-                                       std::string& error)
+                                       std::string& error, bool prefix, size_t need)
 {
     if (!HasLine(line) || segment >= _lines[line]->segments.size())
     {
@@ -1638,7 +1642,20 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
     TTDSegmentInfo& seg = l.segments[segment];
     if (seg.resident)
         return true;
-    const size_t end = SegmentEnd(line, segment);
+    const size_t segmentEnd = SegmentEnd(line, segment);
+    size_t end = segmentEnd;
+    if (prefix)
+    {
+        // The checkpoints the pieces reach from the segment's start; the one needed among them
+        end = seg.firstCheckpoint;
+        while (end < segmentEnd && pieces.byFrame.count(l.checkpoints[end - l.cpBase].position.frame))
+            ++end;
+        if (need < seg.firstCheckpoint || need >= end)
+        {
+            error = "the file's parts read do not reach checkpoint " + std::to_string(need);
+            return false;
+        }
+    }
 
     // Per checkpoint: the file's versions by (region, piece). Checked whole before anything changes
     using Key = uint64_t;
@@ -1764,6 +1781,7 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
     for (const TTDPieceId id : used)
         bytes += _store->PayloadSize(id);
     seg.resident = true;
+    seg.residentEnd = end < segmentEnd ? end : SIZE_MAX;
     seg.readBack = true;
     seg.readBackBytes = bytes;
     seg.lastUse = ++_useClock;
@@ -1773,12 +1791,17 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
 }
 
 bool TimeTravelEngine::ReadBackSegmentFrom(uint32_t line, size_t segment, const ITTDByteSource& source,
-                                           std::string& error)
+                                           std::string& error, size_t upTo)
 {
+    // Up to a checkpoint: the file's parts to its frame and one more (the next frame's restore, a seek check)
+    const bool prefix = upTo != SIZE_MAX && HasLine(line) && segment < _lines[line]->segments.size() &&
+                        upTo >= _lines[line]->segments[segment].firstCheckpoint && upTo < SegmentEnd(line, segment) &&
+                        upTo >= _lines[line]->cpBase;
+    const uint64_t upToFrame = prefix ? _lines[line]->checkpoints[upTo - _lines[line]->cpBase].position.frame : UINT64_MAX;
     TTDSegmentPieces pieces;
-    if (!TTDSessionFile::ReadSegmentPieces(source, *_store, pieces, error))
+    if (!TTDSessionFile::ReadSegmentPieces(source, *_store, pieces, error, upToFrame))
         return false;
-    const bool ok = ReadBackSegment(line, segment, pieces, error);
+    const bool ok = ReadBackSegment(line, segment, pieces, error, prefix, upTo);
     TTDSessionFile::ReleaseSegmentPieces(*_store, pieces);   // the segment holds its own references now
     return ok;
 }
@@ -1850,7 +1873,7 @@ bool TimeTravelEngine::MakeResident(size_t index)
     if (s == SIZE_MAX)
         return true;
     TTDSegmentInfo& seg = _line->segments[s];
-    if (seg.resident)
+    if (seg.resident && index < seg.residentEnd)
     {
         if (seg.readBack && seg.lastUse != _useClock)
         {
@@ -1859,8 +1882,11 @@ bool TimeTravelEngine::MakeResident(size_t index)
         }
         return true;
     }
-    // The loader reads the file into this segment (it may evict others of the cache, never this one)
-    return _segmentLoader && _segmentLoader(_lineId, s) && _line->segments[s].resident;
+    // The loader reads the file into this segment (it may evict others of the cache, never this one). Past the part
+    // read so far: the whole segment
+    const size_t upTo = seg.resident ? SIZE_MAX : index;
+    return _segmentLoader && _segmentLoader(_lineId, s, upTo) && _line->segments[s].resident &&
+           index < _line->segments[s].residentEnd;
 }
 
 /// endregion </Two tiers>
@@ -1988,6 +2014,17 @@ TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWritte
             const size_t offset = size_t(p) * kTTDPieceSize;
             const bool partial = offset + kTTDPieceSize > desc.bytes;
             uint8_t* dst = (desc.restorePiece || partial) ? piece : desc.memory + offset;
+            // Memory that holds a known version of the same chain moves by the differences between the two (the
+            // picture's restore of the frame before a seek's, a replay's next checkpoint: one difference, not the
+            // chain; P1.S10 seek tails). Its bytes are unwritten: the written pieces were not skipped above
+            bool damaged = false;
+            if (dst != piece && _inMemory[r][p] != kUnknown && !(written && written(r, p)) &&
+                _store->DecodeFrom(target, _inMemory[r][p], dst, damaged))
+            {
+                _inMemory[r][p] = target;
+                local.piecesDecoded++;
+                continue;
+            }
             if (!_store->Decode(target, dst))
             {
                 result.Add(DamageIssue(index, r, p));

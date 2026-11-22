@@ -201,9 +201,12 @@ Option (b) + (c) of §4.1, with these choices:
   read as the session's). Two exceptions since 2026-11-21 (P1.S10 follow-up: a pause rewrote them whole, 11 s at
   240k frames): the write journal (stream 7) goes with every file, each with its own records (the journals of a
   file after a pause start where the paused file's ended: `JournalStart`), and the trunk's coverage index goes as
-  parts, stream 19 (`kCoverageFrom`, the part's first frame) before the part's stream 8: each pause writes the blocks
-  from the open block the previous part held on, the loader joins the parts in file order, a later part replacing
-  the blocks it repeats (`TTDCoverageIndex::AppendLater`). A part that will not read is left out with a warning,
+  parts, stream 19 (`kCoverageFrom`, the part's first frame) before the part's stream 8: each trunk file the writer
+  closes during a recording ends with the blocks from the open block the previous part held on
+  (`TTDRecordingWriter::SetFileEndStreams`, since 2026-11-22: a first pause after a long recording wrote every block
+  since the start, 0.4 s at 240k frames), and a pause writes only the blocks since the last closed file; the loader
+  joins the parts in file order, a later part replacing the blocks it repeats (`TTDCoverageIndex::AppendLater`). A
+  truncate that rewrites closed files moves the next part's start back to the earliest of theirs. A part that will not read is left out with a warning,
   the rest kept. The branch records of the folder are the creates' (the end as at the fork): the loaded
   end is the line's own when it holds more. Branch state, per-branch coverage and bookmarks are not in the folder
   (a save from memory has them).

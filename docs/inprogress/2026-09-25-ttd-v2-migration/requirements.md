@@ -255,6 +255,28 @@ Release build), reference workloads of §5.3.
   - a pause with coverage writes the coverage blocks sealed since the last
     pause: 0.4-0.5 s after 240k frames without one (89 MB).
 
+  **Measured** (P1.S10 seek tails, 2026-11-22, the same harness at load 10-35),
+  before -> after:
+  - seek into an evicted segment at 240k frames: p50 / p95 11.4 / 43 ms ->
+    4.1 / 5.5 ms (max 5.7), 3.9 / 5.0 ms at 100k: a restore reads back only
+    the file's prefix up to the target's part, the file in one read. PR-5
+    holds within noise for evicted history too;
+  - seek inside the window, frame-aligned: p50 1.45-1.74 ms -> 1.0-1.2 ms,
+    p95 ≤ 1.5 ms. The restore is 0.5-0.7 ms (the full memory decode), the
+    picture 0.5 ms (one frame run from the checkpoint before, the run's
+    write checks off, memory moved along the piece chains, buffers pooled).
+    PR-6's p50 ≤ 1 ms holds up to 100k frames and is 1.2 ms at 240k: the
+    floor is the full decode plus one frame of emulation;
+  - timeline at 240k: 367 -> 84 ms; with coverage 13,276 ms (1,924 at the
+    2026-11-21 follow-up) -> 290 ms, 72 ms at 50k (port facts from per-block
+    tallies, no decode of the port journal);
+  - a first pause with coverage at 240k: 413 -> 9 ms (every closed trunk file
+    carries the coverage blocks since the previous one);
+  - capture with coverage (A/B of the index alone, min of 15 rounds): 19.3 ->
+    13.0 us a frame at 1,100 keys a frame (10.9 before the summaries), 71.7 ->
+    45.3 us at 8 K; the port journal's tallies cost 2.2 us a frame at 3,000
+    port records a frame.
+
 ### 3.3 Storage efficiency
 
 - **PR-9 (MUST)** v2 is **more efficient than v1** on every reference workload

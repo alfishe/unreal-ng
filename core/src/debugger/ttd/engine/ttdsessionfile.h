@@ -234,6 +234,10 @@ public:
     bool Finish(const TimeTravelEngine& engine, size_t end = SIZE_MAX);
     /// The holder streams' bytes for the last part (ids declared at Begin)
     void SetHolderStreams(std::vector<TTDHolderStream> streams) { _params.holderStreams = std::move(streams); }
+    /// Holder streams for the file's last part when the file ends before the session does (a recording folder's
+    /// segment file closed at the next baseline: the coverage index's part, so a later pause writes only what came
+    /// since). Ids declared at Begin; the trunk's files only
+    void SetFileEndStreams(std::vector<TTDHolderStream> streams) { _fileEndStreams = std::move(streams); }
     /// Save with branches: every live line one after another (the trunk first, as a file without branches), each
     /// branch in its streams' twins, then the index. Instead of Finish; the engine's active line is kept
     bool WriteAllLines(TimeTravelEngine& e);
@@ -276,6 +280,7 @@ private:
     ITTDByteSink* _sink = nullptr;
     TTDContainerWriter _writer;
     TTDSessionSaveParams _params;
+    std::vector<TTDHolderStream> _fileEndStreams;   ///< SetFileEndStreams
 
     // The layout's state (the engine's thread)
     std::unordered_map<uint32_t, uint32_t> _itemOf;   ///< store id -> number in the file
@@ -345,8 +350,9 @@ public:
     /// Two tiers (P3): the versions of a recording folder's segment file, per checkpoint, imported into @p store
     /// (each with one reference: ReleaseSegmentPieces) for TimeTravelEngine::ReadBackSegment. False with the reason
     /// when a part is damaged or a version does not fit; nothing is held then
+    /// @p upToFrame: only the parts from the file's start to the one holding that frame and one more are read
     static bool ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
-                                  std::string& error);
+                                  std::string& error, uint64_t upToFrame = UINT64_MAX);
     static void ReleaseSegmentPieces(TTDPieceStore& store, TTDSegmentPieces& pieces);
 
     /// The copy frame-boundary stream @p stream (the engine's id) took at
