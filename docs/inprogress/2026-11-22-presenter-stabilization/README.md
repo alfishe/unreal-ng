@@ -34,7 +34,25 @@ fixed display under it is the setting's meaning, not a defect.
 Only DXGI drops a queued present when a later one is due. The timed GL swap keeps "at once" presents, Vulkan keeps
 all, Metal queues drawables: a machine faster than a fixed display (50.08 Hz on 50 Hz after a rate switch, a 60 Hz
 Next on 59.81 Hz), most of all with low latency, fills the queue: the GUI thread blocks a refresh per frame, two
-refreshes of delay stay, the lead climbs to its bound. Open.
+refreshes of delay stay, the lead climbs to its bound.
+
+Tried on the Steam Deck (gamescope, low latency, 2026-11-22), GL and Vulkan, per-present traces:
+
+| Case | Result |
+|------|--------|
+| ZX 48K (50.08 Hz), `display_rate=match` (gamescope at 50 Hz), 90 s | no queue: the error steady (GL 9-10 / 17 ms), 0 dropped; the display shows 50.1 frames a second, not fewer than the machine makes |
+| Turbo, 30 s | no queue: the window hands over one frame a refresh (59 a second) |
+
+So the pile is not reached in what a user can set today; a machine clearly faster than its display (a 60 Hz mode on
+59.81 Hz) is the case left, with no machine to make it here.
+
+- Done, the timed GL swap: a frame at once gives way to a pile of two or more frames at once behind it
+  (`linuxpresent::NextForPlan`). One frame waiting is the usual case and stays: giving way to it lost 0.4 frames a
+  second on the Deck (48.83 Hz on 60 Hz); with the pile rule 0 dropped in the measured 20 s (5 during the start and
+  the snapshot's load).
+- Open, Vulkan and Metal: a present handed over cannot be taken back (an acquired image, a drawable). The way is
+  back-pressure in the window: while a present waits for its refresh the next frame is not handed over, the newest one
+  goes when the presenter is free. Not built: nothing reproduces the pile there yet.
 
 ### 1.3 Smooth motion (step 3)
 
@@ -56,9 +74,10 @@ refreshes of delay stay, the lead climbs to its bound. Open.
 | K4 | `VK_ERROR_PRESENT_TIMING_QUEUE_FULL_EXT` is a plain drop: nothing drains the queue of a window that is not shown |
 | K5 | The refresh period does not follow a mode change of the same screen (a display rate switch, gamescope's 49 Hz) |
 | K6 | The Wayland lead is applied in IMMEDIATE too (policy `vrr`): 10 ms early |
-| K7 | `WantedMode` looks at "the surface offers present timing", not at "the swapchain has it": FIFO with the timing flags when the set-up failed |
+| K7 | `WantedMode` looks at "the surface offers present timing", not at "the swapchain has it": FIFO with the timing flags when the set-up failed. Fixed: a failed set-up makes the swapchain again without present timing |
+| K10 | gamescope's WSI layer completes every timing result with no time while the window does not bypass Xwayland: no screen times for 15 s after each start on the Steam Deck, and whenever something is over the window. Fixed: 32 such results in a row end present timing for the swapchain (`VK_KHR_present_wait`'s times), until the surface says it changed ([Vulkan renderer, section 2.6](../2026-11-19-vulkan-renderer/README.md)) |
 | K8 | Acquire waits 100 ms under the swapchain mutex; `vkWaitForPresentKHR` 100 ms per present while the queue is busy (a locked screen) |
-| K9 | The calibration takes one sample with the call's own delay in it; the time domain counter is not watched |
+| K9 | The calibration takes one sample with the call's own delay in it; the time domain counter is not watched. Half done: a change of the swapchain's time domains asks them again (`PickTimeDomain`) |
 
 ### 1.5 Display events nobody handles (step 5)
 

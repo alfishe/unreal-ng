@@ -534,7 +534,7 @@ private:
                     break;
                 item = _queue.front();
                 _queue.pop_front();
-                nextAtNs = _queue.empty() ? 0 : _queue.front().atNs;
+                nextAtNs = linuxpresent::NextForPlan(_queue.size(), _queue.empty() ? 0 : _queue.front().atNs);
             }
             int64_t wakeNs = 0;
             if (linuxpresent::PlanSwap(item.atNs, nextAtNs, SteadyNowNs(), kSwapCostNs, wakeNs) ==

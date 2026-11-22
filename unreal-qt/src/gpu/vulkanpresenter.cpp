@@ -1,5 +1,6 @@
 #include "vulkanpresenter.h"
 
+#include <QDebug>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QWindow>
@@ -113,6 +114,18 @@ struct VulkanPresenter::Impl
     bool presentTiming = false;
     std::atomic<bool> timed{false};  ///< the swapchain presents at absolute times (MakeSwapchain)
     std::string timingWhy;           ///< why not (Describe), empty: no VK_EXT_present_timing on the device
+    /// The timed swapchain gave no screen times (kNoTimeLimit results in a row without one, or its set-up failed): the
+    /// next swapchain is made without present timing, its screen times VK_KHR_present_wait's. gamescope's WSI layer
+    /// completes every result with no time while the window does not bypass XWayland (something over it, a child
+    /// window that does not cover its top level: the Steam Deck, 15 s after the start). Asked again when the surface
+    /// says it changed (SUBOPTIMAL / OUT_OF_DATE: the bypass came back)
+    std::atomic<bool> timingOff{false};
+    std::atomic<int> noTimeRun{0};
+    static constexpr int kNoTimeLimit = 32;
+    uint64_t domainsCounter = 0;     ///< the swapchain's time domains as last asked (PickTimeDomain)
+    std::atomic<uint64_t> domainChanges{0};      ///< ... changed under the swapchain
+    std::atomic<uint64_t> timingNoTime{0};       ///< timing results without a time (a present never shown)
+    std::atomic<uint64_t> timingOtherDomain{0};  ///< ... with a time in a domain not asked for
 #ifdef VK_EXT_present_timing
     PFN_vkGetPastPresentationTimingEXT pastTimingExt = nullptr;
     PFN_vkSetSwapchainPresentTimingQueueSizeEXT timingQueueSize = nullptr;
@@ -184,7 +197,7 @@ struct VulkanPresenter::Impl
         // FIFO barrier on each present, and mutter showed one in five a refresh after Mesa's own time (.238,
         // WAYLAND_DEBUG: 422 of 534 at it, 104 a refresh after, 7 two): a judder on a scroll. One present per refresh,
         // just after the one before, is never replaced in the mailbox
-        if (presentTiming && has(VK_PRESENT_MODE_FIFO_KHR))
+        if (presentTiming && !timingOff.load(std::memory_order_relaxed) && has(VK_PRESENT_MODE_FIFO_KHR))
             return VK_PRESENT_MODE_FIFO_KHR;  // the compositor holds each present for its time
         if (wayland && has(VK_PRESENT_MODE_MAILBOX_KHR))
             return VK_PRESENT_MODE_MAILBOX_KHR;
@@ -274,7 +287,8 @@ struct VulkanPresenter::Impl
             }
         info.presentMode = wantedMode;
 #ifdef VK_EXT_present_timing
-        const bool wantTimed = presentTiming && wantedMode == VK_PRESENT_MODE_FIFO_KHR;
+        const bool wantTimed = presentTiming && !timingOff.load(std::memory_order_relaxed) &&
+                               wantedMode == VK_PRESENT_MODE_FIFO_KHR;
         if (wantTimed)
             info.flags |= VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT | VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR;
 #endif
@@ -320,6 +334,14 @@ struct VulkanPresenter::Impl
         recreate = false;
 #ifdef VK_EXT_present_timing
         timed = wantTimed && SetUpTiming(count);
+        noTimeRun = 0;
+        if (wantTimed && !timed.load(std::memory_order_relaxed))
+        {
+            // A swapchain made for present timing that has none: not presented to with the other feedback's
+            // structures, made again without it
+            timingOff = true;
+            recreate = true;
+        }
 #endif
         if (refreshCycle)
         {
@@ -445,7 +467,10 @@ struct VulkanPresenter::Impl
         }
         item.submittedNs = SteadyNs();
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
+        {
             recreate = true;
+            timingOff = false;  // the surface changed: present timing is asked again
+        }
         else if (r == VK_ERROR_DEVICE_LOST || r == VK_ERROR_SURFACE_LOST_KHR)
         {
             failed = true;
@@ -559,8 +584,17 @@ struct VulkanPresenter::Impl
             timingWhy = "queue size " + std::to_string(r);
             return false;
         }
+        return PickTimeDomain();
+    }
+
+    /// The swapchain's time domain the screen times are asked in, and its counter: the list changes while the
+    /// swapchain lives (gamescope's WSI layer: with the first refresh cycle it hears; a mode change), and results in a
+    /// domain not asked again carry no usable time (the Steam Deck: no screen times for 15 s after the start)
+    bool PickTimeDomain()
+    {
         VkSwapchainTimeDomainPropertiesEXT domains{VK_STRUCTURE_TYPE_SWAPCHAIN_TIME_DOMAIN_PROPERTIES_EXT};
-        if (const VkResult r = timeDomains(dev, swapchain, &domains, nullptr); r != VK_SUCCESS || !domains.timeDomainCount)
+        if (const VkResult r = timeDomains(dev, swapchain, &domains, &domainsCounter);
+            r != VK_SUCCESS || !domains.timeDomainCount)
         {
             timingWhy = "time domains " + std::to_string(r);
             return false;
@@ -569,7 +603,8 @@ struct VulkanPresenter::Impl
         std::vector<uint64_t> ids(domains.timeDomainCount);
         domains.pTimeDomains = kinds.data();
         domains.pTimeDomainIds = ids.data();
-        if (const VkResult r = timeDomains(dev, swapchain, &domains, nullptr); r != VK_SUCCESS && r != VK_INCOMPLETE)
+        if (const VkResult r = timeDomains(dev, swapchain, &domains, &domainsCounter);
+            r != VK_SUCCESS && r != VK_INCOMPLETE)
         {
             timingWhy = "time domains " + std::to_string(r);
             return false;
@@ -658,6 +693,15 @@ struct VulkanPresenter::Impl
             const VkResult r = pastTimingExt(dev, &info, &props);
             if (r != VK_SUCCESS && r != VK_INCOMPLETE)
                 return;
+            if (props.timeDomainsCounter != domainsCounter)
+            {
+                // The domains changed under the swapchain: asked again, the clock calibrated anew
+                const uint64_t was = timeDomainId;
+                const bool picked = PickTimeDomain();
+                domainChanges++;
+                qInfo().noquote() << "VulkanPresenter: the swapchain's time domains changed (domain" << was << "->"
+                                  << timeDomainId << (picked ? ")" : "): none usable now");
+            }
         }
         for (uint32_t i = 0; i < props.presentationTimingCount && i < kMax; ++i)
         {
@@ -665,12 +709,29 @@ struct VulkanPresenter::Impl
             if (!p.reportComplete)
                 continue;
             int64_t screenNs = 0;
+            bool otherDomain = false;
             for (uint32_t k = 0; k < p.presentStageCount; ++k)
-                if (p.pPresentStages[k].stage == timingStage && p.pPresentStages[k].time != 0 &&
-                    (p.timeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR ||
-                     (localDomain && p.timeDomainId == timeDomainId)))
-                    screenNs = static_cast<int64_t>(p.pPresentStages[k].time) -
-                               (p.timeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR ? 0 : offsetNs);
+                if (p.pPresentStages[k].stage == timingStage && p.pPresentStages[k].time != 0)
+                {
+                    if (p.timeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR ||
+                        (localDomain && p.timeDomainId == timeDomainId))
+                        screenNs = static_cast<int64_t>(p.pPresentStages[k].time) -
+                                   (p.timeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR ? 0 : offsetNs);
+                    else
+                        otherDomain = true;
+                }
+            if (screenNs != 0)
+                noTimeRun = 0;
+            else
+            {
+                (otherDomain ? timingOtherDomain : timingNoTime)++;
+                if (++noTimeRun == kNoTimeLimit && !timingOff.exchange(true))
+                {
+                    recreate = true;
+                    qInfo().noquote() << "VulkanPresenter: present timing gives no screen times (" << kNoTimeLimit
+                                      << "results in a row) - a swapchain without it, VK_KHR_present_wait's times";
+                }
+            }
             while (!timing.empty() && timing.front().presentId <= p.presentId)
             {
                 const Item item = timing.front();
@@ -817,6 +878,7 @@ std::unique_ptr<VulkanPresenter> VulkanPresenter::Create(QWindow* window, Vulkan
 VulkanPresenter::~VulkanPresenter()
 {
     Impl& impl = *_impl;
+    qInfo().noquote() << "VulkanPresenter: closing," << QString::fromStdString(Describe());
     QObject::disconnect(impl.screenChanged);
     {
         std::lock_guard<std::mutex> lock(impl.queueMutex);
@@ -919,11 +981,17 @@ void VulkanPresenter::PresentFrame(int64_t atNs, const TraceInfo& trace)
     }
     const int64_t acquireNs = SteadyNs() - acquireStart;
     if (r == VK_SUBOPTIMAL_KHR)
+    {
         impl.recreate = true;
+        impl.timingOff = false;  // the surface changed: present timing is asked again
+    }
     else if (r != VK_SUCCESS)
     {
         if (r == VK_ERROR_OUT_OF_DATE_KHR)
+        {
             impl.recreate = true;
+            impl.timingOff = false;
+        }
         else if (r == VK_ERROR_DEVICE_LOST || r == VK_ERROR_SURFACE_LOST_KHR)
             impl.failed = true;
         impl.device->Flush();  // the picture's work goes anyway: the next frame's barriers expect it done
@@ -1084,6 +1152,18 @@ std::string VulkanPresenter::Describe() const
                   s.errorP50, s.errorP99, s.errorMax, s.drawableWaitP50, s.drawableWaitMax, s.maxRefreshHz,
                   s.visible ? "" : "; occluded", Lost() ? "; lost" : "",
                   impl.timingWhy.empty() ? "" : "; present timing: ", impl.timingWhy.c_str());
-    return line;
+    std::string text = line;
+    if (impl.timingOff.load(std::memory_order_relaxed))
+        text += "; off now: it gave no screen times";
+    if (impl.presentTiming)
+    {
+        // What the timing results did not give a screen time for, and how often the swapchain's domains changed
+        std::snprintf(line, sizeof line, "; timing results: %llu without a time, %llu in another domain, %llu domain changes",
+                      static_cast<unsigned long long>(impl.timingNoTime.load()),
+                      static_cast<unsigned long long>(impl.timingOtherDomain.load()),
+                      static_cast<unsigned long long>(impl.domainChanges.load()));
+        text += line;
+    }
+    return text;
 }
 }  // namespace gpu

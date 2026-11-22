@@ -167,8 +167,20 @@ display's GL was a software one.
 
 SteamOS 3.10, RADV VANGOGH (Mesa 26.2.0-devel, Vulkan 1.4.350; radeonsi 26.1.2 for GL), gamescope 3.17 Game Mode,
 the app through Xwayland (`QT_QPA_PLATFORM=xcb`). RADV offers `VK_EXT_present_timing`, `VK_KHR_present_id2`,
-`VK_KHR_present_wait(2)` and calibrated timestamps, but gamescope's WSI layer (`VkLayer_FROG_gamescope_wsi`) gives the
-surface no present timing (`surface 0 timing 0 absolute 0`): the Vulkan path is FIFO with `VK_KHR_present_wait`.
+`VK_KHR_present_wait(2)` and calibrated timestamps. What the window gets depends on gamescope's WSI layer
+(`VkLayer_FROG_gamescope_wsi`, on with `ENABLE_GAMESCOPE_WSI=1`, which Steam sets for a game):
+
+- Without the layer (a start outside Steam without that variable): Mesa's X11 swapchain through Xwayland, no present
+  timing on the surface (`surface 0 timing 0 absolute 0`), FIFO with `VK_KHR_present_wait`. The traces below are this
+  path.
+- With the layer: the surface has present timing, and the layer completes every result **with no time** while the
+  window does not bypass Xwayland (`timingQueue.complete(serial, 0, 0, 0)` in its `QueuePresentKHR`): something over
+  the window, a child window that does not cover its top level. Seen 2026-11-22: 15 s after each start with no screen
+  time at all (3 of 898 presents), then times with a larger error (15 / 23 ms at once against GL's 9.5 / 17 ms).
+  Fixed: 32 results in a row without a time make the next swapchain without present timing (`VK_KHR_present_wait`'s
+  times); it is asked again when the surface says it changed (SUBOPTIMAL / OUT_OF_DATE). After the fix, Across the
+  Edge, 20 s, with the layer: at once GL 9.2 / 17.3 ms, Vulkan 9.2 / 17.3 ms; at the frame's time GL 10.0 / 18.1 ms,
+  Vulkan 8.1 / 16.3 ms; screen times from the first second.
 
 The installed bundle (the AppImage of §2.7 with 1.4.341 headers) started from Steam, the renderer and CRT setting
 switched through the WebAPI, Across the Edge reloaded before each case, 5 s settle, 20 s measured, 2026-11-22
