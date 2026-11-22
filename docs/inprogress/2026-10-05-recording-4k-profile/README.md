@@ -76,6 +76,17 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   x86-64 (the old and new outputs compared, `ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte` widened). To
   3840x2160 on an M1 Ultra: 352x288 (7.5x fit) 2.40 -> 1.38 ms, 320x256 2.17 -> 1.27 ms, 2048x1536 (fit) 9.2 ->
   6.4 ms, 1280x720 (3x) 5.17 -> 2.4 ms, 768x432 (5x) 4.43 -> 2.98 ms; even factors and 1x unchanged.
+- ~~GIF (the `video/record` default, `Auto` palette) on the emulation thread~~ done 2026-11-21. `GifWriteFrame` made
+  the median-split palette of the whole frame twice per frame, and a repeated frame turned pixel (0,0) black (a
+  1x1 frame of the previous index with a palette of no colors). Now: a repeated frame is one transparent pixel; the
+  changed pixels of a frame with at most 255 colors get an exact palette (one entry per color, the fewest code bits)
+  in two passes, no median split; more colors keep the median split. Quality: every decoded frame equals its source
+  on six ZX programs (the old encoder was off in 2-200 of 200 frames, by up to 255 per channel) and on 16-color
+  noise; the GIF bytes are the same on macOS, Linux and Windows. Mean ms per frame, 5 interleaved rounds (M1 Ultra
+  clang / i7-11850H gcc 15 / Windows host MSVC 2022): earshaver 5.6 -> 2.2 / 5.6 -> 1.2 / 3.3 -> 1.0; aleste 2.9 ->
+  2.1 / 2.3 -> 1.4 / 1.5 -> 1.0; Dizzy 1.1 -> 0.6 / 0.7 -> 0.4 / 0.7 -> 0.5; across-the-edge 10.7 -> 1.3 / 11.6 ->
+  1.2 / 7.0 -> 1.0; 16-color noise 48 -> 3.8 / 54 -> 6.3 / 28 -> 3.4; a 1024-color frame (median split) 42 -> 33 /
+  49 -> 37 / 30 -> 21. Files 4-49 % smaller; a live 5 s recording records the same frames, 37-50 % smaller.
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).

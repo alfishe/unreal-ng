@@ -767,6 +767,88 @@ bool GifBeginFile(GifWriter* writer, FILE* file, uint32_t width, uint32_t height
 // The GIFWriter should have been created by GIFBegin.
 // AFAIK, it is legal to use different bit depths for different frames of an image -
 // this may be handy to save bits in animations that don't change much.
+// Local change: a frame with few colors (an emulated machine's 2..16, a ZX frame) needs no median split. Every color
+// that changed gets its own palette entry (1..n, in the order met; 0 stays the transparent index) and each pixel its
+// index: the decoded frame is the source exactly, and the code size is the fewest bits that hold n + 1 entries (2 at
+// least). The colors are collected first: `outFrame` is the previous frame too (in place), so it is written only once
+// they are known to fit. False when more than 2^bitDepth - 1 colors changed, nothing written
+static bool GifPaletteExactColors(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                                  uint32_t height, int bitDepth, GifPalette* pPal)
+{
+    constexpr uint32_t kSlots = 1024;  // a power of 2, four times the most colors: short probes
+    uint32_t keys[kSlots];
+    uint8_t values[kSlots];
+    bool used[kSlots] = {};
+    const int maxColors = (1 << bitDepth) - 1;
+    int count = 0;
+    const uint32_t numPixels = width * height;
+
+    auto keyOf = [](const uint8_t* p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16); };
+    auto unchanged = [](const uint8_t* last, const uint8_t* next) {
+        return last && last[0] == next[0] && last[1] == next[1] && last[2] == next[2];
+    };
+    // The slot of a color, added when new; false once the colors overflow. Runs of one color skip the table
+    uint32_t lastKey = 0xFFFFFFFFu;  // never a key: they have no bit 31
+    uint32_t lastSlot = 0;
+    auto slotOf = [&](uint32_t key, uint32_t& slotOut) -> bool {
+        if (key == lastKey)
+        {
+            slotOut = lastSlot;
+            return true;
+        }
+        uint32_t slot = (key * 2654435761u) >> 22;  // the top 10 bits: kSlots
+        while (used[slot] && keys[slot] != key)
+            slot = (slot + 1) & (kSlots - 1);
+        if (!used[slot])
+        {
+            if (count == maxColors)
+                return false;
+            ++count;
+            used[slot] = true;
+            keys[slot] = key;
+            values[slot] = (uint8_t)count;
+            pPal->r[count] = (uint8_t)key;
+            pPal->g[count] = (uint8_t)(key >> 8);
+            pPal->b[count] = (uint8_t)(key >> 16);
+        }
+        lastKey = key;
+        lastSlot = slot;
+        slotOut = slot;
+        return true;
+    };
+
+    // Pass 1: the colors of the changed pixels
+    uint32_t slot = 0;
+    for (uint32_t i = 0; i < numPixels; ++i)
+    {
+        const uint8_t* next = nextFrame + 4 * (size_t)i;
+        if (!unchanged(lastFrame ? lastFrame + 4 * (size_t)i : nullptr, next) && !slotOf(keyOf(next), slot))
+            return false;
+    }
+    // Pass 2: the indices (all colors are in the table now; the previous frame is read before its pixel is written)
+    for (uint32_t i = 0; i < numPixels; ++i)
+    {
+        const uint8_t* next = nextFrame + 4 * (size_t)i;
+        uint8_t* out = outFrame + 4 * (size_t)i;
+        const bool same = unchanged(lastFrame ? lastFrame + 4 * (size_t)i : nullptr, next);
+        uint8_t index = kGifTransIndex;
+        if (!same)
+        {
+            slotOf(keyOf(next), slot);
+            index = values[slot];
+        }
+        out[0] = next[0];
+        out[1] = next[1];
+        out[2] = next[2];
+        out[3] = index;
+    }
+    int depth = 2;
+    while ((1 << depth) <= count)
+        ++depth;
+    pPal->bitDepth = depth;
+    return true;
+}
+
 bool GifWriteFrame(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
                    int bitDepth, bool dither)
 {
@@ -776,18 +858,29 @@ bool GifWriteFrame(GifWriter* writer, const uint8_t* image, uint32_t width, uint
     const uint8_t* oldImage = writer->firstFrame ? NULL : writer->oldImage;
     writer->firstFrame = false;
 
-    GifPalette fakePal;
-    GifMakePalette((dither ? NULL : oldImage), image, width, height, bitDepth, dither, &fakePal);
-
     if (writer->oldRawImage != nullptr && memcmp(writer->oldRawImage, image, width * height * 4) == 0)
     {
-        // When adjacent frames have no differences at all - put fake image into resulting stream
-        GifWriteLzwImage(writer->f, writer->oldImage, 0, 0, 1, 1, delay, &fakePal);
+        // When adjacent frames have no differences at all - put fake image into resulting stream.
+        // Local change: one transparent pixel, which keeps the picture as it is. It wrote the previous frame's index
+        // of pixel (0,0) with a palette made of the changed pixels - none - so a repeated frame turned that pixel
+        // black; and two median splits of the whole image were made for every frame, this one up front
+        GifPalette fakePal;
+        memset(&fakePal, 0, sizeof(fakePal));
+        fakePal.bitDepth = 2;
+        uint8_t transparentPixel[4] = {0, 0, 0, kGifTransIndex};
+        GifWriteLzwImage(writer->f, transparentPixel, 0, 0, 1, 1, delay, &fakePal);
     }
     else
     {
         // When frames have differences - do full new frame encoding
         GifPalette pal;
+        memset(&pal, 0, sizeof(pal));
+        if (!dither && GifPaletteExactColors(oldImage, image, writer->oldImage, width, height, bitDepth, &pal))
+        {
+            GifWriteLzwImage(writer->f, writer->oldImage, 0, 0, width, height, delay, &pal);
+        }
+        else
+        {
         GifMakePalette((dither ? NULL : oldImage), image, width, height, bitDepth, dither, &pal);
 
         if (dither)
@@ -796,6 +889,7 @@ bool GifWriteFrame(GifWriter* writer, const uint8_t* image, uint32_t width, uint
             GifThresholdImage(oldImage, image, writer->oldImage, width, height, &pal);
 
         GifWriteLzwImage(writer->f, writer->oldImage, 0, 0, width, height, delay, &pal);
+        }
     }
 
     if (writer->oldRawImage == nullptr)
