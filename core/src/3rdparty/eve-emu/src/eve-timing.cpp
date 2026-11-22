@@ -43,9 +43,16 @@ void FrameEvent(EveChip& chip)
         FoldFrameMetrics(chip);
 }
 
+// With the renderer on, the lines due go to it every so many lines (CatchUpAhead), not only before a change and at
+// the frame event: a frames barrier waits for less. A catch-up draws only lines whose time has come, so the picture
+// is the same wherever it comes
+constexpr uint32_t kAsyncCatchUpLines = 16;
+
 void EndOfLine(EveChip& chip)
 {
     ScanState& scan = chip.state.scan;
+    if (chip.asyncDrawing && scan.line % kAsyncCatchUpLines == kAsyncCatchUpLines - 1)
+        CatchUpAhead(chip);
     if (scan.dlswapPending == 1)
         ApplySwap(chip);
     if (scan.line == FrameEventLine(chip))

@@ -213,6 +213,9 @@ public:
     /// select do byte by byte, with the clock caught up once and the next event planned once (no time passes
     /// inside a transaction). `miso` may be null. A capture or a device history takes the byte path
     void Transaction(const uint8_t* mosi, uint8_t* miso, size_t count);
+    /// `count` 32-bit words (little-endian bytes) at `address`, `address` + 4, ... (22-bit addresses), one write
+    /// transaction each: the words in RAM_G go in one pass (EveWriteRamGWords), the others as transactions
+    void WriteWords(uint32_t address, const uint8_t* words, size_t count);
     /// endregion
 
     /// region <TTD (line-budget-metrics.md §3.4)>
@@ -288,6 +291,11 @@ private:
     bool Drawing() const;
     /// The chip's frame buffer (ARGB8888) into the presented picture (RGBA8888)
     void ConvertFrameToPicture();
+    /// The frame converted into `out` (and `copy` when not null), `pixels` of it
+    void ConvertFrame(uint8_t* out, uint8_t* copy, size_t pixels) const;
+    /// The finished frame into the picture and, unless a TTD replay composes the pictures, latched into the present
+    /// queue (Screen::LatchExternalFrame)
+    void PresentPicture();
     /// The drawing on the renderer thread when wanted (Params::drawThread), on this thread for a capture
     /// (it hashes the frame buffer at the frame event) and a TTD replay (it composes pictures from it)
     bool AsyncWanted() const;

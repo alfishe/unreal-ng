@@ -1355,6 +1355,10 @@ public:
     FramebufferDescriptor& GetNativeFramebufferDescriptor() { return _framebuffer; }
     /// Latch the external picture into the present queue (emulation thread)
     void LatchExternalFrame();
+    /// The same, with the slot written by `fill` (the external picture's size) instead of copied from the external
+    /// picture: an owner that makes its picture and the slot in one pass. False: nothing latched, `fill` not called
+    using ExternalFill = void (*)(void* context, uint8_t* slot, size_t bytes);
+    bool LatchExternalFrame(ExternalFill fill, void* context);
     /// endregion
 
     /// Display viewport for cropping framebuffer to display

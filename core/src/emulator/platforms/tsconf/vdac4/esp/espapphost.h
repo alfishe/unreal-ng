@@ -52,6 +52,8 @@ struct EspAppHostPorts
     /// Tang LINK register file (32-bit words at byte addresses)
     std::function<uint32_t(uint32_t address)> linkRead;
     std::function<void(uint32_t address, uint32_t value)> linkWrite;
+    /// LINK FT_ADDR, then FT_DATA per word (little-endian bytes), in one call. Unset: through linkWrite
+    std::function<void(uint32_t ftAddress, const uint8_t* words, size_t count)> linkFtWrite;
     /// Played PCM: interleaved int16 stereo at `rate`
     std::function<void(const int16_t* frames, size_t count, uint32_t rate)> audio;
     /// zm_core_t::log lines and runtime diagnostics

@@ -38,6 +38,9 @@ public:
 
     /// region <Producer: the thread running the ESP job>
     void Write(uint64_t stamp, uint32_t address, uint32_t value);
+    /// FT_ADDR = `ftAddress`, then FT_DATA = each word (Vdac4Tang::LinkFtWrite): at once in one pass, or queued
+    /// as those writes
+    void WriteFt(uint64_t stamp, uint32_t ftAddress, const uint8_t* words, size_t count);
     /// Wait for the queue, then the read at `stamp`
     uint32_t Read(uint64_t stamp, uint32_t address);
     /// The job ended: the chip drawn up to `stamp`; `job` (the runtime's job index) is done once applied, with

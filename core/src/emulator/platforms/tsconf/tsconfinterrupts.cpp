@@ -262,8 +262,9 @@ void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)
 
     // The common stall: no frame pulse is latched and the frame event is not in the rasters this stall evaluates. Then nothing
     // below touches the pulse, and the two catch-ups latch what one to the stall's end latches (a line end between the start and
-    // the end is found by either)
-    if (!(_ts.intPending & TsConfInt::Frame) && !_lineSource) [[likely]]
+    // the end is found by either; a line source's edges up to the start and after it are its edges up to the end, each taken at
+    // the same raster as one catch-up takes it: the first catch-up takes every edge up to the start)
+    if (!(_ts.intPending & TsConfInt::Frame)) [[likely]]
     {
         const uint32_t from = _ts.intLastRaster;
         const uint32_t to = std::min<uint32_t>(t1 / multiplier, kFrameTacts - 1);

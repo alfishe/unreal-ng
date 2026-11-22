@@ -331,6 +331,18 @@ uint32_t Vdac4Tang::LinkRead(uint32_t address)
     }
 }
 
+void Vdac4Tang::LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count)
+{
+    // The time does not move between the words: Update has nothing to change after the first call
+    Update(Now());
+    _state.ftAddr = ftAddress & 0x3FFFFF;
+    if (count == 0)
+        return;
+    if (_state.personality == Personality::Ft && !_state.selected)
+        WriteWords(_state.ftAddr, words, count);
+    _state.ftAddr += 4 * static_cast<uint32_t>(count);
+}
+
 void Vdac4Tang::LinkWrite(uint32_t address, uint32_t value)
 {
     const uint64_t now = Now();

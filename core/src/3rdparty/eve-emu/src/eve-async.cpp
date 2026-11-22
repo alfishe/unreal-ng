@@ -53,6 +53,7 @@ struct Op
 {
     OpKind kind = OpKind::Sync;
     uint8_t flag = 0;
+    bool ahead = false; // lines drawn ahead (CatchUpAhead): REG_TAG as the host sees it stays as it was
     uint8_t sync = 0; // SyncFlags
     uint32_t due = 0;
     uint64_t frame = 0;
@@ -100,6 +101,14 @@ struct AsyncDrawing
     std::deque<std::unique_ptr<Op>> queue;
     std::vector<std::unique_ptr<Op>> free;
     uint32_t framesQueued = 0;
+    // Operations queued and applied, counted (under `lock`); the frames barrier's REG_TAG is the shadow's after
+    // operation `tagMark` (0: none asked), taken by the renderer when it gets there
+    uint64_t opsQueued = 0;
+    uint64_t opsApplied = 0;
+    uint64_t tagMark = 0;
+    uint32_t tagAtMark = 0;
+    // REG_TAG as the host sees it: the shadow's after the last operation that is not drawn ahead
+    uint32_t tagSeen = 0;
     bool busy = false;
     bool stop = false;
     std::thread thread;
@@ -214,18 +223,20 @@ void Queue(AsyncDrawing& a, std::unique_ptr<Op> op)
         });
         if (frameEnd)
             ++a.framesQueued;
+        ++a.opsQueued;
         a.queue.push_back(std::move(op));
     }
     a.work.notify_one();
 }
 
-void QueueOp(EveChip& chip, OpKind kind, uint32_t due = 0, uint8_t flag = 0)
+void QueueOp(EveChip& chip, OpKind kind, uint32_t due = 0, uint8_t flag = 0, bool ahead = false)
 {
     AsyncDrawing& a = *chip.async;
     std::unique_ptr<Op> op = TakeOp(a);
     op->kind = kind;
     op->due = due;
     op->flag = flag;
+    op->ahead = ahead;
     op->frame = chip.state.scan.frames;
     CaptureInputs(chip, a, *op);
     if (kind == OpKind::Swapped && flag && !op->hasList)
@@ -350,6 +361,10 @@ void RendererLoop(AsyncDrawing* a)
             a->busy = false;
             if (op->kind == OpKind::FrameEnd)
                 --a->framesQueued;
+            if (!op->ahead)
+                a->tagSeen = RegGet(*a->shadow, Reg::Tag);
+            if (++a->opsApplied == a->tagMark)
+                a->tagAtMark = a->tagSeen;
             a->free.push_back(std::move(op));
         }
         a->done.notify_all();
@@ -360,9 +375,14 @@ void RendererLoop(AsyncDrawing* a)
 
 // --- Hooks of the drawing (eve-dl.cpp, eve-timing.cpp) ------------------------------------------
 
-void AsyncLines(EveChip& chip, uint32_t due, bool draw)
+void AsyncLines(EveChip& chip, uint32_t due, bool draw, bool ahead)
 {
-    QueueOp(chip, OpKind::Lines, due, draw ? 1 : 0);
+    QueueOp(chip, OpKind::Lines, due, draw ? 1 : 0, ahead);
+}
+
+void AsyncCatchUpPoint(EveChip& chip)
+{
+    QueueOp(chip, OpKind::Sync);
 }
 
 void AsyncFrameStart(EveChip& chip)
@@ -388,6 +408,7 @@ void AsyncInvalidate(EveChip& chip)
 
 void AsyncTakeDrawingState(EveChip& chip, bool metrics)
 {
+    AsyncDropPendingTag(chip);
     if (chip.async)
         chip.async->syncPending |= SyncHandles | (metrics ? SyncMetrics : 0);
 }
@@ -414,7 +435,49 @@ void AsyncSyncTag(EveChip& chip)
     if (!chip.asyncDrawing)
         return;
     AsyncWait(chip);
-    RegSet(chip, Reg::Tag, RegGet(*chip.async->shadow, Reg::Tag));
+    AsyncDropPendingTag(chip); // superseded: the tag of now
+    std::lock_guard<std::mutex> guard(chip.async->lock);
+    RegSet(chip, Reg::Tag, chip.async->tagSeen);
+}
+
+void AsyncFramesBarrier(EveChip& chip)
+{
+    AsyncDrawing* a = chip.async.get();
+    if (!a || !chip.asyncDrawing || std::this_thread::get_id() == a->rendererId)
+        return;
+    AsyncResolveTag(chip); // the last barrier's: the renderer is past it once it is past the frames after it
+    std::unique_lock<std::mutex> guard(a->lock);
+    a->done.wait(guard, [&] { return a->framesQueued == 0; });
+    if (a->opsApplied == a->opsQueued)
+    {
+        // The renderer drew everything: REG_TAG now, as the full barrier takes it
+        RegSet(chip, Reg::Tag, a->tagSeen);
+        return;
+    }
+    a->tagMark = a->opsQueued;
+    chip.tagPending = true;
+}
+
+void AsyncStorePendingTag(const EveChip& chip)
+{
+    AsyncDrawing* a = chip.async.get();
+    EveChip& writable = const_cast<EveChip&>(chip);
+    writable.tagPending = false;
+    if (!a)
+        return;
+    std::unique_lock<std::mutex> guard(a->lock);
+    a->done.wait(guard, [&] { return a->opsApplied >= a->tagMark; });
+    a->tagMark = 0;
+    RegSet(writable, Reg::Tag, a->tagAtMark);
+}
+
+void AsyncDropPendingTag(EveChip& chip)
+{
+    if (!chip.tagPending)
+        return;
+    chip.tagPending = false;
+    std::lock_guard<std::mutex> guard(chip.async->lock);
+    chip.async->tagMark = 0;
 }
 
 } // namespace EveLib
@@ -438,6 +501,8 @@ int EveSetAsyncDrawing(EveChip* chip, int on, EveFrameCallback onFrame, void* us
         chip->state.metrics = s.state.metrics;
         std::memcpy(chip->lineCosts.get(), s.lineCosts.get(), kMaxLines * sizeof(EveLineCost));
         chip->overflowLines = s.overflowLines;
+        AsyncDropPendingTag(*chip);
+        chip->drawnAhead = false;
         RegSet(*chip, Reg::Tag, RegGet(s, Reg::Tag));
         // The frame buffer holds the shadow's lines: none of the chip's kept lines describes it
         for (uint32_t i = 0; i < kMaxLines; ++i)
@@ -496,6 +561,11 @@ int EveAsyncDrawing(const EveChip* chip)
 void EveDrawingBarrier(EveChip* chip)
 {
     AsyncSyncTag(*chip);
+}
+
+void EveFramesBarrier(EveChip* chip)
+{
+    AsyncFramesBarrier(*chip);
 }
 
 } // extern "C"
