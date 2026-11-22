@@ -10,6 +10,7 @@
 #include <platform.h>
 
 #include "videowall/VideoWallWindow.h"
+#include "videowall/TileGridGL.h"
 #include "videowall/VideowallRecorder.h"
 #include "videowall/VideowallRecordingWidget.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -608,8 +609,10 @@ void VideoWallWindow::handleWallScreenshotSaveAs()
     if (filePath.isEmpty())
         return;
 
-    // grab() renders the widget as it is painted now: the GPU grid through its framebuffer, the CPU grid through its paint
-    const QImage image = wall->grab().toImage();
+    // The CPU grid paints into grab(); the GPU grid is a GL window in a container that grab() shows empty: its
+    // framebuffer is read back
+    TileGridGL* gpuGrid = (_useGPU && _tileGridWrapper) ? _tileGridWrapper->gpuGrid() : nullptr;
+    const QImage image = gpuGrid ? gpuGrid->grabFramebuffer() : wall->grab().toImage();
     if (image.isNull() || !image.save(filePath, "PNG"))
     {
         showScreenshotMessage(tr("Screenshot failed: %1 could not be written").arg(filePath));
@@ -2050,8 +2053,10 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
     }
 
     // The recorder grabs the grid it was pointed at: the old one is gone
-    VideowallRecorder::instance().setTargetWidget(_useGPU && _tileGridWrapper ? _tileGridWrapper->widget()
-                                                                            : static_cast<QWidget*>(_tileGrid));
+    if (_useGPU && _tileGridWrapper)
+        VideowallRecorder::instance().setTargetWidget(_tileGridWrapper->widget(), _tileGridWrapper->gpuGrid());
+    else
+        VideowallRecorder::instance().setTargetWidget(_tileGrid);
 
     // The menus are created after the event loop starts (initializeAfterEventLoopStart): a switch asked for before
     // that (--gpu on the command line) finds no action yet, and createMenus checks it from _useGPU

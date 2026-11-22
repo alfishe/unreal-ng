@@ -4,6 +4,7 @@
 #include <QTimer>
 #include <QImage>
 #include <QPixmap>
+#include <QPointer>
 #include <QWidget>
 #include <memory>
 #include <string>
@@ -25,6 +26,8 @@ struct VideowallRecordingOptions
 };
 
 /// @brief Videowall Recorder - Captures combined Qt buffer video and active tile miniaudio output
+class TileGridGL;
+
 class VideowallRecorder : public QObject
 {
     Q_OBJECT
@@ -32,8 +35,9 @@ class VideowallRecorder : public QObject
 public:
     static VideowallRecorder& instance();
 
-    /// Attach the target Qt widget (TileGrid / centralWidget) to capture visually
-    void setTargetWidget(QWidget* widget);
+    /// Attach the wall to capture: the CPU grid widget, or with the GPU grid its window container and the GL grid
+    /// itself (the GL picture is read back from the grid; the container has nothing to grab)
+    void setTargetWidget(QWidget* widget, TileGridGL* gpuGrid = nullptr);
 
     /// Start recording to output file
     bool startRecording(const std::string& filename,
@@ -84,7 +88,9 @@ private:
     ~VideowallRecorder();
 
     std::unique_ptr<RecordingManager> _recordingManager;
-    QWidget* _targetWidget = nullptr;
+    QPointer<QWidget> _targetWidget;
+    QPointer<TileGridGL> _gpuGrid;
+    QImage _frame;  ///< the CPU grid painted into it, reused frame to frame
     QTimer _frameTimer;
 
     uint32_t _targetWidth = 0;
