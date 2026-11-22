@@ -202,6 +202,36 @@ TEST_F(DebuggerTimeTravel_Test, RunBackStopsAtTheEnabledExecutionBreakpoints)
     EXPECT_EQ(_tt->momentLabel()->toolTip(), QStringLiteral("Run Back: at the breakpoint ") + hex);
 }
 
+TEST_F(DebuggerTimeTravel_Test, RunBackHonoursBreakpointConditions)
+{
+    BreakpointManager& bm = *_machine->GetBreakpointManager();
+    Record(5);
+    ASSERT_TRUE(_ttd->SeekTo({_start + 2, 0}));
+    const uint16_t pc = _machine->GetContext()->pCore->GetZ80()->pc;
+    ASSERT_TRUE(_ttd->SeekTo({_start + 4, 0}));
+    bm.ClearUserBreakpoints();
+    const uint16_t id = bm.AddExecutionBreakpoint(pc);
+    EXPECT_EQ(DebuggerTimeTravel::RunBackCondition(bm), "") << "no condition: plain pcs";
+
+    // A condition that never holds: Run Back finds nothing and the machine stays
+    std::string error;
+    ASSERT_TRUE(bm.SetBreakpointCondition(id, "FRAME > 100000000", error)) << error;
+    EXPECT_NE(DebuggerTimeTravel::RunBackCondition(bm).find("FRAME"), std::string::npos)
+        << DebuggerTimeTravel::RunBackCondition(bm);
+    _tt->setEmulator(_machine);
+    QString said;
+    _tt->inform = [&](const QString&, const QString& text, bool) { said = text; };
+    const ttd::TTDTimePoint before = _ttd->CurrentPosition();
+    _tt->runBack();
+    EXPECT_EQ(_ttd->CurrentPosition().frame, before.frame) << "the condition held nowhere: no move";
+    EXPECT_FALSE(said.isEmpty());
+
+    // One that holds in the history: back to that hit
+    ASSERT_TRUE(bm.SetBreakpointCondition(id, "FRAME >= " + std::to_string(_start), error)) << error;
+    _tt->runBack();
+    EXPECT_EQ(_machine->GetContext()->pCore->GetZ80()->pc, pc);
+}
+
 TEST_F(DebuggerTimeTravel_Test, AtAForkTheDropDownNamesTheBranchAndWhatLeavesHere)
 {
     RecordAFork();

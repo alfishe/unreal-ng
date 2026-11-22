@@ -2,7 +2,7 @@
 
 One page for everything about time travel in this repository: the designs, the plan folders and their status, the
 automation planes, the code, the tests and tools, and the open tasks. Read this first instead of scanning the tree.
-Updated 2026-11-20.
+Updated 2026-11-21.
 
 ## What TTD is here
 
@@ -66,7 +66,7 @@ Related design docs next door: [device-history.md](../device-history.md) (per-de
 | [2026-11-07-ttd-backtrace](../../../../inprogress/2026-11-07-ttd-backtrace/README.md) | the call stack at a moment | done 2026-11-07 | [README.md](../../../../inprogress/2026-11-07-ttd-backtrace/README.md) | #119 | - |
 | [2026-11-08-ttd-branches](../../../../inprogress/2026-11-08-ttd-branches/README.md) | branched history, two tiers, surfaces, `ttdtool` | closed 2026-11-16 (P4 not planned) | [DONE.md](../../../../inprogress/2026-11-08-ttd-branches/DONE.md) | #76 (W1) | `e0ac62a53`, `912e8dd68`, `47ebc9dd3` |
 | [2026-11-12-re-api-efficiency](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) | reverse-engineering agents vs MCP / WebAPI (TTD items among others) | open | [TODO.md](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md), [analysis.md](../../../../inprogress/2026-11-12-re-api-efficiency/analysis.md) | #122 | F1-F3, S1, V2, E4 (`e918537f5`), F6, V4 |
-| [2026-09-27-gs-debugger](../../../../inprogress/2026-09-27-gs-debugger/TODO.md) | card CPU debugger; TTD positions on the card's CPU (§8) | open (TTD part landed; D3 left) | [TODO.md](../../../../inprogress/2026-09-27-gs-debugger/TODO.md), [design.md §8](../../../../inprogress/2026-09-27-gs-debugger/design.md#8-ttd-d1-d4) | #45 | `3945ca4f3` / `7dce0959a`, `a6be6598d`, `61276899f`, `e97d71a26` |
+| [2026-09-27-gs-debugger](../../../../inprogress/2026-09-27-gs-debugger/TODO.md) | card CPU debugger; TTD positions on the card's CPU (§8) | open (TTD part landed, D3 done 2026-11-20) | [TODO.md](../../../../inprogress/2026-09-27-gs-debugger/TODO.md), [design.md §8](../../../../inprogress/2026-09-27-gs-debugger/design.md#8-ttd-d1-d4) | #45 | `3945ca4f3` / `7dce0959a`, `a6be6598d`, `61276899f`, `e97d71a26` |
 | [2026-09-29-rzx-replay](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) | RZX playback, recording, TTD interop | open (R0-R3 done; R4, R5 left) | [TODO.md](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) | #27 | R0-R3 2026-09-29 |
 | [2026-09-29-model-what-if](../../../../inprogress/2026-09-29-model-what-if/TODO.md) | machine state transfer, branches (W1), forks to other models | open (W3 postponed) | [TODO.md](../../../../inprogress/2026-09-29-model-what-if/TODO.md) | #76 | W0 `6f5759f3`, `570ca3ce`, `7ddbef11` |
 
@@ -134,7 +134,7 @@ TTD files in other folders:
 | Hooks, journals, search | `timetravelhooks.*`, `ttdexternalevents.*`, `ttdinputjournal.*`, `ttdinputapply.*`, `ttdv1events.*` (input journal and events into the engine's log), `ttdwritejournal.*`, `ttdportjournal.*`, `ttdportsearch.*`, `ttdportdescribe.*`, `ttdportclassifier.h`, `ttdcoverageindex.*`, `ttdprobe.*` |
 | Device serializers | `ttdperipheralregistry.*`, `ttdmachineperipherals.*`, `ttdperipheralmask.h`, `ttdserializable.h`, chips at the top level (`ttdds12887`, `ttdpit8253`, `ttdppi8255`, `ttdusart8251`, `ttdwd1793context`); per platform in `atm/`, `gmx/`, `ide/`, `network/`, `next/`, `p2666/`, `plus3/`, `profi/`, `scorpion/`, `sprinter/`, `tsconf/` |
 | Benchmark harness | `bench/` (`ttdbench.*`, `ttdtimelinefixture.*`) |
-| File format | `ttd.ksy` (Kaitai, schema 2, `legacy_id` device table) |
+| File format | `ttd.ksy` (Kaitai, schema 2, `legacy_id` device table, branch and holder streams; checked against the fixtures by `tools/verification/ttd-analyzer/scripts/check_ksy.py`) |
 
 Outside it:
 
@@ -216,19 +216,12 @@ Open, by priority:
 | E8 | Capability check before a session | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | F8 | Port history flush and frame counter reset on snapshot load (next to TTD) | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | E3 | Frame counter in `/registers` (next to TTD; run answers done in `c3ab886b3`) | P3 | partly done | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| D3 | GS command log: cut entries after the target on a TTD seek | GS phase 6 | open | [gs-debugger design §6.3](../../../../inprogress/2026-09-27-gs-debugger/design.md#63-the-command-log-f1-f1c-f3-f4-w1-w4) |
-| P1.S10 | Real-use sessions over days; quiet-machine A/B of C1d | - | open | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
-| P4.S6 | Kaitai-generated parser run against `ttd.ksy` (no compiler on the build host) | - | open (minor) | [v2 DONE, Phase 4](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-4--the-session-file) |
-| P7-info | `ttdtool info` shows no memory / disk tiers | - | open (minor) | [branches tools.md](../../../../inprogress/2026-11-08-ttd-branches/tools.md) |
-| RSI-cond | Conditions in reverse execution / read watchpoints via read coverage (blocker gone, re-check on v2) | - | open (re-check) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
-| RSI-models | Per-model TTD page sets from the configuration layer (`ResolveModelRamPages`) | - | open (re-check) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
-| RSI-wide | Prune wide (more than 16 KB) and page-wrapping ranges with the index | - | open (v1-era note) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
-| RSI-bpset | Index-guided reverse breakpoints with large breakpoint sets | - | open (known limit) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
-| RSI-zone | Zone maps (value set, SP range, port set), blocked columnar journal | - | open (v1-era note) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
-| TD-5 file | Timeline of a `.ttd` file without loading it | - | open | [timeline design §8](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#8-not-in-scope) |
-| TD-5 blobs | Device-state blobs in the timeline's memory regions | - | open (remark) | [timeline plan](../../../../inprogress/2026-10-31-ttd-timeline-summary/plan.md) |
-| DM limit | Diff of two moments: name the fields that changed inside a device | - | open (known limit) | [diff plan](../../../../inprogress/2026-11-03-ttd-diff-moments/plan.md#acceptance) |
-| PD-Q2 | "Same T-state in the next frame" as an explicit operation | - | idea, only if asked | [positioning design §7](../../../../inprogress/2026-09-28-ttd-positioning-and-display/design.md#7-open-questions) |
+| P1.S10 | Real-use sessions over days; quiet-machine A/B of C1d | - | done 2026-11-21 (A/B within noise; 100-min soak, three bugs fixed; days of real use stay the owner's) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
+| RSI-cond-ecat | eCat Run Back passes breakpoint conditions to `reverse-continue` (`condition`; the Qt Run Back does) | - | done 2026-11-21 (embedded and remote; `--self-check`) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
+| TD-5 file | Timeline of a `.ttd` file without loading it (option `file`, `branch`) | - | done 2026-11-21 | [timeline design §8](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#8-a-ttd-file-without-loading-it) |
+| TD-5 blobs | Device-state blobs in the timeline (`state` entries, `states_every_frame`) | - | done 2026-11-21 | [timeline design §1](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#1-what-the-recording-already-holds) |
+| DM limit | Diff of two moments: name the fields that changed inside a device | - | done 2026-11-21 (`TTDDescribeFields`, counters apart) | [diff plan](../../../../inprogress/2026-11-03-ttd-diff-moments/plan.md#device-fields-2026-11-21-the-dm-limit) |
+| PD-Q2 | "Same T-state in the next frame" as an explicit operation | - | closed 2026-11-21: `seek` frame + 1 with the T wanted, one call on every plane | [positioning design §7](../../../../inprogress/2026-09-28-ttd-positioning-and-display/design.md#7-open-questions) |
 | R5 | RZX and TTD interop (player state blob, TTD while playing, import, export) | low | open | [rzx TODO](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) |
 
 Blocked or deferred (waiting for a trigger):
@@ -262,10 +255,14 @@ Not planned (owner decisions; do not propose again):
 | C-mem | Separate TTD-only memory path | left out by the plan (no explicit owner veto) | [phase-2-plan](../../../../inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md#c-halt-idle-while-ttd-records-and-replays) |
 | EF limit | Explain frame across frames (call graph) | design scope | [explain design §7](../../../../inprogress/2026-11-02-ttd-explain-frame/design.md#7-what-it-does-not-do) |
 
+Done since the index was collected: D3, the GS command log follows TTD moves (2026-11-20,
+[gs-debugger design §6.3](../../../../inprogress/2026-09-27-gs-debugger/design.md#63-the-command-log-f1-f1c-f3-f4-w1-w4),
+the generic part in [device-history.md](../device-history.md)). P4.S6, the Kaitai-generated parser run against `ttd.ksy` (2026-11-20: 38 fixtures, 0 disagree after four schema fixes; repeatable with `tools/verification/ttd-analyzer/scripts/check_ksy.py`, which skips without the compiler; [v2 DONE, Phase 4](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-4--the-session-file)). RSI-wide, RSI-bpset and RSI-cond (2026-11-21): wide and wrapping ranges are pruned with an exact offset set (a wrapping read 148.98 to 3.49 ms), reverse continue decodes a frame once for all its PCs, `reverse-continue` takes a `condition` on every plane, and read watchpoints already used read coverage ([RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why)); eCat Run Back passes the conditions too (RSI-cond-ecat). P1.S10 (2026-11-21): the quiet-machine A/B of C1d is within noise, and a 100-minute soak on four models over WebAPI and MCP found and fixed three bugs: a save after eviction with a branch, a resume at an evicted trunk end losing a segment's file (and cutting the trunk on a failed fork), and the Qt panel lifting a script's history limit ([v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine)). DM limit (2026-11-21): the diff of two moments names the fields that changed inside a device (`TTDSerializable::TTDDescribeFields`; AY, TurboSound, TSFM, WD1793 and its drives, +D, Covox) and lists free-running counters apart, `only counters` for a device whose counters alone moved ([diff plan](../../../../inprogress/2026-11-03-ttd-diff-moments/plan.md#device-fields-2026-11-21-the-dm-limit)).
+
 Checked and closed (stale notes; nothing left to do): branches on resume / edit in the past, a file continuing
 across a resume, branch operations in the UI (all done by TTD branches, ticked in the v2 DONE.md); the GS debugger's
 §8 heading (all landed); the 2026-07-19 index "Not started" rows (v1 history); "forks here" for eCat remote
-(`forks_here` is in the `branches` answer); PD-Q1 frame start vs end (answered by D13).
+(`forks_here` is in the `branches` answer); PD-Q1 frame start vs end (answered by D13); PD-Q2 the same T-state in the next frame (2026-11-21: one `seek` with frame + 1 and the T wanted, [positioning design §7](../../../../inprogress/2026-09-28-ttd-positioning-and-display/design.md#7-open-questions)); P7-info, `ttdtool info` without memory / disk tiers (2026-11-20: the tiers are runtime state since P3, no file records them; the live split is in `ttd status`, [branches tools.md](../../../../inprogress/2026-11-08-ttd-branches/tools.md)). RSI-models (2026-11-21): the v1 blockers are gone, the bound comes from the model table, the lost warning for a page past it is back as a counter, and a sweep covers every creatable model. Not worth it: RSI-zone, zone maps and a blocked columnar journal (the worst case they would remove is a full journal scan, about 50 ms for the whole 64 MB ring; port searches take under 1 ms), and the rest of RSI-bpset (offset aliasing past a few PCs: 16 PCs 286 against 332 ms) ([RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why)).
 
 ## Keeping this index current
 

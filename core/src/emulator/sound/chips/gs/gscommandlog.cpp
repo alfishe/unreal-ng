@@ -1,8 +1,12 @@
 #include "emulator/sound/chips/gs/gscommandlog.h"
 
+#include <algorithm>
 #include <bit>
 #include <cstdio>
+#include <cstring>
+#include <iterator>
 #include <string>
+#include <type_traits>
 
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -336,9 +340,10 @@ void GSCommandLog::Publish()
 
 /// region <Decoder>
 
-bool GSCommandLog::Skip() const
+bool GSCommandLog::Replaying() const
 {
-    // A TTD replay re-runs what the log already holds (the WD1793's history does the same)
+    // A TTD replay re-runs what the log already holds (the WD1793's history does the same); the decoder still
+    // follows it, so it stands where the machine stands
     return _context && _context->ttdReplayActive;
 }
 
@@ -444,8 +449,9 @@ void GSCommandLog::EndTransfer(bool truncated, bool automation)
 
 void GSCommandLog::HostCommand(uint8_t command, bool automation)
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -521,8 +527,9 @@ void GSCommandLog::HostCommand(uint8_t command, bool automation)
 
 void GSCommandLog::HostData(uint8_t value, bool automation)
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -579,8 +586,9 @@ void GSCommandLog::HostData(uint8_t value, bool automation)
 
 void GSCommandLog::HostReplyRead(uint8_t value, bool automation)
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -629,8 +637,9 @@ void GSCommandLog::HostReplyRead(uint8_t value, bool automation)
 
 void GSCommandLog::HostReset()
 {
-    if (Skip())
-        return;
+    if (!Replaying())
+        Live();
+    _dirty = true;
     const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
@@ -644,23 +653,179 @@ void GSCommandLog::HostReset()
 
 void GSCommandLog::Frame()
 {
+    const bool replaying = Replaying();
+    if (!replaying)
+        Live();
     // A host that only polls the status (IN #BB, no hook) sees the card take the command: so does the log, at the
     // frame start at the latest
-    if (_commandPending && _card && !Skip() && _armed.load(std::memory_order_relaxed))
+    if (_commandPending && _card && _armed.load(std::memory_order_relaxed))
     {
         NoteTaken(_card->getStatusRaw());
         if (!_commandPending)
+        {
+            _dirty = true;
             Publish();
+        }
     }
-    if (!_inTransfer || _stallReported || !_context || Skip())
-        return;
-    if (_context->emulatorState.frame_counter - _progressFrame < kStallFrames)
-        return;
-    GSCommandLogEntry e = Make(GSCommandLogKind::Anomaly, uint8_t(GSCommandLogAnomaly::TransferStalled), false);
-    e.command = _transferCommand;
-    e.count = _blockCount;
-    Push(e);
-    _stallReported = true;
+    if (_inTransfer && !_stallReported && _context &&
+        _context->emulatorState.frame_counter - _progressFrame >= kStallFrames)
+    {
+        GSCommandLogEntry e = Make(GSCommandLogKind::Anomaly, uint8_t(GSCommandLogAnomaly::TransferStalled), false);
+        e.command = _transferCommand;
+        e.count = _blockCount;
+        Push(e);
+        _stallReported = true;
+        _dirty = true;
+    }
+    // A checkpoint of this frame holds the machine after its frame start: the decoder as it stands now
+    if (!replaying && _dirty)
+        TakeMark();
 }
 
 /// endregion </Decoder>
+
+/// region <Time travel (D3)>
+
+GSCommandLog::Moment GSCommandLog::Now() const
+{
+    Moment m;
+    if (_context)
+    {
+        m.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);  // as the entries hold it
+        if (const Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+            m.t = cpu->t;
+    }
+    return m;
+}
+
+void GSCommandLog::Live()
+{
+    if (_switched.load(std::memory_order_relaxed)) [[unlikely]]
+    {
+        // A log switched on again starts over: the marks of its previous run would put back a decoder that did not
+        // see what happened while it was off
+        _switched.store(false, std::memory_order_relaxed);
+        _marks.clear();
+    }
+    if (_settle) [[unlikely]]
+        Settle();
+}
+
+void GSCommandLog::Settle()
+{
+    _settle = false;
+    // A live run from where a move left the machine is a new line (a resume in the past forks a branch): what the
+    // log holds after this moment, kept or held back, happened on the line the machine left
+    const Moment now = Now();
+    _history.Truncate([&](const GSCommandLogEntry& e) { return After(e, now); }, true);
+    while (!_marks.empty() && _marks.back().frame > now.frame)
+        _marks.pop_back();
+}
+
+void GSCommandLog::TakeMark()
+{
+    _dirty = false;
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    Mark mark{frame, _armed.load(std::memory_order_relaxed), static_cast<const GSCommandLogDecoder&>(*this)};
+    if (!_marks.empty() && _marks.back().frame >= frame)
+    {
+        _marks.back() = mark;
+        return;
+    }
+    if (_marks.size() >= kMaxMarks)
+        _marks.erase(_marks.begin(), _marks.begin() + kMaxMarks / 4);
+    _marks.push_back(mark);
+}
+
+void GSCommandLog::Restored()
+{
+    if (!_history.On() || !_context)
+        return;
+    if (_switched.load(std::memory_order_relaxed))
+    {
+        _switched.store(false, std::memory_order_relaxed);
+        _marks.clear();
+    }
+    // The checkpoint holds the machine after its frame start: the newest mark at or before its frame is the decoder
+    // there (no mark: the log had not seen traffic yet, it starts over at the next hook)
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    const auto it = std::upper_bound(_marks.begin(), _marks.end(), frame,
+                                     [](uint64_t f, const Mark& m) { return f < m.frame; });
+    if (it != _marks.begin())
+    {
+        const Mark& mark = *std::prev(it);
+        static_cast<GSCommandLogDecoder&>(*this) = mark.decoder;
+        _armed.store(mark.armed, std::memory_order_relaxed);
+    }
+    else
+    {
+        static_cast<GSCommandLogDecoder&>(*this) = GSCommandLogDecoder{};
+        _armed.store(false, std::memory_order_relaxed);
+    }
+    _dirty = false;
+    _settle = true;
+    Publish();
+}
+
+void GSCommandLog::Landed(const history::TimeMoment* lineSince)
+{
+    const Moment now = Now();
+    if (lineSince && _context)
+    {
+        // A branch switch: the lines are the same up to their parting only. The entries and marks after it are the
+        // left line's; past it the target line's entries were not seen, and the decoder starts over
+        const EmulatorState& st = _context->emulatorState;
+        const history::TimeMoment part = *lineSince;
+        auto afterPart = [&](const GSCommandLogEntry& e) {
+            return e.frame > part.frame || (e.frame == part.frame && st.TtdTInFrame(e.mainT) > part.tInFrame);
+        };
+        _history.Truncate(afterPart, false);
+        while (!_marks.empty() && _marks.back().frame > part.frame)
+            _marks.pop_back();
+        if (now.frame > part.frame || (now.frame == part.frame && st.TtdTInFrame(now.t) > part.tInFrame))
+        {
+            static_cast<GSCommandLogDecoder&>(*this) = GSCommandLogDecoder{};
+            _armed.store(false, std::memory_order_relaxed);
+            Publish();
+        }
+    }
+    // The entries after the machine's moment are held back; on a move forward the held ones up to it come back
+    _history.Rewind([&](const GSCommandLogEntry& e) { return After(e, now); });
+    _settle = true;
+}
+
+namespace
+{
+/// What SaveLive keeps: the decoder and the follow state
+struct GSCommandLogLive
+{
+    GSCommandLogDecoder decoder;
+    bool armed = false;
+    bool dirty = false;
+    bool settle = false;
+};
+static_assert(std::is_trivially_copyable_v<GSCommandLogLive>);
+}  // namespace
+
+void GSCommandLog::SaveLive(std::vector<uint8_t>& out) const
+{
+    GSCommandLogLive live{static_cast<const GSCommandLogDecoder&>(*this), _armed.load(std::memory_order_relaxed),
+                          _dirty, _settle};
+    out.resize(sizeof(live));
+    std::memcpy(out.data(), &live, sizeof(live));
+}
+
+void GSCommandLog::LoadLive(const std::vector<uint8_t>& in)
+{
+    if (in.size() != sizeof(GSCommandLogLive))
+        return;
+    GSCommandLogLive live;
+    std::memcpy(&live, in.data(), sizeof(live));
+    static_cast<GSCommandLogDecoder&>(*this) = live.decoder;
+    _armed.store(live.armed, std::memory_order_relaxed);
+    _dirty = live.dirty;
+    _settle = live.settle;
+    Publish();
+}
+
+/// endregion </Time travel (D3)>

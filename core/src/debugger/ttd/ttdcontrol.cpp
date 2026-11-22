@@ -522,8 +522,8 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"port-events", {"*"}},
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
                        "before_frame", "before_tin", "before", "changes_only", "all", "limit", "from_frame"}},
-        {"reverse-continue", {"pcs", "phys_page", "all", "first_per_pc", "limit", "before_frame", "before_tin", "before",
-                              "from_frame", "cpu", "max_frames"}},
+        {"reverse-continue", {"pcs", "phys_page", "all", "first_per_pc", "condition", "limit", "before_frame",
+                              "before_tin", "before", "from_frame", "cpu", "max_frames"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit",
                            "order", "ranges"}},
@@ -537,7 +537,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
                            "max_bytes"}},
         {"screen-at", {"frame", "which", "format", "area", "encoding"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
-        {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms"}},
+        {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms", "file", "branch"}},
         {"cause-chain", {"addr", "phys_page", "reg", "frame", "tinframe", "depth", "max_links", "max_frames", "flags",
                          "text"}},
         {"backtrace", {"frame", "tinframe", "max_depth", "max_slots", "text"}},
@@ -3667,12 +3667,17 @@ TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, err);
     if (std::string err = SearchBounds(request, query.beforeGlobalT, query.fromFrame); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
+    // condition: only hits where it holds at the instruction's start (the breakpoint condition language)
+    if (const std::string* t = Option(request, "condition"))
+        query.condition = *t;
 
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
     TTDReverseContinueResult r;
     r = _manager->ReverseContinue(query);
+    if (!r.error.empty())
+        return Fail(TTDControlError::BadRequest, r.error);
     const bool list = query.all || query.firstPerPc;
     if (!list)
         NotifyFrameRefresh();
@@ -4277,6 +4282,55 @@ TTDReply TTDControlBackend::CoverageSummary(const TTDRequest& request)
 
 namespace
 {
+/// A session path as one file: a recording's folder (or one of its segment files) joined into a temporary file,
+/// deleted when this goes; any other path as it is
+struct JoinedSession
+{
+    std::string file;
+    std::string joined;    ///< the temporary file, when one was written
+    std::string error;     ///< non-empty: the join failed
+    std::string message;   ///< the reply's text for the failure
+    bool internal = false; ///< no temporary folder (500), else the recording could not be joined (400)
+
+    explicit JoinedSession(const std::string& path) : file(path)
+    {
+        const auto folder = TTDRecordingFolder::Open(path);
+        if (!folder)
+            return;
+        static std::atomic<uint32_t> joins{0};
+        std::error_code ec;
+        const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
+        if (ec)
+        {
+            error = ec.message();
+            message = "no temporary folder to join the recording in: " + error;
+            internal = true;
+            return;
+        }
+        joined = FileHelper::FromFsPath(temp / ("unreal-ttd-join-" + std::to_string(platform::CurrentProcessId()) +
+                                                "-" + std::to_string(joins++) + ".ttd"));
+        if (!folder->SaveAs(joined, /*overwrite=*/true, error))
+        {
+            if (error.empty())
+                error = "the segments could not be joined";
+            message = "Cannot join the recording " + folder->Path() + ": " + error;
+            return;
+        }
+        file = joined;
+    }
+    ~JoinedSession()
+    {
+        std::error_code ec;
+        if (!joined.empty())
+            std::filesystem::remove(FileHelper::ToFsPath(joined), ec);
+    }
+    JoinedSession(const JoinedSession&) = delete;
+    JoinedSession& operator=(const JoinedSession&) = delete;
+};
+}  // namespace
+
+namespace
+{
 /// A bucket or a phase's facts (design.md §3); devices and media slots only where they were used
 StateNode TimelineFactsNode(const TTDTimelineResult& result, const TTDTimelineBucket& b)
 {
@@ -4340,6 +4394,15 @@ StateNode TimelineFactsNode(const TTDTimelineResult& result, const TTDTimelineBu
             dev["frames"] = static_cast<uint64_t>(b.regionFrames[r]);
             devices.push(dev);
         }
+    // A device's state blob that changed in some frames, not in all of the window (those are states_every_frame)
+    for (size_t r = 0; r < result.states.size() && r < b.stateFrames.size(); ++r)
+        if (b.stateFrames[r] > 0 && !(r < result.stateEveryFrame.size() && result.stateEveryFrame[r]))
+        {
+            StateNode dev = StateNode::Object();
+            dev["state"] = result.states[r].name;
+            dev["frames"] = static_cast<uint64_t>(b.stateFrames[r]);
+            devices.push(dev);
+        }
     node["devices"] = devices;
     return node;
 }
@@ -4362,10 +4425,40 @@ TTDReply TTDControlBackend::Timeline(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "Invalid min_phase_ms: '" + *t + "' (expected 1..60000)");
     options.minPhaseMs = static_cast<unsigned>(minPhaseMs);
 
-    const TTDTimelineResult res = _manager->QueryTimeline(options);
+    // file: a .ttd on disk (or a recording's folder), read without loading it - this session is not touched and
+    // the machine is not parked; branch picks a line of the file (the live timeline reads the active branch)
+    const std::string* file = Option(request, "file");
+    const std::string* branch = Option(request, "branch");
+    if (file && file->empty())
+        return Fail(TTDControlError::BadRequest, "Invalid file: empty path");
+    if (branch && !file)
+        return Fail(TTDControlError::BadRequest,
+                    "branch goes with file: the session's timeline is the active branch's (switch to another first)");
+    std::optional<JoinedSession> joined;
+    if (file)
+    {
+        joined.emplace(*file);
+        if (!joined->error.empty())
+            return Fail(joined->internal ? TTDControlError::Internal : TTDControlError::BadRequest, joined->message);
+    }
+    const TTDTimelineResult res = file ? _manager->QueryTimelineInFile(joined->file, options, branch ? *branch : "")
+                                       : _manager->QueryTimeline(options);
     if (!res.error.empty())
-        return Fail(TTDControlError::NotAvailable, res.error);
+    {
+        if (!file)
+            return Fail(TTDControlError::NotAvailable, res.error);
+        return Fail(res.error.rfind("cannot open", 0) == 0 ? TTDControlError::NotFound
+                    : res.error.rfind("Unknown branch", 0) == 0 ? TTDControlError::NotFound
+                                                                 : TTDControlError::BadRequest,
+                    res.error);
+    }
     TTDReply reply;
+    if (file)
+    {
+        reply.body["file"] = *file;
+        reply.body["branch"] = static_cast<uint64_t>(res.branch);
+        reply.body["model"] = res.model;
+    }
     reply.body["from_frame"] = res.fromFrame;
     reply.body["to_frame"] = res.toFrame;
     reply.body["bucket_size"] = res.bucketSize;
@@ -4381,6 +4474,11 @@ TTDReply TTDControlBackend::Timeline(const TTDRequest& request)
         devices.push(dev);
     }
     reply.body["devices"] = devices;
+    StateNode everyFrame = StateNode::Array();
+    for (size_t r = 0; r < res.states.size() && r < res.stateEveryFrame.size(); ++r)
+        if (res.stateEveryFrame[r])
+            everyFrame.push(res.states[r].name);
+    reply.body["states_every_frame"] = everyFrame;
     StateNode phases = StateNode::Array();
     for (const TTDTimelinePhase& p : res.phases)
     {
@@ -5253,12 +5351,36 @@ TTDReply TTDControlBackend::DiffMoments(const TTDRequest& request)
             n["name"] = d.name;
             n["bytes"] = d.bytes;
             n["changed"] = d.changed;
+            n["described"] = d.described;
+            n["counters_only"] = d.CountersOnly();
+            n["fields_changed"] = d.fieldsChanged;
+            n["counters_changed"] = d.countersChanged;
+            StateNode fields = StateNode::Array();
+            for (const TTDDiffField& f : d.fields)
+            {
+                StateNode field = StateNode::Object();
+                field["name"] = f.name;
+                field["offset"] = f.offset;
+                field["size"] = f.size;
+                field["changed"] = f.changed;
+                if (f.counter)
+                    field["counter"] = true;
+                if (f.hasValues)
+                {
+                    field["before"] = f.before;
+                    field["after"] = f.after;
+                }
+                fields.push(field);
+            }
+            n["fields"] = fields;
+            n["more_fields"] = d.moreFields;
             list.push(n);
         }
         StateNode devices = StateNode::Object();
         devices["changed"] = list;
         devices["more"] = res.moreDevices;
         devices["same"] = res.devicesSame;
+        devices["counters_only"] = res.devicesCountersOnly;
         b["devices"] = devices;
     }
     if (q.sections & kDiffBetween)
@@ -5513,37 +5635,15 @@ TTDReply TTDControlBackend::Load(const TTDRequest& request)
 
     // A recording's folder (or one of its segment files): its segments joined
     // into one file first, a temporary one, deleted after the load
-    std::string file = *path;
-    std::string joined;
-    if (const auto folder = TTDRecordingFolder::Open(*path))
+    const JoinedSession session(*path);
+    if (!session.error.empty())
     {
-        static std::atomic<uint32_t> joins{0};
-        std::error_code ec;
-        const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
-        if (ec)
-            return Fail(TTDControlError::Internal, "no temporary folder to join the recording in: " + ec.message());
-        joined = FileHelper::FromFsPath(temp / ("unreal-ttd-join-" + std::to_string(platform::CurrentProcessId()) +
-                                                "-" + std::to_string(joins++) + ".ttd"));
-        std::string error;
-        if (!folder->SaveAs(joined, /*overwrite=*/true, error))
-        {
-            StateNode body = StateNode::Object();
-            body["ok"] = false;
-            body["error"] = error;
-            return Fail(TTDControlError::BadRequest, "Cannot join the recording " + folder->Path() + ": " + error, body);
-        }
-        file = joined;
+        StateNode body = StateNode::Object();
+        body["ok"] = false;
+        body["error"] = session.error;
+        return Fail(session.internal ? TTDControlError::Internal : TTDControlError::BadRequest, session.message, body);
     }
-    struct RemoveJoined
-    {
-        const std::string& path;
-        ~RemoveJoined()
-        {
-            std::error_code ec;
-            if (!path.empty())
-                std::filesystem::remove(FileHelper::ToFsPath(path), ec);
-        }
-    } removeJoined{joined};
+    const std::string& file = session.file;
 
     std::ifstream in(FileHelper::ToFsPath(file), std::ios::binary);
     if (!in.is_open())

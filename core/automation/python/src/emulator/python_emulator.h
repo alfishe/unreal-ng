@@ -5184,8 +5184,9 @@ namespace PythonBindings
             }, py::arg("enabled") = py::none(), py::arg("port") = py::none(), py::arg("mode") = "", py::arg("clear") = false,
                "Switch the magic debug port (enabled=True/False), choose its port (0..65535) and mode (hex, dec, ascii, line), clear its output")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
-               "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
-               "does not advance its read sequence; available=False elsewhere")
+               "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte; on the "
+               "NEXT-DDMA core the ddma part: #DF flags, 22-bit addresses, 2D block, transparent / fill values, Layer 2 X,Y, SRAM range); "
+               "reading it does not advance its read sequence; available=False elsewhere")
             .def("next_video", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextVideo(self.GetContext())); },
                "The Next video layers: layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster")
             .def("next_palette", [](Emulator& self, py::object palette, py::object range) -> py::object {
@@ -7165,7 +7166,7 @@ namespace PythonBindings
                 for (uint16_t pc : pcs)
                     list += (list.empty() ? "" : ",") + std::to_string(pc);
                 std::map<std::string, std::string> options{{"pcs", list}};
-                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame
+                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame, condition
                 TtdKwargsPy(options, kwargs);
                 const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
@@ -7441,13 +7442,18 @@ namespace PythonBindings
                 py::arg("bucket_size") = 0, py::arg("limit") = 100)
 
             .def("ttd_timeline", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj, uint64_t bucketSize,
-                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs) -> py::object {
+                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs, py::object fileObj,
+                                    py::object branchObj) -> py::object {
                 std::map<std::string, std::string> options{
                     {"from_frame", std::to_string(fromFrame)}, {"bucket_size", std::to_string(bucketSize)},
                     {"limit", std::to_string(limit)},          {"buckets", buckets ? "true" : "false"},
                     {"ports", ports ? "true" : "false"},       {"min_phase_ms", std::to_string(minPhaseMs)}};
                 if (!toFrameObj.is_none())
                     options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                if (!fileObj.is_none())
+                    options["file"] = TtdOptionTextPy(fileObj);
+                if (!branchObj.is_none())
+                    options["branch"] = TtdOptionTextPy(branchObj);
                 const ttd::TTDReply reply = TtdRunPy(self, "timeline", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
                     throw py::value_error(reply.message);
@@ -7456,9 +7462,11 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 return StateNodeToPy(value);
             }, "The recording cut into phases of the same activity (tape, disk, input, net, sound, screen, burst, halt, "
-               "paging), each with its facts; from what the session holds, no replay",
+               "paging), each with its facts; from what the session holds, no replay. file: a .ttd file (or a "
+               "recording's folder) read without loading it, branch: a line of that file (id, GUID or name)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("bucket_size") = 0,
-                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200);
+                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200,
+                py::arg("file") = py::none(), py::arg("branch") = py::none());
 
         emulatorClass.def("ttd_cause_chain", [](Emulator& self, py::object target, py::object frameObj,
                                                 py::object tinObj, py::object pageObj, unsigned depth,

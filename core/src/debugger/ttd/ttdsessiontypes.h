@@ -789,6 +789,10 @@ struct TTDReverseContinueQuery
     size_t limit = 100;                   ///< all: most hits returned
     /// The list as `all`, one hit per PC (its newest); the walk ends once every PC has one
     bool firstPerPc = false;
+    /// Only hits where this condition holds (the breakpoint condition language, breakpointcondition.h), checked at
+    /// the instruction's start with the machine as the replay has it there - where a live execution breakpoint
+    /// checks its own. Empty: every hit. `x@prev` is refused (a backward walk has no "before"); HITS reads 0
+    std::string condition;
 };
 
 /// @brief One instruction start a reverse search found.
@@ -810,6 +814,7 @@ struct TTDReverseContinueResult
     TTDSearchWindow  window{};           ///< Part of history the scan examined (TD-8).
     std::vector<TTDReverseHit> hits;     ///< Newest first; single mode: the one hit
     bool truncated = false;              ///< all: the walk stopped at the limit, older hits may exist
+    std::string error;                   ///< The query was refused (a condition that does not compile): no walk
 };
 
 /// @brief What a reverse step over did (TimeTravelController::ReverseStepOver).

@@ -7,9 +7,42 @@
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 #include "emulator/slots/portowners.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
+
+namespace
+{
+
+constexpr bool IsEntry(uint16_t address)
+{
+    switch (address)
+    {
+        case 0x0000:
+        case 0x0008:
+        case 0x0038:
+        case 0x0066:
+        case 0x04C6:
+        case 0x0562:
+            return true;
+        default:
+            return false;
+    }
+}
+
+constexpr bool IsTrDosEntry(uint16_t address)
+{
+    return (address >> 8) == 0x3D;
+}
+
+constexpr bool IsOffArea(uint16_t address)
+{
+    return address >= 0x1FF8 && address <= 0x1FFF;
+}
+
+}  // namespace
 
 DivMmcPaging::DivMmcPaging(EmulatorContext* context) : _context(context)
 {
@@ -17,8 +50,9 @@ DivMmcPaging::DivMmcPaging(EmulatorContext* context) : _context(context)
     windowEnd = 0x4000;
     observesReads = true;
     _rom = std::make_unique<uint8_t[]>(kRomSize);
-    _ram = std::make_unique<uint8_t[]>(kBanks * kBankSize);
+    _ram = std::make_unique<uint8_t[]>(kRamSize);
     std::memset(_rom.get(), 0xFF, kRomSize);
+    std::memset(_ram.get(), 0x00, kRamSize);
     // The exchange is instant here; the byte time (16 T at 3.5 MHz) only scales exports
     _spiTap.SetByteTimeNs(16.0 * 1000.0 / 3.5);
     for (unsigned i = 0; i < 2; i++)
@@ -37,7 +71,7 @@ DivMmcPaging::~DivMmcPaging()
     Detach();
 }
 
-bool DivMmcPaging::Attach()
+bool DivMmcPaging::Attach(bool ownPorts)
 {
     if (_attached)
         return true;
@@ -51,9 +85,10 @@ bool DivMmcPaging::Attach()
         LOGERROR("DivMmcPaging: the machine's M1 observer is taken; the automap cannot be installed");
         return false;
     }
-    if (!decoder->RegisterFullDecodeLowBytePort(kPortControl, this) ||
-        !decoder->RegisterFullDecodeLowBytePort(kPortSpiSelect, this) ||
-        !decoder->RegisterFullDecodeLowBytePort(kPortSpiData, this))
+    _ownPorts = ownPorts;
+    if (_ownPorts && (!decoder->RegisterFullDecodeLowBytePort(kPortControl, this) ||
+                      !decoder->RegisterFullDecodeLowBytePort(kPortSpiSelect, this) ||
+                      !decoder->RegisterFullDecodeLowBytePort(kPortSpiData, this)))
     {
         decoder->UnregisterFullDecodeLowBytePort(kPortControl, this);
         decoder->UnregisterFullDecodeLowBytePort(kPortSpiSelect, this);
@@ -61,16 +96,25 @@ bool DivMmcPaging::Attach()
         LOGERROR("DivMmcPaging: ports #E3 / #E7 / #EB are taken");
         return false;
     }
+    // One try tells a machine with no room for the overlay; from then on it is installed only while mapped
     if (!core->AddBusOverlay(this))
     {
-        decoder->UnregisterFullDecodeLowBytePort(kPortControl, this);
-        decoder->UnregisterFullDecodeLowBytePort(kPortSpiSelect, this);
-        decoder->UnregisterFullDecodeLowBytePort(kPortSpiData, this);
+        if (_ownPorts)
+        {
+            decoder->UnregisterFullDecodeLowBytePort(kPortControl, this);
+            decoder->UnregisterFullDecodeLowBytePort(kPortSpiSelect, this);
+            decoder->UnregisterFullDecodeLowBytePort(kPortSpiData, this);
+        }
         return false;
     }
+    _overlayInstalled = true;
+    _core = core;
+    _savedHookEnd = z80->machineM1HookEnd;
     z80->machineM1Hook = this;
+    _hookInstalled = true;
     _spiTap.Attach(_context);
     _attached = true;
+    UpdateBus();
     return true;
 }
 
@@ -80,17 +124,26 @@ void DivMmcPaging::Detach()
         return;
     _attached = false;
     _spiTap.Detach();
-    Core* core = _context->pCore;
+    // The core that took the board (the machine's release clears pCore before the cards go)
+    Core* core = _core;
+    _core = nullptr;
     Z80* z80 = core->GetZ80();
-    if (z80->machineM1Hook == this)
+    if (_hookInstalled && z80->machineM1Hook == this)
+    {
         z80->machineM1Hook = nullptr;
-    core->RemoveBusOverlay(this);
-    if (PortDecoder* decoder = _context->pPortDecoder)
+        z80->machineM1HookEnd = _savedHookEnd;
+    }
+    _hookInstalled = false;
+    if (_overlayInstalled)
+        core->RemoveBusOverlay(this);
+    _overlayInstalled = false;
+    if (PortDecoder* decoder = _context->pPortDecoder; decoder && _ownPorts)
     {
         decoder->UnregisterFullDecodeLowBytePort(kPortControl, this);
         decoder->UnregisterFullDecodeLowBytePort(kPortSpiSelect, this);
         decoder->UnregisterFullDecodeLowBytePort(kPortSpiData, this);
     }
+    _mapcond = false;
     _automap = false;
 }
 
@@ -110,17 +163,63 @@ bool DivMmcPaging::LoadRomFile(const std::string& path)
         return false;
     uint8_t buffer[kRomSize];
     const size_t size = std::fread(buffer, 1, sizeof buffer, file);
+    const bool larger = size == kRomSize && std::fgetc(file) != EOF;
     std::fclose(file);
-    return LoadRom(buffer, size);
+    return !larger && LoadRom(buffer, size);
 }
 
 void DivMmcPaging::Reset()
 {
+    // divmmc.vhd: /RESET clears card(0), card(1) (deselected) and the SPI engine; #E3 and the latch have no reset
+    SpiSelect(0xFF);
+    _spiRx = 0xFF;
+}
+
+void DivMmcPaging::PowerOn()
+{
+    Reset();
     _control = 0;
     _mapram = false;
+    _mapcond = false;
     _automap = false;
-    _selected = -1;
-    _spiRx = 0xFF;
+    for (SdCardSpi& card : _card)
+        card.powerOn();
+    UpdateBus();
+}
+
+void DivMmcPaging::UnmapForProgram()
+{
+    _control &= static_cast<uint8_t>(~kConmem);
+    _mapcond = false;
+    _automap = false;
+    UpdateBus();
+}
+
+void DivMmcPaging::SetAutomapMode(AutomapMode mode)
+{
+    _mode = mode;
+    UpdateBus();
+}
+
+void DivMmcPaging::UpdateBus()
+{
+    if (!_attached)
+        return;
+    Core* core = _core;
+    const bool mapped = Mapped();
+    if (mapped && !_overlayInstalled)
+    {
+        // Core::AddBusOverlay logs a refusal (all overlay slots taken since Attach): the board then reads as absent
+        _overlayInstalled = core->AddBusOverlay(this);
+    }
+    else if (!mapped && _overlayInstalled)
+    {
+        core->RemoveBusOverlay(this);
+        _overlayInstalled = false;
+    }
+    // A latch change waits for the next opcode fetch wherever it is; otherwise only the automap addresses matter
+    if (_hookInstalled)
+        core->GetZ80()->machineM1HookEnd = _mapcond != _automap ? 0x10000 : kHookEnd;
 }
 
 /// region <Ports>
@@ -147,6 +246,7 @@ void DivMmcPaging::portDeviceOutMethod(uint16_t port, uint8_t value)
             _control = value & (kConmem | kBankMask);
             if (value & kMapram)
                 _mapram = true;  // sticky
+            UpdateBus();
             break;
         case kPortSpiSelect:
             SpiSelect(value);
@@ -213,42 +313,100 @@ void DivMmcPaging::onWrite(uint16_t addr, uint8_t value, bool)
     if (!Mapped())
         return;
     if (addr < kRomSize)
-        return;  // the EEPROM (jumper E) and, with MAPRAM, bank 3 are read-only here
-    if (_mapram && (_control & kBankMask) == 3)
-        return;  // MAPRAM write-protects bank 3 wherever it shows
-    _ram[(_control & kBankMask) * kBankSize + (addr - kBankSize)] = value;
+        return;  // the EEPROM (writes need the jumper: not modelled) and, with MAPRAM, bank 3 are read-only here
+    if (_mapram && !Conmem() && (_control & kBankMask) == 3)
+        return;  // divmmc.vhd ramwr: MAPRAM write-protects bank 3 unless CONMEM is set
+    const size_t offset = (_control & kBankMask) * kBankSize + (addr - kBankSize);
+    _ram[offset] = value;
+    if (_ramTracker) [[unlikely]]
+        _ramTracker->Mark(offset);
 }
 
 /// endregion
 
 /// region <Automap>
 
+bool DivMmcPaging::BasicRomPaged() const
+{
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    return memory && memory->IsBank0ROM() && memory->IsCurrentROM48k();
+}
+
+DivMmcPaging::Latch DivMmcPaging::NextLatch(uint16_t address) const
+{
+    // No firmware and no MAPRAM: a board with nothing to map stays out
+    if (!_hasRom && !_mapram)
+        return {_mapcond, _automap};
+    bool entry = address < kHookEnd && IsEntry(address);
+    bool trdos = address < kHookEnd && IsTrDosEntry(address);
+    if ((entry || trdos) && _mode == AutomapMode::Rom3 && !BasicRomPaged())
+        entry = trdos = false;
+    Latch next;
+    next.mapcond = entry || trdos || (_mapcond && !IsOffArea(address));
+    next.automap = _mapcond || trdos;
+    return next;
+}
+
 void DivMmcPaging::BeforeMachineM1(uint16_t address)
 {
-    // #3D00-#3DFF: the TR-DOS entry maps in at once, the opcode at #3Dxx already comes from the board
-    if (_automapEnabled && _hasRom && (address >> 8) == 0x3D)
-        _automap = true;
+    // The falling /MREQ of the fetch: #3Dxx maps this fetch in already, the rest acts from the next one
+    const Latch next = NextLatch(address);
+    if (next.mapcond == _mapcond && next.automap == _automap)
+        return;
+    _mapcond = next.mapcond;
+    _automap = next.automap;
+    UpdateBus();
 }
 
 void DivMmcPaging::OnMachineM1(uint16_t address)
 {
-    if (!_automapEnabled || !_hasRom)
-        return;
-    switch (address)
-    {
-        case 0x0000:
-        case 0x0008:
-        case 0x0038:
-        case 0x0066:
-        case 0x04C6:
-        case 0x0562:
-            _automap = true;  // after this fetch: the instruction at the entry still came from the Spectrum ROM
-            return;
-        default:
-            break;
-    }
-    if (address >= 0x1FF8 && address <= 0x1FFF)
-        _automap = false;
+    (void)address;
+}
+
+bool DivMmcPaging::RepeatM1IsInert(uint16_t address) const
+{
+    const Latch next = NextLatch(address);
+    return next.mapcond == _mapcond && next.automap == _automap;
+}
+
+/// endregion
+
+/// region <State>
+
+void DivMmcPaging::SaveState(uint8_t* dst) const
+{
+    std::memset(dst, 0, kStateSize);
+    dst[0] = kStateVersion;
+    dst[1] = _control;
+    dst[2] = _mapram ? 1 : 0;
+    dst[3] = _mapcond ? 1 : 0;
+    dst[4] = _automap ? 1 : 0;
+    dst[5] = static_cast<uint8_t>(_mode);
+    dst[6] = _selected >= 0 ? static_cast<uint8_t>(_selected) : 0xFF;
+    dst[7] = _spiRx;
+    _card[0].saveState(dst + kStateCardOffset);
+    _card[1].saveState(dst + kStateCardOffset + SdCardSpi::STATE_SIZE);
+}
+
+bool DivMmcPaging::LoadState(const uint8_t* src)
+{
+    if (src == nullptr || src[0] != kStateVersion)
+        return false;
+    // The cards first: the select below re-announces the line to the selected one (a deselect would drop the
+    // command it is receiving, so the others are left as their blobs say)
+    _card[0].loadState(src + kStateCardOffset);
+    _card[1].loadState(src + kStateCardOffset + SdCardSpi::STATE_SIZE);
+    _control = static_cast<uint8_t>(src[1] & (kConmem | kBankMask));
+    _mapram = src[2] != 0;
+    _mapcond = src[3] != 0;
+    _automap = src[4] != 0;
+    // The mode is the card option (the session's configuration): it is not taken from the blob
+    _selected = src[6] <= 1 ? src[6] : -1;
+    if (_selected >= 0)
+        _card[_selected].select(true);
+    _spiRx = src[7];
+    UpdateBus();
+    return true;
 }
 
 /// endregion

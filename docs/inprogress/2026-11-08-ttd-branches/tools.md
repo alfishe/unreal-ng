@@ -21,8 +21,14 @@ As built, against this design:
   missing or damaged), then deletes the files: the same state as `DeleteLines`;
 - `reindex` keeps the old index as `branches.tdx.old`; `join` and `reindex` give the C++ bytes exactly (tested);
 - `recover` keeps each file up to its first damaged part and drops a branch's later files after a lost one;
-- `info` has no memory / disk tiers yet (P3 is open: files record no tiers); `stats` counts unique bytes as the
-  branch's subtree (what deleting it frees) and shared bytes as its ancestors';
+- `info` shows no memory / disk tiers, and none are missing: P3 (2026-11-16) made the tiers a runtime state of a
+  recording, not of the format. Every segment keeps its file for the session's life, which segments sit in memory
+  depends on the history limit and the seeks of the moment, and neither a session file nor a recording folder
+  records it (checked 2026-11-20: no tier field in `ttd.ksy`, the writer or `branches.tdx`). The live split is in
+  the memory report of `ttd status` (`disk_tier_active`, `evicted_to_disk_segments`, `read_back_segments`, ...,
+  [architecture.md §5.4](architecture.md#54-read-back-from-disk)); `info` on a folder lists its segment files, all of
+  them the disk tier; `stats` counts unique bytes as the branch's subtree (what deleting it frees) and shared bytes
+  as its ancestors';
 - every writing command checks its output by loading it whole and comparing every kept line's positions and content
   CRCs with the original's.
 
@@ -44,7 +50,7 @@ tools/python/ttd/
 
 | Command | Does | Writes |
 |---|---|---|
-| `info <file|folder>` | sizes per stream and per branch, segment list, memory / disk tiers as recorded | - |
+| `info <file|folder>` | sizes per stream and per branch, segment list (tiers are not recorded: see above) | - |
 | `tree <file|folder>` | the branch tree: GUID, name, parent, fork, length, created, by, reason, tags, pinned | - |
 | `validate <file|folder>` | everything the analyzer validates, plus the branch table (no cycle, parents exist, forks inside the parent, unique GUIDs), every branch part's dependencies, the folder index against the files | - |
 | `extract <in> --branch <guid|name> [--lineage] -o <out>` | a file holding the lineage of the branch (or the branch and its descendants with `--subtree`): parts copied verbatim (storage.md S-6), branch table and index rewritten | new file |

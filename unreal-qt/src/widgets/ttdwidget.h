@@ -108,8 +108,10 @@ public slots:
 
 private:
     void updateTelemetry();
-    /// The history combo's limit onto the active emulator's TTD (a new one, or a change)
-    void applyHistoryLimit();
+    /// The history combo's limit onto the active emulator's TTD: a change of the combo always; a new active
+    /// emulator (@p keepSessionLimit) only when its session has no limit of its own - one an automation call set
+    /// stays (the window following another instance must not lift it)
+    void applyHistoryLimit(bool keepSessionLimit = false);
     /// The saved journal choice onto the active emulator's TTD while it holds no session (a recording
     /// already under way keeps what it records with)
     void applyJournalPreference();

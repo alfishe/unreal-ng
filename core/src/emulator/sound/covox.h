@@ -331,5 +331,16 @@ public:
     /// checkpoint's blob map.
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::Covox; }
     std::string TTDDeviceName() const override { return "Covox"; }
+    /// The four latches, their idle-frame countdowns (counters) and the written-this-frame bits
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override
+    {
+        static const char* const kNames[2][4] = {{"dac[0]", "dac[1]", "dac[2]", "dac[3]"},
+                                                 {"idle_frames[0]", "idle_frames[1]", "idle_frames[2]", "idle_frames[3]"}};
+        for (uint32_t i = 0; i < 4; ++i)
+            ttd::AddStateField(out, "", 0, kNames[0][i], i, 1);
+        for (uint32_t i = 0; i < 4; ++i)
+            ttd::AddStateField(out, "", 0, kNames[1][i], 4 + i, 1, ttd::kStateFieldCounter);
+        ttd::AddStateField(out, "", 0, "written", 8, 1);
+    }
     /// endregion </TTDSerializable interface>
 };

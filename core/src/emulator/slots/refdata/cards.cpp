@@ -381,6 +381,78 @@ constexpr Src kPlusDSources[] = { Src::FusePlusD, Src::MameMgt };
 
 // endregion
 
+// region <disciple (docs/inprogress/2026-11-15-mgt-plus-d/hardware-reference.md §9): MGT DISCiPLE, low-byte decode>
+
+// The FDC registers (A7 A6), the control latch / joystick, the network, the RAM / ROM swap, the paging port and the
+// printer data. #7B and #BB: the card acts on the cycle and leaves the data bus alone on a read
+constexpr PortClaim kDiscipleClaims[] = {
+    { .mask = 0x00FF, .match = 0x001B, .dir = Dir::InOut, .port = 0x001B },
+    { .mask = 0x00FF, .match = 0x005B, .dir = Dir::InOut, .port = 0x005B },
+    { .mask = 0x00FF, .match = 0x009B, .dir = Dir::InOut, .port = 0x009B },
+    { .mask = 0x00FF, .match = 0x00DB, .dir = Dir::InOut, .port = 0x00DB },
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::InOut, .port = 0x001F, .input = InputRole::KempstonJoystick },
+    { .mask = 0x00FF, .match = 0x003B, .dir = Dir::Out, .port = 0x003B },
+    { .mask = 0x00FF, .match = 0x007B, .dir = Dir::InOut, .port = 0x007B },
+    { .mask = 0x00FF, .match = 0x00BB, .dir = Dir::InOut, .port = 0x00BB },
+    { .mask = 0x00FF, .match = 0x00FB, .dir = Dir::Out, .port = 0x00FB },
+};
+
+constexpr FunctionUse kDiscipleFunctions[] = {
+    { .function = Function::DiskMgt },
+    { .function = Function::KempstonJoystick },
+};
+
+constexpr OptionValue kDiscipleInhibitValues[] = {
+    { "off", "released: the card pages on its traps" }, { "on", "pressed: the card pages only with latch bit 4 set" },
+};
+
+constexpr OptionDef kDiscipleOptions[] = {
+    { .key = Opt::Inhibit, .kind = OptionKind::Enum, .values = kDiscipleInhibitValues, .defaultBits = Bit(0),
+      .description = "the inhibit button: locks the interface out (GDOS can override it with latch bit 4)" },
+};
+
+constexpr const char* kDiscipleMedia[] = { "fdd.disciple1", "fdd.disciple2" };
+constexpr Src kDiscipleSources[] = { Src::FuseDisciple, Src::MameMgt };
+
+// endregion
+
+// region <divmmc (docs/inprogress/2026-10-07-zx-next/research-divmmc-original-rtl.md): Mario Prato's DivMMC, low byte>
+
+// #E3 control and #E7 card select are decoded with /WR only (a read leaves the data bus alone); #EB is the SPI data
+// port both ways. The ROM override is the edge's /ROMCS on the 48K / 128K / +2; on the +2A / +3, which have no /ROMCS,
+// the board's jumper J3 drives /ROM1OE and /ROM2OE instead (DivMMC_2013_schematic.pdf: Q4 / Q5, "Spectrum +2A, +3
+// Jumper"), so the card needs no /RDROM of the bus: it fits every Sinclair edge
+constexpr PortClaim kDivMmcClaims[] = {
+    { .mask = 0x00FF, .match = 0x00E3, .dir = Dir::Out, .port = 0x00E3 },
+    { .mask = 0x00FF, .match = 0x00E7, .dir = Dir::Out, .port = 0x00E7 },
+    { .mask = 0x00FF, .match = 0x00EB, .dir = Dir::InOut, .port = 0x00EB },
+};
+
+constexpr FunctionUse kDivMmcFunctions[] = {
+    { .function = Function::SdDivmmc },
+};
+
+constexpr OptionValue kDivMmcRomValues[] = {
+    { "unodos", "UnoDOS 3 (rom/divmmc/unodos3.rom, shipped)" },
+    { "esxdos", "esxDOS (rom/divmmc/esxmmc.bin, the user's ESXMMC.BIN)" },
+};
+constexpr OptionValue kDivMmcAutomapValues[] = {
+    { "on", "the board: every entry point maps the firmware in, in any ROM" },
+    { "off", "the EEPROM jumper set: nothing maps unless MAPRAM is set" },
+    { "rom3", "emulator option, the Next's rule: the entry points count only with the 48K BASIC ROM paged" },
+};
+constexpr OptionDef kDivMmcOptions[] = {
+    { .key = Opt::Rom, .kind = OptionKind::Enum, .values = kDivMmcRomValues, .defaultBits = Bit(0),
+      .description = "the firmware in the EEPROM" },
+    { .key = Opt::Automap, .kind = OptionKind::Enum, .values = kDivMmcAutomapValues, .defaultBits = Bit(0),
+      .description = "the automap" },
+};
+
+constexpr const char* kDivMmcMedia[] = { "sd.divmmc0", "sd.divmmc1" };
+constexpr Src kDivMmcSources[] = { Src::MpratoDivMmc, Src::RepoDivMmcRtl, Src::RepoDivMmcSurvey };
+
+// endregion
+
 constexpr CardDef kCards[] = {
     { .id = "ay", .name = "machine's own AY (socket default)", .bus = BusKind::AySocket, .needs = kNone,
       .socketDefault = true, .portsNote = "host decode",
@@ -427,6 +499,13 @@ constexpr CardDef kCards[] = {
     { .id = "plusd", .name = "MGT +D disk interface", .bus = BusKind::SinclairEdge,
       .needs = BusSignal::RdRom | BusSignal::M1 | BusSignal::Nmi, .functions = kPlusDFunctions,
       .claims = kPlusDClaims, .media = kPlusDMedia, .sources = kPlusDSources },
+    { .id = "disciple", .name = "MGT DISCiPLE disk interface", .bus = BusKind::SinclairEdge,
+      .needs = BusSignal::RdRom | BusSignal::M1 | BusSignal::Nmi, .options = kDiscipleOptions,
+      .functions = kDiscipleFunctions, .claims = kDiscipleClaims, .media = kDiscipleMedia,
+      .sources = kDiscipleSources },
+    { .id = "divmmc", .name = "DivMMC SD interface", .bus = BusKind::SinclairEdge,
+      .needs = BusSignal::M1 | BusSignal::Nmi, .options = kDivMmcOptions, .functions = kDivMmcFunctions,
+      .claims = kDivMmcClaims, .media = kDivMmcMedia, .sources = kDivMmcSources },
 };
 
 } // namespace

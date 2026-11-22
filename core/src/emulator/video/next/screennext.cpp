@@ -642,6 +642,7 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
     NextVideoInputs in;
     in.ram = _context->pMemory->RAMPageAddress(0);
     in.ramPages = static_cast<NextMemory*>(_context->pMemory)->InstalledRamPages();
+    in.sramTwin = static_cast<NextMemory*>(_context->pMemory)->SramTwin();
     in.regs = &board.Video();
     in.sprites = &board.Sprites();
     in.flash = _state && (_state->frame_counter & 0x10);

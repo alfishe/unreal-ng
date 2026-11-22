@@ -34,10 +34,6 @@ std::string Lower(std::string text)
     return text;
 }
 
-bool IsSys(const GdosFile& f)
-{
-    return f.type == kCode && Lower(f.name).rfind("+sys", 0) == 0;
-}
 
 bool IsAuto(const GdosFile& f)
 {
@@ -60,9 +56,10 @@ std::string LoadCommand(const GdosFile& f)
     return command;
 }
 
-/// The body of the +SYS file on `image` (empty when it does not read)
-std::vector<uint8_t> DosBody(unrealdisk::DiskImage& image)
+/// The body of the system file on `image` (empty when it does not read)
+std::vector<uint8_t> DosBody(unrealdisk::DiskImage& image, bool disciple)
 {
+    const auto IsSys = [disciple](const GdosFile& f) { return PlusDAutostart::IsSystemFile(f.name, f.type, disciple); };
     GdosFileSystem fs(image);
     std::vector<GdosFile> files;
     std::string error;
@@ -81,19 +78,30 @@ std::vector<uint8_t> DosBody(unrealdisk::DiskImage& image)
 }
 }  // namespace
 
-std::string PlusDAutostart::FindSystemDisk()
+bool PlusDAutostart::IsSystemFile(const std::string& name, uint8_t type, bool disciple)
+{
+    return type == kCode && Lower(name).rfind(disciple ? "sys" : "+sys", 0) == 0;
+}
+
+std::string PlusDAutostart::FindSystemDisk(bool disciple)
 {
     for (const std::string& base : {FileHelper::GetExecutablePath(), FileHelper::GetResourcesPath()})
     {
-        const std::string path = FileHelper::PathCombine(base, kSystemDiskRelative);
+        const std::string path =
+            FileHelper::PathCombine(base, disciple ? kDiscipleSystemDiskRelative : kSystemDiskRelative);
         if (FileHelper::FileExists(path))
             return path;
     }
     return {};
 }
 
-PlusDAutostart::Plan PlusDAutostart::MakePlan(unrealdisk::DiskImage& work, bool is48K, const std::string& systemDiskPath)
+PlusDAutostart::Plan PlusDAutostart::MakePlan(unrealdisk::DiskImage& work, bool is48K, const std::string& systemDiskPath,
+                                              bool disciple)
 {
+    const auto IsSys = [disciple](const GdosFile& f) { return IsSystemFile(f.name, f.type, disciple); };
+    const char* const sysName = disciple ? "SYS" : "+SYS";
+    const char* const dosName = disciple ? "GDOS" : "G+DOS";
+    const char* const model128 = disciple ? "128K-DISCIPLE" : "128K-PLUSD";
     Plan plan;
     plan.kind = "mount";
     GdosFileSystem fs(work);
@@ -111,13 +119,14 @@ PlusDAutostart::Plan PlusDAutostart::MakePlan(unrealdisk::DiskImage& work, bool 
     }
 
     const bool hasSys = std::any_of(files.begin(), files.end(), IsSys);
-    const auto autoFile = std::find_if(files.begin(), files.end(), [](const GdosFile& f) { return IsAuto(f) && !IsSys(f); });
+    const auto autoFile =
+        std::find_if(files.begin(), files.end(), [&IsSys](const GdosFile& f) { return IsAuto(f) && !IsSys(f); });
     if (hasSys && autoFile != files.end())
     {
         plan.kind = "run";
         plan.dos = "disk";
         plan.startFile = autoFile->name;
-        plan.message = "Autostart: RUN (the disk's +SYS loads " + autoFile->name + ")";
+        plan.message = std::string("Autostart: RUN (the disk's ") + sysName + " loads " + autoFile->name + ")";
         return plan;
     }
 
@@ -154,7 +163,7 @@ PlusDAutostart::Plan PlusDAutostart::MakePlan(unrealdisk::DiskImage& work, bool 
     }
     if (start->type == kSnapshot128 && is48K)
     {
-        plan.message = "Autostart: " + start->name + " is a 128K snapshot: use 128K-PLUSD - mounted only";
+        plan.message = "Autostart: " + start->name + " is a 128K snapshot: use " + model128 + " - mounted only";
         return plan;
     }
 
@@ -164,14 +173,14 @@ PlusDAutostart::Plan PlusDAutostart::MakePlan(unrealdisk::DiskImage& work, bool 
     {
         plan.kind = "run+load";
         plan.dos = "disk";
-        plan.dosBody = DosBody(work);
+        plan.dosBody = DosBody(work, disciple);
     }
     else
     {
         if (systemDiskPath.empty())
         {
-            plan.message = std::string("Autostart: the disk has no DOS and the system disk (") + kSystemDiskRelative +
-                           ") is missing - mounted only";
+            plan.message = std::string("Autostart: the disk has no DOS and the system disk (") +
+                           (disciple ? kDiscipleSystemDiskRelative : kSystemDiskRelative) + ") is missing - mounted only";
             return plan;
         }
         std::unique_ptr<unrealdisk::DiskImage> system;
@@ -183,15 +192,16 @@ PlusDAutostart::Plan PlusDAutostart::MakePlan(unrealdisk::DiskImage& work, bool 
         }
         plan.kind = "system-disk+load";
         plan.dos = "system-disk";
-        plan.dosBody = DosBody(*system);
+        plan.dosBody = DosBody(*system, disciple);
     }
     if (plan.dosBody.empty())
     {
         plan.kind = "mount";
-        plan.message = "Autostart: the +SYS file does not read - mounted only";
+        plan.message = std::string("Autostart: the ") + sysName + " file does not read - mounted only";
         return plan;
     }
-    plan.message = "Autostart: " + plan.command + (plan.dos == "system-disk" ? " (G+DOS from the system disk)" : "");
+    plan.message = "Autostart: " + plan.command +
+                   (plan.dos == "system-disk" ? std::string(" (") + dosName + " from the system disk)" : std::string());
     return plan;
 }
 
@@ -319,7 +329,7 @@ void PlusDAutostart::OnFrame()
     PlusDCard* card = Card();
     if (!typer || !card)
     {
-        Finish(false, std::string(!typer ? "no command typer" : "the +D card is gone") + " (" + _status.stage + ")");
+        Finish(false, std::string(!typer ? "no command typer" : "the MGT card is gone") + " (" + _status.stage + ")");
         return;
     }
     const uint64_t now = _context->emulatorState.frame_counter;
@@ -398,7 +408,7 @@ void PlusDAutostart::OnFrame()
             InsertOptions options;
             options.disposition = Disposition::Discard;
             options.ttdReason = "plusd-autostart";
-            const MediaResult inserted = _context->pMediaManager->Insert(PlusDCard::kDriveSlotIds[0], source, options);
+            const MediaResult inserted = _context->pMediaManager->Insert(card->DriveSlotId(0), source, options);
             if (!inserted.Ok())
                 Finish(false, "the work's disk did not go back into drive 1: " + inserted.message);
             else

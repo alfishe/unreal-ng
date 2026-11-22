@@ -1104,6 +1104,46 @@ size_t SoundChip_AY8910::TTDStateSize() const
     return kAYChipStateSize;
 }
 
+void SoundChip_AY8910::TTDFields(ttd::TTDStateFieldList& out, const std::string& prefix, uint32_t base)
+{
+    using ttd::AddStateField;
+    constexpr uint8_t kCounter = ttd::kStateFieldCounter;
+    static const char* const kRegisters[16] = {"R0", "R1", "R2",  "R3",  "R4",  "R5",  "R6",  "R7",
+                                               "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"};
+    static const char* const kApplied[16] = {"applied.R0",  "applied.R1",  "applied.R2",  "applied.R3",
+                                             "applied.R4",  "applied.R5",  "applied.R6",  "applied.R7",
+                                             "applied.R8",  "applied.R9",  "applied.R10", "applied.R11",
+                                             "applied.R12", "applied.R13", "applied.R14", "applied.R15"};
+    for (uint32_t r = 0; r < 16; ++r)
+        AddStateField(out, prefix, base, kRegisters[r], r, 1);
+    AddStateField(out, prefix, base, "register", 16, 1);   // the latched register number
+    static const char* const kTone[3][5] = {
+        {"tone_a.period", "tone_a.counter", "tone_a.volume", "tone_a.flags", "tone_a.out"},
+        {"tone_b.period", "tone_b.counter", "tone_b.volume", "tone_b.flags", "tone_b.out"},
+        {"tone_c.period", "tone_c.counter", "tone_c.volume", "tone_c.flags", "tone_c.out"},
+    };
+    for (uint32_t i = 0; i < 3; ++i)
+    {
+        const uint32_t at = 17 + i * static_cast<uint32_t>(kAYToneStateSize);
+        AddStateField(out, prefix, base, kTone[i][0], at, 2);
+        AddStateField(out, prefix, base, kTone[i][1], at + 2, 2, kCounter);
+        AddStateField(out, prefix, base, kTone[i][2], at + 4, 1);
+        AddStateField(out, prefix, base, kTone[i][3], at + 5, 1);
+        AddStateField(out, prefix, base, kTone[i][4], at + 6, 1, kCounter);
+    }
+    AddStateField(out, prefix, base, "noise.period", 38, 1);
+    AddStateField(out, prefix, base, "noise.counter", 39, 2, kCounter);
+    AddStateField(out, prefix, base, "noise.out", 41, 1, kCounter);
+    AddStateField(out, prefix, base, "noise.lfsr", 42, 4, kCounter);
+    AddStateField(out, prefix, base, "envelope.shape", 46, 1);
+    AddStateField(out, prefix, base, "envelope.period", 47, 4);
+    AddStateField(out, prefix, base, "envelope.counter", 51, 4, kCounter);
+    AddStateField(out, prefix, base, "envelope.segment", 55, 1, kCounter);
+    AddStateField(out, prefix, base, "envelope.out", 56, 1, kCounter);
+    for (uint32_t r = 0; r < 16; ++r)
+        AddStateField(out, prefix, base, kApplied[r], 57 + r, 1);
+}
+
 void SoundChip_AY8910::TTDSaveState(uint8_t* dst) const
 {
     uint8_t* cur = dst;

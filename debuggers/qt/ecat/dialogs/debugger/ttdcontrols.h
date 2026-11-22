@@ -66,6 +66,10 @@ public:
     //next instruction" at a card position (", at its instruction boundary" when not inside one); "gs at instruction
     //1200, PC #0A3C" without one; "gs: no instruction counts in this recording" when the recording has none
     static QString describe_card(const QJsonObject &card);
+    //Run Back's breakpoint conditions as one reverse-continue `condition`, from {address, its condition} (empty: it
+    //stops there whatever holds): "(PC == #8000 && (A == 5)) || (PC == #9000)"; empty when no address has one (the
+    //pcs alone say it all)
+    static std::string run_back_condition(const std::vector<std::pair<unsigned int, std::string>> &breakpoints);
     //The Step (F7, kind "in"), Step over (F8, "over"), Step out (Ctrl+F8, "out") or Run to the cursor (F4, "to", to
     //`address`) of the card's tab in the past: the card's step or run through the history (a run to the cursor not
     //reached in the history says so and moves nothing). False when that is not the case (the main CPU's tab, not in

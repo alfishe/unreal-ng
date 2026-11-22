@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "debugger/history/devicehistory.h"
 
@@ -116,87 +117,13 @@ struct GSProtocolState
 const char* GSCommandLogKindName(GSCommandLogKind kind);
 const char* GSCommandLogAnomalyName(GSCommandLogAnomaly anomaly);
 
-class GSCommandLog
+/// The decoder's state (§6.3): what the current command still takes and gives, the transfer it started, the mailbox
+/// as the host's accesses left it. A plain value, so time travel can put it back (GSCommandLog's marks)
+struct GSCommandLogDecoder
 {
-public:
-    static constexpr size_t kDefaultCapacity = 65536;  ///< 2 MB: twice 5 minutes at 2 commands a frame (F1c)
-    static constexpr uint32_t kStallFrames = 50;       ///< an upload with no byte for this long is stalled
-
-    /// `device` names the history (the registry id of the card + ".commands"), listed in `registry` while the log
-    /// lives (null: unlisted)
-    template <typename Name>
-    GSCommandLog(const EmulatorContext* context, history::Registry* registry, Name&& device)
-        : _context(context), _registry(registry),
-          _history(std::forward<Name>(device), "GS host commands, decoded by the firmware profile", kDefaultCapacity)
-    {
-        // Switched on or off (a configuration, a pause): the decoder starts over and the firmware is identified again
-        // (a ROM loaded meanwhile) at the next entry
-        _history.OnSwitch([this](bool) { _armed.store(false, std::memory_order_relaxed); });
-        if (_registry)
-            _registry->Add(&_history);
-    }
-    ~GSCommandLog()
-    {
-        if (_registry)
-            _registry->Remove(&_history);
-    }
-    GSCommandLog(const GSCommandLog&) = delete;
-    GSCommandLog& operator=(const GSCommandLog&) = delete;
-
-    GSCommandHistory& History() { return _history; }
-    const GSCommandHistory& History() const { return _history; }
-
-    /// The card that feeds the log (a personality switch binds the new one; nullptr: none). The decoder starts over
-    /// and the profile is identified again at the next entry. The emulation thread parked
-    void Bind(const GeneralSoundCard* card)
-    {
-        _card = card;
-        _armed.store(false, std::memory_order_relaxed);
-    }
-
-    /// True while the log records: the card's test before it calls the hooks below
-    bool On() const { return _history.On(); }
-
-    /// The hooks, called by the card before it changes its mailbox (the status they read is the one the access met).
-    /// `automation`: a tool's access (the card's sendCommand / sendData / readData)
-    void HostCommand(uint8_t command, bool automation = false);
-    void HostData(uint8_t value, bool automation = false);
-    void HostReplyRead(uint8_t value, bool automation = false);
-    void HostReset();
-    /// Once a frame (the card's frame start): an upload that stopped is reported once
-    void Frame();
-
-    /// The profile the decoder uses now (nullptr: raw); identified when the log starts and at a new card
-    const GSFirmwareProfile* Profile() const { return _profile; }
-    /// The conversation's state (F3), as the last host access left it; any thread
-    GSProtocolState State() const;
-
-private:
-    void Arm();
-    GSCommandLogEntry Make(GSCommandLogKind kind, uint8_t value, bool automation) const;
-    void Push(const GSCommandLogEntry& entry) { _history.Push(entry); }
-    void NoteTaken(uint8_t status);
-    void BeginTransfer();
-    void EndTransfer(bool truncated, bool automation);
-    void ResetDecoder();
-    bool Skip() const;
-    void Publish();
-    /// Publishes the decoder's state when a hook returns
-    struct PublishOnExit
-    {
-        GSCommandLog& log;
-        ~PublishOnExit() { log.Publish(); }
-    };
-
-    const EmulatorContext* _context;
-    history::Registry* const _registry;
-    GSCommandHistory _history;
-    const GeneralSoundCard* _card = nullptr;
     const GSFirmwareProfile* _profile = nullptr;
     uint8_t _profileIndex = 0xFF;
-    std::atomic<bool> _armed{false};  ///< the decoder runs (cleared by a switch of the history, on any thread)
 
-    // The decoder (§6.3): what the current command still takes and gives
     int _command = -1;           ///< the current command, -1 none
     uint8_t _postLeft = 0;       ///< data bytes it takes after the command
     uint8_t _paramIndex = 0;     ///< the next parameter's index
@@ -222,6 +149,147 @@ private:
     uint8_t _pendingCommand = 0;
     bool _lastDataFromHost = false; ///< the data flag's last raise was the host's write (not taken yet)
     uint8_t _lastData = 0;
+};
+
+/// The log follows time travel (history::ITimeFollower, gs-debugger design §6.3 D3): it shows the entries up to where
+/// the machine stands. A move back holds the later entries back, a move forward on the same line brings them back, a
+/// live run from the past (a resume forks a branch) drops them and logs anew, a branch switch keeps the shared past.
+/// The decoder follows the machine: a checkpoint restore puts back its state at that frame's start (a mark the log
+/// takes at each frame start after traffic), and a TTD replay runs the decoder without logging
+class GSCommandLog : public history::ITimeFollower, private GSCommandLogDecoder
+{
+public:
+    static constexpr size_t kDefaultCapacity = 65536;  ///< 2 MB: twice 5 minutes at 2 commands a frame (F1c)
+    static constexpr uint32_t kStallFrames = 50;       ///< an upload with no byte for this long is stalled
+
+    /// `device` names the history (the registry id of the card + ".commands"), listed in `registry` while the log
+    /// lives (null: unlisted)
+    template <typename Name>
+    GSCommandLog(const EmulatorContext* context, history::Registry* registry, Name&& device)
+        : _context(context), _registry(registry),
+          _history(std::forward<Name>(device), "GS host commands, decoded by the firmware profile", kDefaultCapacity)
+    {
+        // Switched on or off (a configuration, a pause): the decoder starts over and the firmware is identified again
+        // (a ROM loaded meanwhile) at the next entry
+        _history.OnSwitch([this](bool) {
+            _armed.store(false, std::memory_order_relaxed);
+            _switched.store(true, std::memory_order_relaxed);
+        });
+        if (_registry)
+        {
+            _registry->Add(&_history);
+            _registry->AddFollower(this);
+        }
+    }
+    ~GSCommandLog() override
+    {
+        if (_registry)
+        {
+            _registry->RemoveFollower(this);
+            _registry->Remove(&_history);
+        }
+    }
+    GSCommandLog(const GSCommandLog&) = delete;
+    GSCommandLog& operator=(const GSCommandLog&) = delete;
+
+    GSCommandHistory& History() { return _history; }
+    const GSCommandHistory& History() const { return _history; }
+
+    /// The card that feeds the log (a personality switch binds the new one; nullptr: none). The decoder starts over
+    /// and the profile is identified again at the next entry. The emulation thread parked
+    void Bind(const GeneralSoundCard* card)
+    {
+        _card = card;
+        _armed.store(false, std::memory_order_relaxed);
+        _dirty = true;
+    }
+
+    /// True while the log records: the card's test before it calls the hooks below
+    bool On() const { return _history.On(); }
+
+    /// The hooks, called by the card before it changes its mailbox (the status they read is the one the access met).
+    /// `automation`: a tool's access (the card's sendCommand / sendData / readData)
+    void HostCommand(uint8_t command, bool automation = false);
+    void HostData(uint8_t value, bool automation = false);
+    void HostReplyRead(uint8_t value, bool automation = false);
+    void HostReset();
+    /// Once a frame (the card's frame start): an upload that stopped is reported once
+    void Frame();
+
+    /// The profile the decoder uses now (nullptr: raw); identified when the log starts and at a new card
+    const GSFirmwareProfile* Profile() const { return _profile; }
+    /// The conversation's state (F3), as the last host access left it; any thread
+    GSProtocolState State() const;
+
+    /// region <history::ITimeFollower (time travel; the emulation thread parked)>
+    void Restored() override;
+    void Landed(const history::TimeMoment* lineSince) override;
+    void SaveLive(std::vector<uint8_t>& out) const override;
+    void LoadLive(const std::vector<uint8_t>& in) override;
+    /// endregion </history::ITimeFollower>
+
+    /// Frame-start decoder states kept for time travel (the frames after traffic)
+    size_t Marks() const { return _marks.size(); }
+    static constexpr size_t kMaxMarks = 65536;
+
+private:
+    void Arm();
+    GSCommandLogEntry Make(GSCommandLogKind kind, uint8_t value, bool automation) const;
+    void Push(const GSCommandLogEntry& entry)
+    {
+        if (!Replaying())
+            _history.Push(entry);
+    }
+    void NoteTaken(uint8_t status);
+    void BeginTransfer();
+    void EndTransfer(bool truncated, bool automation);
+    void ResetDecoder();
+    /// In a TTD replay the decoder runs and nothing is logged
+    bool Replaying() const;
+    /// A live hook's first work: marks of a log switched meanwhile go; the first after a time travel move settles it
+    void Live();
+    /// The machine runs live from where a move left it: the entries and marks after that moment are another line's
+    void Settle();
+    /// The machine's moment (frame, the main CPU's T in it) and an entry's being after it
+    struct Moment
+    {
+        uint64_t frame = 0;
+        uint32_t t = 0;
+    };
+    Moment Now() const;
+    static bool After(const GSCommandLogEntry& e, const Moment& m)
+    {
+        return e.frame > m.frame || (e.frame == m.frame && e.mainT > m.t);
+    }
+    /// At a frame start (Frame, live): the decoder's state there when traffic changed it since the last mark
+    void TakeMark();
+    void Publish();
+    /// Publishes the decoder's state when a hook returns
+    struct PublishOnExit
+    {
+        GSCommandLog& log;
+        ~PublishOnExit() { log.Publish(); }
+    };
+
+    const EmulatorContext* _context;
+    history::Registry* const _registry;
+    GSCommandHistory _history;
+    const GeneralSoundCard* _card = nullptr;
+    const GSFirmwareProfile* _profile = nullptr;
+    uint8_t _profileIndex = 0xFF;
+    std::atomic<bool> _armed{false};  ///< the decoder runs (cleared by a switch of the history, on any thread)
+
+    // Time travel (the emulation thread, or the control thread with it parked)
+    struct Mark
+    {
+        uint64_t frame = 0;
+        bool armed = false;
+        GSCommandLogDecoder decoder;
+    };
+    std::vector<Mark> _marks;            ///< the decoder at frame starts, oldest first
+    bool _dirty = false;                 ///< a hook ran since the last mark
+    bool _settle = false;                ///< a time travel move happened: the next live hook settles it
+    std::atomic<bool> _switched{false};  ///< the history was switched (any thread): the marks are of another run
 
     mutable std::mutex _stateMutex;  ///< the published state: written by the hooks while on, read by the planes
     GSProtocolState _state;

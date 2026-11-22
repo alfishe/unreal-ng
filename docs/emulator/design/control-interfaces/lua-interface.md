@@ -592,7 +592,7 @@ nm, err = next_nmi{kinds="int_ack,nmi_request", since=0, from=0, to=999, limit=5
 au = next_audio()                -- the Next's sound as configured: config {chip_model, stereo_mode, turbosound, dac, nr_06, nr_08, nr_09}, selected_chip, chips[3] {pan, mono, registers[16], tone_periods, noise_period, mixer, volumes, envelope_period, envelope_shape}, dac {a, b, c, d, left_sum, right_sum}
 ip = next_input()                 -- the Next's joystick modes: joystick_modes {nr_05, left / right {code, name, port}}, io_mode {nr_0b, enabled, mode}, kempston_1f {value, bits, selected_by_nr_05, answers_here, note}, kempston_37 {value, answers_here}, extended_keys {nr_b0, nr_b1, pressed}, md_pad_extra {nr_b2, left / right {mode, x, y, z}, host_keys}
 u = next_uart()                  -- the Next's two UARTs: selected, ports {enabled}, channels[2] {name, prescaler, baud, frame, rts, rx / tx {count, capacity, preview_hex}, status, bytes, interrupts, peer {attached, kind, target}}
-d = next_dma()                    -- the Next's DMA as programmed and running: mode (zxn|z80), enabled, waiting, burst, prescaler, a/b {address, type, step, timing}, direction, block_length, counter, src/dst (+ src_kind/dst_kind: the 8K slot they hit, 'rom' = a write into ROM), holds_bus, status; reading never advances its read sequence
+d = next_dma()                    -- the Next's DMA as programmed and running: mode (zxn|z80), enabled, waiting, burst, prescaler, a/b {address, type, step, timing}, direction, block_length, counter, src/dst (+ src_kind/dst_kind: the 8K slot they hit, 'rom' = a write into ROM), holds_bus, status, zxnddma (+ ddma {physical, two_d, transparent, fill, layer2_xy, hidden, ext_a, ext_b, src, dst, row_length, rows, stride_a, stride_b, row, column, transparent_value, fill_value, layer2 {x, y}, sram {board, bytes, range}} on the NEXT-DDMA core); reading never advances its read sequence
 v = next_video()                  -- layer_order {value, name}, ula {mode, port_ff, scroll, clip}, layer2 {resolution, bank, scroll, clip}, tilemap {columns, map_bank, map_offset, ...}, sprites, transparency, raster {hc, vc, frame_t}, timing
 p, err = next_palette{palette="sprites_1", range="0-15"}  -- the 9-bit palettes (default: the selected one, all 256 entries; palette=0..7|name|"all"): selected, transparent, palettes[{name, entries[{index, rgb9, red, green, blue, priority}]}]; no index moves
 w, err = next_ports(0x6B, "w")    -- the internal port enable word (NR #82-#85) and which device answers the port: device, decoded_by, enabled, enabled_by {nr, bit}, enforced, side_effect (a number is the port, a string hex text)
@@ -1298,6 +1298,8 @@ ttd_card_position()                  --> every card CPU (an array)
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 -- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
 local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
+-- condition: only hits where a breakpoint condition holds at the instruction's start
+local hit = ttd_reverse_continue({0x8200}, { condition = "A == 5 && M(#5C78) > 3" })
 ```
 
 **Reverse search:**
@@ -1511,6 +1513,7 @@ local attrs = ttd_screen_at{frame = 150, which = "shadow", format = "attributes"
 --                flips = {} }
 
 local timeline = ttd_timeline{min_phase_ms = 500}   -- also from_frame, to_frame, buckets, limit, bucket_size, ports
+local saved = ttd_timeline{file = "/path/run.ttd", branch = "1"}   -- a file or a recording's folder, not loaded
 -- { from_frame = ..., to_frame = ..., phases = { {frame_start = ..., frame_end = ...,
 --   tags = {"halt", "input"}, executed = ..., keys = {"A"}, busiest_frame = ..., ...}, ... },
 --   events = {...}, missing = { {fact = "writes", reason = "the write journal is off"} }, ... }
@@ -1556,6 +1559,9 @@ local d = ttd_diff{from_frame = 1201, to_frame = 1204, sections = "cpu,memory"}
 --   memory = {changed = 2, pages = 1, ranges = { {region = "ram", page = 2, offset = 0x2000, address = 0xA000,
 --   length = 1, changed = 1, before = {3}, after = {6}, last_write = {frame = 1203, tinframe = 71, pc = 0x800C,
 --   address = 0xA000, text = "inc (hl)"}}, ... }, more = 0}, writer_searches = 2, ms = ... }
+-- With sections "devices": devices = {changed = { {name = "ay-socket.ts", bytes = 325, changed = 9, counters_only = false,
+--   fields = { {name = "ay0.R8", offset = 9, size = 1, changed = 1, before = 0, after = 15},
+--   {name = "ay0.tone_a.counter", ..., counter = true}, ... }}, ... }, same = 4, counters_only = 2}
 
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,

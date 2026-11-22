@@ -13,3 +13,11 @@ A folder that unreal-ng presents as a FAT16 SD card (`HostFolderFat`) and boots 
 | `dot/` | `os/dot-commands/` |
 
 The same tree is in unreal-ng `testdata/machines/zxnext/card`.
+
+## browser-navigation.json
+
+The NextZXOS Browser navigation as data: the keys, hold frames and waits of each step (boot, menu, Browser, search, type, accept,
+down, open, up, back), the idle loop (`HALT` at `#0C8F`), the Browser's order (`.` / `..` except at the root, then the names
+case-insensitively), the search rule (`H` + the shortest unique prefix of the searchable part, else counting down) and the run steps
+per extension (`.sna`, `.tap`, the rest) plus the `.bas` RUN. Read by `tools/machines/next/browser-drive/navigation.py` (drive.py,
+suite.py, collection.py, `regress.py`) and by `NexBrowserRun_Test` (`core/tests/loaders/nex/nexbrowser_test.cpp`).

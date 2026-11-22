@@ -175,12 +175,12 @@ protected:
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
 
-    void Create(const std::string& model, bool withCard)
+    void Create(const std::string& model, bool withCard, const char* card = "plusd")
     {
         std::function<void(CONFIG&)> slotSet;
         std::string error;
         if (withCard)
-            ASSERT_TRUE(SlotControl::CreateOverride({{"edge.1", "plusd"}}, slotSet, error)) << error;
+            ASSERT_TRUE(SlotControl::CreateOverride({{"edge.1", card}}, slotSet, error)) << error;
         _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero, slotSet);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
@@ -280,6 +280,54 @@ TEST(PlusDAutostart_Plan, RulesByDirectory)
     EXPECT_EQ(PlusDAutostart::MakePlan(*image, true, "").kind, "mount") << "no system disk, nothing to boot";
 }
 
+/// The DISCiPLE's plan (~5 ms): GDOS 3 boots `SYS*`, not G+DOS's `+SYS*`; a 128K snapshot names 128K-DISCIPLE
+TEST(PlusDAutostart_Plan, DiscipleLooksForSys)
+{
+    EXPECT_TRUE(PlusDAutostart::IsSystemFile("SYSTEM 3d", 4, true));
+    EXPECT_TRUE(PlusDAutostart::IsSystemFile("sys", 4, true));
+    EXPECT_FALSE(PlusDAutostart::IsSystemFile("+SYS 2a", 4, true)) << "the DISCiPLE ROM does not load +SYS";
+    EXPECT_TRUE(PlusDAutostart::IsSystemFile("+SYS 2a", 4, false));
+    EXPECT_FALSE(PlusDAutostart::IsSystemFile("SYSTEM 3d", 4, false));
+    EXPECT_FALSE(PlusDAutostart::IsSystemFile("SYSTEM 3d", 1, true)) << "CODE only";
+
+    GdosDisk disk;
+    const uint8_t header[9] = {0x03, 0x70, 0x17, 0x00, 0x20, 0xFF, 0xFF, 0x00, 0x00};  // CODE 6000 bytes at #2000
+    disk.Add("SYSTEM 3d", 4, std::vector<uint8_t>(6000, 0x11), header);
+    disk.AddBorderLoop("game", 4);
+    std::unique_ptr<DiskImage> image = disk.Image();
+    const PlusDAutostart::Plan p = PlusDAutostart::MakePlan(*image, true, "", true);
+    EXPECT_EQ(p.kind, "run+load") << p.message;
+    EXPECT_EQ(p.dos, "disk");
+    EXPECT_EQ(p.command, "LOAD d1\"game\"");
+    EXPECT_EQ(p.dosBody.size(), 6000u);
+
+    GdosDisk snap128;
+    snap128.Add("Big", 9, std::vector<uint8_t>(1000, 0));
+    image = snap128.Image();
+    EXPECT_NE(PlusDAutostart::MakePlan(*image, true, "", true).message.find("128K-DISCIPLE"), std::string::npos);
+}
+
+/// `system-disk+load` on the DISCiPLE (~1 s): a disk without `SYS*` boots GDOS 3d from
+/// data/boot/disciple/gdos-3d-system.mgt in `fdd.disciple1`, then the work's disk comes back and its loader runs
+TEST_F(PlusDAutostart_Test, DiscipleBootsGdos3dThenTheWork)
+{
+    Create("48K", true, "disciple");
+    _emulator->EnableTurboMode();
+    GdosDisk disk;
+    disk.AddBorderLoop("Loader", 5);
+    const std::string path = disk.Save("disciple-nodos.mgt");
+    const Emulator::DiskAutostartResult result = _emulator->AutostartDisk(path);
+    ASSERT_TRUE(result.started) << result.message;
+    EXPECT_EQ(result.plan, "system-disk+load");
+    PlusDCard* card = PlusDCard::Find(_context);
+    ASSERT_NE(card, nullptr);
+    ASSERT_TRUE(card->IsDisciple());
+    EXPECT_EQ(card->Drive(0)->getSlotId(), "fdd.disciple1");
+    EXPECT_TRUE(RunsWithBorder(5, 2000)) << Describe();
+    EXPECT_EQ(Status().plan.dosBody.size(), 0x1A00u) << "SYSTEM 3d";
+    EXPECT_FALSE(card->Drive(0)->isWriteProtect()) << "the work's disk is back";
+}
+
 /// An MGT disk goes to the +D's drive (~30 ms): drive A / B are `fdd.plusd1` / `2`, C is refused; Beta drive A stays
 /// empty
 TEST_F(PlusDAutostart_Test, MgtGoesToThePlusDDrive)
@@ -308,7 +356,8 @@ TEST_F(PlusDAutostart_Test, MgtRefusedWithoutTheCard)
     const Emulator::DiskAutostartResult result = _emulator->AutostartDisk(path);
     EXPECT_FALSE(result.mounted);
     EXPECT_FALSE(result.started);
-    EXPECT_NE(result.message.find("no +D"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("no MGT interface"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("48K-DISCIPLE"), std::string::npos) << result.message;
 }
 
 /// `run` (~1 s): the system disk with an AUTO program: reset, RUN; the ROM loads +SYS, then AUTO, which runs

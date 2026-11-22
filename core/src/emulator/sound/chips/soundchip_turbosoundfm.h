@@ -606,6 +606,26 @@ public:
         Ym2203Pair::TTDTimeFields(d.timeFields, kTsfmStateHeaderSize);
         return d;
     }
+    /// The §8.2 layout as named fields: the header (the render phases are counters), both chips ("fm0.", "fm1.":
+    /// Ym2203Pair::TTDChipFields, the SSG halves "fm0.ssg."), the timeline tail and the frame progress (counters)
+    void TTDDescribeFields(ttd::TTDStateFieldList& out) const override
+    {
+        using ttd::AddStateField;
+        constexpr uint8_t kCounter = ttd::kStateFieldCounter;
+        AddStateField(out, "", 0, "version", 0, 1);
+        AddStateField(out, "", 0, "board", 1, 1);
+        AddStateField(out, "", 0, "sample_phase", 2, 8, kCounter);
+        AddStateField(out, "", 0, "decimation_phase", 10, 8, kCounter);
+        AddStateField(out, "", 0, "decimator_phases", 18, 32, kCounter);
+        constexpr uint32_t chip = static_cast<uint32_t>(Ym2203Pair::kChipStateSize);
+        Ym2203Pair::TTDChipFields(out, "fm0.", kTsfmStateHeaderSize);
+        Ym2203Pair::TTDChipFields(out, "fm1.", kTsfmStateHeaderSize + chip);
+        const uint32_t timeline = kTsfmStateHeaderSize + 2 * chip;
+        Ym2203Pair::TTDTimelineFields(out, timeline);
+        const uint32_t tail = timeline + static_cast<uint32_t>(Ym2203Pair::kTimelineStateSize);
+        AddStateField(out, "", 0, "frame_tstates", tail, 4, kCounter);
+        AddStateField(out, "", 0, "frame_samples", tail + 4, 4, kCounter);
+    }
 
     /// Synced: the pair has been advanced to the CPU's T-state, or adopts the
     /// CPU's position at its next sync (after a reset or restore)

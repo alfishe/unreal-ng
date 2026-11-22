@@ -49,3 +49,15 @@ const char* NextBoardIssueTitle(NextBoardIssue issue)
             return n.title;
     return "Issue 4 (KS2)";
 }
+
+uint32_t NextSramBytes(NextBoardIssue issue, unsigned ramKb)
+{
+    constexpr uint32_t kMb = 0x100000;
+    switch (issue)
+    {
+        case NextBoardIssue::Issue5: return 4 * kMb;
+        case NextBoardIssue::Issue2: return ramKb > 1024 ? 2 * kMb : kMb;
+        case NextBoardIssue::Issue4:
+        default: return 2 * kMb;
+    }
+}

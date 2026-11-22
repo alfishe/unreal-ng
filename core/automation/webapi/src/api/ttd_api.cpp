@@ -847,7 +847,7 @@ void EmulatorAPI::probeFramesTTD(const HttpRequestPtr& req, std::function<void(c
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-continue
 ///
 /// Body: { "pcs": [int, ...], "phys_page"?, "all"?, "limit"?, "before_frame"?, "before_tin"?, "before"?,
-///         "from_frame"? }  — non-empty list of reverse breakpoints; the rest narrow the walk.
+///         "from_frame"?, "condition"? }  — non-empty list of reverse breakpoints; the rest narrow the walk.
 ///       or { "cpu": "gs", "max_frames"? }  — on a sound card's CPU: back to its breakpoints' previous hit (no pcs)
 ///
 /// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int, "t": int, "phys_page": int|"rom",

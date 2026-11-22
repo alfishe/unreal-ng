@@ -295,7 +295,11 @@ oldest first, until under budget or nothing more can go.
 A segment leaves memory only after the writer has closed its file (T-C10: `TTDRecordingWriter`'s file-closed
 callback gives the path and the segment's first checkpoint; the controller keeps `(line, first checkpoint) -> path`);
 otherwise eviction waits. A truncate drops the map entries of the files it writes again, a branch delete those of its
-line, a session end all.
+line, a session end all. The truncate's own segment (a resume at the trunk's end after the head was on a branch: it
+may have left memory, or sit in the read-back cache) is read back and taken out of the cache first: its file is
+written again from memory, and a cached segment without a known file would be dropped for good (found by the P1.S10
+soak 2026-11-21; `TimeTravelController_TwoTiers_Test.ResumeAtTheEndOfAnEvictedTrunk`). A resume before a line's end
+whose branch cannot fork is refused; it never cuts the history after it instead.
 
 The check is cheap per frame: the full pass runs only when a segment started, a file completed, or the bytes are
 over budget. `SetHistoryLimit` with the disk tier active evicts whatever the state (a stopped session too: nothing
@@ -318,7 +322,11 @@ read-only queries never load the emulation thread. A failed read back counts `re
 reports the checkpoint damaged.
 
 Save (`SerializeSession`) reads every evicted segment back for the call (the cache unbounded), writes the file, then
-trims the cache again: memory peaks during a save of a long session.
+trims the cache again: memory peaks during a save of a long session. A branch forked inside a segment that later left
+memory keeps its delta bases on the trunk's versions of that time (the store holds them by reference), while the read
+back gave the trunk the file's copies under other ids: the writer stores such a version whole (decoded, no base)
+instead of refusing the save with "a version's base is not in the session" (found by the P1.S10 soak 2026-11-21;
+`TimeTravelController_TwoTiers_Test.SaveAfterEvictionWithABranch`).
 
 Counters on every plane where the memory report appears (`ttd status`, `history-limit`; CLI, WebAPI / OpenAPI,
 MCP, Lua, Python, WebSocket `ttd.status` and `debug.buffers`): `disk_tier_active`, `evicted_to_disk_segments`,

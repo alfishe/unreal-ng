@@ -148,6 +148,27 @@ std::string DebuggerTimeTravel::RunBackPcs(const BreakpointManager& breakpoints)
     return text;
 }
 
+std::string DebuggerTimeTravel::RunBackCondition(const BreakpointManager& breakpoints)
+{
+    std::string condition;
+    bool any = false;
+    for (const auto& [id, bp] : breakpoints.GetAllBreakpoints())
+    {
+        if (!bp || !bp->active || !BreakpointManager::IsUserBreakpoint(*bp) || bp->type != BRK_MEMORY ||
+            !(bp->memoryType & BRK_MEM_EXECUTE))
+            continue;
+        std::string part = "PC >= " + Hex(bp->z80address).toStdString() + " && PC <= " +
+                           Hex(static_cast<uint16_t>(bp->EndAddress())).toStdString();
+        if (bp->condition)
+        {
+            part += " && (" + bp->condition->Canonical() + ")";   // canonical: the Unreal dialect, parenthesised
+            any = true;
+        }
+        condition += (condition.empty() ? "(" : " || (") + part + ")";
+    }
+    return any ? condition : std::string();
+}
+
 QString DebuggerTimeTravel::CardReadout(const ttd::TTDCardPosition& card)
 {
     const QString name = QString::fromLatin1(DebugCpuName(card.cpu));
@@ -433,9 +454,15 @@ void DebuggerTimeTravel::runBack()
             inform(tr("Run Back"), tr("Run Back stops at the enabled execution breakpoints: there is none."), false);
         return;
     }
-    // Not found: the machine stays where it is and the reply says so (matched false)
+    // Not found: the machine stays where it is and the reply says so (matched false). Conditional breakpoints stop
+    // only where their condition holds, as they do running forward
+    std::map<std::string, std::string> options{{"pcs", pcs}};
+    if (_emulator)
+        if (const BreakpointManager* breakpoints = _emulator->GetBreakpointManager())
+            if (std::string condition = RunBackCondition(*breakpoints); !condition.empty())
+                options["condition"] = condition;
     ttd::TTDReply reply;
-    if (!move("reverse-continue", {{"pcs", pcs}}, tr("Run Back"), &reply))
+    if (!move("reverse-continue", options, tr("Run Back"), &reply))
         return;
     const StateNode* matched = reply.body.find("matched");
     const StateNode* pc = reply.body.find("pc");

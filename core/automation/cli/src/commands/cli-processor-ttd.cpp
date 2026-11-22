@@ -516,11 +516,14 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "      [--phys-page P|rom] [--all] [--limit N] [--before-frame F [--before-tin T] | --before T] [--from-frame F]"
        << NEWLINE;
     ss << "    [--pc <B> ...]                    (repeat --pc for multiple breakpoints)" << NEWLINE;
+    ss << "    [--condition <expression>]        Only where it holds at the instruction (last: the rest of the line)"
+       << NEWLINE;
     ss << "  ttd probe-frames <exec|read|write|port-in|port-out> <address>   The frames a profile probe fired in" << NEWLINE;
     ss << "      [--end A] [--page N] [--port-mask M] [--if \"COND\"] | --probes '[{...}, ...]'" << NEWLINE;
     ss << "      [--from-frame F] [--to-frame F] [--limit N]   (replays the window; the machine stays)" << NEWLINE;
     ss << "  ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] [--limit N] [--buckets] [--no-ports]" << NEWLINE;
-    ss << "      [--min-phase-ms N]              The recording cut into phases of the same activity (no replay)" << NEWLINE;
+    ss << "      [--min-phase-ms N] [--file PATH [--branch B]]   The recording cut into phases of the same activity" << NEWLINE;
+    ss << "      (no replay; --file: a .ttd file or a recording's folder, read without loading it)" << NEWLINE;
     ss << "  ttd cause <addr>[:page] | <reg> [--frame F [--tin T]] [--depth N] [--links N] [--frames N] [--flags]" << NEWLINE;
     ss << "      Where a byte or a register got its value: the chain back to constants, ports, initial memory" << NEWLINE;
     ss << "  ttd bt [F[+T]] [--depth N] [--slots N]   The call stack at moment F+T (default: the current position):" << NEWLINE;
@@ -1929,6 +1932,14 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
             options["all"] = "true";
         else if (args[i] == "--first-per-pc")
             options["first_per_pc"] = "true";   // the list, each PC's newest hit only
+        else if (args[i] == "--condition" && i + 1 < args.size())
+        {
+            // Only hits where it holds: the rest of the line is the condition (it may hold spaces)
+            std::string condition;
+            while (++i < args.size())
+                condition += (condition.empty() ? "" : " ") + args[i];
+            options["condition"] = condition;
+        }
         else if (flag != flags.end() && i + 1 < args.size())
             options[flag->second] = args[++i];
     }
@@ -1936,7 +1947,7 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
     {
         session.SendResponse(std::string("Error: --pc is required (at least one)") + NEWLINE +
                              "Usage: ttd reverse-continue --pc <A> [--pc <B> ...] [--phys-page P|rom] [--all | --first-per-pc] [--limit N] "
-                             "[--before-frame F [--before-tin T] | --before T] [--from-frame F]" + NEWLINE);
+                             "[--before-frame F [--before-tin T] | --before T] [--from-frame F] [--condition <expression>]" + NEWLINE);
         return;
     }
     options["pcs"] = pcs;
@@ -2453,7 +2464,8 @@ void CLIProcessor::HandleTTDSeekCheck(const ClientSession& session, EmulatorCont
 }
 
 /// `ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] [--limit N] [--buckets] [--no-ports]
-/// [--min-phase-ms N]`: the phases of the recording, each with its tags and the facts that made them
+/// [--min-phase-ms N] [--file PATH [--branch B]]`: the phases of the recording, each with its tags and the facts
+/// that made them; --file reads a .ttd file (or a recording's folder) without loading it
 void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorContext* context,
                                      const std::vector<std::string>& args)
 {
@@ -2461,7 +2473,9 @@ void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorConte
                                                              {"--to-frame", "to_frame"},
                                                              {"--bucket-size", "bucket_size"},
                                                              {"--limit", "limit"},
-                                                             {"--min-phase-ms", "min_phase_ms"}};
+                                                             {"--min-phase-ms", "min_phase_ms"},
+                                                             {"--file", "file"},
+                                                             {"--branch", "branch"}};
     std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -2475,7 +2489,8 @@ void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorConte
         else
         {
             session.SendResponse(std::string("Usage: ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] "
-                                             "[--limit N] [--buckets] [--no-ports] [--min-phase-ms N]") + NEWLINE);
+                                             "[--limit N] [--buckets] [--no-ports] [--min-phase-ms N] "
+                                             "[--file PATH [--branch B]]") + NEWLINE);
             return;
         }
     }
@@ -2517,6 +2532,8 @@ void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorConte
                 ss << "; " << slot->s << " " << dev.find("sectors")->i << " sectors";
             else if (const StateNode* region = dev.find("region"))
                 ss << "; " << region->s << " changed " << dev.find("frames")->i << " fr";
+            else if (const StateNode* state = dev.find("state"))
+                ss << "; " << state->s << " state " << dev.find("frames")->i << " fr";
             else if (static_cast<size_t>(dev.find("device")->i) < devices.size())
                 ss << "; " << devices[static_cast<size_t>(dev.find("device")->i)].find("name")->s << " in "
                    << dev.find("in")->i << " out " << dev.find("out")->i;
@@ -2524,6 +2541,8 @@ void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorConte
         ss << NEWLINE;
     };
     std::stringstream ss;
+    if (const StateNode* file = b.find("file"))
+        ss << "File " << file->s << " (" << b.find("model")->s << ", branch " << b.find("branch")->i << "): ";
     ss << "Frames " << b.find("from_frame")->i << ".." << b.find("to_frame")->i;
     if (b.find("bucket_count")->i)
         ss << ", " << b.find("bucket_count")->i << " buckets of " << b.find("bucket_size")->i;
@@ -2545,6 +2564,13 @@ void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorConte
     }
     for (const StateNode& e : b.find("events")->items)
         ss << "  event " << e.find("frame")->i << " " << e.find("kind")->s << " " << e.find("text")->s << NEWLINE;
+    if (const StateNode* every = b.find("states_every_frame"); every && !every->items.empty())
+    {
+        ss << "  state changed in every frame:";
+        for (const StateNode& name : every->items)
+            ss << " " << name.s;
+        ss << NEWLINE;
+    }
     for (const StateNode& m : b.find("missing")->items)
         ss << "  missing " << m.find("fact")->s << ": " << m.find("reason")->s << NEWLINE;
     session.SendResponse(ss.str());

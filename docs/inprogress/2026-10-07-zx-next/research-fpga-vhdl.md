@@ -149,7 +149,7 @@ copper address, NR `#62` bits 7:6 are the copper mode.
 | `#018000-#01BFFF` | 16K | alternate ROM 0 (128K) |
 | `#01C000-#01FFFF` | 16K | alternate ROM 1 (48K) |
 | `#020000-#03FFFF` | 128K | DivMMC RAM (16 x 8K banks) |
-| `#040000-#05FFFF` | 128K | ZX Spectrum RAM (MMU pages 0-15; page `#0A/#0B` = bank 5, `#0E/#0F` = bank 7) |
+| `#040000-#05FFFF` | 128K | ZX Spectrum RAM (MMU pages 0-15; page `#0A/#0B` = bank 5, `#0E/#0F` = bank 7). Pages `#0A`, `#0B`, `#0E` exist twice: the MMU reaches an FPGA block RAM instead (the ULA's), Layer 2 and NR `#04` this SRAM |
 | `#060000-#07FFFF` | 128K | extra RAM |
 | `#080000-#1FFFFF` | 3 x 512K | extra IC RAM (1st at `#080000`, 2nd at `#100000`, 3rd at `#180000`), if fitted |
 
@@ -159,7 +159,9 @@ earlier boards have two chips; a smaller RAM population simply leaves the upper 
 of the page sum overflowing bit 8 decide RAM vs ROM, so reads from a page past the populated RAM are the
 board's concern, not a decode rule).
 
-- The boot ROM (`bootrom.vhd`, 8K, `ADDR` 13 bits) is mapped at `#0000-#1FFF` while `bootrom_en = 1`; it is
+- The boot ROM (`bootrom.vhd`, 8K, `ADDR` 13 bits = `cpu_a(12:0)`) answers every read of `#0000-#3FFF` while `bootrom_en = 1`
+  (its 8K at `#0000` and again at `#2000`, ahead of the MMU, Multiface, DivMMC and Layer 2: `cpu_di`'s first choice, `zxnext.vhd`
+  1856-1857); writes take the decode under it (NR `#04`'s bank in config mode, 3044-3050). It is
   switched on by a reset in config mode and off by **any write to NR `#03`** (`bootrom_en <= '0'`). The 8192 bytes
   are in the VHDL as a plain byte array and can be extracted by a script (MD5 `8c4f0c1b77db8de9ed857f2c873250b8`
   at this commit). The `tbblue_loader.rom` that ships inside ZEsarUX is a **different, older** image (6822 of

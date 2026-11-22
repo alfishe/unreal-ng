@@ -457,7 +457,14 @@ bool LoaderSZX::CommitImage(EmulatorContext* context, const snapshot::Image& ima
     // MGT +D: paging, the control latch, the WD1772's task registers and the 8K RAM
     if (stage.plusd)
     {
-        if (PlusDCard* card = PlusDCard::Find(context))
+        PlusDCard* card = PlusDCard::Find(context);
+        if (card != nullptr && card->IsDisciple())
+        {
+            // PLSD is the +D's chunk; SZX has none for the DISCiPLE (libspectrum)
+            report.Add("PLSD", Outcome::Ignored, "a +D chunk: this machine has a DISCiPLE (a 48K-PLUSD or 128K-PLUSD "
+                                                 "takes it)");
+        }
+        else if (card != nullptr)
         {
             const PlusD& d = *stage.plusd;
             PlusDCard::SnapshotRegisters registers;
@@ -1169,8 +1176,9 @@ bool LoaderSZX::Capture(EmulatorContext* context, Stage& stage, std::string& err
         stage.beta = beta;
     }
 
-    // PLSD when a +D card is fitted
-    if (const PlusDCard* card = PlusDCard::Find(context))
+    // PLSD when a +D card is fitted (SZX has no DISCiPLE chunk: a DISCiPLE is not saved)
+    const PlusDCard* card = PlusDCard::Find(context);
+    if (card != nullptr && !card->IsDisciple())
     {
         const PlusDCard::SnapshotRegisters r = card->CaptureSnapshot();
         PlusD plusd;

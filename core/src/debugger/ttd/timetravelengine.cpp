@@ -1250,6 +1250,12 @@ TimeTravelEngine::BranchLine& TimeTravelEngine::AddImportedLine(uint32_t parent,
             slot.changes.pop_back();
     while (_lines.size() < wanted)
         _lines.push_back(nullptr);   // the file's branches left out (deleted, damaged)
+    // Its journals take the file's records as the trunk's do (OnRead / OnWrite append only while recording): a line
+    // made Off dropped every IN / OUT and vector of a loaded branch
+    line->busReads.StartRecording();
+    line->busWrites.StartRecording();
+    line->busVectors.StartRecording();
+    line->mediaReads.StartRecording();
     _lines.push_back(std::move(line));
     // The import goes on on the new line
     _line = _lines.back().get();

@@ -535,19 +535,25 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         checkpoints.Varint(cp.mediaReadCursor - _base[2]);
         checkpoints.Varint(cp.busVectorCursor - _base[3]);
         // One version, numbered as it appears; @p asFull: a difference decoded and stored whole (a folder file's fork
-        // copy: its delta bases are in another file)
+        // copy: its delta bases are in another file). A difference whose base the file does not hold is stored whole
+        // too: a branch forked inside a segment that later left memory builds on the trunk's version of that time,
+        // and the segment's read back gave the trunk the file's copy of it (the same content under another id)
         auto version = [&](uint32_t region, uint32_t piece, TTDPieceId id, bool asFull) {
             checkpoints.Varint(piece);
             const uint32_t item = static_cast<uint32_t>(_itemPart.size());
             _itemOf[id] = item;
             _itemPart.push_back(static_cast<uint32_t>(_part));
             auto encoding = store.EncodingOf(id);
-            if (asFull && TTDPieceStore::IsDifference(encoding))
+            uint32_t baseItem = kNoItem, baseLocal = _local, basePart = 0;
+            const bool difference = TTDPieceStore::IsDifference(encoding);
+            const bool baseHeld = difference && !asFull && FindItem(store.BaseOf(id), baseLocal, baseItem, basePart);
+            if (difference && !baseHeld)
             {
                 std::array<uint8_t, kTTDPieceSize> raw{};
                 if (!store.Decode(id, raw.data()))
                 {
-                    _buildError = "a version of the fork could not be decoded";
+                    _buildError = asFull ? "a version of the fork could not be decoded"
+                                         : "a version's base is not in the session";
                     return false;
                 }
                 const bool zero = codec::IsAllZero(raw.data(), raw.size());
@@ -561,19 +567,9 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
                 _liveItem[region][piece] = item;
                 return true;
             }
-            uint32_t baseItem = kNoItem, baseLocal = _local;
-            if (TTDPieceStore::IsDifference(encoding))
-            {
-                // A branch's version may build on an ancestor's (its delta base at the fork)
-                uint32_t basePart = 0;
-                if (!FindItem(store.BaseOf(id), baseLocal, baseItem, basePart))
-                {
-                    _buildError = "a version's base is not in the session";
-                    return false;
-                }
-                if (basePart != _part)
-                    dependencies.insert(basePart);
-            }
+            // A branch's version may build on an ancestor's (its delta base at the fork)
+            if (baseHeld && basePart != _part)
+                dependencies.insert(basePart);
             pieces.U8(static_cast<uint8_t>(encoding));
             pieces.Varint(store.DepthOf(id));
             if (_local != 0)

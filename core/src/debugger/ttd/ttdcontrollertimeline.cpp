@@ -31,6 +31,37 @@ constexpr size_t kMaxEvents = 1000;
 /// Coverage keys are (page field << 14 | offset) under 2^23 (TTDCoverageIndex::kKeySpaceBits)
 constexpr size_t kCoverageKeySlots = size_t{1} << 23;
 
+/// The pieces of @p region that changed at checkpoint @p index. A baseline (a segment's start) stores every piece
+/// anew, so there a piece counts only when its content differs from the one the checkpoint before held; elsewhere
+/// the change records are the answer
+std::vector<std::pair<uint32_t, TTDPieceId>> ChangedPieces(const TimeTravelEngine& engine, size_t index, uint32_t region)
+{
+    std::vector<std::pair<uint32_t, TTDPieceId>> changes;
+    if (engine.ChangeCount(index, region) == 0)
+        return changes;
+    changes = engine.ChangesAt(index, region);
+    const TTDEngineCheckpoint* cp = engine.Checkpoint(index);
+    if (!cp || !cp->baseline || index == 0 || !engine.Checkpoint(index - 1))
+        return changes;
+    std::vector<uint8_t> now(kTTDPieceSize), before(kTTDPieceSize);
+    std::erase_if(changes, [&](const std::pair<uint32_t, TTDPieceId>& c) {
+        const uint32_t previous = engine.VersionAt(index - 1, region, c.first);
+        return previous != TimeTravelEngine::kAbsent && engine.PieceStore().Decode(c.second, now.data()) &&
+               engine.PieceStore().Decode(previous, before.data()) && now == before;
+    });
+    return changes;
+}
+
+/// Any piece of @p region changed at checkpoint @p index (ChangedPieces, without the list off a baseline)
+bool RegionChanged(const TimeTravelEngine& engine, size_t index, uint32_t region)
+{
+    const uint32_t n = engine.ChangeCount(index, region);
+    if (n == 0)
+        return false;
+    const TTDEngineCheckpoint* cp = engine.Checkpoint(index);
+    return !(cp && cp->baseline) || !ChangedPieces(engine, index, region).empty();
+}
+
 /// The frame wrote the picture's bytes: a piece of a layout range changed at checkpoint @p index, and, in machine RAM
 /// with the frame's written keys known (@p keys, sorted: a RAM key is the byte's RAM address), the CPU wrote a byte of
 /// the range there - or wrote nothing in that piece at all (a DMA, a device: the piece is all there is to go by)
@@ -44,7 +75,7 @@ bool WroteScreen(const TimeTravelEngine& engine, size_t index, const std::vector
         while (end < layout.size() && layout[end].region == region)
             ++end;
         if (engine.ChangeCount(index, region) > 0)
-            for (const auto& change : engine.ChangesAt(index, region))
+            for (const auto& change : ChangedPieces(engine, index, region))
             {
                 const uint32_t lo = change.first * static_cast<uint32_t>(kTTDPieceSize);
                 const uint32_t hi = lo + static_cast<uint32_t>(kTTDPieceSize);
@@ -128,7 +159,8 @@ struct DeviceCount
     {
         Port,     ///< `index` into result.devices: in, out
         Slot,     ///< into result.media: in = sectors
-        Region    ///< into result.regions: changed in the frame
+        Region,   ///< into result.regions: changed in the frame
+        State     ///< into result.states: the device's state blob changed in the frame
     };
     Kind kind;
     uint32_t index;
@@ -177,6 +209,9 @@ void SumFrames(const std::vector<FrameFacts>& frames, const std::vector<DeviceCo
                 case DeviceCount::Kind::Region:
                     ++into.regionFrames[d.index];
                     break;
+                case DeviceCount::Kind::State:
+                    ++into.stateFrames[d.index];
+                    break;
             }
         }
     }
@@ -185,10 +220,20 @@ void SumFrames(const std::vector<FrameFacts>& frames, const std::vector<DeviceCo
 
 TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& options) const
 {
+    TimelineMachine machine;
+    machine.fps = TTDFrameRate(_context);
+    machine.model = _context ? _context->config.mem_model : MM_PENTAGON;
+    machine.ports = _context ? _context->pPortDecoder : nullptr;
+    return QueryTimelineOn(options, machine);
+}
+
+TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions& options,
+                                                        const TimelineMachine& machine) const
+{
     const auto started = std::chrono::steady_clock::now();
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     TTDTimelineResult result;
-    result.fps = TTDFrameRate(_context);
+    result.fps = machine.fps;
 
     // The frames with a checkpoint at both ends: what the session holds of them is whole
     const TimeTravelEngine& engine = *_engine;
@@ -231,7 +276,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     const size_t frameCount = static_cast<size_t>(toFrame - fromFrame + 1);
 
     // What this session cannot tell
-    const MEM_MODEL model = _context ? _context->config.mem_model : MM_PENTAGON;
+    const MEM_MODEL model = machine.model;
     const bool ulaScreen = HasUlaScreen(model);
     const bool coverage = _line->coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0;
     const bool writes = engine.Writes().Size() > 0;
@@ -241,6 +286,8 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
         result.missing.push_back({"writes", "the write journal is off"});
     if (!options.ports)
         result.missing.push_back({"ports", "not asked (ports=false)"});
+    else if (!machine.portsMissing.empty())
+        result.missing.push_back({"ports", machine.portsMissing});
 
     uint32_t ramRegion = UINT32_MAX;
     const std::vector<TTDRegionDesc>& regions = engine.Regions();
@@ -251,7 +298,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
             break;
         }
 
-    PortClassifier ports(options.ports && _context ? _context->pPortDecoder : nullptr, result.devices);
+    PortClassifier ports(options.ports ? machine.ports : nullptr, result.devices);
     const int16_t ula = ports.UlaDevice();
     for (const std::string& slot : engine.MediaReads().SlotNames())
         result.media.push_back({slot, 0});
@@ -263,6 +310,17 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
             deviceRegions.push_back(r);
             result.regions.push_back({regions[r].name, 0});
         }
+    // Device state blobs (registers, latches, timers; the engine's `device.<instance>` regions): which frames changed
+    // one. Its declared clocks are kept apart by the engine (time fields), the others change it too: a blob that
+    // changes in every frame of the window says nothing about when, and goes to statesEveryFrame instead
+    std::vector<uint32_t> stateRegions;   // engine region index per result.states
+    for (uint32_t r = 0; r < regions.size(); ++r)
+        if (engine.IsDeviceStateRegion(r))
+        {
+            stateRegions.push_back(r);
+            result.states.push_back({regions[r].name, 0});
+        }
+    std::vector<uint32_t> stateTotal(stateRegions.size(), 0);
     size_t tapeSlot = SIZE_MAX;
     for (size_t s = 0; s < engine.MediaSlots().size(); ++s)
         if (engine.MediaSlots()[s].slot == "tape")
@@ -315,7 +373,8 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
             f.lengthChange = next->start - cp->start != cp->start - prev->start;
         }
         if (ramRegion != UINT32_MAX)
-            f.ramPieces = engine.ChangeCount(i + 1, ramRegion);
+            f.ramPieces = next->baseline ? static_cast<uint32_t>(ChangedPieces(engine, i + 1, ramRegion).size())
+                                         : engine.ChangeCount(i + 1, ramRegion);
         // The picture's bytes at the frame's start (and at its end, after a mode switch inside it); a session without
         // the captured layouts finds a ULA model's screen from the 7FFD latch
         f.changesAt = i + 1;
@@ -384,8 +443,14 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
             f.cut.sound += f.beeperToggles;
         }
         for (size_t r = 0; r < deviceRegions.size(); ++r)
-            if (engine.ChangeCount(i + 1, deviceRegions[r]) > 0)
+            if (RegionChanged(engine, i + 1, deviceRegions[r]))
                 deviceCounts.push_back({DeviceCount::Kind::Region, static_cast<uint32_t>(r), 1, 0});
+        for (size_t r = 0; r < stateRegions.size(); ++r)
+            if (RegionChanged(engine, i + 1, stateRegions[r]))
+            {
+                deviceCounts.push_back({DeviceCount::Kind::State, static_cast<uint32_t>(r), 1, 0});
+                ++stateTotal[r];
+            }
         f.deviceCount = static_cast<uint32_t>(deviceCounts.size()) - f.firstDevice;
         prev = cp;
     }
@@ -398,6 +463,10 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
         for (FrameFacts& f : frames)
             f.cut.halted = false;
     }
+    // A blob changed in every frame of a window of more than one: named once, left out of the ranges
+    result.stateEveryFrame.assign(stateRegions.size(), false);
+    for (size_t r = 0; r < stateRegions.size(); ++r)
+        result.stateEveryFrame[r] = frameCount > 1 && stateTotal[r] == frameCount;
     auto frameOf = [&](uint64_t frame) -> FrameFacts* {
         return frame >= fromFrame && frame <= toFrame ? &frames[static_cast<size_t>(frame - fromFrame)] : nullptr;
     };
@@ -543,6 +612,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
         b.deviceOut.assign(result.devices.size(), 0);
         b.mediaSectors.assign(result.media.size(), 0);
         b.regionFrames.assign(result.regions.size(), 0);
+        b.stateFrames.assign(result.states.size(), 0);
         SumFrames(frames, deviceCounts, static_cast<size_t>(b.frameStart - fromFrame),
                   static_cast<size_t>(b.frameEnd - fromFrame), b);
         for (const auto& [frame, key] : keyDowns)

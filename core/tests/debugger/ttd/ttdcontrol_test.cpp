@@ -428,6 +428,28 @@ TEST_F(TTDControl_Test, MovingVerbsAndStatusReportTheCheck)
     EXPECT_EQ(Run("status").body.find("check"), nullptr) << "recording again: no position to judge";
 }
 
+/// PD-Q2 (positioning design §7): "the same T-state in the next frame" is one seek with frame + 1 and the T asked
+/// for (not the T arrived at, which is the instruction boundary after it): each frame lands at the same boundary,
+/// the overshoot never grows as the old frame step's did
+TEST_F(TTDControl_Test, TheSameTStateInTheNextFrameIsOneSeek)
+{
+    Record(6);
+    ASSERT_TRUE(Run("stop").Ok());
+    const uint64_t first = Info().sessionStartFrame;
+    constexpr uint32_t kT = 1000;
+    for (uint64_t f = first + 1; f <= first + 4; ++f)
+    {
+        const TTDReply r = Run("seek", {{"frame", std::to_string(f)}, {"tinframe", std::to_string(kT)}});
+        ASSERT_TRUE(r.Ok()) << r.message;
+        ASSERT_TRUE(Bool(r, "reached"));
+        const StateNode* at = r.body.find("arrived_at");
+        ASSERT_NE(at, nullptr);
+        EXPECT_EQ(static_cast<uint64_t>(at->find("frame")->i), f);
+        EXPECT_GE(at->find("tinframe")->i, kT);
+        EXPECT_LT(at->find("tinframe")->i, kT + 24) << "the first instruction boundary at or after T";
+    }
+}
+
 TEST_F(TTDControl_Test, InstructionStepsCheckTheirArguments)
 {
     Record(4);

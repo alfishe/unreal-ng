@@ -105,6 +105,7 @@
 // defined in the emulator headers; here we only need pointer types.)
 class EmulatorContext;
 class Memory;
+class PortDecoder;
 struct Z80State;
 struct EmulatorState;
 namespace ttd { class TTDDirtyTracker; class TimeTravelEngine; }
@@ -429,9 +430,11 @@ private:
     /// bound to it; nothing of the current session changes
     /// The load from any byte source (a file, memory)
     bool DeserializeSessionFrom(const ITTDByteSource& source, std::string& err);
+    /// @p bind false: read the file alone, nothing checked against or bound to a machine (a file's timeline, read
+    /// by a controller of its own with no machine, QueryTimelineInFile)
     std::unique_ptr<TimeTravelEngine> LoadEngineSession(const ITTDByteSource& source, TTDSessionFacts& facts,
                                                         std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks,
-                                                        std::string& err);
+                                                        std::string& err, bool bind = true);
     /// Make @p loaded the session: the side table, the controller's journals and indexes from it
     /// A loaded file's branches (TTD branches P2): per branch line its record, coverage and bookmarks, the
     /// session's branch state; LoadEngineSession fills it, CommitLoadedSession builds the tree from it
@@ -443,6 +446,16 @@ private:
         std::vector<uint8_t> state;
     };
     LoadedBranches _loadedBranches;
+    /// What a timeline is read against: the port map, the frame rate, the model (QueryTimeline: this machine's;
+    /// QueryTimelineInFile: the recorded model's). @p portsMissing: why there is no port map (`missing` names it)
+    struct TimelineMachine
+    {
+        const PortDecoder* ports = nullptr;
+        double fps = 50.0;
+        MEM_MODEL model = MM_PENTAGON;
+        std::string portsMissing;
+    };
+    TTDTimelineResult QueryTimelineOn(const TTDTimelineOptions& options, const TimelineMachine& machine) const;
     /// The loaded file's branches into the tree and their controller lines, each built by @p buildLine on its
     /// own lineage; the saved active branch becomes the active one
     void CommitLoadedBranches(const std::function<void(const std::vector<uint8_t>&)>& buildLine);
@@ -1297,30 +1310,30 @@ private:
     ///
     /// Read, Execute and Write searches reach the replay loop (a Write only
     /// for frames outside the write journal's segments; Io answers from the
-    /// port journal), and pruning is sound only when the
-    /// query's Z80 address range collapses to one non-wrapping offset interval
-    /// inside a 16 KB page. A range spanning a page boundary, or wider than a
-    /// page, could match any offset, so it is left unpruned rather than
-    /// approximated.
-    /// May frame `frame` hold an access q matches (CanPruneByCoverage first): the coverage keys name the byte's true
-    /// offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no known half asks both halves
-    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
-
+    /// port journal). Any non-empty address range prunes: its Z80 addresses map
+    /// to in-page offsets (CoverageOffsets) - one interval inside a 16 KB page,
+    /// two for a range that wraps a page boundary, every offset for a range of
+    /// 16 KB or more (then only a frame with no access of that kind, or none on
+    /// the query's page, is skipped).
     inline bool CanPruneByCoverage(const TTDSearchQuery& q) const
     {
         if (!_enableCoverageIndex)
             return false;
         if (q.access != TTDAccessType::Read && q.access != TTDAccessType::Execute && q.access != TTDAccessType::Write)
             return false;
-        if (q.addrTo < q.addrFrom)
-            return false;
-        if (static_cast<uint32_t>(q.addrTo - q.addrFrom) >= 0x4000u)
-            return false;  // Wider than a page — every offset is possible.
-
-        // Reject ranges that wrap across a 16 KB boundary: their offsets are two
-        // disjoint intervals, which FrameMayContain does not model.
-        return (q.addrFrom & 0x3FFF) <= (q.addrTo & 0x3FFF);
+        return q.addrTo >= q.addrFrom;
     }
+
+    /// @brief Add the in-page offsets (and the page) q's address range may touch to @p out.
+    ///
+    /// The coverage keys name the byte's true offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no
+    /// known half asks both halves. A wrapping range is its two offset intervals; 16 KB or more is every offset.
+    void CoverageOffsets(const TTDSearchQuery& q, TTDCoverageOffsetSet& out) const;
+
+    /// May frame `frame` hold an access q matches (CanPruneByCoverage first)
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
+    /// The same for offsets built once (CoverageOffsets): one decode of the frame for any number of them
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDCoverageOffsetSet& set) const;
 
 public:
 
@@ -1441,6 +1454,15 @@ public:
     /// the facts the session holds, and the phases they make. Reads only what the recording stores (no replay);
     /// a fact it cannot give is named in `missing`
     TTDTimelineResult QueryTimeline(const TTDTimelineOptions& options) const;
+
+    /// @brief The timeline of a .ttd file on disk without loading it (TD-5 file): the file is read into a session
+    /// of its own, held by a controller with no machine, exactly as a load builds it, and the same query runs there
+    /// - so the answer is the one `timeline` gives after loading the file. This instance's session and machine are
+    /// not touched. @p branch (an id, a GUID or a name; empty: the branch the file saved as active) picks the line.
+    /// The port map and the frame rate are this instance's when it is of the recorded model; another model leaves
+    /// `ports` in `missing` (the file does not hold its port map) and counts 50 frames a second
+    TTDTimelineResult QueryTimelineInFile(const std::string& path, const TTDTimelineOptions& options,
+                                          const std::string& branch = {}) const;
 
     /// @brief The cause chain (docs/inprogress/2026-11-02-ttd-cause-chain): where the value of a memory byte or a
     /// register at a moment came from, as a tree of links back to constants, port reads and the session's initial
@@ -1792,6 +1814,8 @@ public:
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
     inline uint16_t GetModelRamPages() const { return _modelRamPages; }
+    /// Dirty RAM pages at or past GetModelRamPages() the captures of this session met (not recorded; should be 0)
+    inline uint64_t GetPagesBeyondBound() const { return _pagesBeyondBound; }
 
     /// Devices fitted but deliberately not recorded: the loaded file's when the
     /// session came from one, else the live registry's
@@ -2042,6 +2066,8 @@ private:
     bool _walkingTrailBack = false;
     /// The active branch changes from @p left: onto the trail (not twice in a row, at most kBranchTrailMax)
     void LeaveBranch(uint32_t left);
+    /// The moment the lineages of lines @p a and @p b part (their history is the same up to it); none for one lineage
+    std::optional<TTDTimePoint> LineagesPartAt(uint32_t a, uint32_t b) const;
     /// The trail's last live branch other than the active one; kTTDNoBranch: none
     uint32_t PreviousOnTrail() const;
     /// The active lineage as the bookmark readers see it: a copy under its own lock, so a read while recording
@@ -2317,6 +2343,8 @@ private:
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
         /// The card position the caller stood at (a read that replays elsewhere comes back to it)
         std::shared_ptr<CardStand> cardStand;
+        /// The derived state of the histories that follow time travel (history::ITimeFollower)
+        std::vector<std::vector<uint8_t>> historyFollowers;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -2626,6 +2654,9 @@ private:
     /// machine has 3 pages but uses page numbers {0, 2, 5}, so its bound is 6
     /// and three slots inside the range stay unused. See ResolveModelRamPages().
     uint16_t _modelRamPages = 0;
+    /// Dirty pages at or past _modelRamPages a capture met this session (the bound is wrong for the model: those
+    /// writes are not recorded). Warned once; zero on every model the tests sweep
+    uint64_t _pagesBeyondBound = 0;
 
     /// Latches the first "dirty page outside the captured range" warning so a
     /// mis-sized model reports once per session instead of every frame.

@@ -45,6 +45,17 @@ controls that make the Next as inspectable as the TS-Conf and Sprinter, and the 
 (`continuous|burst|byte`), `prescaler`, `read_mask`, `read_seq`, `status` (the byte the read sequence would return first), ports
 `a` / `b` (`address`, `type memory|io`, `step inc|dec|fixed`, `timing`), `direction a_to_b|b_to_a`, `block_length`, `counter`, `src`, `dst`, `holds_bus`,
 `dma_delay` (NR #CC-#CE state), `last_run_28`, plus `interrupt_enables` (#CC/#CD/#CE).
+`zxnddma` says whether the core has the blitter (core 3.03.00, the variant `NEXT-DDMA`, [design-zxnddma.md](design-zxnddma.md)); only
+then `ddma`: `physical`, `two_d`, `transparent`, `fill`, `layer2_xy`, `hidden` (the `#DF` flags), `ext_a` / `ext_b` (`#D7` / `#DB`),
+`src` / `dst` (the 22-bit working addresses), `row_length`, `rows`, `stride_a`, `stride_b`, `row`, `column` (the 2D block and the next
+byte's place in it), `transparent_value`, `fill_value`, `layer2 {x, y}` and `sram {board, bytes, range}` (what the board's physical
+addresses reach: Issue 5 `0x000000-0x3FFFFF`, Issue 4 and Issue 2 with the expansion `0x000000-0x1FFFFF`, Issue 2 `0x000000-0x0FFFFF`).
+In physical mode `src_kind` / `dst_kind` name the SRAM behind the address (`system area`, `ram`, `ram (sram side)` = banks 5 / 7, `not
+fitted`). Planes: CLI `state next dma`, Python `emu.next_dma()`, Lua `next_dma()`, MCP `inspect_state` aspect `next_dma` (the text line
+`[next_dma] zxnDDMA physical+two_d, src 0x0C0000 dst 0x064000, 2D 16x8 ...`), REST `GET /state/next/dma`, WebSocket
+`{"op":"call","method":"GET","path":"/api/v1/emulator/{id}/state/next/dma"}` (no topic: the DMA state is polled). The DMA's device
+history (`dma`, the blocks it finishes) adds on that core `physical`, the 22-bit `source` / `destination`, `two_d` with `row_length` /
+`rows`, `fill` or `transparent` (the value) and `layer2_x` / `layer2_y` / `hidden`.
 
 **`next_copper`** - `control` (NR #62 mode), `address` (NR #61/#62 pointer), `pc` (running position), `running`, `instructions` (`from`,
 `count`, default the first 64 and the ones around `pc`): `index, word, op (wait|move|halt|nop), reg, value, hpos, vpos`. The 2048-byte list as hex in `raw` on request.

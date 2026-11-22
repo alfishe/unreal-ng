@@ -102,6 +102,11 @@ that the emulator works out of the box, on the following basis:
   `gdos.rom` is the DISCiPLE GDOS v3 ROM (CRC32 `82047489`, SHA-1 `9a75ed4b293f968985be4c9aa893cd88276d1ced`,
   SHA-256 `efaedc62de4157d7a638634e6460f5dccff20dff2c043a876f830e04f1e988b1`; MAME `disciple_g.rom`, Fuse
   `disciple.rom`). Datel, who sold the +D after MGT, allow their distribution (Fuse `roms/README.copyright`).
+* **DivMMC firmware** (8 KB, the `divmmc` edge card, `.recipe/machines/slots.md`): `divmmc/unodos3.rom` is UnoDOS 3
+  by Source Solutions (GPL-3.0, <https://github.com/source-solutions/unodos3>, `bin/`; CRC32 `E18835C3`, SHA-1
+  `8954bbd17dfe80e0088d8cb45765395f2e8c818d`), the same image as `testdata/storage/divmmc/unodos/unodos.rom`. It
+  loads `/dos/unodos.sys` from the SD card. esxDOS is not shipped: the card option `rom=esxdos` reads
+  `divmmc/esxmmc.bin` (the 8 KB `ESXMMC.BIN` of an esxDOS 0.8.x release) placed here by the user.
 * **Open firmware**: `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's

@@ -163,7 +163,12 @@ fixed RAM window, 3: high ROM at `#C000`).
    - Done: the device history `<slot>.commands` (every plane through the history verbs; the stream file is the
      export), fed by LLE, LW and NeoGS, owned by `SoundManager` / the MultiSound card; four anomalies;
      `GSCommandLog_Test`, `BM_GSCommandLog_HostTraffic_*`, MCP `test_the_command_log_is_a_device_history`. Design
-     §6.3 "As built". Left: TTD seek cut-off (D3), card-side hooks, block destinations of uploads.
+     §6.3 "As built". Left: card-side hooks, block destinations of uploads.
+   - D3 done (2026-11-20, worktree `scratch/wt-ttd-d3`): the log follows time travel (`history::ITimeFollower`,
+     `DeviceHistory::Rewind` / `Truncate`): a move holds the entries after the moment back, a move forward brings
+     them back, a live run from the past logs anew, a branch switch keeps the shared past; the decoder follows the
+     machine (frame-start marks, replay decodes without logging). Design §6.3 "TTD (D3)"; tests
+     `GSCommandLog_Test.Ttd*`, `DeviceHistory_Test.Rewind*` / `Truncate*`.
 4. [x] **Protocol state and send with decoding (F3, F6).**
    - Done: `GSProtocolState` from the command log's decoder (`protocol` in the GS report), `GSHostDriver` (the
      debugger's send: each byte when the mailbox allows it, replies read, decoded; TTD input `GSReadData`), CLI /

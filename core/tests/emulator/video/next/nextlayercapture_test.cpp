@@ -36,10 +36,10 @@ uint16_t Nine(uint8_t rrrgggbb)
 }
 unsigned R3(uint16_t c) { return (c >> 6) & 7; }
 unsigned G3(uint16_t c) { return (c >> 3) & 7; }
-unsigned B2(uint16_t c) { return (c >> 1) & 3; }
+unsigned B3(uint16_t c) { return c & 7; }  // the blend and the stencil keep the 9-bit blue (zxnext.vhd mixer_b_t, stencil_rgb)
 uint16_t Pack(unsigned r, unsigned g, unsigned b)
 {
-    return static_cast<uint16_t>((r << 6) | (g << 3) | (b << 1) | (b ? 1 : 0));
+    return static_cast<uint16_t>((r << 6) | (g << 3) | b);
 }
 }  // namespace
 
@@ -112,7 +112,7 @@ protected:
                         break;
                     case kIdStencil:
                         ASSERT_TRUE(stencilMode) << name;
-                        expected = NextVideoRenderer::Rgba(Pack(R3(ula.colour) & R3(tile.colour), G3(ula.colour) & G3(tile.colour), B2(ula.colour) & B2(tile.colour)));
+                        expected = NextVideoRenderer::Rgba(static_cast<uint16_t>(ula.colour & tile.colour & 0x1FF));
                         break;
                     case kIdBlend:
                     {
@@ -128,7 +128,7 @@ protected:
                                 if (stencilMode)
                                 {
                                     mixOpaque = ulaV && tv;
-                                    mix = Pack(R3(ula.colour) & R3(tile.colour), G3(ula.colour) & G3(tile.colour), B2(ula.colour) & B2(tile.colour));
+                                    mix = static_cast<uint16_t>(ula.colour & tile.colour & 0x1FF);
                                 }
                                 else if (tv && (!below || !ulaV))
                                 {
@@ -145,9 +145,9 @@ protected:
                         }
                         unsigned r = (lv ? R3(l2.colour) : 0) + (mixOpaque ? R3(mix) : 0);
                         unsigned g = (lv ? G3(l2.colour) : 0) + (mixOpaque ? G3(mix) : 0);
-                        unsigned b = (lv ? B2(l2.colour) : 0) + (mixOpaque ? B2(mix) : 0);
+                        unsigned b = (lv ? B3(l2.colour) : 0) + (mixOpaque ? B3(mix) : 0);
                         if (order == 6)
-                            expected = NextVideoRenderer::Rgba(Pack(std::min(r, 7u), std::min(g, 7u), std::min(b, 3u)));
+                            expected = NextVideoRenderer::Rgba(Pack(std::min(r, 7u), std::min(g, 7u), std::min(b, 7u)));
                         else
                         {
                             auto sub = [](unsigned v) -> unsigned { return v <= 4 ? 0 : (((v >> 2) & 3) == 3 ? 7 : ((v + 0x0B) & 0x0F)); };
@@ -157,7 +157,7 @@ protected:
                                 g = sub(g);
                                 b = sub(b);
                             }
-                            expected = NextVideoRenderer::Rgba(Pack(r & 7, g & 7, b & 3));
+                            expected = NextVideoRenderer::Rgba(Pack(r & 7, g & 7, b & 7));
                         }
                         break;
                     }
@@ -207,10 +207,11 @@ TEST_F(NextLayerCapture_Test, OffCostsNothing)
 // The renderer's frames are what they were before the sink existed: the digest of every configuration and line of the fixed scene,
 // taken with the renderer as of commit deb0ec112 (without the layer record). Re-taken 2026-10-12 after the VHDL re-read of the ULA
 // (Timex mode fetch, hi-res bright border, fine scroll, the border never clipped), LoRes (bank 5, Y scroll) and the sprite engine
-// (collision / budget before the clip window); the sink-versus-no-sink identity above is the check that the record changes nothing
+// (collision / budget before the clip window), and 2026-11-20 for the 9-bit blue of the blend / stencil, the hidden ULA in blend source 00
+// and ULANext's fallback paper (tbblue diff #9-#11); the sink-versus-no-sink identity above is the check that the record changes nothing
 TEST_F(NextLayerCapture_Test, FramesAreByteIdenticalToTheRendererBeforeTheSink)
 {
-    EXPECT_EQ(_scene.Digest(), 0x839B1F5D8CF2B7FBull);
+    EXPECT_EQ(_scene.Digest(), 0xC8DFE6C808E8B7FBull);
 }
 
 TEST_F(NextLayerCapture_Test, TransparencyIsAlpha)

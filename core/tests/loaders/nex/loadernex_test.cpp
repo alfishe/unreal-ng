@@ -245,10 +245,13 @@ TEST_F(LoaderNex_Test, ResetRegistersWriteNr06AndNr08LikeNexload)
     ASSERT_NE(decoder, nullptr);
     decoder->Board().Write(0x06, 0xB4);  // the DRIVE button's NMI on, the M1 button's off
     decoder->Board().Write(0x08, 0x31);
+    // bit 2 (the PS/2 mode) is taken in config mode only (zxnext.vhd 5167-5169): the loader keeps whatever the board holds
+    const uint8_t before = decoder->Board().Stored(0x06);
+    EXPECT_EQ(before & 0xFB, 0xB0);
     auto image = MakeNex("V1.2", 0, 0, {{0, {0x18, 0xFE}}}, 0xC000, 0xBFF0, 0, 0);
     LoaderNex loader(_context);
     ASSERT_TRUE(loader.Load(image)) << loader.Error();
-    EXPECT_EQ(decoder->Board().Stored(0x06), 0xAC);
+    EXPECT_EQ(decoder->Board().Stored(0x06), static_cast<uint8_t>((before & ~0x10) | 0x08)) << "res 4, set 3";
     EXPECT_EQ(decoder->Board().Stored(0x08), 0xDE);
 }
 

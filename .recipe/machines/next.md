@@ -274,6 +274,20 @@ holds_bus: false    dma_delay: false
 interrupt_enables: nr_cc 0x00, nr_cd 0x00, nr_ce 0x00
 ```
 
+On the zxnDDMA core (variant `NEXT-DDMA`, core 3.03.00) the report adds `zxnddma: true` and a `ddma` part: the `#DF` flags, the 22-bit
+working addresses, the 2D block and where it is, the transparent / fill values, Layer 2 X,Y and the SRAM the board's physical addresses
+reach (Issue 5 `0x000000-0x3FFFFF`, Issue 4 `0x000000-0x1FFFFF` - bit 21 dropped, `#210000` is `#010000` -, Issue 2 `0x000000-0x0FFFFF`
+or `0x1FFFFF` with the expansion). A physical 16 x 8 transparent copy `#0C0000 -> #064000`, 20 bytes in (`NextDdmaReport_Test`):
+
+```text
+$ state next dma          (excerpt, NEXT-DDMA)
+src_kind: ram   dst_kind: ram          # physical mode: the SRAM behind the 22-bit address, not the 8K slot
+zxnddma: true
+ddma: physical true, two_d true, transparent true, fill false, layer2_xy false, hidden false, ext_a 0x0C, ext_b 0x06,
+      src 0x0C0014, dst 0x064104, row_length 16, rows 8, stride_a 16, stride_b 256, row 1, column 4,
+      transparent_value 0xE3, fill_value 0x00, layer2 {x 0, y 0}, sram {board issue4, bytes 2097152, range 0x000000-0x1FFFFF}
+```
+
 **`next_video`** - layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, raster. The tilemap base `#A0` is bank 7 at 8K
 offset `#2000`: the video side of bank 7 is an 8K RAM, so the map is read from `#0000` of the bank (`map_wraps_8k: true`):
 
@@ -500,6 +514,10 @@ control_execution {"action":"step"}  ×2
 `tools/machines/next/browser-drive/suite.py --card <card>` runs every program of `tests/<area>/<test>/` the way a person does (reset,
 Browser, run) and photographs the result beside the board photograph; `tools/machines/next/realboard/run-all.py` runs them straight
 through the snapshot loader with automatic verdicts for the four programs that paint their own pass / fail.
+
+`tools/machines/next/regress/` runs all of it at once (NextZXOS boot, every collection title by both load paths, realboard) on
+one binary and compares two runs picture by picture: the check before landing a Next emulation change
+([README](../../tools/machines/next/regress/README.md)).
 
 ### 5b. Playing a game: the keys are the game's own
 

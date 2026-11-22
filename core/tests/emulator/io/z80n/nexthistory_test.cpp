@@ -12,6 +12,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/machinevariants.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/state/statenodejson.h"
 
@@ -83,6 +84,33 @@ TEST_F(NextHistory_Test, DmaBlocks)
     EXPECT_NE(json.find("\"destination\":40960"), std::string::npos) << json;
     EXPECT_NE(json.find("\"length\":16"), std::string::npos) << json;
     EXPECT_NE(json.find("\"source_space\":\"memory\""), std::string::npos) << json;
+    EXPECT_EQ(json.find("physical"), std::string::npos) << "core 3.02.03: no zxnDDMA fields";
+}
+
+/// zxnDDMA (NEXT-DDMA): a physical 2D fill from #0C0000 -> #064010 (4 x 2, fill #5A) is one block with its flags, the 22-bit addresses,
+/// the rectangle and the value; the plain NEXT's blocks carry none of it (DmaBlocks)
+TEST_F(NextHistory_Test, DmaBlocksOfTheZxnDdmaCoreShowItsState)
+{
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero,
+                                                           [](CONFIG& config) { MachineVariants::Find("NEXT-DDMA")->apply(config); });
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    _ports = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+    ASSERT_NE(_ports, nullptr);
+    On("dma");
+    Dma({0x7D, 0x00, 0x00, 0x08, 0x00, 0x14, 0x10, 0xAD, 0x10, 0x40, 0xD7, 0x0C, 0xDB, 0x06, 0xDF, 0x0B, 0xE3, 4, 0, 0xE7, 2, 0, 0xEB, 4, 0,
+         0xEF, 0x00, 0x01, 0xF7, 0x5A, 0xCF, 0x87});
+    RunDma();
+    ASSERT_EQ(Written("dma"), 1u);
+    const std::string json = Json("dma");
+    EXPECT_NE(json.find("\"physical\":true"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"source\":786432"), std::string::npos) << json << " (#0C0000)";
+    EXPECT_NE(json.find("\"destination\":409616"), std::string::npos) << json << " (#064010)";
+    EXPECT_NE(json.find("\"two_d\":true"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"row_length\":4"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"rows\":2"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"fill\":90"), std::string::npos) << json;
 }
 
 /// A NOP, then the halting WAIT: the NOP is recorded where the beam was

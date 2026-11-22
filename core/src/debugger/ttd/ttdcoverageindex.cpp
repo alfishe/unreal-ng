@@ -259,29 +259,37 @@ bool TTDCoverageIndex::CoveredRange(TTDCoverageKind kind, uint64_t& outFirst,
     return true;
 }
 
-bool TTDCoverageIndex::FrameMayContain(TTDCoverageKind kind, uint64_t frame,
-                                       uint16_t offsetLow, uint16_t offsetHigh,
-                                       bool hasPage, PhysPage page) const
+const std::vector<TTDCoverageKey>* TTDCoverageIndex::DecodeWatchedFrame(TTDCoverageKind kind, uint64_t frame) const
 {
     const size_t kindIdx = static_cast<size_t>(kind);
     if (kindIdx >= kKindCount)
-        return true;  // Unknown kind — never claim to have proved absence.
+        return nullptr;  // Unknown kind — never claim to have proved absence.
 
     if (!CoversFrame(kind, frame))
-        return true;  // Not watched; the caller must not skip this frame.
+        return nullptr;  // Not watched; the caller must not skip this frame.
 
     const uint32_t blockIdx = FindBlockForFrame(kindIdx, frame);
     if (blockIdx == UINT32_MAX)
-        return true;
+        return nullptr;
     if (!MaterializeBlock(kindIdx, blockIdx))
-        return true;  // Decompression failed — fall back to replaying.
+        return nullptr;  // Decompression failed — fall back to replaying.
 
     const uint64_t base = (blockIdx < _blocks[kindIdx].size())
                               ? _blocks[kindIdx][blockIdx].baseFrame
                               : _openBlockBaseFrame[kindIdx];
     DecodeFrameFromCache(static_cast<uint32_t>(frame - base), _decodeScratch);
+    return &_decodeScratch;
+}
 
-    for (TTDCoverageKey key : _decodeScratch)
+bool TTDCoverageIndex::FrameMayContain(TTDCoverageKind kind, uint64_t frame,
+                                       uint16_t offsetLow, uint16_t offsetHigh,
+                                       bool hasPage, PhysPage page) const
+{
+    const std::vector<TTDCoverageKey>* keys = DecodeWatchedFrame(kind, frame);
+    if (!keys)
+        return true;
+
+    for (TTDCoverageKey key : *keys)
     {
         const uint16_t offset = static_cast<uint16_t>(key & 0x3FFF);
         if (offset < offsetLow || offset > offsetHigh)
@@ -292,6 +300,45 @@ bool TTDCoverageIndex::FrameMayContain(TTDCoverageKind kind, uint64_t frame,
     }
 
     return false;  // Watched, decoded, nothing in range.
+}
+
+bool TTDCoverageIndex::FrameMayContain(TTDCoverageKind kind, uint64_t frame, const TTDCoverageOffsetSet& set) const
+{
+    const std::vector<TTDCoverageKey>* keys = DecodeWatchedFrame(kind, frame);
+    if (!keys)
+        return true;
+
+    for (TTDCoverageKey key : *keys)
+    {
+        if (set.hasPage && (key >> 14) != set.pageField)
+            continue;
+        if (set.Contains(key & 0x3FFFu))
+            return true;
+    }
+    return false;  // Watched, decoded, no offset of the set
+}
+
+void TTDCoverageOffsetSet::AddRange(uint16_t low, uint16_t high)
+{
+    low &= 0x3FFF;
+    high &= 0x3FFF;
+    for (uint32_t offset = low; offset <= high;)
+    {
+        const uint32_t word = offset >> 6;
+        const uint32_t first = offset & 63;
+        const uint32_t last = std::min<uint32_t>(63, first + (high - offset));
+        const uint64_t mask = (last == 63 ? ~uint64_t{0} : ((uint64_t{1} << (last + 1)) - 1)) & ~((uint64_t{1} << first) - 1);
+        bits[word] |= mask;
+        offset += last - first + 1;
+    }
+}
+
+bool TTDCoverageOffsetSet::Empty() const
+{
+    for (const uint64_t w : bits)
+        if (w != 0)
+            return false;
+    return true;
 }
 
 void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)

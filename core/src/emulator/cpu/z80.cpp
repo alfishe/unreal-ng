@@ -1616,7 +1616,8 @@ void Z80::NotifyInstructionStart()
         // from ROM reports kPhysPageNone.
         uint8_t flip = 0;
         const ttd::PhysPage execPhysPage = _memory->TtdKeyOf(m1_pc, flip);
-        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage, flip))
+        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage, flip) &&
+            !_context->ttdProbe.ExecuteFiltered(m1_pc))   // a conditional reverse continue's PCs and condition
         {
             const auto& st = _context->emulatorState;
             const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};

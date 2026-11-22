@@ -8,6 +8,7 @@
 
 #include "debugger/ttd/bench/ttdtimelinefixture.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "debugger/ttd/ttdportjournal.h"
 #include "emulator/emulatorcontext.h"
@@ -313,4 +314,62 @@ TEST_F(TTDTimeline_Test, QueryLeavesTheMachineAlone)
     EXPECT_EQ(_s->ttd->GetPortReadJournal().Size(), reads);
     EXPECT_EQ(_s->ttd->GetEngine().CheckpointCount(), checkpoints);
     EXPECT_EQ(_s->context->emulatorState.frame_counter, frame);
+}
+
+/// Device state blobs (TD-5 blobs): the keyboard matrix changes only around the fixture's key presses, in the idle
+/// phases; a blob that changes in every frame (the Covox's, on a Pentagon) is named once and left out of the ranges
+TEST_F(TTDTimeline_Test, DeviceStatesInTheirFrames)
+{
+    ASSERT_TRUE(_s && _s->Ok());
+    ttd::TTDTimelineOptions o;
+    o.buckets = true;
+    o.bucketSize = 1;
+    o.limit = 500;
+    const ttd::TTDTimelineResult r = _s->ttd->QueryTimeline(o);
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    ASSERT_EQ(r.states.size(), r.stateEveryFrame.size());
+    size_t keyboard = SIZE_MAX;
+    size_t covox = SIZE_MAX;
+    for (size_t k = 0; k < r.states.size(); ++k)
+    {
+        keyboard = r.states[k].name == "device.keyboardmatrix" ? k : keyboard;
+        covox = r.states[k].name == "device.covox" ? k : covox;
+    }
+    ASSERT_NE(keyboard, SIZE_MAX);
+    ASSERT_NE(covox, SIZE_MAX);
+    EXPECT_TRUE(r.stateEveryFrame[covox]);
+    EXPECT_FALSE(r.stateEveryFrame[keyboard]);
+
+    // Each frame the matrix changed in is a key's down or up frame (its checkpoint ends the frame the key changed in)
+    std::set<uint64_t> changed;
+    for (const ttd::TTDTimelineBucket& b : r.buckets)
+        if (b.stateFrames[keyboard])
+            changed.insert(b.frameStart);
+    ASSERT_FALSE(changed.empty());
+    for (const uint64_t frame : changed)
+    {
+        bool nearKey = false;
+        for (const ttd::bench::TimelineKey& key : _s->keys)
+            for (const uint64_t at : {key.downFrame, key.upFrame})
+                nearKey = nearKey || (frame + 1 >= at && frame <= at + 1);
+        EXPECT_TRUE(nearKey) << "keyboard state changed in frame " << frame;
+    }
+    EXPECT_LE(changed.size(), 4u * _s->keys.size());
+
+    // The reply: the matrix in the phases that hold the presses, the Covox only in states_every_frame
+    const ttd::TTDReply reply = ttd::TTDControl(_s->context).Execute({"timeline", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    bool covoxNamed = false;
+    for (const StateNode& name : reply.body.find("states_every_frame")->items)
+        covoxNamed = covoxNamed || name.s == "device.covox";
+    EXPECT_TRUE(covoxNamed);
+    size_t keyboardRows = 0;
+    for (const StateNode& phase : reply.body.find("phases")->items)
+        for (const StateNode& dev : phase.find("devices")->items)
+            if (const StateNode* state = dev.find("state"))
+            {
+                EXPECT_NE(state->s, "device.covox");
+                keyboardRows += state->s == "device.keyboardmatrix";
+            }
+    EXPECT_GE(keyboardRows, 1u);
 }

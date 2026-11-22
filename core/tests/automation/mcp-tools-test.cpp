@@ -1382,6 +1382,52 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_SummarizeTheReports)
     EXPECT_NE(result.text.find("[next_video] not a ZX Spectrum Next"), std::string::npos) << result.text;
 }
 
+// The zxnDDMA core (NEXT-DDMA) adds the 'ddma' part to next_dma: the agent sees the flags, the 22-bit addresses, the 2D block and the SRAM
+TEST_F(McpTools_Test, InspectState_NextDmaShowsTheZxnDdmaPart)
+{
+    Json::Value dma;
+    dma["available"] = true;
+    dma["mode"] = "zxn";
+    dma["enabled"] = false;
+    dma["direction"] = "a_to_b";
+    dma["a"]["address"] = "0x0000";
+    dma["a"]["type"] = "memory";
+    dma["b"]["address"] = "0x4000";
+    dma["b"]["type"] = "memory";
+    dma["burst"] = "continuous";
+    dma["counter"] = 0;
+    dma["block_length"] = 0;
+    dma["status"] = "0x3A";
+    dma["zxnddma"] = true;
+    Json::Value& d = dma["ddma"];
+    d["physical"] = true;
+    d["two_d"] = true;
+    d["transparent"] = true;
+    d["fill"] = false;
+    d["layer2_xy"] = false;
+    d["hidden"] = false;
+    d["src"] = "0x090000";
+    d["dst"] = "0x064000";
+    d["row_length"] = 16;
+    d["rows"] = 8;
+    d["row"] = 0;
+    d["column"] = 0;
+    d["stride_a"] = 16;
+    d["stride_b"] = 256;
+    d["transparent_value"] = "0xE3";
+    d["sram"]["board"] = "issue4";
+    d["sram"]["range"] = "0x000000-0x1FFFFF";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/dma"] = {200, dma};
+    Json::Value args;
+    args["aspects"].append("next_dma");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_dma] zxnDDMA physical+two_d+transparent, src 0x090000 dst 0x064000, 2D 16x8 at row 0 column 0, "
+                               "strides 16/256, transparent 0xE3, SRAM 0x000000-0x1FFFFF (issue4)"),
+              std::string::npos)
+        << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_SchemaListsTheNextReportAspectsAndParameters)
 {
     const mcp::ToolDefinition* tool = _registry->Find("inspect_state");

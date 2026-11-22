@@ -211,6 +211,18 @@ std::string& DefaultNvramFolder()
 
 void Config::SetDefaultNvramFolder(const std::string& folder) { DefaultNvramFolder() = folder; }
 
+namespace
+{
+std::string& Vdac4EspCacheFolder()
+{
+	static std::string folder;
+	return folder;
+}
+}  // namespace
+
+void Config::SetDefaultVdac4EspCacheFolder(const std::string& folder) { Vdac4EspCacheFolder() = folder; }
+const std::string& Config::DefaultVdac4EspCacheFolder() { return Vdac4EspCacheFolder(); }
+
 std::function<void(CONFIG&)> Config::RamPowerOnOverride(RamPowerOn mode)
 {
 	return [mode](CONFIG& config) { config.ramPowerOn = mode; };

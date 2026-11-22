@@ -288,7 +288,9 @@ class Emulator:
 
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
-        src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""
+        src_kind / dst_kind, holds_bus, status byte; zxnddma, and on the NEXT-DDMA core ddma: the #DF flags, ext_a / ext_b, the 22-bit
+        src / dst, the 2D block (row_length, rows, strides, row, column), transparent_value, fill_value, layer2 {x, y}, sram {board, bytes,
+        range}); reading it does not advance its read sequence; available=False elsewhere"""
 
     def next_video(self) -> dict:
         """Layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster (hc, vc, frame_t), timing"""
@@ -1747,6 +1749,8 @@ more = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, before=hits['ne
 # When did each of these PCs last run: one hit per PC (its newest), the walk ends once each has one
 last = emu.ttd_reverse_continue([0x8200, 0x9A10, 0xC000], first_per_pc=True)
 # {'hits': [...], 'count': 2, 'pcs_without_hit': [39440], ...}
+# condition: only hits where a breakpoint condition holds at the instruction's start
+hit = emu.ttd_reverse_continue([0x8200], condition="A == 5 && M(#5C78) > 3")
 # phys_page='rom': runs from the ROM. Bounds: before_frame= / before_tin= or before= (machine T), from_frame=
 ```
 
@@ -1971,6 +1975,8 @@ attrs = emu.ttd_screen_at(150, which='shadow', format='attributes', encoding='he
 #                  'changed_during_frame': False, 'flips': []}
 
 timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buckets, limit, bucket_size, ports
+saved = emu.ttd_timeline(file='/path/run.ttd', branch='1')   # a file (or a recording's folder), not loaded:
+# the answer a load would give, plus 'file', 'branch', 'model'
 # {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],
 #   'keys': ['A'], 'busiest_frame': ..., ...}, ...], 'events': [...], 'missing': [{'fact': 'writes', ...}], ...}
 
@@ -2009,6 +2015,8 @@ d = emu.ttd_diff(1201, to_frame=1204, sections='cpu,memory')
 #  'memory': {'changed': 2, 'pages': 1, 'ranges': [{'region': 'ram', 'page': 2, 'offset': 8192, 'address': 40960,
 #   'length': 1, 'before': [3], 'after': [6], 'last_write': {'frame': 1203, 'pc': 32780, 'text': 'inc (hl)', ...}}],
 #   'more': 0}, 'writer_searches': 2, 'ms': ...}
+# sections='devices': 'devices': {'changed': [{'name': 'ay', 'counters_only': False, 'fields': [{'name': 'ay0.R8',
+#  'before': 0, 'after': 15, ...}, {'name': 'ay0.tone_a.counter', 'counter': True, ...}], ...}], 'counters_only': 2}
 
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,

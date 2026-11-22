@@ -1107,7 +1107,8 @@ void RegisterLoadSoftware(ToolRegistry& registry)
         "same as the Qt UI's drag-and-drop autostart (ignored for other drives). Tapes: playback starts and "
         "LOAD \"\" is typed (a 128K menu is left for 128 BASIC first), as the media.open action; a paused machine "
         "runs for the typing and is paused again, so run_frames go on loading. Ignored for snapshots. An .mgt on "
-        "a machine with the MGT +D (48K-PLUSD, 128K-PLUSD) runs its plan (run, run+load, system-disk+load, mount): "
+        "a machine with an MGT card (+D: 48K-PLUSD, 128K-PLUSD; DISCiPLE: 48K-DISCIPLE, 128K-DISCIPLE) runs its "
+        "plan (run, run+load, system-disk+load, mount): "
         "the steps go on after the answer, their progress is inspect_state fdc -> autostart.";
     schema["properties"]["basic"]["type"] = "string";
     schema["properties"]["basic"]["enum"].append("48");
@@ -2928,7 +2929,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'next_uart' = the two UARTs (ESP and Pi): prescaler / baud, frame, RTS, the Rx and Tx FIFOs, the status byte as a read gives it, "
         "the byte counters, the NR #C6 interrupt enables and requests and what is on the line (ComPort= / ComPort2=); "
         "'next_dma' = the DMA as programmed (mode zxn / z80, ports A / B, direction, burst, prescaler, counters, status byte; reading does not "
-        "step its read sequence), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
+        "step its read sequence; with the zxnDDMA core the 'ddma' part: #DF flags, 22-bit addresses, 2D block, transparent / fill, "
+        "Layer 2 X,Y, the board's SRAM range), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
         "position, 'next_palette' = the 9-bit palettes (nr_palette = '0'-'7' | name | 'all', default the selected one; nr_range = '16-31'), "
         "'next_ports' = the internal port enable word NR #82-#85 and, with nr_port = '6B' (nr_access = 'r' | 'w'), which device answers it, "
         "'next_nextreg' = one NextREG (nr_reg = '07') with its decoded bits or all (nr_changed = true: only the ones that differ from their "
@@ -4439,11 +4441,34 @@ void RegisterInspectState(ToolRegistry& registry)
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();
                                 else if (aspect == "next_dma")
+                                {
                                     out << "\n[next_dma] " << value["mode"].asString() << " mode, " << (value["enabled"].asBool() ? "enabled" : "idle")
                                         << ", " << value["direction"].asString() << ", A " << value["a"]["address"].asString() << " ("
                                         << value["a"]["type"].asString() << ") B " << value["b"]["address"].asString() << " (" << value["b"]["type"].asString()
                                         << "), " << value["burst"].asString() << ", counter " << value["counter"].asInt() << "/" << value["block_length"].asInt()
                                         << ", status " << value["status"].asString();
+                                    if (value.isMember("ddma"))
+                                    {
+                                        // zxnDDMA (core 3.03): the #DF flags that are on, the 22-bit working addresses, the 2D block, the SRAM range
+                                        const Json::Value& d = value["ddma"];
+                                        std::string flags;
+                                        for (const char* f : {"physical", "two_d", "transparent", "fill", "layer2_xy", "hidden"})
+                                            if (d[f].asBool())
+                                                flags += (flags.empty() ? "" : "+") + std::string(f);
+                                        out << "\n[next_dma] zxnDDMA " << (flags.empty() ? std::string("no flags") : flags) << ", src " << d["src"].asString()
+                                            << " dst " << d["dst"].asString();
+                                        if (d["two_d"].asBool())
+                                            out << ", 2D " << d["row_length"].asInt() << "x" << d["rows"].asInt() << " at row " << d["row"].asInt()
+                                                << " column " << d["column"].asInt() << ", strides " << d["stride_a"].asInt() << "/" << d["stride_b"].asInt();
+                                        if (d["transparent"].asBool())
+                                            out << ", transparent " << d["transparent_value"].asString();
+                                        if (d["fill"].asBool())
+                                            out << ", fill " << d["fill_value"].asString();
+                                        if (d["layer2_xy"].asBool())
+                                            out << ", Layer 2 X " << d["layer2"]["x"].asInt() << " Y " << d["layer2"]["y"].asInt();
+                                        out << ", SRAM " << d["sram"]["range"].asString() << " (" << d["sram"]["board"].asString() << ")";
+                                    }
+                                }
                                 else if (aspect == "next_video")
                                     out << "\n[next_video] order " << value["layer_order"]["name"].asString() << ", ULA " << value["ula"]["mode"].asString()
                                         << (value["ula"]["enabled"].asBool() ? "" : " (off)") << ", Layer 2 "
@@ -6502,7 +6527,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
         "where it is; next_before pages on; first_per_pc=true lists one hit per PC, its newest, and names the PCs that "
-        "did not run), "
+        "did not run; condition keeps only hits where a breakpoint condition holds), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame; "
         "changes_only=true skips writes that store the byte already there and gives old_value; all=true lists the hits "
         "newest first up to limit, the machine stays; next_before pages on). "
@@ -6566,7 +6591,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "busiest frame to seek to; one call instead of a loop of coverage_summary / port_events / memory_diff; reads "
         "what the session stores, no replay; facts it cannot give are listed as missing; from_frame, to_frame, "
         "buckets=true adds an overview of limit buckets (default 20; bucket_size sets their size), ports=false skips the "
-        "per-device port counts, min_phase_ms the shortest phase, default 200). "
+        "per-device port counts, min_phase_ms the shortest phase, default 200; file reads a .ttd file or a recording's "
+        "folder without loading it - the answer a load would give - and branch picks its line). "
         "'find_event' (when did it happen: one call instead of memory_at / coverage_scan / seek loops; find = mem "
         "(addr, cond changed | increased | decreased | equals | becomes | differs | bit_set | bit_clear with value / "
         "bit, size 1 or 2, exact=true follows every CPU write), screen (cond change with min_changed % of the picture, "
@@ -6587,7 +6613,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "current position), any T inside a frame; the answer: the registers, latches and 8K slot mapping that "
         "differ, the RAM changed in ranges (screen pixels / attributes, RAM per page) with the bytes of short ranges "
         "and the last CPU write in between (time, PC, instruction), the screen % changed and the border, the devices "
-        "whose state differs, the frames / T / keys / markers in between; sections picks some ('cpu,memory'), limit "
+        "whose state differs with the fields that changed in each (values of short ones; free-running counters such "
+        "as AY tone phases listed apart, 'only counters' when nothing else moved), the frames / T / keys / markers in between; sections picks some ('cpu,memory'), limit "
         "entries per list (default 16), writers=false skips the write search; the machine stays where it was). "
         "'replay_check' (does the replay reproduce the recording: each frame of from_frame..to_frame (default: the "
         "whole history) replayed from its checkpoint and compared with the next checkpoint, taken live; stride checks "
@@ -6677,7 +6704,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["branch"]["type"] = "string";
     schema["properties"]["branch"]["description"] =
         "branch_info / branch_switch / branch_update / branch_delete: the branch - its id (0 = the trunk), its GUID or "
-        "its name; branch_create: fork on this branch (at frame / tinframe on it, default its end)";
+        "its name; branch_create: fork on this branch (at frame / tinframe on it, default its end); timeline with "
+        "file: the file's branch to read (default the one it saved as active)";
     schema["properties"]["to"]["type"] = "string";
     schema["properties"]["to"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* to : {"previous", "next_sibling", "prev_sibling"})
@@ -6833,6 +6861,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["first_per_pc"]["description"] =
         "reverse_continue: the list as with all, one hit per PC (its newest) - when did each of these PCs last run; "
         "the walk ends once every PC has its hit";
+    schema["properties"]["condition"]["type"] = "string";
+    schema["properties"]["condition"]["description"] =
+        "reverse_continue: only hits where this breakpoint condition holds at the instruction's start (the language "
+        "of breakpoint conditions, e.g. 'A == 5 && M(#5C78) > 3'); x@prev is refused, HITS reads 0";
     schema["properties"]["changes_only"]["type"] = "boolean";
     schema["properties"]["changes_only"]["description"] =
         "find_last (access write): skip writes that store the byte already there; each hit gives old_value. "
@@ -7004,8 +7036,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "and watched bytes (default true)";
     schema["properties"]["file"]["type"] = "string";
     schema["properties"]["file"]["description"] =
-        "port_events: a .ttd file on the emulator's machine to search instead of the current session - it is not "
-        "loaded, the session is untouched (works while recording)";
+        "port_events / timeline: a .ttd file on the emulator's machine (timeline: or a recording's folder) to read "
+        "instead of the current session - it is not loaded, the session is untouched (works while recording)";
     schema["properties"]["pc_from"]["type"] = "string";
     schema["properties"]["pc_from"]["description"] = "find_last: only accesses made by code with PC >= pc_from";
     schema["properties"]["pc_to"]["type"] = "string";
@@ -7274,6 +7306,15 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 {
                     done(ToolResult::Error(error));
                     return;
+                }
+                if (args.isMember("condition"))
+                {
+                    if (!args["condition"].isString())
+                    {
+                        done(ToolResult::Error("'condition' must be a string (a breakpoint condition)"));
+                        return;
+                    }
+                    (*body)["condition"] = args["condition"];
                 }
                 if (args.isMember("changes_only"))
                 {
@@ -8562,6 +8603,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     for (const char* field : {"buckets", "ports"})
                         if (args.isMember(field))
                             query += std::string(field) + "=" + (args[field].asBool() ? "true" : "false") + "&";
+                    if (args["file"].isString() && !args["file"].asString().empty())
+                        query += "file=" + UrlEncodeSegment(args["file"].asString()) + "&";
+                    if (args["branch"].isIntegral() && !args["branch"].isBool())
+                        query += "branch=" + std::to_string(args["branch"].asUInt64()) + "&";
+                    else if (args["branch"].isString() && !args["branch"].asString().empty())
+                        query += "branch=" + UrlEncodeSegment(args["branch"].asString()) + "&";
                     query.pop_back();
                     caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
                         if (status != 200)
@@ -8572,6 +8619,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         // Every phase in the text: an agent may read only this
                         const Json::Value& devices = body["devices"];
                         std::ostringstream out;
+                        if (body.isMember("file"))
+                            out << "File " << body["file"].asString() << " (" << body["model"].asString() << ", branch "
+                                << body["branch"].asUInt64() << "), not loaded. ";
                         out << "Timeline " << body["from_frame"].asUInt64() << ".." << body["to_frame"].asUInt64() << " ("
                             << body["to_frame"].asUInt64() - body["from_frame"].asUInt64() + 1 << " frames";
                         if (body["bucket_count"].asUInt64())
@@ -8605,6 +8655,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                 else if (d.isMember("region"))
                                     out << "; " << d["region"].asString() << " changed " << d["frames"].asUInt64()
                                         << " fr";
+                                else if (d.isMember("state"))
+                                    out << "; " << d["state"].asString() << " state " << d["frames"].asUInt64()
+                                        << " fr";
                                 else if (d["device"].asUInt() < devices.size())
                                     out << "; " << devices[d["device"].asUInt()]["name"].asString() << " in "
                                         << d["in"].asUInt64() << " out " << d["out"].asUInt64();
@@ -8613,6 +8666,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         for (const Json::Value& e : body["events"])
                             out << "\nevent " << e["frame"].asUInt64() << " " << e["kind"].asString() << " "
                                 << e["text"].asString();
+                        if (body["states_every_frame"].size() > 0)
+                        {
+                            out << "\nstate changed in every frame:";
+                            for (const Json::Value& name : body["states_every_frame"])
+                                out << " " << name.asString();
+                        }
                         for (const Json::Value& m : body["missing"])
                             out << "\nmissing " << m["fact"].asString() << ": " << m["reason"].asString();
                         done(ToolResult::Ok(out.str(), std::move(body)));

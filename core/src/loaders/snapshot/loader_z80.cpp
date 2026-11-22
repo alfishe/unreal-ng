@@ -133,7 +133,8 @@ snapshot::Image LoaderZ80::BuildImage() const
     image.timingHint = image.machineHint == "pentagon128" ? "pentagon" : _memoryMode == Z80_48K ? "48k" : "128k";
 
     // v3 hardware 3 / 6: "+ M.G.T.": byte 59 says the interface was paged in, byte 83 which one (0 DISCiPLE + Epson,
-    // 1 DISCiPLE + HP, 16 +D). The file carries no +D RAM or registers: only the paging
+    // 1 DISCiPLE + HP, 16 +D). The file carries no card RAM or registers: only the paging. The extension keeps both
+    // (kind "plusd" is the MGT card, either model)
     if (_snapshotVersion == Z80v3 && (model == Z80_MODEL3_48K_MGT || model == Z80_MODEL3_128K_MGT) &&
         _data.size() >= sizeof(Z80Header_v1) + 2 + 54)
     {
@@ -143,9 +144,12 @@ snapshot::Image LoaderZ80::BuildImage() const
         if (type == kMgtTypePlusD)
             image.extensions.push_back({"z80:v3", "plusd", 2, paged ? "MGT +D, paged in" : "MGT +D, paged out",
                                         {paged, type}});
+        else if (type == kMgtTypeDiscipleEpson || type == kMgtTypeDiscipleHp)
+            image.extensions.push_back({"z80:v3", "plusd", 2,
+                                        paged ? "MGT DISCiPLE, paged in" : "MGT DISCiPLE, paged out", {paged, type}});
         else
-            image.warnings.push_back("saved with a DISCiPLE (byte 83 = " + std::to_string(type) +
-                                     "): DISCiPLE is not supported, the snapshot loads without it");
+            image.warnings.push_back("saved with an unknown M.G.T. interface (byte 83 = " + std::to_string(type) +
+                                     "): the snapshot loads without it");
     }
 
     for (size_t idx = 0; idx < MAX_RAM_PAGES; ++idx)
@@ -262,8 +266,8 @@ bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std
         error = "the .z80 format has no model for '" + machine + "'";
         return false;
     }
-    // An MGT +D on a 48K / 128K: hardware 3 / 6, byte 59 the paging, byte 83 = 16 (+D). On other models the format has
-    // no "+ M.G.T." code: the +D is left out
+    // An MGT card on a 48K / 128K: hardware 3 / 6, byte 59 the paging, byte 83 = 16 (+D) or 0 (DISCiPLE, Epson). On
+    // other models the format has no "+ M.G.T." code: the card is left out
     const snapshot::Extension* plusd = nullptr;
     for (const snapshot::Extension& extension : image.extensions)
         if (extension.kind == "plusd" && !extension.payload.empty())
@@ -274,7 +278,8 @@ bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std
         modelCode = Z80_MODEL3_128K_MGT;
     else if (plusd)
     {
-        warnings.push_back("the .z80 format has no '+ M.G.T.' code for '" + machine + "': the +D state is not saved");
+        warnings.push_back("the .z80 format has no '+ M.G.T.' code for '" + machine +
+                           "': the MGT card's state is not saved");
         plusd = nullptr;
     }
     std::vector<uint16_t> banks;
@@ -331,7 +336,8 @@ bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std
     if (plusd)
     {
         header.mgtROM = plusd->payload[0] != 0 ? 0xFF : 0;
-        header.mgtType = kMgtTypePlusD;
+        // The model the payload names (a DISCiPLE keeps its printer type), +D without one
+        header.mgtType = plusd->payload.size() > 1 ? plusd->payload[1] : kMgtTypePlusD;
     }
 
     // A 48K program on a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise readers (this
@@ -1288,15 +1294,20 @@ void LoaderZ80::commitPeripheralState(const snapshot::Image& image)
     psg->setRegister(image.ay[0].selected & 0x0F);
 }
 
-/// The MGT +D's paging from byte 59 (hardware 3 / 6). Without a +D card the report's warning says so
+/// The MGT card's paging from byte 59 (hardware 3 / 6). Without the card of byte 83's model the log says so
 void LoaderZ80::commitPlusDPaging(const snapshot::Image& image)
 {
     for (const snapshot::Extension& extension : image.extensions)
     {
         if (extension.kind != "plusd" || extension.payload.empty())
             continue;
-        if (PlusDCard* card = PlusDCard::Find(_context))
+        const bool disciple = extension.payload.size() > 1 && extension.payload[1] != kMgtTypePlusD;
+        PlusDCard* card = PlusDCard::Find(_context);
+        if (card != nullptr && card->IsDisciple() == disciple)
             card->SetPaged(extension.payload[0] != 0);
+        else if (disciple)
+            MLOGWARNING("the snapshot was saved with an MGT DISCiPLE: this machine has none (a 48K-DISCIPLE or "
+                        "128K-DISCIPLE has)");
         else
             MLOGWARNING("the snapshot was saved with an MGT +D: this machine has none (a 48K-PLUSD or 128K-PLUSD has)");
         return;
