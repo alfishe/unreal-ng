@@ -7,7 +7,7 @@ fixed, and checked on macOS, Linux (.238), Windows and the Steam Deck where it a
 - [ ] 1. One VRR verdict for every presenter (V1-V5 in code, `9c45c7c79`; hardware checks: G-Sync on .101, ProMotion)
 - [ ] 2. A waiting present is replaced: the timed GL swap done (a pile of two); Vulkan and Metal need back-pressure
   in the window, not built (no pile reproduced: README 1.2). Found on the way and fixed: K10, K7
-- [ ] 3. Smooth motion: S1-S5
+- [x] 3. Smooth motion: S1-S5 (counters `present.smooth.behind` / `starved`)
 - [ ] 4. Vulkan: K1-K9, V6
 - [ ] 5. Display events; V7
 - [ ] 6. Content and displays: scenes for the classes not covered, 75-240 Hz, hi-res modes

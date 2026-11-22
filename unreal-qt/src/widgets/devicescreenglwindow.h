@@ -397,6 +397,13 @@ private:
     bool _smoothChanged = false;  ///< and another one than before
     uint64_t _smoothDrained = 0;  ///< presents handed over before the last refresh left out (a late one: renderNative)
     uint32_t _smoothLag = 0;      ///< the lag (refreshes) of the run of late presents the last drain answered
+    /// feedSmooth after a Reset starts this many frames before the one due
+    static constexpr uint64_t kSmoothLookBehind = 4;
+    uint64_t _smoothBehind = 0;         ///< refreshes whose plan was behind the frame due: the frame shown as it is
+    uint64_t _smoothStarved = 0;        ///< frames due with no next frame fed yet (no picture between them)
+    uint64_t _smoothStarvedSerial = 0;  ///< ... the last one counted
+    /// The presenter goes (made anew, a fall back): its counters start from 0 again, so what was kept by them does too
+    void dropPresenter();
     int64_t _smoothRefreshNs = 0;  ///< native way on a refresh grid: the refresh drawn for (0: no grid)
     uint64_t _smoothPictures = 0;  ///< smooth motion's pictures presented: their numbers for the presenter's beat count
     int64_t _smoothPeriodNs = 0;

@@ -566,6 +566,8 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     smooth["motion_fields"] = p.motionFields;
     smooth["on_device"] = p.onDevice;
     smooth["held_flicker"] = p.heldFlicker;
+    smooth["behind"] = p.smoothBehind;
+    smooth["starved"] = p.smoothStarved;
     node["smooth"] = smooth;
     StateNode display = StateNode::Object();
     display["state"] = p.displayState;

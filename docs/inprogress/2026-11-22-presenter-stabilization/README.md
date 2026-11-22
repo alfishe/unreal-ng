@@ -64,6 +64,19 @@ So the pile is not reached in what a user can set today; a machine clearly faste
 | S4 | `_smoothGpuFailed` is never reset: after one failed `Create` the steps run on the CPU until a restart | `win` |
 | S5 | `_smoothDrained` / `_smoothLag` are not reset when the presenter is made anew | `win` |
 
+Done (2026-11-22):
+
+- S1: a feed after a `Reset` starts four frames before the one due, and a plan whose newest frame is two or more
+  behind the frame due is not used (the frame due is shown as it is; `present.smooth.behind` counts them).
+- S2: no smooth motion on the latch clock (turbo, stepping).
+- S3: `present.smooth.starved` counts the frames due with no next frame fed yet.
+- S4: the GPU passes are tried again with another context or device. S5: the drain's counters start over with a new
+  presenter.
+
+Steam Deck, gamescope, 60 Hz, Across the Edge, `smooth_motion=interpolate`, GL and Vulkan: after six mode switches
+(a `Reset` each) `behind` 0 on both; under turbo the mode in effect is off, and on again after it (one refresh
+`behind` at the change, the frame due shown); `starved` 15-22 of ~1100 frames on GL, 1 on Vulkan.
+
 ### 1.4 Vulkan (step 4)
 
 | # | Finding |

@@ -37,7 +37,7 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `low_latency` (the frame on screen shown at once), `timed_at` (`screen`; `paint` on the software screen: the window's paints of new frames against their time, not the screen; `""`: no times), `presented`, `shown`,
   `dropped`, `late`, `beat` {frames, off}, `lead_ms`, `error_ms` {p50, p99, max}, `sound_offset_ms`, `gpu_wait_ms`,
   `gpu_ms` {`smooth`, `picture`: {p50, max, longest, measured}}, `smooth` {mode in effect, device, game, frames, pictures, renders,
-  blended, interpolated, motion_fields, on_device, held_flicker}, `display` {state, reason, hz, original_hz,
+  blended, interpolated, motion_fields, on_device, held_flicker, behind, starved}, `display` {state, reason, hz, original_hz,
   machine_hz}. The counters cover the native presenter's last 600 presents; `gl-timed` has screen times only where GLX
   has `GLX_OML_sync_control` (X11, XWayland on KDE, gamescope); the plain `gl` path has none (they stay 0); the
   `software` screen gives its paints instead (`timed_at` `paint`: new frames painted, the ones skipped, paint time

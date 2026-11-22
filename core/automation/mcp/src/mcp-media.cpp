@@ -306,7 +306,9 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     smooth.get("device", "").asString() + ": " + std::to_string(smooth.get("renders", 0).asUInt64()) +
                     " renders, " + std::to_string(smooth.get("blended", 0).asUInt64()) + " blended, " +
                     std::to_string(smooth.get("interpolated", 0).asUInt64()) + " interpolated, " +
-                    std::to_string(smooth.get("held_flicker", 0).asUInt64()) + " with flicker held";
+                    std::to_string(smooth.get("held_flicker", 0).asUInt64()) + " with flicker held, " +
+                    std::to_string(smooth.get("starved", 0).asUInt64()) + " frames without a next one, " +
+                    std::to_string(smooth.get("behind", 0).asUInt64()) + " refreshes behind the frame due";
     }
     // The words the setters take: an agent may see only this text
     for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures", "osd_keyboard_styles"})

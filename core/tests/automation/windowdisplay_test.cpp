@@ -243,6 +243,8 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.present.late = 3;
     fake.settings.present.smooth = "interpolate";
     fake.settings.present.heldFlicker = 7;
+    fake.settings.present.smoothBehind = 3;
+    fake.settings.present.smoothStarved = 11;
     fake.settings.present.clock = "audio";
     fake.settings.present.beatFrames = 500;
     fake.settings.present.offBeat = 4;
@@ -268,6 +270,8 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_DOUBLE_EQ(present.find("sound_offset_ms")->find("p99")->d, 6.5);
     EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");
     EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
+    EXPECT_EQ(present.find("smooth")->find("behind")->i, 3);
+    EXPECT_EQ(present.find("smooth")->find("starved")->i, 11);
     ASSERT_NE(present.find("vrr"), nullptr);
     ASSERT_NE(present.find("display"), nullptr);
 

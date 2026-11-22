@@ -251,7 +251,7 @@ bool DeviceScreenGLWindow::recreateLostContext()
                << "native presenter are made anew";
     // The presenter first, as when it stops presenting: its slots and interop registrations go with the old device.
     // A restart of the native presenter: too many of them and GL presents (renderNative)
-    _presenter.reset();
+    dropPresenter();
     if (_native && !_recovery.Restart(SteadyNowNs()))
         _presenterFallback = "lost its GL context too often (" + std::to_string(PresenterRecovery::kMaxRestarts + 1) +
                              " graphics resets or restarts within a minute)";
@@ -301,6 +301,7 @@ void DeviceScreenGLWindow::releaseGLObjects()
     _modelGpu.destroy();
     _smooth.SetDevice(nullptr);
     _smoothGpu.Destroy();
+    _smoothGpuFailed = false;  // another context or device: the GPU passes are tried again
     _customShader.reset();
     if (_slangRunner)
         _slangRunner->release();
@@ -309,7 +310,7 @@ void DeviceScreenGLWindow::releaseGLObjects()
     _hudTexture.reset();
     _hudProgram.reset();
     _frameTarget = nullptr;
-    _presenter.reset();  // its GL objects in this context; Vulkan: its swapchain, before the device and the surface
+    dropPresenter();  // its GL objects in this context; Vulkan: its swapchain, before the device and the surface
     _gpu.reset();
 #ifdef UNREAL_VULKAN
     if (_vkSurface)
@@ -628,7 +629,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
                                                   : QStringLiteral("for %1 ms").arg((now - failingSinceNs) / 1'000'000))
                                          << "(" << _recovery.Failures() << "tries):" << QString::fromStdString(failure)
                                          << "; the native presenter is made anew";
-                    _presenter.reset();
+                    dropPresenter();
                     update();  // the timer's present at once makes it
                     return;
                 case PresenterRecovery::BeginFailure::FallBack:
@@ -665,7 +666,7 @@ void DeviceScreenGLWindow::useGlSwap(const char* why)
 {
     qInfo() << "DeviceScreenGLWindow: the timed GL swap" << why << "- the plain GL swap presents";
     makeCurrent();  // the presenter's GL objects are in the draw context
-    _presenter.reset();
+    dropPresenter();
     _native = false;
     _glSwapChosen = true;
     _presenterFallback = why;
@@ -711,7 +712,7 @@ void DeviceScreenGLWindow::fallBackToGl(const std::string& why)
 {
     qWarning().noquote() << "DeviceScreenGLWindow: the native presenter" << QString::fromStdString(why)
                          << "- presenting with GL from now on";
-    _presenter.reset();  // the context current (renderNative)
+    dropPresenter();  // the context current (renderNative)
     _native = false;
     _presentTimer->stop();
     _presentHidden = false;
@@ -863,6 +864,8 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     }
     out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
     FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.IsCreated(), out);
+    out.smoothBehind = _smoothBehind;
+    out.smoothStarved = _smoothStarved;
     const GpuPassTimes::Times smoothGpu = _gpuTimes.Get(GpuPassTimes::Smooth);
     const GpuPassTimes::Times smoothCpu = _gpuTimes.Get(GpuPassTimes::SmoothCpu);
     const GpuPassTimes::Times pictureGpu = _gpuTimes.Get(GpuPassTimes::Picture);
@@ -1283,11 +1286,21 @@ void DeviceScreenGLWindow::updateDisplayRate()
     _displayReason.clear();
 }
 
+void DeviceScreenGLWindow::dropPresenter()
+{
+    _presenter.reset();
+    _smoothDrained = 0;
+    _smoothLag = 0;
+}
+
 bool DeviceScreenGLWindow::smoothActive() const
 {
     // Low-latency video shows each frame at once: smooth motion would wait for the next one
+    // Turbo, stepping (the latch clock): frames not paced to real time have no picture between them, and feeding
+    // them (copies under the frame source's mutex, a flicker search each) only held the emulation up
     return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
-           !_shownInfo.atOnce && (!_smoothAuto || _sync == VideoSync::Interpolate);
+           !_shownInfo.atOnce && _shownInfo.source != FrameClockSource::Latch &&
+           (!_smoothAuto || _sync == VideoSync::Interpolate);
 }
 
 void DeviceScreenGLWindow::feedSmooth()
@@ -1295,6 +1308,11 @@ void DeviceScreenGLWindow::feedSmooth()
     // Each frame once, in order. The screen holds a few: a backlog past them is gone anyway. Only the copies here,
     // under the mutex; the engine's work on them (its flicker search) in pushSmooth
     uint64_t last = _smoothFed > 0 ? _smoothFeedInfo[_smoothFed - 1].serial : _smooth.LastSerial();
+    // Started over (Reset: settings, the sync step, a new source): from a few frames before the one due, not from the
+    // oldest the screen holds (a feed takes as many as it has room for, and the newest fed was then three frames
+    // behind the one due: shown for a refresh, a step back)
+    if (last == 0 && _shownInfo.serial > kSmoothLookBehind)
+        last = _shownInfo.serial - kSmoothLookBehind;
     while (_smoothFed < _smoothFeed.size())
     {
         QImage& frame = _smoothFeed[_smoothFed];
@@ -1931,7 +1949,26 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
         _smoothGpu.SetPassTimes(&_gpuTimes);
         _smooth.SetDevice(_smoothOnGpu && _smoothGpu.IsCreated() ? &_smoothGpu : nullptr);
         const int64_t planNs = atRefresh ? hostNs : _shownInfo.targetNs;
-        const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(planNs);
+        smoothmotion::SmoothMotion::Result plan = _smooth.Plan(planNs);
+        if (plan.kind != smoothmotion::SmoothMotion::Kind::None)
+        {
+            // Its newest frame is behind the one due (a stall longer than a feed takes up): the frame due as it is,
+            // never an older picture. One behind is its own choice (a held flicker, the frame before the time)
+            const uint64_t newest = std::max(plan.serial, plan.to);
+            if (_shownInfo.serial != 0 && newest + 2 <= _shownInfo.serial)
+            {
+                _smoothBehind++;
+                plan = {};
+            }
+            // The frame due is the newest one fed: no next frame to go towards, the picture repeats (the lead, the
+            // lip-sync trim or the core's delay took the look-ahead)
+            else if (plan.kind == smoothmotion::SmoothMotion::Kind::Frame && plan.serial == _smooth.LastSerial() &&
+                     plan.serial != _smoothStarvedSerial)
+            {
+                _smoothStarvedSerial = plan.serial;
+                _smoothStarved++;
+            }
+        }
         bool kept = false;
         if (plan.kind != smoothmotion::SmoothMotion::Kind::None)
         {
