@@ -56,7 +56,7 @@ if [ "$sync" = 1 ]; then
   }
   list="$state/sync-files.txt"
   prev="$(cat "$list" 2>/dev/null || true)"
-  { git diff --name-only "$base"; git ls-files --others --exclude-standard; echo "$prev"; } | grep -v '^$' | sort -u > "$list.new"
+  { git diff --name-only "$base"; git ls-files --others --exclude-standard; echo "$prev"; } | { grep -v '^$' || true; } | sort -u > "$list.new"  # nothing to copy is fine
   mv "$list.new" "$list"
   # no -t: a copied file is newer than the objects built from its old copy (ninja compares times)
   rsync -rlp --checksum --ignore-missing-args -e "$SSH" --files-from="$list" . "$host:$dir/"
