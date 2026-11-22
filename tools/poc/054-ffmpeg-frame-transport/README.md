@@ -51,6 +51,8 @@ From the repo's `scratch/` (the FIFO and the socket are made in the working dire
 c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/transport.cpp ../core/recording/src/common/framescaler.cpp -o poc054
 ../tools/poc/054-ffmpeg-frame-transport/run.sh ./poc054 3              # ingest only, per transport
 ../tools/poc/054-ffmpeg-frame-transport/e2e.sh ./poc054 SRC.rgba 3       # 4K libx264 end to end, SRC = 352x288 RGBA frames
+c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/fsdump.cpp ../core/recording/src/common/framescaler.cpp -o fsdump
+python3 ../tools/poc/054-ffmpeg-frame-transport/remap.py SRC.rgba         # remap tables against FrameScaler, 4:4:4 bytes
 ```
 
 ## Answer
@@ -80,8 +82,10 @@ Picture fidelity against today, measured on real frames (`exact.py`, `q420.py`):
 - 4:4:4 output (what the window recorder and x264 4:4:4 use): byte-identical to today at whole factors and at
   352x288 -> 4K (7.5x). Converting a pixel and then repeating it is repeating the converted pixel.
 - Other fractional factors (352x288 -> 1080p is 3.75x, 256x192 -> 4K 11.25x): swscale's nearest mapping puts the
-  k / k+1 column boundaries elsewhere than FrameScaler (0.5-2.9 % of pixels differ). Either FrameScaler adopts
-  swscale's mapping, or those layouts keep today's path, or the picture is pre-scaled by the whole part on our side.
+  k / k+1 column boundaries elsewhere than FrameScaler (0.5-2.9 % of pixels differ). Exact instead: ffmpeg's `remap`
+  filter with FrameScaler's own mapping as two gray16le tables of the output size (`x = i * src / picture`, 65535 on
+  the bars, `fill=black`), read once and repeated with `loop`. Byte-identical 4:4:4 for 352x288, 320x240 and
+  256x192 into 4K, 1440p and 1080p (`remap.py`).
 - 4:2:0 output: not the same bytes (today swscale averages the chroma from the 4K RGB), PSNR against the exact 4K
   picture after a round trip: today 33.02 / 32.30 / 38.92 / 38.85 dB, `area` 33.12 / 32.37 / 39.00 / 38.91 dB
   (+0.06..0.10, 4 pictures). `bicubic` was -0.14, `bilinear` -0.5, `neighbor` -2.6.
@@ -105,7 +109,9 @@ When the bytes cannot shrink (the window recorder sends the window's picture), t
 
 ## Next steps
 
-1. Fixed profiles in `FfmpegPipeEncoder`: send the source picture with the graph above; A/B on macOS / Linux / Windows,
-   fidelity per layout (exact 4:4:4 where the mapping matches, `area` 4:2:0).
+1. ~~Fixed profiles in `FfmpegPipeEncoder`~~ done 2026-11-22: the source picture goes through the pipe, whole
+   factors with `neighbor` + `pad`, others with the `remap` tables, `area` 4:2:0 at the target size given
+   explicitly; one segment per picture size, joined with the sound at the end. Results in
+   `docs/inprogress/2026-10-05-recording-4k-profile/README.md`.
 2. VA-API through ffmpeg: the same, the picture uploaded small (`hwupload` before the scaling, `scale_vaapi`).
 3. Window recorder on macOS: a unix socket instead of stdin if its window-size frames stay the limit.

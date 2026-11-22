@@ -105,6 +105,29 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   5 interleaved rounds of 200 frames): the same decoded frames (framemd5) in both builds, no slower; the stepped
   call runs at the real-time pace either way. Transport to ffmpeg measured apart: POC 054 (the macOS FIFO is the
   4K limit, a unix socket moves 10x more).
+- ~~ffmpeg (software and `-c:v` hardware through the pipe) with a fixed profile: the 33 MB 4K frame through the FIFO
+  and ffmpeg's RGB conversion of 8.3 M pixels~~ done 2026-11-22 (POC 054). The pipe carries the source picture
+  (352x288 RGBA, 0.4 MB) and ffmpeg builds the frame at the target size given explicitly: the colour conversion at
+  the source size (4:4:4), then whole factors `neighbor` + `pad`, other factors `remap` with FrameScaler's own
+  mapping as gray16le tables (byte-identical 4:4:4 to FrameScaler's frame for 352x288 / 320x240 / 256x192 into 4K,
+  1440p, 1080p), then `area` 4:2:0 (+0.06..0.10 dB over swscale's conversion of the RGB frame). A raw input has one
+  size, so each picture size is a segment (one ffmpeg, its end on a thread of its own so no frame waits for the
+  flush; the queue holds 5 s of source pictures); the sound goes into a PCM file and Stop joins the segments (stream
+  copy) with the sound encoded. Live, `video/record` h264 software, 9 s, interleaved rounds, frames in the file:
+
+  | Host | 1080p old / new | 1440p old / new | 4K old / new |
+  |:--|--:|--:|--:|
+  | M1 Ultra, 3 rounds | 440 / 440 | 177-381 / 440 | 59-83 / 440 |
+  | i7-11850H Linux (gcc 15), 3 rounds | 440 / 440 | 440 / 440 | 440 / 440 |
+  | Windows 64 threads (MSVC 2022), 3 rounds | 441 / 441 | 441 / 441 | 440-442 / 440-441 |
+
+  CPU of the app and its ffmpeg per recorded frame (psutil): M1 Ultra 4K 185 -> 108 ms (old 255 frames, new 440),
+  1080p 82 -> 77 ms; Windows 4K: the app 5.4 -> 2.6 s (the emulation thread halves), ffmpeg 20.8 -> 25.5 s (`remap`
+  at 4K), 7 % more in total where the old path kept up. The same pictures (PSNR between the files 52-54 dB, the
+  1-frame start offset removed). With sound the old fixed profiles left an mp4 without `moov` on macOS in every run
+  (6 of 6); the new path's sound is one AAC track of the whole recording. Overscan toggled twice mid-recording:
+  3 segments, 443 frames, no frame lost. Side fix: `FFmpegProbe::searchPath` looked for `ffmpeg.exe.exe` on Windows,
+  ffmpeg on PATH was never found there.
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).

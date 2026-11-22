@@ -1081,7 +1081,13 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& nativeFramebuff
         EncoderBase* lender = _activeEncoders.size() == 1 ? _activeEncoders.front().get() : nullptr;
         FrameTarget target;
         FrameTargetResult lent = FrameTargetResult::Unsupported;
-        if (lender && lender->IsRecording() && toEncode->memoryBuffer)
+        if (lender && lender->IsRecording() && toEncode->memoryBuffer && lender->TakesSourcePicture())
+        {
+            // The encoder builds the frame (ffmpeg: the source picture, 0.4 MB, instead of 33 MB at 4K), any size
+            lender->OnVideoFrame(*toEncode, timestamp);
+            deliveredToEncoder = true;
+        }
+        else if (lender && lender->IsRecording() && toEncode->memoryBuffer)
             lent = lender->AcquireFrameTarget(_outputWidth, _outputHeight, target);
 
         if (lent == FrameTargetResult::Ready)
@@ -1433,6 +1439,7 @@ bool RecordingManager::InitializeEncoder()
     config.ffmpegPath = _ffmpegPath;
     config.captureRegion = _captureRegion;
     config.scaleFactor = HasFixedOutput() ? 1 : _scaleFactor;
+    config.fixedOutput = HasFixedOutput();
     config.useHardwareAccel = _acceleration != EncoderAcceleration::Software;
 
     // Determine container from filename extension
