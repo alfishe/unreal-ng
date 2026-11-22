@@ -887,8 +887,12 @@ public:
     /// Run exact N t-states (1 = ULA step / 2 pixels); the run ends with the instruction that reaches the target.
     /// `onTimeline`: the target is N T-states after the previous timeline run's target (RunTimeline), as the
     /// automation planes' run_tstates does, so slices of a run end where one run ends; false (the default, the
-    /// internal callers: time travel, analysis) counts from the current position as before
-    DirectRunResult RunTStates(uint64_t tStates, bool skipBreakpoints = true, bool onTimeline = false);
+    /// internal callers: time travel, analysis) counts from the current position as before.
+    /// `stopAtFrameEnd`: the run also ends at the first frame end it passes. A frame's remainder counted before the
+    /// run is too long when the guest slows its clock inside the frame (an ATM3 boot leaves 14 MHz: the remainder of
+    /// a 4 x 69,888 T frame ran on at 3.5 MHz into three more frames); time travel's frame replays stop there
+    DirectRunResult RunTStates(uint64_t tStates, bool skipBreakpoints = true, bool onTimeline = false,
+                               bool stopAtFrameEnd = false);
     void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
     void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)

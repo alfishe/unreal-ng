@@ -3981,8 +3981,9 @@ void TimeTravelController::RunToFrameEnd()
     // frame-end processing, which completes the frame's picture.
     // A hardware turbo switch inside the frame (GMX, ATM3, Next) rescales the
     // CPU's position and the frame's length at once, so the remainder counted
-    // before the run falls short: run again on the new geometry until the
-    // frame has ended, as the live machine did
+    // before the run falls short (a faster clock): run again on the new
+    // geometry until the frame has ended, as the live machine did; or it is
+    // too long (a slower clock): the run stops at the frame's end
     const uint64_t frameBefore = _context->emulatorState.frame_counter;
     for (int pass = 0; pass < 8 && _context->emulatorState.frame_counter == frameBefore; ++pass)
     {
@@ -3990,7 +3991,10 @@ void TimeTravelController::RunToFrameEnd()
         const uint32_t startT = static_cast<uint32_t>(z80->t);
         if (startT >= frameTStates)
             break;
-        _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
+        // Never past the frame's end: a clock slowed inside the frame (an ATM3 boot leaves 14 MHz) makes the
+        // remainder longer than what is left of it
+        _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true, /*onTimeline=*/false,
+                                        /*stopAtFrameEnd=*/true);
         if (static_cast<uint32_t>(z80->t) == startT && _context->emulatorState.frame_counter == frameBefore)
             break;  // no progress (a halted run) - never spin
     }
