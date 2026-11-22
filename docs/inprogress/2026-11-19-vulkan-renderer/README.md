@@ -127,6 +127,32 @@ Wayland: MAILBOX (no timer, no barrier), the present just after the refresh befo
 last screen time, `WaylandPresentAt`), one per refresh so none is replaced; and the window takes the GPU the display
 hangs on (`boot_vga`: NVIDIA's frames, copied to the Intel the compositor runs on, came a refresh or two late one in
 ten even so). Across the Edge, guest-advanced, Intel, 20 s: 5 of 978 off the beat (was ~8 %), 3.4 % late.
+
+`VK_EXT_present_timing` (Mesa 26.1+; on the device with `VK_KHR_present_id2` and `VK_KHR_calibrated_timestamps`, on a
+surface with absolute times): FIFO, each present carries its frame's time (`PRESENT_AT_NEAREST_REFRESH_CYCLE`: the
+refresh nearest to it), Mesa turns it into mutter's commit timer and the present thread no longer waits for the time.
+Mesa offers only the present stage's own clock (`PRESENT_STAGE_LOCAL`): calibrated against `CLOCK_MONOTONIC` once a
+second (0.5-1.4 us apart on .238). Screen times from `vkGetPastPresentationTimingEXT` (first pixel out). Without the
+extension the MAILBOX grid above stays. Found on the way (mutter 50.1 sources, `MUTTER_DEBUG=frame-clock,wayland` on
+a headless gnome-shell of its own):
+- mutter applies a timed commit in the frame it dispatches next (`on_before_update`: the frame's expected
+  presentation time against the commit's), the dispatch up to a refresh before that frame's vblank. A present ~7 ms
+  ahead (the plain drawing margin) missed it: the frame went a refresh late (error p50 15-20 ms). The lead on this
+  path is the margin plus a refresh (presents 24-27 ms ahead).
+- Mesa commits twice per present (the content with the timer and `set_barrier`, then an empty `wait_barrier`
+  commit), and mutter discards the feedback of a content update as soon as the next commit applies. When the barrier
+  does not hold the second commit (a headless virtual monitor) both apply in one frame: the picture shows, its
+  feedback says discarded (1705 of 1714), no screen times. The live session holds it (2194 of 2194 presented).
+
+Live GNOME session, Across the Edge, Intel, 40 s each, load 6-15 (`UNREAL_PRESENT_TRACE`, WAYLAND_DEBUG, vmstat):
+
+| Path | Shown (from ~2200) | Error p50 / p99 | A refresh or more late | Off the beat |
+|------|--------------------|-----------------|------------------------|--------------|
+| present timing, Mesa 26.2.4 | 2151 | 0.5 / 21 ms (98 % within half a refresh) | 42 (1.9 %) | 22 |
+| MAILBOX grid, Mesa 26.0 | 2104 | 9.2 / 32.8 ms | 182 (8.6 %) | 47 |
+
+The present-timing frames a refresh late had gone 17-26 ms ahead and the present thread woke on time: the miss is
+past the client (mutter, the hybrid copy); 18 of the 42 in the first two seconds (the window coming up).
 GL on Wayland has
 no native presenter (no screen times) to compare with. The refresh estimate: the screen's rate (QScreen)
 refined by the steps between screen times near 1-3 refreshes (the shortest step alone read 71-329 Hz at 60 Hz:

@@ -28,6 +28,7 @@
 #include "gpu/gldevice.h"
 #ifdef UNREAL_VULKAN
 #include "gpu/vulkandevice.h"
+#include "sharedvulkandevice.h"
 #endif
 #include "widgets/crtbeammodelgpu.h"
 
@@ -253,22 +254,22 @@ TEST(CRTBeamModel_Test, TheGpuPictureIsTheSoftwarePicture)
     if (!context.create())
         GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
     // GL, and Vulkan where the build and the machine have it: the same picture, bit for bit
-    std::vector<std::unique_ptr<gpu::Device>> devices;
-    devices.push_back(gpu::GlDevice::Create());
+    const std::unique_ptr<gpu::Device> gl = gpu::GlDevice::Create();
+    std::vector<gpu::Device*> devices{gl.get()};
 #ifdef UNREAL_VULKAN
     {
         std::string error;
-        if (auto vk = gpu::VulkanDevice::Create({}, error))
-            devices.push_back(std::move(vk));
+        if (gpu::Device* vk = testgpu::SharedVulkanDevice(error))  // the run's (sharedvulkandevice.h)
+            devices.push_back(vk);
         else
             std::printf("no Vulkan device (%s): GL only\n", error.c_str());
     }
 #endif
     const std::vector<uint8_t> frame = MakeFrame();
-    for (auto& device : devices)
+    for (gpu::Device* device : devices)
     {
         CRTBeamModelGPU gpu;
-        ASSERT_TRUE(gpu.create(device.get())) << gpu.log().toStdString();
+        ASSERT_TRUE(gpu.create(device)) << gpu.log().toStdString();
 
         // A whole frame at 2x, and a viewport crop at an odd size (phases off the grid)
         const CRTBeamModel::Layout layouts[] = {MakeLayout(704, 576), MakeLayout(1001, 787, QRect(16, 8, 320, 272))};

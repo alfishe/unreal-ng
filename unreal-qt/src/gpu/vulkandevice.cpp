@@ -985,6 +985,13 @@ std::unique_ptr<VulkanDevice> VulkanDevice::Create(const Setup& setup, std::stri
     VkPhysicalDevicePresentWaitFeaturesKHR presentWaitQuery{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR};
     presentIdQuery.pNext = &presentWaitQuery;
+#ifdef VK_EXT_present_timing
+    // present_timing (Mesa 26.1+): a present at an absolute time, the compositor holding the commit for it
+    VkPhysicalDevicePresentId2FeaturesKHR presentId2Query{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR};
+    VkPhysicalDevicePresentTimingFeaturesEXT timingQuery{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT};
+    presentWaitQuery.pNext = &presentId2Query;
+    presentId2Query.pNext = &timingQuery;
+#endif
     VkPhysicalDeviceFeatures2 query{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &presentIdQuery};
     vkGetPhysicalDeviceFeatures2(d->_gpu, &query);
     auto enabled = [&](const char* name) {
@@ -1012,11 +1019,35 @@ std::unique_ptr<VulkanDevice> VulkanDevice::Create(const Setup& setup, std::stri
     {
         presentWait.presentWait = VK_TRUE;
         *tail = &presentWait;
+        tail = &presentWait.pNext;
     }
     else
         extensions.erase(std::remove_if(extensions.begin(), extensions.end(),
                                         [](const char* e) { return std::strcmp(e, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) == 0; }),
                          extensions.end());
+
+#ifdef VK_EXT_present_timing
+    VkPhysicalDevicePresentId2FeaturesKHR presentId2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR};
+    VkPhysicalDevicePresentTimingFeaturesEXT timing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT};
+    const bool timed = enabled(VK_EXT_PRESENT_TIMING_EXTENSION_NAME) && enabled(VK_KHR_PRESENT_ID_2_EXTENSION_NAME) &&
+                       enabled(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) && presentId2Query.presentId2 &&
+                       timingQuery.presentTiming && timingQuery.presentAtAbsoluteTime;
+    if (timed)
+    {
+        presentId2.presentId2 = VK_TRUE;
+        timing.presentTiming = VK_TRUE;
+        timing.presentAtAbsoluteTime = VK_TRUE;
+        *tail = &presentId2;
+        presentId2.pNext = &timing;
+    }
+    else
+        extensions.erase(std::remove_if(extensions.begin(), extensions.end(),
+                                        [](const char* e) {
+                                            return std::strcmp(e, VK_EXT_PRESENT_TIMING_EXTENSION_NAME) == 0 ||
+                                                   std::strcmp(e, VK_KHR_PRESENT_ID_2_EXTENSION_NAME) == 0;
+                                        }),
+                         extensions.end());
+#endif
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};

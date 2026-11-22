@@ -108,6 +108,22 @@ struct VulkanPresenter::Impl
     PFN_vkGetPastPresentationTimingGOOGLE pastTiming = nullptr;
     PFN_vkGetRefreshCycleDurationGOOGLE refreshCycle = nullptr;
     uint64_t nextPresentId = 0;
+    /// VK_EXT_present_timing on the device and the surface (Create): each present asks for its frame's time, the
+    /// compositor holds it until then (Mesa 26.1+ on Wayland: its commit timer set to that time)
+    bool presentTiming = false;
+    std::atomic<bool> timed{false};  ///< the swapchain presents at absolute times (MakeSwapchain)
+    std::string timingWhy;           ///< why not (Describe), empty: no VK_EXT_present_timing on the device
+#ifdef VK_EXT_present_timing
+    PFN_vkGetPastPresentationTimingEXT pastTimingExt = nullptr;
+    PFN_vkSetSwapchainPresentTimingQueueSizeEXT timingQueueSize = nullptr;
+    PFN_vkGetSwapchainTimeDomainPropertiesEXT timeDomains = nullptr;
+    VkPresentStageFlagsEXT timingStage = 0;  ///< the stage whose time is the screen time
+    uint64_t timeDomainId = 0;               ///< the swapchain's time domain for targets and results
+    bool localDomain = false;                ///< that domain is the present stage's own clock (offsetNs to steady)
+    int64_t offsetNs = 0;                    ///< the local clock minus steady_clock (Calibrate)
+    int64_t calibratedNs = 0;                ///< steady time of the last Calibrate
+    PFN_vkGetCalibratedTimestampsKHR calibrated = nullptr;
+#endif
 
     // The present thread
     std::thread thread;
@@ -168,6 +184,8 @@ struct VulkanPresenter::Impl
         // FIFO barrier on each present, and mutter showed one in five a refresh after Mesa's own time (.238,
         // WAYLAND_DEBUG: 422 of 534 at it, 104 a refresh after, 7 two): a judder on a scroll. One present per refresh,
         // just after the one before, is never replaced in the mailbox
+        if (presentTiming && has(VK_PRESENT_MODE_FIFO_KHR))
+            return VK_PRESENT_MODE_FIFO_KHR;  // the compositor holds each present for its time
         if (wayland && has(VK_PRESENT_MODE_MAILBOX_KHR))
             return VK_PRESENT_MODE_MAILBOX_KHR;
         return VK_PRESENT_MODE_FIFO_KHR;
@@ -255,6 +273,11 @@ struct VulkanPresenter::Impl
                 break;
             }
         info.presentMode = wantedMode;
+#ifdef VK_EXT_present_timing
+        const bool wantTimed = presentTiming && wantedMode == VK_PRESENT_MODE_FIFO_KHR;
+        if (wantTimed)
+            info.flags |= VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT | VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR;
+#endif
         info.clipped = VK_TRUE;
         info.oldSwapchain = swapchain;
 
@@ -295,6 +318,9 @@ struct VulkanPresenter::Impl
         nextAcquire = 0;
         timing.clear();
         recreate = false;
+#ifdef VK_EXT_present_timing
+        timed = wantTimed && SetUpTiming(count);
+#endif
         if (refreshCycle)
         {
             VkRefreshCycleDurationGOOGLE cycle{};
@@ -337,7 +363,7 @@ struct VulkanPresenter::Impl
                 busy = true;
             }
             const int64_t wakeNs = (wayland && item.atNs > 0 ? WaylandPresentAt(item.atNs) : item.atNs) - kPresentCostNs;
-            if (item.atNs > 0 && wakeNs > SteadyNs())
+            if (item.atNs > 0 && wakeNs > SteadyNs() && !timed.load(std::memory_order_relaxed))
                 TimeHelper::WaitUntilPrecise(std::chrono::steady_clock::time_point(std::chrono::nanoseconds(wakeNs)),
                                              [this] { return stop.load(); }, &wake);
             Present(item);
@@ -350,6 +376,15 @@ struct VulkanPresenter::Impl
     {
         VkSwapchainKHR chain;
         VkResult r;
+        // The timing queue: results taken off it before each present, so it never fills
+        // (VK_ERROR_PRESENT_TIMING_QUEUE_FULL_EXT: counted dropped below)
+        if (timed.load(std::memory_order_relaxed))
+        {
+            PollTiming();
+            std::lock_guard<std::mutex> lock(swapchainMutex);
+            if (swapchain)
+                Calibrate();
+        }
         {
             std::lock_guard<std::mutex> lock(swapchainMutex);
             chain = swapchain;
@@ -365,6 +400,30 @@ struct VulkanPresenter::Impl
             VkPresentTimeGOOGLE time{};
             VkPresentTimesInfoGOOGLE times{VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE};
             const void** tail = &info.pNext;
+#ifdef VK_EXT_present_timing
+            VkPresentId2KHR id2{VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR};
+            VkPresentTimingInfoEXT at{VK_STRUCTURE_TYPE_PRESENT_TIMING_INFO_EXT};
+            VkPresentTimingsInfoEXT ats{VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT};
+            const bool timedPresent = timed.load(std::memory_order_relaxed);
+            if (timedPresent)
+            {
+                id2.swapchainCount = 1;
+                id2.pPresentIds = &item.presentId;
+                at.targetTime = item.atNs > 0 ? static_cast<uint64_t>(item.atNs + offsetNs) : 0;  // 0: at once
+                at.timeDomainId = timeDomainId;
+                // The frame's time is a refresh's: the one nearest to it, not the first at or after it (a present a
+                // few microseconds past the mark would wait a whole refresh)
+                at.flags = VK_PRESENT_TIMING_INFO_PRESENT_AT_NEAREST_REFRESH_CYCLE_BIT_EXT;
+                at.presentStageQueries = timingStage;
+                at.targetTimeDomainPresentStage = timingStage;
+                ats.swapchainCount = 1;
+                ats.pTimingInfos = &at;
+                id2.pNext = &ats;
+                *tail = &id2;
+                tail = &ats.pNext;
+            }
+            else
+#endif
             if (waitForPresent)
             {
                 id.swapchainCount = 1;
@@ -372,7 +431,7 @@ struct VulkanPresenter::Impl
                 *tail = &id;
                 tail = &id.pNext;
             }
-            if (pastTiming)
+            if (pastTiming && !timed.load(std::memory_order_relaxed))
             {
                 time.presentID = static_cast<uint32_t>(item.presentId);
                 times.swapchainCount = 1;
@@ -397,7 +456,9 @@ struct VulkanPresenter::Impl
             trace.Write(item.trace, item.atNs, item.submittedNs, 0, 0);
             return;
         }
-        if (waitForPresent && exposed.load(std::memory_order_relaxed))
+        if (timed.load(std::memory_order_relaxed))
+            timing.push_back(item);  // its screen time from the past timings (PollTiming)
+        else if (waitForPresent && exposed.load(std::memory_order_relaxed))
         {
             // Returns when the image is on screen: that moment, to the wake's slack
             const VkResult w = waitForPresent(dev, chain, item.presentId, kAcquireTimeoutNs);
@@ -412,6 +473,13 @@ struct VulkanPresenter::Impl
     /// Present thread: the screen times display timing has for the presents waiting for them
     void PollTiming()
     {
+#ifdef VK_EXT_present_timing
+        if (timed.load(std::memory_order_relaxed))
+        {
+            PollPresentTiming();
+            return;
+        }
+#endif
         if (!pastTiming || timing.empty())
             return;
         std::vector<VkPastPresentationTimingGOOGLE> past;
@@ -475,6 +543,147 @@ struct VulkanPresenter::Impl
             refreshPeriodNs.store(step, std::memory_order_relaxed);
     }
 
+#ifdef VK_EXT_present_timing
+    /// MakeSwapchain: the timing queue as deep as the images, steady_clock's time domain on the swapchain. False: no
+    /// timed presents on it
+    bool SetUpTiming(uint32_t imageCount)
+    {
+        constexpr uint32_t kTimingQueue = 32;  ///< half a second of presents waiting for their times
+        if (!timingQueueSize)
+            return false;
+        if (const VkResult r = timingQueueSize(dev, swapchain, std::max<uint32_t>(kTimingQueue, imageCount + 1));
+            r != VK_SUCCESS)
+        {
+            timingWhy = "queue size " + std::to_string(r);
+            return false;
+        }
+        VkSwapchainTimeDomainPropertiesEXT domains{VK_STRUCTURE_TYPE_SWAPCHAIN_TIME_DOMAIN_PROPERTIES_EXT};
+        if (const VkResult r = timeDomains(dev, swapchain, &domains, nullptr); r != VK_SUCCESS || !domains.timeDomainCount)
+        {
+            timingWhy = "time domains " + std::to_string(r);
+            return false;
+        }
+        std::vector<VkTimeDomainKHR> kinds(domains.timeDomainCount);
+        std::vector<uint64_t> ids(domains.timeDomainCount);
+        domains.pTimeDomains = kinds.data();
+        domains.pTimeDomainIds = ids.data();
+        if (const VkResult r = timeDomains(dev, swapchain, &domains, nullptr); r != VK_SUCCESS && r != VK_INCOMPLETE)
+        {
+            timingWhy = "time domains " + std::to_string(r);
+            return false;
+        }
+        // CLOCK_MONOTONIC is steady_clock (libstdc++, libc++ on Linux); else the present stage's own clock, its
+        // offset to steady_clock calibrated (Mesa 26.2 on Wayland offers only that one)
+        for (uint32_t i = 0; i < domains.timeDomainCount; ++i)
+            if (kinds[i] == VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR)
+            {
+                timeDomainId = ids[i];
+                localDomain = false;
+                timingWhy = "on (CLOCK_MONOTONIC)";
+                return true;
+            }
+        for (uint32_t i = 0; i < domains.timeDomainCount; ++i)
+            if (kinds[i] == VK_TIME_DOMAIN_PRESENT_STAGE_LOCAL_EXT && calibrated)
+            {
+                timeDomainId = ids[i];
+                localDomain = true;
+                calibratedNs = 0;
+                if (!Calibrate())
+                {
+                    timingWhy = "no calibration of the present stage's clock";
+                    return false;
+                }
+                timingWhy = "on (present stage clock, offset " + std::to_string(offsetNs) + " ns)";
+                return true;
+            }
+        timingWhy = "no usable time domain:";
+        for (uint32_t i = 0; i < domains.timeDomainCount; ++i)
+            timingWhy += " " + std::to_string(static_cast<int>(kinds[i]));
+        return false;
+    }
+
+    /// The present stage's clock against steady_clock, again once a second (both drift little)
+    bool Calibrate()
+    {
+        if (!localDomain)
+            return true;
+        const int64_t now = SteadyNs();
+        if (calibratedNs != 0 && now - calibratedNs < 1'000'000'000)
+            return true;
+        VkSwapchainCalibratedTimestampInfoEXT stage{VK_STRUCTURE_TYPE_SWAPCHAIN_CALIBRATED_TIMESTAMP_INFO_EXT};
+        stage.swapchain = swapchain;
+        stage.presentStage = timingStage;
+        stage.timeDomainId = timeDomainId;
+        VkCalibratedTimestampInfoKHR infos[2]{{VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR, &stage,
+                                               VK_TIME_DOMAIN_PRESENT_STAGE_LOCAL_EXT},
+                                              {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR, nullptr,
+                                               VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR}};
+        uint64_t stamps[2]{};
+        uint64_t deviation = 0;
+        if (calibrated(dev, 2, infos, stamps, &deviation) != VK_SUCCESS)
+            return false;
+        const int64_t mono = static_cast<int64_t>(stamps[1]);
+        offsetNs = static_cast<int64_t>(stamps[0]) - mono;
+        // CLOCK_MONOTONIC against steady_clock as read here (equal on Linux; the difference kept if not)
+        offsetNs += mono - now;
+        calibratedNs = now;
+        return true;
+    }
+
+    /// Present thread: the screen times the swapchain has for the presents waiting for them
+    void PollPresentTiming()
+    {
+        if (timing.empty())
+            return;
+        constexpr uint32_t kMax = 16;
+        VkPresentStageTimeEXT stages[kMax]{};
+        VkPastPresentationTimingEXT past[kMax];
+        for (uint32_t i = 0; i < kMax; ++i)
+        {
+            past[i] = {VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_EXT};
+            past[i].presentStageCount = 1;
+            past[i].pPresentStages = &stages[i];
+        }
+        VkPastPresentationTimingInfoEXT info{VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_INFO_EXT};
+        VkPastPresentationTimingPropertiesEXT props{VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_PROPERTIES_EXT};
+        props.presentationTimingCount = kMax;
+        props.pPresentationTimings = past;
+        {
+            std::lock_guard<std::mutex> lock(swapchainMutex);
+            if (!swapchain)
+                return;
+            info.swapchain = swapchain;
+            const VkResult r = pastTimingExt(dev, &info, &props);
+            if (r != VK_SUCCESS && r != VK_INCOMPLETE)
+                return;
+        }
+        for (uint32_t i = 0; i < props.presentationTimingCount && i < kMax; ++i)
+        {
+            const VkPastPresentationTimingEXT& p = past[i];
+            if (!p.reportComplete)
+                continue;
+            int64_t screenNs = 0;
+            for (uint32_t k = 0; k < p.presentStageCount; ++k)
+                if (p.pPresentStages[k].stage == timingStage && p.pPresentStages[k].time != 0 &&
+                    (p.timeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR ||
+                     (localDomain && p.timeDomainId == timeDomainId)))
+                    screenNs = static_cast<int64_t>(p.pPresentStages[k].time) -
+                               (p.timeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR ? 0 : offsetNs);
+            while (!timing.empty() && timing.front().presentId <= p.presentId)
+            {
+                const Item item = timing.front();
+                timing.pop_front();
+                Record(item, item.presentId == p.presentId ? screenNs : 0);
+            }
+        }
+        while (timing.size() > 64)
+        {
+            Record(timing.front(), 0);
+            timing.pop_front();
+        }
+    }
+#endif
+
     /// Present thread, Wayland: when the present for a frame due at `atNs` goes: just after the refresh before the
     /// first one at or after `atNs` (the grid from the last screen time), so it shows at that one
     int64_t WaylandPresentAt(int64_t atNs) const
@@ -505,7 +714,9 @@ struct VulkanPresenter::Impl
             // Wayland: the present goes a refresh ahead (WaylandPresentAt); a late one does not widen the lead (more
             // lead only queued more: 8 or 20 ms ~16 ms after the time, 40 ms ~33 ms)
             lead.Shown(screenNs - own, item.number,
-                       wayland ? std::numeric_limits<int64_t>::max() : std::max(own, item.handedNs) - item.handedNs);
+                       wayland && !timed.load(std::memory_order_relaxed)
+                           ? std::numeric_limits<int64_t>::max()
+                           : std::max(own, item.handedNs) - item.handedNs);
             const int64_t period = refreshPeriodNs.load(std::memory_order_relaxed);
             beat.Shown(item.trace.picture, item.trace.targetNs, screenNs, period > 0 ? period : 16'666'667);
         }
@@ -551,6 +762,44 @@ std::unique_ptr<VulkanPresenter> VulkanPresenter::Create(QWindow* window, Vulkan
         impl.refreshCycle = reinterpret_cast<PFN_vkGetRefreshCycleDurationGOOGLE>(
             vkGetDeviceProcAddr(impl.dev, "vkGetRefreshCycleDurationGOOGLE"));
     }
+#ifdef VK_EXT_present_timing
+    if (device.Enabled(VK_EXT_PRESENT_TIMING_EXTENSION_NAME))
+    {
+        // The surface's: absolute times and a stage that tells the screen time (Mesa: first pixel out)
+        auto caps2 = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(
+            vkGetInstanceProcAddr(device.Instance(), "vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
+        VkPresentTimingSurfaceCapabilitiesEXT timingCaps{VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT};
+        VkSurfaceCapabilities2KHR caps{VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR, &timingCaps};
+        VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR};
+        surfaceInfo.surface = surface;
+        const VkResult capsResult = caps2 ? caps2(device.Physical(), &surfaceInfo, &caps) : VK_ERROR_EXTENSION_NOT_PRESENT;
+        impl.timingWhy = "surface " + std::to_string(capsResult) + " timing " +
+                         std::to_string(timingCaps.presentTimingSupported) + " absolute " +
+                         std::to_string(timingCaps.presentAtAbsoluteTimeSupported);
+        if (capsResult == VK_SUCCESS && timingCaps.presentTimingSupported && timingCaps.presentAtAbsoluteTimeSupported)
+        {
+            for (VkPresentStageFlagsEXT stage : {VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_VISIBLE_BIT_EXT,
+                                                 VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT})
+                if (timingCaps.presentStageQueries & stage)
+                {
+                    impl.timingStage = stage;
+                    break;
+                }
+            impl.pastTimingExt = reinterpret_cast<PFN_vkGetPastPresentationTimingEXT>(
+                vkGetDeviceProcAddr(impl.dev, "vkGetPastPresentationTimingEXT"));
+            impl.timingQueueSize = reinterpret_cast<PFN_vkSetSwapchainPresentTimingQueueSizeEXT>(
+                vkGetDeviceProcAddr(impl.dev, "vkSetSwapchainPresentTimingQueueSizeEXT"));
+            impl.timeDomains = reinterpret_cast<PFN_vkGetSwapchainTimeDomainPropertiesEXT>(
+                vkGetDeviceProcAddr(impl.dev, "vkGetSwapchainTimeDomainPropertiesEXT"));
+            if (device.Enabled(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME))
+                impl.calibrated = reinterpret_cast<PFN_vkGetCalibratedTimestampsKHR>(
+                    vkGetDeviceProcAddr(impl.dev, "vkGetCalibratedTimestampsKHR"));
+            impl.presentTiming = impl.timingStage && impl.pastTimingExt && impl.timingQueueSize && impl.timeDomains;
+            if (!impl.presentTiming)
+                impl.timingWhy = "stages " + std::to_string(timingCaps.presentStageQueries) + " or no functions";
+        }
+    }
+#endif
     const QSize pixels = (QSizeF(window->size()) * window->devicePixelRatio()).toSize();
     if (!impl.MakeSwapchain(std::max(1, pixels.width()), std::max(1, pixels.height())))
     {
@@ -721,6 +970,13 @@ int64_t VulkanPresenter::LeadNs(int64_t refreshPeriodNs) const
     const int64_t margin = impl.lead.Margin(refreshPeriodNs);
     if (!impl.wayland)
         return margin;
+    if (impl.timed.load(std::memory_order_relaxed))
+    {
+        // mutter applies a timed commit in the frame whose dispatch it reaches first, the dispatch up to a refresh
+        // before that frame's vblank: the present a whole refresh ahead on top of the drawing's margin (closer, the
+        // frame lands a refresh late, or two commits meet in one frame and the first is discarded)
+        return margin + (refreshPeriodNs > 0 ? refreshPeriodNs : kWaylandAheadNs + kAfterRefreshNs);
+    }
     // Drawn before its present goes, up to a refresh before the frame's time (WaylandPresentAt)
     return std::max(margin, refreshPeriodNs > 0 ? refreshPeriodNs : kWaylandAheadNs + kAfterRefreshNs);
 }
@@ -789,7 +1045,7 @@ NativePresenter::Stats VulkanPresenter::GetStats() const
         s.soundOffsetP99 = beat.offsetP99Ms;
     }
     s.late = impl.lead.Late();
-    s.leadMs = static_cast<double>(impl.wayland ? LeadNs(impl.lead.PeriodNs()) : impl.lead.MarginNs()) / 1e6;
+    s.leadMs = static_cast<double>(LeadNs(impl.lead.PeriodNs())) / 1e6;
     presentstats::Fill(s, std::move(errors), std::move(waits), std::move(acquires));
     const bool vrr = !impl.Synced();
     const int64_t period = impl.refreshPeriodNs.load(std::memory_order_relaxed);
@@ -813,16 +1069,18 @@ std::string VulkanPresenter::Describe() const
     std::snprintf(line, sizeof line,
                   "Vulkan swapchain %s, %zu images %ux%u (policy %s; feedback %s): %llu presented, %llu shown, %llu "
                   "dropped, %llu a refresh late (lead %.1f ms); error p50 %.2f p99 %.2f max %.2f ms; acquire p50 %.2f "
-                  "max %.2f ms; display %.2f Hz%s%s",
+                  "max %.2f ms; display %.2f Hz%s%s%s%s",
                   ModeName(impl.mode), impl.images.size(), impl.extent.width, impl.extent.height,
                   PresentPolicyName(impl.Policy()),
-                  impl.waitForPresent ? "VK_KHR_present_wait"
+                  impl.timed.load(std::memory_order_relaxed) ? "VK_EXT_present_timing"
+                  : impl.waitForPresent                      ? "VK_KHR_present_wait"
                   : impl.pastTiming   ? "VK_GOOGLE_display_timing"
                                       : "none",
                   static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
                   static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs,
                   s.errorP50, s.errorP99, s.errorMax, s.drawableWaitP50, s.drawableWaitMax, s.maxRefreshHz,
-                  s.visible ? "" : "; occluded", Lost() ? "; lost" : "");
+                  s.visible ? "" : "; occluded", Lost() ? "; lost" : "",
+                  impl.timingWhy.empty() ? "" : "; present timing: ", impl.timingWhy.c_str());
     return line;
 }
 }  // namespace gpu

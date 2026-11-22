@@ -23,6 +23,7 @@
 #include "widgets/crtrenderer.h"
 #ifdef UNREAL_VULKAN
 #include "gpu/vulkandevice.h"
+#include "sharedvulkandevice.h"
 #endif
 
 namespace
@@ -54,7 +55,7 @@ struct Devices
 {
     GLContext context;
     std::unique_ptr<gpu::GlDevice> gl;
-    std::unique_ptr<gpu::Device> vk;
+    gpu::Device* vk = nullptr;  ///< the run's (sharedvulkandevice.h)
     std::string skip;
 
     Devices()
@@ -75,12 +76,12 @@ struct Devices
         // Vulkan of the same name, not a hardware GPU (another rasteriser's ties, another compiler's maths)
         if (gl && gl->Describe().find("llvmpipe") != std::string::npos)
             setup.preferredDevice = "llvmpipe";
-        vk = gpu::VulkanDevice::Create(setup, error);
+        vk = testgpu::SharedVulkanDevice(error, setup.preferredDevice);
         if (!vk)
             skip = "no Vulkan device: " + error;
 #endif
     }
-    gpu::Device* Both(int i) { return i == 0 ? static_cast<gpu::Device*>(gl.get()) : vk.get(); }
+    gpu::Device* Both(int i) { return i == 0 ? static_cast<gpu::Device*>(gl.get()) : vk; }
 };
 
 /// A Spectrum-like frame: a blue border, white paper with black ink stripes, a red block; rows top first

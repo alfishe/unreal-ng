@@ -1,11 +1,12 @@
 #pragma once
 /// @file sharedvulkandevice.h
-/// @brief One Vulkan device for a test suite: making one (instance, device, the shader compiler) takes ~150 ms, a test
-/// on it a few. A test leaves nothing on it (its textures and programs go with the test); the suite releases it in
-/// TearDownTestSuite.
+/// @brief One Vulkan device per GPU asked for, for the whole test run: making one (instance, device, the shader
+/// compiler) takes ~150-200 ms, a test on it a few, and the programs it compiled stay for the next suite. A test leaves
+/// nothing on it (its textures and programs go with the test); main() releases them all after the run.
 
 #ifdef UNREAL_VULKAN
 
+#include <map>
 #include <memory>
 #include <string>
 
@@ -17,35 +18,34 @@ struct SharedVulkan
 {
     std::unique_ptr<gpu::Device> device;
     std::string error;
-    bool asked = false;
 };
 
-inline SharedVulkan& Shared()
+inline std::map<std::string, SharedVulkan>& Shared()
 {
-    static SharedVulkan shared;
+    static std::map<std::string, SharedVulkan> shared;
     return shared;
 }
 
-/// The suite's device, made on the first ask; null with `error` when there is no Vulkan 1.3 GPU (asked once a suite)
-inline gpu::Device* SharedVulkanDevice(std::string& error)
+/// The run's device for `preferred` (part of a GPU name, empty: the default choice), made on the first ask; null with
+/// `error` when there is none (asked once a run)
+inline gpu::Device* SharedVulkanDevice(std::string& error, const std::string& preferred = {})
 {
-    SharedVulkan& shared = Shared();
-    if (!shared.asked)
+    auto [it, made] = Shared().try_emplace(preferred);
+    SharedVulkan& shared = it->second;
+    if (made)
     {
-        shared.asked = true;
-        shared.device = gpu::VulkanDevice::Create({}, shared.error);
+        gpu::VulkanDevice::Setup setup;
+        setup.preferredDevice = preferred;
+        shared.device = gpu::VulkanDevice::Create(setup, shared.error);
     }
     error = shared.error;
     return shared.device.get();
 }
 
-/// Its end (a suite's TearDownTestSuite): the next ask makes one again
-inline void ReleaseSharedVulkanDevice()
+/// The end of the run (main, before the QApplication goes)
+inline void ReleaseSharedVulkanDevices()
 {
-    SharedVulkan& shared = Shared();
-    shared.device.reset();
-    shared.error.clear();
-    shared.asked = false;
+    Shared().clear();
 }
 }  // namespace testgpu
 

@@ -44,7 +44,7 @@ protected:
         {
 #ifdef UNREAL_VULKAN
             std::string error;
-            _device = testgpu::SharedVulkanDevice(error);  // the suite's: one device made, not one a test
+            _device = testgpu::SharedVulkanDevice(error);  // the run's: one device made, not one a test
             if (!_device)
                 GTEST_SKIP() << "no Vulkan: " << error;
 #else
@@ -56,13 +56,6 @@ protected:
         ASSERT_TRUE(_target);
         if (!_times.Init(_device))
             GTEST_SKIP() << "no GPU timestamps here";
-    }
-
-    static void TearDownTestSuite()
-    {
-#ifdef UNREAL_VULKAN
-        testgpu::ReleaseSharedVulkanDevice();
-#endif
     }
 
     void TearDown() override

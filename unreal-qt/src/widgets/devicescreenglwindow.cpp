@@ -2224,6 +2224,11 @@ bool DeviceScreenGLWindow::createVulkanDevice()
         setup.surface = _vkSurface;
         setup.optionalExtensions = {VK_KHR_PRESENT_ID_EXTENSION_NAME, VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
                                     VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME};
+#ifdef VK_EXT_present_timing
+        for (const char* name : {VK_EXT_PRESENT_TIMING_EXTENSION_NAME, VK_KHR_PRESENT_ID_2_EXTENSION_NAME,
+                                 VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME})
+            setup.optionalExtensions.push_back(name);
+#endif
         device = gpu::VulkanDevice::Create(setup, error);
     }
     if (!device)

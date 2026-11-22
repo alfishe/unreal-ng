@@ -137,7 +137,7 @@ protected:
         {
 #ifdef UNREAL_VULKAN
             std::string error;
-            _device = testgpu::SharedVulkanDevice(error);  // the suite's: one device made, not one a test
+            _device = testgpu::SharedVulkanDevice(error);  // the run's: one device made, not one a test
             if (!_device)
                 GTEST_SKIP() << "no Vulkan: " << error;
 #else
@@ -146,13 +146,6 @@ protected:
         }
         ASSERT_TRUE(_device);
         ASSERT_TRUE(gpu.Create(_device)) << gpu.Log().toStdString();
-    }
-
-    static void TearDownTestSuite()
-    {
-#ifdef UNREAL_VULKAN
-        testgpu::ReleaseSharedVulkanDevice();
-#endif
     }
 
     void TearDown() override
@@ -170,7 +163,7 @@ private:
     QOpenGLContext _context;
     QOffscreenSurface _surface;
     std::unique_ptr<gpu::Device> _gl;  ///< GL: the test's own (its context)
-    gpu::Device* _device = nullptr;   ///< the device the test draws on (Vulkan: the suite's)
+    gpu::Device* _device = nullptr;   ///< the device the test draws on (Vulkan: the run's)
 };
 }  // namespace
 
