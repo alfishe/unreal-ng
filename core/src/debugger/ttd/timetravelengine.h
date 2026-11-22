@@ -91,6 +91,12 @@ struct TTDSegmentInfo
     bool readBack = false;           ///< in memory because a restore read it back (the read-back cache)
     uint64_t readBackBytes = 0;      ///< read back: the payload bytes it brought in
     mutable uint64_t lastUse = 0;    ///< read back: the engine's use clock at its last use (the cache's LRU order)
+    /// The pieces whose content its baseline changed from the checkpoint before (region << 16 | piece, ascending):
+    /// what a comparison of the two versions would show, known without either in memory (the timeline over evicted
+    /// segments read each one back, P1.S10 follow-up 2026-11-21). Live captures only: false for a loaded, imported
+    /// or forked baseline and for the session's first
+    bool baselineDiffKnown = false;
+    std::vector<uint32_t> baselineDiff;
 };
 
 /// One piece of a region taking a new version (TimeTravelEngine::ImportCheckpoint)
@@ -619,6 +625,18 @@ public:
         const TTDEngineCheckpoint::RegionRefs* r = RefsOf(index, region);
         return r ? r->changeCount : 0;
     }
+    /// Those pieces without their versions, from the change records alone: no read back of an evicted segment
+    std::vector<uint32_t> ChangedPieceIndices(size_t index, uint32_t region) const
+    {
+        std::vector<uint32_t> pieces;
+        if (const TTDEngineCheckpoint::RegionRefs* r = HasCheckpoint(index) ? RefsOf(index, region) : nullptr)
+            for (uint32_t k = 0; k < r->changeCount; ++k)
+                pieces.push_back(ChangeAt(r->firstChange + k).piece);
+        return pieces;
+    }
+    /// The content changes of the baseline at checkpoint @p index of the active line (TTDSegmentInfo::baselineDiff),
+    /// or null when @p index is no baseline or its changes are not known
+    const std::vector<uint32_t>* BaselineDiff(size_t index) const;
     /// Those pieces with their new versions (PieceStore().Decode reads one)
     std::vector<std::pair<uint32_t, TTDPieceId>> ChangesAt(size_t index, uint32_t region) const
     {
@@ -848,6 +866,11 @@ private:
         TTDWriteIndex writes;
         /// A deque: no growth reserve (a vector held up to twice the records), and records never move
         std::deque<TTDEngineCheckpoint> checkpoints;
+        /// HeapBreakdown's sums over checkpoints[0, heapCounted): what is appended is added at the next call, what
+        /// is dropped is taken out as it goes (UncountCheckpoints), so a breakdown does not walk the whole history
+        mutable size_t heapCounted = 0;
+        mutable size_t heapRegions = 0;   ///< each checkpoint's region references, as allocated
+        mutable size_t heapDevices = 0;   ///< each checkpoint's unclaimed device list, as allocated
         std::vector<TTDConfigEntry> configs;
         std::vector<std::pair<uint32_t, TTDMediaVersion>> pendingMedia;   ///< slot, version: for the next checkpoint
         std::vector<TTDMediaSlot> mediaSlots;   ///< the slots and their version changes along this lineage
@@ -859,6 +882,8 @@ private:
     uint32_t _headLine = 0;   ///< the line the capture head was built for
     /// Release a line's change records and full tables (EndSession, ReleaseLine)
     void ReleaseLineData(BranchLine& line);
+    /// Takes checkpoints[from, to) of @p line out of its heap sums, before they are dropped
+    static void UncountCheckpoints(BranchLine& line, size_t from, size_t to);
     /// The active line's journal modes pass to @p to: recording stays recording (ForkAt, SwitchLine)
     void HandOverJournals(BranchLine& from, BranchLine& to);
     /// The fork checkpoint's tables for @p line from the active line's checkpoint @p index (ForkAt, ImportForkLine)

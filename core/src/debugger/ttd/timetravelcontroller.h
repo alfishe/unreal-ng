@@ -1279,6 +1279,9 @@ public:
 
     /// @brief Read-only access to the coverage index (control thread).
     inline const TTDCoverageIndex& GetCoverageIndex() const { return _line->coverageIndex; }
+    /// The coverage records of a loaded file in order (TTDSessionLoadReport::coverageParts) as one index
+    static std::vector<uint8_t> JoinCoverageParts(std::vector<std::pair<uint64_t, std::vector<uint8_t>>>& parts,
+                                                  size_t* unreadParts = nullptr);
 
     /// @brief Is per-frame coverage collection enabled for new sessions?
     inline bool IsCoverageIndexEnabled() const { return _enableCoverageIndex; }
@@ -2252,7 +2255,8 @@ private:
         return lines;
     }
     /// A line's coverage index as a holder stream's bytes (empty: nothing sealed)
-    std::vector<uint8_t> CoverageBytes(const ControllerLine& line) const;
+    /// The line's coverage index serialized, whole or (a recording folder's part) from @p fromFrame on
+    std::vector<uint8_t> CoverageBytes(const ControllerLine& line, uint64_t fromFrame = 0) const;
     /// Every line by branch id (the trunk first) and the one read and written now
     std::vector<std::unique_ptr<ControllerLine>> _lines = MakeTrunkLine();
     ControllerLine* _line = _lines.front().get();
@@ -2471,6 +2475,21 @@ private:
     /// Branches in the folder (storage.md §4): a file holds one line; only the active one records
     uint32_t _shadowWriterLine = 0;              ///< the engine line _shadowWriter writes
     std::set<uint32_t> _shadowLinesWithFiles;    ///< lines with a file in the folder
+    /// Where the last file finished at its line's end (a pause) left the journals: the line's next file opens with
+    /// the records after it, recorded before its first checkpoint (StartLineFiles)
+    struct ShadowJournalEnds
+    {
+        uint32_t line = UINT32_MAX;
+        size_t checkpoints = 0;   ///< the line's checkpoint count at the finish
+        TTDSessionSaveParams::JournalStart ends;
+    };
+    ShadowJournalEnds _shadowJournalEnds;
+    /// The frame the folder's next coverage part starts at: each pause writes the trunk's index from here, not whole
+    /// (90 MB at 240,000 frames, written at every pause before 2026-11-21). Lowered by a cut of the index, 0 when a
+    /// file that held a part may be gone
+    uint64_t _shadowCoverageFrom = 0;
+    /// Where the part written by the last FinishShadowFiles started: a resume that writes that file again loses it
+    uint64_t _shadowLastCoveragePartFrom = 0;
     TTDSessionSaveParams _shadowParams;          ///< the folder's files: identity, holder streams, branch records
     bool _shadowFilesStopped = false;            ///< writing failed: no new writer until the session's next folder
     uint64_t _shadowFolderSerial = UINT64_MAX;   ///< the engine's segments begun when the folder was made
@@ -2499,7 +2518,8 @@ private:
     /// The controller's holder streams of a session file (facts, coverage,
     /// bookmarks) as they are now. @p declareAll: coverage too when empty (a
     /// recording's files declare the same streams in every segment)
-    std::vector<TTDHolderStream> SessionHolderStreams(bool declareAll) const;
+    /// @p declareAll: a recording folder's (every id declared, the coverage as a part from @p coverageFrom)
+    std::vector<TTDHolderStream> SessionHolderStreams(bool declareAll, uint64_t coverageFrom = 0) const;
 
 public:
     /// Frame-boundary stream 0 of the shadow engine: width u16, height u16,
