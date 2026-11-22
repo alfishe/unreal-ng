@@ -381,9 +381,11 @@ struct VulkanPresenter::Impl
         if (timed.load(std::memory_order_relaxed))
         {
             PollTiming();
+#ifdef VK_EXT_present_timing
             std::lock_guard<std::mutex> lock(swapchainMutex);
             if (swapchain)
                 Calibrate();
+#endif
         }
         {
             std::lock_guard<std::mutex> lock(swapchainMutex);

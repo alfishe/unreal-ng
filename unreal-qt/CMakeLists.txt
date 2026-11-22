@@ -228,8 +228,9 @@ if (NOT ENABLE_RECORDING)
 endif()
 
 # The Vulkan renderer (src/gpu/vulkan*, docs/inprogress/2026-11-19-vulkan-renderer): the Vulkan loader and headers
-# and glslang (macOS: Homebrew vulkan-loader, molten-vk, glslang; Linux: libvulkan-dev, glslang-dev). Without them
-# the screen renders with GL only
+# and glslang (macOS: Homebrew vulkan-loader, molten-vk, glslang; Linux: libvulkan-dev, glslang-dev, glslang-tools:
+# Ubuntu 24.04's glslang CMake config stops the configure when the glslang binary is missing). Without them the
+# screen renders with GL only. Ubuntu 24.04's headers (1.3.275) build it without VK_EXT_present_timing
 # Linux only by default (the GL drivers there are the weak ones); macOS / Windows: -DUNREAL_VULKAN=ON
 set(UNREAL_VULKAN_DEFAULT OFF)
 if (UNIX AND NOT APPLE)

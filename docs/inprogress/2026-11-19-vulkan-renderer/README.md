@@ -163,6 +163,43 @@ Found on the way: gcc evaluated `Made(create(..., &surface), surface, ...)` righ
 it was made: no Vulkan window on Linux, no reason given); the GPU probe refused the Vulkan renderer when the
 display's GL was a software one.
 
+### 2.6 Steam Deck
+
+SteamOS 3.10, RADV VANGOGH (Mesa 26.2.0-devel, Vulkan 1.4.350; radeonsi 26.1.2 for GL), gamescope 3.17 Game Mode,
+the app through Xwayland (`QT_QPA_PLATFORM=xcb`). RADV offers `VK_EXT_present_timing`, `VK_KHR_present_id2`,
+`VK_KHR_present_wait(2)` and calibrated timestamps, but gamescope's WSI layer (`VkLayer_FROG_gamescope_wsi`) gives the
+surface no present timing (`surface 0 timing 0 absolute 0`): the Vulkan path is FIFO with `VK_KHR_present_wait`.
+
+The installed bundle (the AppImage of §2.7 with 1.4.341 headers) started from Steam, the renderer and CRT setting
+switched through the WebAPI, Across the Edge reloaded before each case, 5 s settle, 20 s measured, 2026-11-22
+(error: screen time minus the time asked; CPU: the process, % of one core; power: the APU's `power1_average`):
+
+| Case | GPU picture pass p50 | Error p50 / p99 | A refresh late | CPU | APU power |
+|------|----------------------|-----------------|----------------|-----|-----------|
+| GL, no CRT | 0.13 ms | 9.7 / 17.5 ms | 21 of 4660 | 25 % | 3.4 W |
+| Vulkan, no CRT | 0.13 ms | 9.9 / 18.5 ms | 47 of 1228 | 31 % | 3.3 W |
+| GL, crt-lottes | 2.96 ms | 9.3 / 17.4 ms | 15 of 1232 | 28 % | 4.0 W |
+| Vulkan, crt-lottes | 2.90 ms | 12.5 / 20.9 ms | 230 of 1226 | 32 % | 3.5 W |
+| GL, preset crt-royale | 1.75 ms | 9.6 / 17.3 ms | 19 of 1235 | 27 % | 3.9 W |
+| Vulkan, preset crt-royale | 1.96 ms | 11.6 / 20.1 ms | 171 of 1228 | 32 % | 3.9 W |
+
+The GPU work is the same on both (radeonsi is a good GL driver: the reason for Vulkan on Linux does not hold here),
+Vulkan costs 3-6 % of a core more and shows up to 19 % of frames a refresh late against 1-2 % for GL: the present
+lead is not fitted to gamescope's latch. The ~9.5 ms error both share is gamescope's composition. The Deck stays on GL.
+
+### 2.7 Builds
+
+- CI and the release (`ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04`, the DEB, the AppImage, the Deck bundle) have no
+  `libvulkan-dev` / `glslang-dev`: they build without the Vulkan renderer, and nothing checks it there. Kept so: the
+  measured gain is on Wayland with Mesa 26.2+ (§2.5), not on the Deck. Shipping it means the packages, `libvulkan1` in
+  the DEB's dependencies, and headers newer than Ubuntu 24.04's.
+- Ubuntu 24.04's headers (1.3.275) have no `VK_EXT_present_timing`: the renderer builds without it (checked with
+  gcc 13 and 15 against Vulkan-Headers 1.3.275; a call outside its `#ifdef` broke that build, fixed).
+- Ubuntu 24.04's glslang CMake config stops the configure when `/usr/bin/glslang` is missing: `glslang-tools` too.
+- A measurement AppImage: the CI image plus `libvulkan-dev glslang-dev glslang-tools`, configured with
+  `-DVulkan_INCLUDE_DIR=<Vulkan-Headers 1.4.341>/include`, then `tools/package-appimage.sh` and
+  `install/steamdeck/package.sh` as in [.recipe/testing/steamdeck.md](../../../.recipe/testing/steamdeck.md).
+
 ## 3. Plan
 
 1. The layer: `gpu::Device` API, `VkDevice` (glslang, reflection, pipelines per state, a frame's command buffer,
@@ -173,3 +210,8 @@ display's GL was a software one.
 5. Settings / automation: `renderer` gl | vulkan on every plane (the window display settings: `renderer`, `renderers`
    offered, `renderer_active`; `video.present` carries `renderer`), View > Renderer (a build with Vulkan), kept in
    `View/Renderer`; `UNREAL_RENDERER` wins at start. Done 2026-11-20.
+6. Wayland present timing (`VK_EXT_present_timing`, §2.5). Done 2026-11-21. Deck measured (§2.6), builds checked
+   (§2.7) 2026-11-22.
+
+Open: the Vulkan lead under gamescope (§2.6, refresh-late frames); release packages with Vulkan only when a measured
+gain justifies them (§2.7).

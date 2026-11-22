@@ -329,7 +329,9 @@ TEST_P(SmoothMotionGPU_Test, TheWorstContentIsTheCpusBits)
             EXPECT_EQ(gpu.LastLayerCounts().vectors, static_cast<int>(layers.all.size()));
         }
         if (!layered)
+        {
             EXPECT_EQ(layers.all.size(), LayerFlow::kMaxVectors) << "the scene reaches the cap";
+        }
     }
 }
 
