@@ -285,10 +285,15 @@ public:
 
     void SetPolicy(PresentPolicy policy) override
     {
+        // The same policy again (the window sets it with every settings change): what CheckVrr found stays
+        const bool changed = policy != Policy();
         _policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(_statsMutex);
-        _engaged = true;
-        _vrrNote.clear();
+        if (changed)
+        {
+            _engaged = true;
+            _vrrNote.clear();
+        }
         ApplyMode();
         _decidedNs = 0;  // _VARIABLE_REFRESH follows at the next frame
     }

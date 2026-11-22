@@ -354,13 +354,13 @@ void main() {
         Keep("custom", backend, pictures[backend], w, h);
     }
     const auto [worst, count] = Diff(pictures[0], pictures[1]);
-    size_t far = 0;
+    size_t apart = 0;  // not `far`: a macro of the Windows headers
     for (size_t i = 0; i < pictures[0].size(); ++i)
-        far += std::abs(int(pictures[0][i]) - int(pictures[1][i])) > 2;
-    std::printf("custom shader: %zu bytes differ, %zu by more than 2, at most by %d\n", count, far, worst);
+        apart += std::abs(int(pictures[0][i]) - int(pictures[1][i])) > 2;
+    std::printf("custom shader: %zu bytes differ, %zu by more than 2, at most by %d\n", count, apart, worst);
     // pow / smoothstep of two compilers: a step; the mask's step(0.5, fract(x / 3)) on a tie may fall either way on
     // another rasteriser (a few pixels a mask strength apart)
-    EXPECT_LT(far, pictures[0].size() / 10000);
+    EXPECT_LT(apart, pictures[0].size() / 10000);
     EXPECT_LT(count, pictures[0].size() / 100);
 }
 

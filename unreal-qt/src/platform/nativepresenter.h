@@ -59,6 +59,9 @@ public:
         /// say; the window derives it from the refresh range)
         std::string vrrSupport;
         std::string vrrReason;
+        /// Policy auto: the presenter is still measuring whether the display follows the frames (vrrprobe.h). The
+        /// window holds what a wrong guess would make it undo (a display mode switch) until it knows
+        bool vrrPending = false;
     };
 
     /// Where a present came from (steady clock, ns; 0 = unknown): UNREAL_PRESENT_TRACE's columns, and the picture and

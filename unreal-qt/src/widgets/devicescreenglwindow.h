@@ -329,6 +329,9 @@ private:
     bool _smoothAuto = false;                             ///< ScreenFrames::smooth is auto
     VideoSync _sync = VideoSync::Off;                     ///< its step in effect (Off while not auto)
     bool _syncVrr = false;                                ///< the presenter's VRR the display rate step last saw
+    bool _syncVrrPending = false;                         ///< ... and its VRR check still running
+    /// Does the sync timer watch the presenter: Auto picks its step by it, display_rate match its mode switch
+    bool syncWatched() const { return _smoothAuto || _displayRate == DisplayRate::Match; }
     std::string _syncReason;                              ///< WindowPresentStats::syncReason
     QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present

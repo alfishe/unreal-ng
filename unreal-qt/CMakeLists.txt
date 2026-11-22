@@ -970,6 +970,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presenterrecovery_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presenterrecovery.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentstats_test.cpp"
+        # The presenters' VRR verdict: from the screen's refreshes against the presents alone
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/vrrprobe_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vrrprobe.h"
         # The Linux presenter's decisions (VRR, swap mode, timed swap, vblank grid, RandR mode), on every platform
         # The files a drag carries: Finder's file references Qt leaves empty, a stale volume id, a refusal that says why
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/droppaths_test.cpp"

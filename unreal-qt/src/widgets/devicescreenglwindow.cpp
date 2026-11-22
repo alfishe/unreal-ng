@@ -1116,7 +1116,7 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
     _uploadedSerial = 0;
     updateDisplayRate();
     updateVideoSync();
-    if (_smoothAuto)
+    if (syncWatched())
         _syncTimer->start();
     else
         _syncTimer->stop();
@@ -1124,34 +1124,37 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
 
 void DeviceScreenGLWindow::updateVideoSync()
 {
-    if (!_smoothAuto)
-    {
-        _sync = VideoSync::Off;
-        _syncReason.clear();
-        return;
-    }
     bool vrr = false;
+    bool vrrPending = false;
     double displayHz = 0.0;
     double presenterMinHz = 0.0;
     if (_presenter)
     {
         const NativePresenter::Stats s = _presenter->GetStats();
         vrr = s.vrr;
+        vrrPending = s.vrrPending;
         displayHz = s.maxRefreshHz;
         presenterMinHz = s.minRefreshHz;
+    }
+    // The display rate step follows what the presenter sees now, whatever smooth motion is set to: a VRR that
+    // engaged or left, a VRR check that came to its answer (the mode switch waited for it)
+    if ((vrr != _syncVrr || vrrPending != _syncVrrPending) && _displayRate == DisplayRate::Match)
+    {
+        _syncVrr = vrr;
+        _syncVrrPending = vrrPending;
+        updateDisplayRate();
+    }
+    if (!_smoothAuto)
+    {
+        _sync = VideoSync::Off;
+        _syncReason.clear();
+        return;
     }
     if (_displayState == "matched" && _displayHz > 0.0)
         displayHz = _displayHz;
     if (displayHz <= 0.0 && screen())
         displayHz = screen()->refreshRate();
     const double machineHz = _frameRate.Hz();
-    // The display rate step follows what the presenter sees now: a VRR it reported before the vblanks showed a fixed
-    // grid left "VRR" as the display rate's reason for good
-    if (vrr != _syncVrr && _displayRate == DisplayRate::Match)
-    {
-        _syncVrr = vrr;
-        updateDisplayRate();
-    }
     const VideoSync sync = PickVideoSync(vrr, displayHz, machineHz, _sync);
 
     // Why the steps before the one in effect are not
@@ -1215,8 +1218,20 @@ void DeviceScreenGLWindow::updateDisplayRate()
     }
     if (QGuiApplication::applicationState() != Qt::ApplicationActive)
         return restoreDisplayRate("the emulator is not the active application");
-    if (_presenter && _presenter->GetStats().vrr)
+    const NativePresenter::Stats presenterStats = _presenter ? _presenter->GetStats() : NativePresenter::Stats{};
+    if (presenterStats.vrr)
         return restoreDisplayRate("the display shows each frame at its own time (VRR)");
+    if (presenterStats.vrrPending)
+    {
+        // Not known yet whether the display follows the frames: a mode switched now would be switched back a second
+        // later on a VRR display (two blankings). updateVideoSync comes again when the presenter knows
+        if (!_displaySwitch || !_displaySwitch->Switched())
+        {
+            _displayState = "unchanged";
+            _displayReason = "the display's VRR check is not done yet";
+        }
+        return;
+    }
     const double machineHz = _frameRate.Hz();
     if (machineHz <= 0.0)
     {
@@ -1330,7 +1345,7 @@ void DeviceScreenGLWindow::refresh()
     // A source without serials (the legacy buffer, a ZX-Poly display) has a new frame now
     _textureNeedsUpdate = true;
     _idleRefreshes = 0;
-    if (_smoothAuto && !_syncTimer->isActive() && isExposed())
+    if (syncWatched() && !_syncTimer->isActive() && isExposed())
         _syncTimer->start();
     if (_native)
     {
@@ -2619,7 +2634,7 @@ bool DeviceScreenGLWindow::event(QEvent* event)
         case QEvent::Expose:
             if (isExposed())
             {
-                if (_smoothAuto && !_syncTimer->isActive() && !_isShuttingDown)
+                if (syncWatched() && !_syncTimer->isActive() && !_isShuttingDown)
                     _syncTimer->start();
                 if (_native)
                     renderNative(true);
