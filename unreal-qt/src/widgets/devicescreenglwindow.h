@@ -404,6 +404,7 @@ private:
     uint64_t _smoothStarvedSerial = 0;  ///< ... the last one counted
     /// The presenter goes (made anew, a fall back): its counters start from 0 again, so what was kept by them does too
     void dropPresenter();
+    bool pictureNotPresented(int64_t now, bool failHook);
     int64_t _smoothRefreshNs = 0;  ///< native way on a refresh grid: the refresh drawn for (0: no grid)
     uint64_t _smoothPictures = 0;  ///< smooth motion's pictures presented: their numbers for the presenter's beat count
     int64_t _smoothPeriodNs = 0;

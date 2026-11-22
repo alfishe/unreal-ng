@@ -99,6 +99,9 @@ public:
     /// The picture drawn: shown at `atNs` (steady clock; at once when it is 0 or past). GL rows count from the bottom,
     /// the presenter turns them over
     virtual void PresentFrame(int64_t atNs, const TraceInfo& trace) = 0;
+    /// The last PresentFrame did not hand its picture on (Vulkan: no swapchain image came, the present thread holds
+    /// them all): the window counts it as a picture not presented (PresenterRecovery)
+    virtual bool PresentFailed() const { return false; }
 
     /// [VIDEO] PresentPolicy, from any thread; the next present follows it
     virtual void SetPolicy(PresentPolicy policy) = 0;

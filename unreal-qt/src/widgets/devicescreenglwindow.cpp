@@ -598,7 +598,13 @@ void DeviceScreenGLWindow::renderNative(bool force)
             }
             _presenter->PresentFrame(at, trace);
             _frameTarget = nullptr;
-            if (const int64_t failedNs = _recovery.Presented(now); failedNs > 0)
+            // Drawn and not handed on (Vulkan: no image to present into): the same way as no framebuffer
+            if (_presenter->PresentFailed())
+            {
+                if (pictureNotPresented(now, false))
+                    return;
+            }
+            else if (const int64_t failedNs = _recovery.Presented(now); failedNs > 0)
                 qInfo().noquote() << "DeviceScreenGLWindow: presenting again after" << failedNs / 1'000'000 << "ms,"
                                   << _recovery.Failures() << "pictures not presented";
         }
@@ -608,36 +614,8 @@ void DeviceScreenGLWindow::renderNative(bool force)
         }
         else
         {
-            const int64_t failingSinceNs = _recovery.FailingSinceNs();
-            const bool lost = _presenter->Lost();
-            const std::string failure = failHook ? "UNREAL_TEST_PRESENT_FAIL" : _presenter->LastFailure();
-            switch (_recovery.BeginFailed(now, lost))
-            {
-                case PresenterRecovery::BeginFailure::First:
-                    // Told: a picture not presented is a black or frozen window
-                    qWarning().noquote() << "DeviceScreenGLWindow: picture not presented:"
-                                         << QString::fromStdString(failure);
-                    break;
-                case PresenterRecovery::BeginFailure::Wait:
-                    break;
-                case PresenterRecovery::BeginFailure::Restart:
-                    // No framebuffer for a while (seen once on .101 after a snapshot load: the presenter thread idle,
-                    // every BeginFrame failing, the window black until a restart), or the device gone: a new
-                    // presenter, made on the next paint
-                    qWarning().noquote() << "DeviceScreenGLWindow: no picture presented"
-                                         << (lost ? QStringLiteral("(the device is gone)")
-                                                  : QStringLiteral("for %1 ms").arg((now - failingSinceNs) / 1'000'000))
-                                         << "(" << _recovery.Failures() << "tries):" << QString::fromStdString(failure)
-                                         << "; the native presenter is made anew";
-                    dropPresenter();
-                    update();  // the timer's present at once makes it
-                    return;
-                case PresenterRecovery::BeginFailure::FallBack:
-                    _presenterFallback = "stopped presenting " + std::to_string(PresenterRecovery::kMaxRestarts + 1) +
-                                         " times within a minute (" + failure + ")";
-                    fallBackToGl(_presenterFallback);
-                    return;
-            }
+            if (pictureNotPresented(now, failHook))
+                return;
         }
     }
 
@@ -707,6 +685,53 @@ void DeviceScreenGLWindow::chooseLinuxPresenter()
     }
 }
 #endif
+
+/// A picture was not presented (no framebuffer, or the present failed): told once, waited for, then a new presenter,
+/// then GL. @return the presenter is gone (renderNative ends)
+bool DeviceScreenGLWindow::pictureNotPresented(int64_t now, bool failHook)
+{
+    const int64_t failingSinceNs = _recovery.FailingSinceNs();
+    const bool lost = _presenter->Lost();
+    const std::string failure = failHook ? "UNREAL_TEST_PRESENT_FAIL" : _presenter->LastFailure();
+    switch (_recovery.BeginFailed(now, lost))
+    {
+        case PresenterRecovery::BeginFailure::First:
+            // Told: a picture not presented is a black or frozen window
+            qWarning().noquote() << "DeviceScreenGLWindow: picture not presented:"
+                                 << QString::fromStdString(failure);
+            break;
+        case PresenterRecovery::BeginFailure::Wait:
+            break;
+        case PresenterRecovery::BeginFailure::Restart:
+            // No framebuffer for a while (seen once on .101 after a snapshot load: the presenter thread idle,
+            // every BeginFrame failing, the window black until a restart), or the device gone: a new
+            // presenter, made on the next paint
+            qWarning().noquote() << "DeviceScreenGLWindow: no picture presented"
+                                 << (lost ? QStringLiteral("(the device is gone)")
+                                          : QStringLiteral("for %1 ms").arg((now - failingSinceNs) / 1'000'000))
+                                 << "(" << _recovery.Failures() << "tries):" << QString::fromStdString(failure)
+                                 << "; the native presenter is made anew";
+            dropPresenter();
+            update();  // the timer's present at once makes it
+            return true;
+        case PresenterRecovery::BeginFailure::FallBack:
+            _presenterFallback = "stopped presenting " + std::to_string(PresenterRecovery::kMaxRestarts + 1) +
+                                 " times within a minute (" + failure + ")";
+            if (_vulkan)
+            {
+                // The Vulkan renderer goes with its presenter (kept, GL's paint would draw nothing: an empty
+                // window for good); GL draws and tries its own presenter
+                const std::string why = _presenterFallback;
+                _presenterFallback.clear();
+                _recovery = PresenterRecovery();
+                dropVulkan(why);
+            }
+            else
+                fallBackToGl(_presenterFallback);
+            return true;
+    }
+    return false;
+}
 
 void DeviceScreenGLWindow::fallBackToGl(const std::string& why)
 {

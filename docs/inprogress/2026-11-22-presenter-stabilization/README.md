@@ -92,6 +92,28 @@ Steam Deck, gamescope, 60 Hz, Across the Edge, `smooth_motion=interpolate`, GL a
 | K8 | Acquire waits 100 ms under the swapchain mutex; `vkWaitForPresentKHR` 100 ms per present while the queue is busy (a locked screen) |
 | K9 | The calibration takes one sample with the call's own delay in it; the time domain counter is not watched. Half done: a change of the swapchain's time domains asks them again (`PickTimeDomain`) |
 
+Done (2026-11-22):
+
+- K1: restarts used up with the Vulkan renderer end in `dropVulkan` (GL draws and tries its own presenter). Checked
+  on .238 under Xvfb with `UNREAL_TEST_PRESENT_FAIL` (a build with `UNREAL_TEST_HOOKS`): four restarts, then "the
+  Vulkan renderer stopped presenting", `renderer_active` gl, the window's capture shows the picture.
+- K2: `NativePresenter::PresentFailed` (Vulkan: no image came, every image held): the window counts it as a picture
+  not presented, the same recovery as a missing framebuffer.
+- K3: the idle poll does not run while `BeginTexture` makes the swapchain anew, and is waited for when under way.
+- K5: the screen's `refreshRateChanged` is followed (the period measured again, the swapchain's refresh asked again).
+- K6: the Wayland lead only on a swapchain that shows a present at a refresh.
+- K7, K10: step 2. K9: the time domains followed (step 2); a calibration call that took over 0.5 ms keeps the offset
+  before it.
+
+Steam Deck after these (gamescope with its layer, Across the Edge, 20 s; error p50 / p99): at once GL 9.2 / 17.3 ms,
+Vulkan 12.3 / 20.4 ms on a timed swapchain (its submit is taken before the GPU work: Vulkan renderer README 2.6); at
+the frame's time GL 10.0 / 18.1 ms, Vulkan 1.9 / 10.3 ms. The whole cycle was seen in one run: present timing, no
+times without the bypass, `VK_KHR_present_wait`, present timing again when the bypass came back.
+
+Open: K4 (a full timing queue: not seen since the poll runs before every present and K10 ends a timed swapchain
+without times), K8 (the 100 ms waits under the swapchain mutex and per present for a window that is exposed and not
+shown), V6 (VRR under policy `auto` on X11: `x11::DecideWindowVrr` with the probe; no VRR display on a Linux host here).
+
 ### 1.5 Display events nobody handles (step 5)
 
 The OS changing the rate of the same screen (no `QScreen::refreshRateChanged`); full screen to windowed and back;

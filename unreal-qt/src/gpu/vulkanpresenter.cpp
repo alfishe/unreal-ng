@@ -82,6 +82,7 @@ struct VulkanPresenter::Impl
 
     QWindow* window = nullptr;
     QMetaObject::Connection screenChanged;  ///< the screen's refresh followed (screenPeriodNs)
+    QMetaObject::Connection rateChanged;    ///< ... and that screen's rate
     VulkanDevice* device = nullptr;
     VkDevice dev = VK_NULL_HANDLE;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -119,6 +120,8 @@ struct VulkanPresenter::Impl
     /// completes every result with no time while the window does not bypass XWayland (something over it, a child
     /// window that does not cover its top level: the Steam Deck, 15 s after the start). Asked again when the surface
     /// says it changed (SUBOPTIMAL / OUT_OF_DATE: the bypass came back)
+    std::atomic<bool> rebuilding{false};     ///< BeginTexture makes the swapchain anew: the idle poll stays out
+    std::atomic<bool> presentFailed{false};  ///< the last PresentFrame handed nothing on (PresentFailed)
     std::atomic<bool> timingOff{false};
     std::atomic<int> noTimeRun{0};
     static constexpr int kNoTimeLimit = 32;
@@ -376,6 +379,11 @@ struct VulkanPresenter::Impl
                     break;
                 if (queue.empty())
                 {
+                    // Not while the window makes the swapchain anew (it clears the timing queue and writes the
+                    // calibration); busy while it runs, so WaitDrained waits for a poll under way
+                    if (rebuilding.load(std::memory_order_acquire))
+                        continue;
+                    busy = true;
                     lock.unlock();
                     PollTiming();
                     continue;
@@ -659,6 +667,10 @@ struct VulkanPresenter::Impl
         uint64_t deviation = 0;
         if (calibrated(dev, 2, infos, stamps, &deviation) != VK_SUCCESS)
             return false;
+        // A call that took long (the thread put aside between the two clocks' reads) would move every target by
+        // that much for a second: the offset before it stays, the next present asks again
+        if (calibratedNs != 0 && SteadyNs() - now > 500'000)
+            return true;
         const int64_t mono = static_cast<int64_t>(stamps[1]);
         offsetNs = static_cast<int64_t>(stamps[0]) - mono;
         // CLOCK_MONOTONIC against steady_clock as read here (equal on Linux; the difference kept if not)
@@ -753,7 +765,10 @@ struct VulkanPresenter::Impl
     {
         const int64_t last = lastScreenNs.load(std::memory_order_relaxed);
         const int64_t period = refreshPeriodNs.load(std::memory_order_relaxed);
-        if (last <= 0 || period <= 0 || !Synced())
+        // A swapchain that shows a present when it comes (IMMEDIATE: policy vrr) has no refresh to be ahead of
+        if (!Synced())
+            return atNs;
+        if (last <= 0 || period <= 0)
             return atNs - kWaylandAheadNs;
         const int64_t refreshes = atNs > last ? (atNs - last + period - 1) / period : 1;
         return last + (refreshes - 1) * period + kAfterRefreshNs;
@@ -802,10 +817,19 @@ std::unique_ptr<VulkanPresenter> VulkanPresenter::Create(QWindow* window, Vulkan
     Impl& impl = *p->_impl;
     impl.window = window;
     impl.device = &device;
-    auto screenPeriod = [&impl](QScreen* screen) {
-        const double hz = screen ? screen->refreshRate() : 0.0;
+    auto setRate = [&impl](double hz) {
         impl.screenPeriodNs.store(hz > 1.0 ? static_cast<int64_t>(1e9 / hz) : 0, std::memory_order_relaxed);
-        impl.refreshPeriodNs.store(0, std::memory_order_relaxed);  // measured again against the new screen
+        impl.refreshPeriodNs.store(0, std::memory_order_relaxed);  // measured again against the new rate
+        impl.recreate = true;  // the swapchain's own refresh duration (MoltenVK, present timing) asked again
+    };
+    // The window's screen, and that screen's rate: a display rate switch or the system's mode change keeps the
+    // screen and changes its rate (the grid stayed at 16.7 ms on a display switched to 50 Hz)
+    auto screenPeriod = [&impl, window, setRate](QScreen* screen) {
+        QObject::disconnect(impl.rateChanged);
+        if (screen)
+            impl.rateChanged = QObject::connect(screen, &QScreen::refreshRateChanged, window,
+                                                [setRate](qreal hz) { setRate(hz); });
+        setRate(screen ? screen->refreshRate() : 0.0);
     };
     screenPeriod(window->screen());
     impl.wayland = QGuiApplication::platformName().startsWith(QStringLiteral("wayland"));
@@ -880,6 +904,7 @@ VulkanPresenter::~VulkanPresenter()
     Impl& impl = *_impl;
     qInfo().noquote() << "VulkanPresenter: closing," << QString::fromStdString(Describe());
     QObject::disconnect(impl.screenChanged);
+    QObject::disconnect(impl.rateChanged);
     {
         std::lock_guard<std::mutex> lock(impl.queueMutex);
         impl.stop = true;
@@ -923,12 +948,16 @@ Texture* VulkanPresenter::BeginTexture(int width, int height)
     const bool resized = want.width != impl.extent.width || want.height != impl.extent.height;
     if (!impl.swapchain || resized || impl.recreate || impl.WantedMode() != impl.mode)
     {
-        if (!impl.WaitDrained())
+        impl.rebuilding.store(true, std::memory_order_release);
+        const bool drained = impl.WaitDrained();
+        const bool made = drained && impl.MakeSwapchain(width, height);
+        impl.rebuilding.store(false, std::memory_order_release);
+        if (!drained)
         {
             impl.Fail("the present thread did not drain for a new swapchain");
             return nullptr;
         }
-        if (!impl.MakeSwapchain(width, height))
+        if (!made)
             return nullptr;
     }
     if (!impl.target || impl.target->Width() != width || impl.target->Height() != height)
@@ -960,6 +989,7 @@ void VulkanPresenter::PresentFrame(int64_t atNs, const TraceInfo& trace)
             lock.unlock();
             impl.device->Flush();
             impl.Fail("the present thread holds every image");
+            impl.presentFailed = true;
             std::lock_guard<std::mutex> stats(impl.statsMutex);
             impl.dropped++;
             return;
@@ -996,10 +1026,13 @@ void VulkanPresenter::PresentFrame(int64_t atNs, const TraceInfo& trace)
             impl.failed = true;
         impl.device->Flush();  // the picture's work goes anyway: the next frame's barriers expect it done
         impl.Fail("vkAcquireNextImageKHR: " + std::to_string(r));
+        // Out of date is the next BeginTexture's new swapchain, not a failure of the presenter
+        impl.presentFailed = r != VK_ERROR_OUT_OF_DATE_KHR;
         std::lock_guard<std::mutex> stats(impl.statsMutex);
         impl.dropped++;
         return;
     }
+    impl.presentFailed = false;
     impl.nextAcquire = (impl.nextAcquire + 1) % impl.acquired.size();
     impl.device->RecordPresentBlit(*impl.target, impl.images[index], impl.extent, VK_IMAGE_LAYOUT_UNDEFINED);
     impl.device->Submit(acquired, impl.rendered[index]);
@@ -1068,6 +1101,11 @@ uint64_t VulkanPresenter::Presented() const
 {
     std::lock_guard<std::mutex> lock(_impl->statsMutex);
     return _impl->presented;
+}
+
+bool VulkanPresenter::PresentFailed() const
+{
+    return _impl->presentFailed.load(std::memory_order_relaxed);
 }
 
 uint64_t VulkanPresenter::LastLatePresent() const
