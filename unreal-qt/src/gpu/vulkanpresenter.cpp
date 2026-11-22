@@ -712,13 +712,14 @@ struct VulkanPresenter::Impl
             shown++;
             const int64_t asked = std::max(item.atNs, item.submittedNs);
             errors.Add(static_cast<double>(screenNs - asked) / 1e6);
-            const int64_t own = item.atNs > 0 ? item.atNs : asked;
             // Wayland: the present goes a refresh ahead (WaylandPresentAt); a late one does not widen the lead (more
-            // lead only queued more: 8 or 20 ms ~16 ms after the time, 40 ms ~33 ms)
-            lead.Shown(screenNs - own, item.number,
-                       wayland && !timed.load(std::memory_order_relaxed)
-                           ? std::numeric_limits<int64_t>::max()
-                           : std::max(own, item.handedNs) - item.handedNs);
+            // lead only queued more: 8 or 20 ms ~16 ms after the time, 40 ms ~33 ms). A present at once has no time
+            // of its own to be late against (PresentLead)
+            if (item.atNs > 0)
+                lead.Shown(screenNs - item.atNs, item.number,
+                           wayland && !timed.load(std::memory_order_relaxed)
+                               ? std::numeric_limits<int64_t>::max()
+                               : std::max(item.atNs, item.handedNs) - item.handedNs);
             const int64_t period = refreshPeriodNs.load(std::memory_order_relaxed);
             beat.Shown(item.trace.picture, item.trace.targetNs, screenNs, period > 0 ? period : 16'666'667);
         }

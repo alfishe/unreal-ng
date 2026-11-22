@@ -2020,7 +2020,7 @@ path such as a Bluetooth headset or a large lip-sync trim, so it is due `max_del
 picture leads its sound; the one-line summary says so), `max_delay_ms` (9 frames), `clamped_frames`, `early`
 (refreshes that found no frame due yet: start up), `carried` (steps of the frames' clock carried and paid back by
 0.2 ms a frame: a device came or went, an underrun), `cuts` (breaks of the frame sequence: a pause, a seek, turbo),
-`carry_ms` (the carry being paid back now)}, `presented`, `shown`, `dropped`, `late` (a refresh late), `beat` {`frames` judged, `off`: on screen for a refresh count
+`carry_ms` (the carry being paid back now)}, `presented`, `shown`, `dropped`, `late` (a refresh late after its own time; presents at once, the low-latency ones, are not counted), `beat` {`frames` judged, `off`: on screen for a refresh count
 outside floor / ceil of their span over the refresh, a refresh missed, a frame held or never shown}, `lead_ms`,
 `error_ms` {p50, p99, max}, `sound_offset_ms` {p50, p99: screen time minus the picture's sound, the lip-sync trim
 taken out}, `gpu_wait_ms` {p50, max}: the native presenter's last 600 presents (the beat since the start); `gpu_ms` {`smooth`, `smooth_cpu`, `picture`: {p50, max over the last 600, `longest` since the GL context was made, `measured`}: `smooth` the GPU time of smooth motion's passes alone (timer-query segments, the CPU's work between them left out), `smooth_cpu` its whole refresh on the CPU's clock (the readback waits included), `picture` the GPU time of the picture (CRT composition, beam model, custom shader or preset), a pass over 100 ms logged; where GL has no timer (macOS reads 0) `smooth` and `picture` stay `measured` 0; `smooth` {`mode` in effect, `device`, `game`, `frames`, `pictures`,

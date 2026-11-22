@@ -316,8 +316,9 @@ void RunVBlanks(const std::shared_ptr<Feedback>& shared)
                 fb.errors.Add(static_cast<double>(screen - p.askedNs) / 1e6);
                 // The lead from the frame's own time: a window that handed it over late was late too. Handed over
                 // a refresh or more before its time and still late: the compositor held it, more lead cannot help
-                const int64_t asked = p.atNs > 0 ? p.atNs : p.askedNs;
-                fb.lead.Shown(screen - asked, p.number, std::max(asked, p.handedNs) - p.handedNs);
+                // A present at once has no time of its own to be late against (PresentLead)
+                if (p.atNs > 0)
+                    fb.lead.Shown(screen - p.atNs, p.number, std::max(p.atNs, p.handedNs) - p.handedNs);
                 fb.beat.Shown(p.trace.picture, p.trace.targetNs, screen, static_cast<int64_t>(1e9 / topHz));
             }
             else

@@ -10,7 +10,10 @@
 /// was held by the system (the compositor a refresh behind under load), and more lead would only queue more presents.
 /// A long run on time narrows it by one, within the bounds. The first vsync a present can make is less than a refresh after the time
 /// asked (smooth motion asks half a refresh before its vsync), so more than a refresh (plus 1 ms of jitter) is a
-/// refresh late.
+/// refresh late. Only presents with a time of their own count: one at once (low-latency video, a repaint) shows at the
+/// first refresh it makes, its submit somewhere in a refresh; judged by the submit its "late" was the compositor's
+/// deadline and the backend's submit point (Vulkan's before the GPU work, GL's after it; Steam Deck, 2026-11-22), and
+/// the margin it widened is not used at once anyway.
 ///
 /// Shown from the presenter's completion thread, Margin from the drawing one.
 class PresentLead

@@ -36,7 +36,7 @@ public:
         uint64_t presented = 0;  ///< presents since the start
         uint64_t shown = 0;      ///< reached the screen
         uint64_t dropped = 0;    ///< never on screen (replaced, or the system dropped it)
-        uint64_t late = 0;       ///< shown more than a refresh after the time asked for (a refresh late)
+        uint64_t late = 0;       ///< shown more than a refresh after the time asked for (a refresh late; at once: none)
         double leadMs = 0.0;     ///< the lead in effect (LeadNs at the last refresh period asked)
         uint32_t window = 0;     ///< presents the percentiles cover
         double errorP50 = 0.0;   ///< screen time minus the time asked for

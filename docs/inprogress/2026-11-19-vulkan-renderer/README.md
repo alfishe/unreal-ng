@@ -184,8 +184,33 @@ switched through the WebAPI, Across the Edge reloaded before each case, 5 s sett
 | Vulkan, preset crt-royale | 1.96 ms | 11.6 / 20.1 ms | 171 of 1228 | 32 % | 3.9 W |
 
 The GPU work is the same on both (radeonsi is a good GL driver: the reason for Vulkan on Linux does not hold here),
-Vulkan costs 3-6 % of a core more and shows up to 19 % of frames a refresh late against 1-2 % for GL: the present
-lead is not fitted to gamescope's latch. The ~9.5 ms error both share is gamescope's composition. The Deck stays on GL.
+Vulkan costs 3-6 % of a core more. Its "a refresh late" count is not a later picture. Per-present traces
+(`UNREAL_PRESENT_TRACE`, the app under `systemd-run` on gamescope's `:1`, crt-lottes, 20 s each, 2026-11-22):
+
+| Mode | Renderer | Latch to screen p50 / p95 | Screen steps 1 / 2 refreshes | Screen minus time asked p50 / p95 | "Late" |
+|------|----------|---------------------------|------------------------------|-----------------------------------|--------|
+| low latency (at once; Game Mode's default) | GL | 15.4 / 23.2 ms | 1001 / 284 | (from the submit) 9.6 / 16.8 ms | 12 |
+| low latency | Vulkan | 16.1 / 24.1 ms | 1032 / 298 | (from the submit) 13.8 / 21.0 ms | 300 |
+| at the frame's time | GL | 82.8 / 91.1 ms | 1003 / 300 | 10.1 / 17.6 ms | 56 |
+| at the frame's time | Vulkan | 81.6 / 90.1 ms | 1005 / 299 | 9.4 / 16.9 ms | 42 |
+
+- The picture reaches the screen as early on both (within 0.7-1.2 ms), with the same 50-on-60 Hz cadence; at the
+  frame's time Vulkan is the closer one.
+- At once, the error counts from the submit, and the submits differ: GL's present thread waits for the picture's GPU
+  work (`glClientWaitSync`) before it takes the time and swaps, Vulkan's takes it after `vkQueuePresentKHR`, the GPU
+  still drawing (woke to submit: GL 5.6 ms, Vulkan 2.2 ms). The same screen time reads ~3 ms later on Vulkan, past
+  the "a refresh plus 1 ms" mark more often. A present at once has no time of its own to be late against.
+- gamescope's screen times (present_wait, GLX_OML_sync_control both) are its composition's, ±7 ms off a vblank grid:
+  the "a refresh plus 1 ms" mark counts that spread on both, and both leads sit at their 20 ms bound.
+- The ~9.5 ms error both share at once is the frame's phase: 50 Hz frames on a 59.81 Hz screen land anywhere in a
+  refresh.
+
+The Deck stays on GL: no gain, a little more CPU. Nothing in Vulkan's present to fix there; the counters are.
+
+Fixed on every presenter (GL timed, Vulkan, Metal, DXGI; `PresentLead`): a present at once is not judged and does not
+widen the lead. The Deck again, crt-lottes, 20 s each: at once `late` 0 on both (before: GL 12-21, Vulkan 230-300) and
+the lead at its 8 ms start (before: 18-20 ms, kept into the timed mode after); at the frame's time unchanged (GL 62,
+Vulkan 32, both leads at 19-20 ms: gamescope's spread, still open).
 
 ### 2.7 Builds
 
@@ -213,5 +238,5 @@ lead is not fitted to gamescope's latch. The ~9.5 ms error both share is gamesco
 6. Wayland present timing (`VK_EXT_present_timing`, §2.5). Done 2026-11-21. Deck measured (§2.6), builds checked
    (§2.7) 2026-11-22.
 
-Open: the Vulkan lead under gamescope (§2.6, refresh-late frames); release packages with Vulkan only when a measured
+Open: the "late" count and the lead on gamescope's screen times, ±7 ms off the vblanks (§2.6); release packages with Vulkan only when a measured
 gain justifies them (§2.7).

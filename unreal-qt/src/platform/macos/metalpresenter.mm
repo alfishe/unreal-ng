@@ -567,8 +567,10 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
           }
           fb->shown.fetch_add(1, std::memory_order_relaxed);
           fb->lastPresentedNs.store(screenNs, std::memory_order_relaxed);
-          // The lead from the frame's own time: a window that handed it over late was late too
-          fb->lead.Shown(screenNs - (atNs > 0 ? atNs : asked), number, asked - now);
+          // The lead from the frame's own time: a window that handed it over late was late too. A present at once
+          // has no time of its own to be late against (PresentLead)
+          if (atNs > 0)
+              fb->lead.Shown(screenNs - atNs, number, asked - now);
           std::lock_guard<std::mutex> lock(fb->statsMutex);
           fb->errors.Add(static_cast<double>(screenNs - asked) / 1e6);
           fb->beat.Shown(traced.picture, traced.targetNs, screenNs, refreshNs);

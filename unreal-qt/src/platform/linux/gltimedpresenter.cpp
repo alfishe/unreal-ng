@@ -631,8 +631,9 @@ private:
             _shown++;
             const int64_t asked = std::max(item.atNs, submitted);
             _errors.Add(static_cast<double>(screenNs - asked) / 1e6);
-            const int64_t own = item.atNs > 0 ? item.atNs : asked;
-            _lead.Shown(screenNs - own, item.number, std::max(own, item.handedNs) - item.handedNs);
+            // A present at once has no time of its own to be late against (PresentLead)
+            if (item.atNs > 0)
+                _lead.Shown(screenNs - item.atNs, item.number, std::max(item.atNs, item.handedNs) - item.handedNs);
             const double hz = linuxpresent::FixedRefreshHz(_refreshHz.load(std::memory_order_relaxed),
                                                            _vblankPeriodNs.load(std::memory_order_relaxed),
                                                            _vrr.load(std::memory_order_relaxed));
