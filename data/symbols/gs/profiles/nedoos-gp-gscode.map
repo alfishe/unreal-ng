@@ -1,0 +1,12 @@
+; NedoOS gp/ngsdec/gscode.asm, assembled at #4000 (gs-debugger nedoos-gs-software.md §3.5)
+4000 begin
+4046 startnewstream
+4071 mainloop
+40A0 interrupthandler
+4285 volumevalue
+4295 vsversion
+4336 checkifngs
+4355 processcommand
+43C1 streaminfo
+43CB noper
+43DE end

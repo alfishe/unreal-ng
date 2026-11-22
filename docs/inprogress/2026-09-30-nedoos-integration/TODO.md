@@ -33,7 +33,11 @@ Index: [README.md](README.md).
   (`PortDecoder::DescribeNetwork`; `Card=` a list with `ZXWIFI`, `ZxWifi=`, `ComFlavor=` gone),
   the ZX-Evo AVR UART always present, every AVR firmware release as `[EVO] Avr=`, the /WAIT
   model ISR + loop phase + service ([reference-evo-com-port.md](reference-evo-com-port.md) §3, §9).
-  Open: Moon Rabbit / Karabas net-tools check, the ZX-Evo AVR FIFO question
+  Moon Rabbit Fusion (`mrfue`) over `ComPort=AT` fetches a gopher `.mod` into the GS
+  (`GSNedoOsMoonRabbit_Test.V6MoonRabbitStreamsAModFromTheNetwork`), once the ESP's power-up lines are
+  taken before it starts (they wait for RTS, then flood the FIFO during Moon Rabbit's `ATE0`: see
+  the gs-debugger TODO item 11).
+  Open: Karabas net-tools check, the ZX-Evo AVR FIFO question
   (reference-esp-modules.md Part 4); the AVR version string (Gluk cells #F0..#FF) still
   says "ZXEvo 4M" 07.01.2026 whatever `Avr=` picks (the old releases' tags and CRCs are not
   in the sources); the ZiFi API under a TS firmware on BaseConf (N5). The Qt Network window

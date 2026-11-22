@@ -1,0 +1,54 @@
+{
+  "id": "nedoos-ngsldr",
+  "title": "NedoOS ngsplay loader stub (ngsldr.bin)",
+  "note": "ngsbios.a80 LOADER at #5100: takes only #13 and #14; any other command is never cleared",
+  "match": [
+    {
+      "kind": "upload",
+      "addr": "#5100",
+      "length": 143,
+      "sha256": "1ef08a9faba171e382ca7656980c5e169b77c4b2ebe7b0514efd93931d9d549e"
+    }
+  ],
+  "commands": [
+    {
+      "number": "13",
+      "name": "Jump to address",
+      "pre": 1,
+      "params": [
+        {
+          "name": "address",
+          "kind": "low"
+        },
+        {
+          "name": "address",
+          "kind": "high"
+        }
+      ]
+    },
+    {
+      "number": "14",
+      "name": "Receive block",
+      "pre": 1,
+      "transfer": "block_upload",
+      "params": [
+        {
+          "name": "length",
+          "kind": "low"
+        },
+        {
+          "name": "length",
+          "kind": "high"
+        },
+        {
+          "name": "address",
+          "kind": "low"
+        },
+        {
+          "name": "address",
+          "kind": "high"
+        }
+      ]
+    }
+  ]
+}

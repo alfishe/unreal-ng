@@ -1,0 +1,16 @@
+; NeoTracker BIOS (NedoOS kapps/ngsplay/gs/ngsbios.a80) as uploaded to #0000 (nedoos-gs-software.md §4.6-§4.7)
+01F5 COMHZ
+01F8 COMINT
+01FB COMINT_
+0203 COMINT1
+020F COMLOW
+021A COM13
+0565 COM14
+2600 COMZ
+2923 GSDDRV
+2E80 COMTAB
+3000 EndBIOS
+3E00 Tab64
+4F00 SamplTabl
+5FFE ISTACK
+6000 DAC0

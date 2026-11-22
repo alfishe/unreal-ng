@@ -1,0 +1,664 @@
+data #00
+anomaly data_before_command #0 (#23 Get number of RAM pages)
+#23 Get number of RAM pages
+card took #23 Get number of RAM pages
+reply 0 #3E: pages (#23 Get number of RAM pages)
+anomaly reply_read_without_poll #3E (#23 Get number of RAM pages)
+data #00
+#1E
+card took #1E
+reply 0 #3E (#1E)
+card reset
+#F3 Warm restart
+card took #F3 Warm restart
+data #8F
+#14 Receive block, length #8F
+card took #14 Receive block
+length #00 (#14 Receive block)
+address #00 (#14 Receive block)
+address #51 (#14 Receive block)
+block upload: 143 bytes at #5100 (#14 Receive block)
+data #00
+#13 Jump to address, address #00
+card took #13 Jump to address
+address #51 (#13 Jump to address)
+data #0F
+#14 Receive block, length #0F
+card took #14 Receive block
+length #30 (#14 Receive block)
+address #00 (#14 Receive block) (repeated)
+block upload: 12303 bytes at #0000 (#14 Receive block)
+data #00
+#13 Jump to address, address #00
+card took #13 Jump to address
+address #00 (#13 Jump to address)
+#00 Reset flags
+card took #00 Reset flags
+data #02
+#E1 Set page 3, page #02
+card took #E1 Set page 3
+data #68
+#14 Receive block, length #68
+card took #14 Receive block
+length #1C (#14 Receive block)
+address #00 (#14 Receive block)
+address #D0 (#14 Receive block)
+block upload: 7272 bytes at #D000 (#14 Receive block)
+data #01
+#E0 Set page 2, page #01
+card took #E0 Set page 2
+#00 Reset flags
+card took #00 Reset flags
+data #02
+#15 Transmit block, length #02
+length #00 (#15 Transmit block)
+address #00 (#15 Transmit block)
+address #BC (#15 Transmit block)
+card took #15 Transmit block
+block download: 2 bytes at #BC00 (#15 Transmit block)
+data #00
+#E8 Start load, slot #00
+card took #E8 Start load
+block: 256 bytes (#E8 Start load)
+#00 Reset flags
+card took #00 Reset flags
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #00 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #01 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #01 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #01 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #02 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #02 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #02 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #03 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #03 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #03 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #04 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #04 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #04 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #04 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #05 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #05 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #05 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #06 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #06 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #06 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #07 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #07 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #07 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #08 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #08 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #02 (#E9 Next block)
+reply 1 #08 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #04 (#E9 Next block)
+reply 1 #46 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #04 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #04
+#EA Load block, pages #04
+card took #EA Load block
+page block: 1024 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #09 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #0A (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #02 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #02
+#EA Load block, pages #02
+card took #EA Load block
+page block: 512 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #0B (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #0C (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #04 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #04
+#EA Load block, pages #04
+card took #EA Load block
+page block: 1024 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #0F (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #10 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #04 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #04
+#EA Load block, pages #04
+card took #EA Load block
+page block: 1024 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #13 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #14 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #04 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #04
+#EA Load block, pages #04
+card took #EA Load block
+page block: 1024 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #17 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #18 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #05 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #05
+#EA Load block, pages #05
+card took #EA Load block
+page block: 1280 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #1C (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #1D (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #04 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #04
+#EA Load block, pages #04
+card took #EA Load block
+page block: 1024 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #20 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #21 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #05 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #05
+#EA Load block, pages #05
+card took #EA Load block
+page block: 1280 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #25 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #26 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #05 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #05
+#EA Load block, pages #05
+card took #EA Load block
+page block: 1280 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #2A (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #2B (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #06 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #06
+#EA Load block, pages #06
+card took #EA Load block
+page block: 1536 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #30 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #31 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #06 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #06
+#EA Load block, pages #06
+card took #EA Load block
+page block: 1536 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #36 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #37 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #06 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #06
+#EA Load block, pages #06
+card took #EA Load block
+page block: 1536 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #3C (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #3D (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #06 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #06
+#EA Load block, pages #06
+card took #EA Load block
+page block: 1536 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #06 (#E9 Next block)
+reply 1 #42 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #01 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #01
+#EA Load block, pages #01
+card took #EA Load block
+page block: 256 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #07 (#E9 Next block)
+reply 1 #43 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #04 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #04
+#EA Load block, pages #04
+card took #EA Load block
+page block: 1024 bytes (#EA Load block)
+#E9 Next block
+card took #E9 Next block
+reply 0 #00 (#E9 Next block)
+reply 1 #43 (#E9 Next block)
+reply 2 #00 (#E9 Next block)
+reply 3 #04 (#E9 Next block)
+reply 4 #00 (#E9 Next block)
+data #00
+#E2 Init sample, module #00
+card took #E2 Init sample
+sample #FF (#E2 Init sample)
+data #00
+#E3 Start play, module #00
+card took #E3 Start play
+order #00 (#E3 Start play)
+#E4 Pause
+card took #E4 Pause

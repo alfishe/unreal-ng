@@ -1,0 +1,361 @@
+
+; LAST UPDATE: 10.02.2024 savelij
+
+; автоопределение кодировки работает неправильно
+
+		RELAXED ON
+		CPU Z80UNDOC
+
+BUILD_DEBUG	EQU 0
+
+	IFDEF DOS_FE
+;TESTEMUFDD	; сборка для тестирования эмулятора
+	ENDIF
+
+; вставка текстовой строки с нулем в окончании
+DZ		MACRO DEFZ
+		DB DEFZ,0
+		ENDM 
+
+; вставка текстовой строки с установкой 7 бита у последнего символа
+DC		MACRO DEFC
+	IF STRLEN(DEFC)>1
+		DB SUBSTR(DEFC,0,STRLEN(DEFC)-1)
+	ENDIF
+	IF STRLEN(DEFC)>0
+		DB CHARFROMSTR(DEFC,STRLEN(DEFC)-1)|80H
+	ENDIF
+		ENDM
+
+; генерация заголовка Hobeta файла
+SUM_HOB		MACRO STR,AA,BB,CC
+		DB STR
+		DW AA
+		DW BB
+		DB 0
+		DB CC
+$$I := 0
+$$S := 0
+		REPT 9
+$$N := CHARFROMSTR (STR,STRLEN(STR)+$$S-9)
+$$I := ($$I+$$S+$$N+($$N*256))&0XFFFF
+$$S := $$S+1
+		ENDM
+$$I := ($$I+$$S+LOW (AA)+(LOW (AA)*0X100))&0XFFFF
+$$S := $$S+1
+$$I := ($$I+$$S+HIGH (AA)+(HIGH (AA)*0X100))&0XFFFF
+$$S := $$S+1
+$$I := ($$I+$$S+LOW (BB)+(LOW (BB)*0X100))&0XFFFF
+$$S := $$S+1
+$$I := ($$I+$$S+HIGH (BB)+(HIGH (BB)*0X100))&0XFFFF
+$$S := $$S+1
+$$I := ($$I+$$S+LOW (CC)+(LOW (CC)*0X100))&0XFFFF
+$$S := $$S+1
+$$I := ($$I+$$S+HIGH (CC)+(HIGH (CC)*0X100))&0XFFFF
+$$S := $$S+1
+		DW $$I
+		ENDM
+
+; заполнение области указанным байтом или нулем при отсуствии второго параметра
+DUPL		MACRO LEN,FILL
+DUPL:
+$$N		EQU (LEN) / 1024
+$$M		EQU (LEN) # 1024
+		REPT $$N
+		DB 1024 DUP(FILL)
+		ENDM
+	IF $$M <> 0
+	IFB FILL
+		DB $$M DUP(0)
+	ELSE
+		DB $$M DUP(FILL)
+	ENDIF
+	ENDIF
+		ENDM
+
+; старший байт слова
+HIGH		FUNCTION X,((X >> 8) & 0XFF)
+; младший байт слова
+LOW		FUNCTION X,(X & 0XFF)
+
+; вызов подпрограммы в другой странице ROM
+ROMCALL		MACRO ADR,PAGE
+		RST 0X30
+		DW ADR
+		DB PAGE
+		ENDM
+
+; вызов подпрограммы в другой странице RAM
+RAMCALL		MACRO ADR,PAGE
+		RST 0X20
+		DW ADR
+		DB PAGE
+		ENDM
+
+; запись в порт ATM Turbo 2+
+ATMPORT		MACRO PORT,BYTE
+		LD BC,PORT
+	IF BYTE = 0
+		XOR A
+	ELSE
+		LD A,BYTE
+	ENDIF
+		OUT (C),A
+		ENDM
+
+; запись в порт расширенных портов PentEvo
+EVOPORT		MACRO PORT,BYTE
+		LD BC,PORT
+	IF BYTE = 0
+		XOR A
+	ELSE
+		LD A,BYTE
+	ENDIF
+		OUT (C),A
+		ENDM
+
+; включение бита (битов) в порту 0xBF
+PEC_ON		MACRO BYTE
+		IN A,(PEVO_CONF)
+		OR BYTE
+		OUT (PEVO_CONF),A
+		ENDM
+
+; сброс бита (битов) в порту 0xBF
+PEC_OFF		MACRO BYTE
+		IN A,(PEVO_CONF)
+		AND BYTE!0XFF
+		OUT (PEVO_CONF),A
+		ENDM
+
+; чтение порта 0x7FFD
+READ_7FFD	MACRO
+		LD A,HIGH (RD_7FFD)
+		IN A,(LOW (RD_7FFD))
+		ENDM
+
+; генерация даты
+; LINUX		DATE: "10/07/21"
+; WIN32		DATE: "10/7/2021"
+SIZEDATE	EQU STRLEN (DATE)
+__POS := 0
+; извлечение месяца
+MMOUNTH := (CHARFROMSTR (DATE,__POS) - '0')
+__POS := __POS + 1
+	IF (CHARFROMSTR (DATE,__POS)) > '/'
+MMOUNTH := MMOUNTH * 10 + (CHARFROMSTR (DATE,__POS)) -'0'
+__POS := __POS + 1
+	ENDIF
+__POS := __POS + 1
+; извлечение даты
+DDATE := (CHARFROMSTR (DATE,__POS) - '0')
+__POS := __POS + 1
+	IF (CHARFROMSTR (DATE,__POS)) > '/'
+DDATE := DDATE * 10 + (CHARFROMSTR (DATE,__POS)) - '0'
+__POS := __POS + 1
+	ENDIF
+__POS := __POS + 1
+; извлечение года
+YYEAR := (CHARFROMSTR (DATE,__POS) - '0')
+__POS := __POS + 1
+	WHILE (CHARFROMSTR (DATE,__POS)) > '/'
+YYEAR := YYEAR * 10 + (CHARFROMSTR (DATE,__POS)) - '0'
+__POS := __POS + 1
+	IF __POS > SIZEDATE
+	EXITM
+	ENDIF
+	ENDM
+	IF YYEAR > 99
+YYEAR := YYEAR - 2000
+	ENDIF
+
+; генерация времени
+; "9:28:8"
+SIZETIME	EQU STRLEN (TIME)
+__POS := 0
+; извлечение часа
+HHOUR := CHARFROMSTR (TIME, __POS) - '0'
+__POS := __POS + 1
+	IF (CHARFROMSTR (TIME,__POS)) <= '9'
+HHOUR := HHOUR * 10 + CHARFROMSTR (TIME, __POS) - '0'
+__POS := __POS + 1
+	ENDIF
+__POS := __POS + 1
+; извлечение минут
+MMINUTE := CHARFROMSTR (TIME, __POS) - '0'
+__POS := __POS + 1
+	IF (CHARFROMSTR (TIME,__POS)) <= '9'
+MMINUTE := MMINUTE * 10 + CHARFROMSTR (TIME, __POS) - '0'
+__POS := __POS + 1
+	ENDIF
+__POS := __POS + 1
+; извлечение секунд
+SSECUND := CHARFROMSTR (TIME, __POS) - '0'
+__POS := __POS + 1
+	IF __POS < SIZETIME
+SSECUND := SSECUND * 10 + CHARFROMSTR (TIME, __POS) - '0'
+	ENDIF
+
+DATA_VERS	EQU DDATE + (MMOUNTH << 5) + (YYEAR<<9) + 0x8000			;уже упаковано
+
+FAT_DATE	EQU DDATE + (MMOUNTH << 5) + ((2000 + YYEAR - 1980) & 0x7F) << 9
+FAT_TIME	EQU SSECUND / 2 + (MMINUTE << 5) + (HHOUR << 11)
+
+; генерация даты и времени в текстовом виде
+TEXTDATE	MACRO
+		DB (DDATE / 10) + '0', (DDATE # 10) + '0', '.'
+		DB MMOUNTH / 10 + '0', MMOUNTH # 10 + '0', '.'
+		DB CHARFROMSTR (DATE, SIZEDATE - 4), CHARFROMSTR (DATE, SIZEDATE - 3)
+		DB CHARFROMSTR (DATE, SIZEDATE - 2), CHARFROMSTR (DATE, SIZEDATE - 1)
+		ENDM
+
+TEXTTIME	MACRO
+		DB HHOUR/10 + '0', HHOUR#10 + '0', '.'
+		DB MMINUTE/10 + '0', MMINUTE#10 + '0', '.'
+		DB SSECUND/10 + '0', SSECUND#10 + '0'
+		ENDM
+
+; вызов RST 8 с параметрами
+RST8		MACRO N1,N2,N3
+		RST 8
+		DB N1
+	IFNB N2
+		DB N2
+	ENDIF
+	IFNB N3
+		DB N3
+	ENDIF
+		ENDM
+
+BYTE		EQU 1
+WORD		EQU 2
+JUMP		EQU 3
+DWORD		EQU 4
+QWORD		EQU 8
+
+BITMASK		MACRO NAME,NUM
+B_NAME		EQU NUM
+M_NAME		EQU 1<<NUM
+		ENDM
+
+; генерация метки с резервированием места и размера области
+SETVAR		MACRO NAME,SIZE
+NAME		EQU INITVAR		; номер имени
+	IFNB SIZE
+INITVAR := INITVAR+SIZE
+NAME_Size	EQU SIZE		; размер
+	ELSE
+INITVAR := INITVAR+BYTE
+NAME_Size	EQU BYTE
+	ENDIF
+NAME_CurAdr	EQU $			; текущий адрес
+		ENDM
+
+; перенос метки назад на указанное число байт
+SUBVAR		MACRO SIZE
+INITVAR := INITVAR-SIZE
+		ENDM
+
+; перенос метки вперед на указанное число байт
+ADDVAR		MACRO SIZE
+INITVAR := INITVAR+SIZE
+		ENDM
+
+; инициализация переменной для резервирования указанным числом
+; или 0 при отсуствии второго параметра
+INIT_VAR	MACRO START
+	IFNB START
+INITVAR := START
+	ELSE
+INITVAR := 0
+	ENDIF
+		ENDM
+
+; выравнивание для генерации меток на границу 256 байт
+SETVAR_ALIGN	MACRO
+INITVAR := INITVAR + 0x100 - (INITVAR & 0xFF)
+ 		ENDM
+
+; выравнивание текущего адреса на границу 256 байт
+ALIGN		MACRO BYTES,FILL
+	IFNB
+		DB BYTES - ($ & (BYTES - 1)) DUP (0)
+	ELSE
+		DB BYTES - ($ & (BYTES - 1)) DUP (FILL)
+	ENDIF
+		ENDM
+
+MALIGN		MACRO
+	IF LOW($) = 0
+		DUPL (HIGH($) << 8) - $,0
+	ELSE
+		DUPL ((HIGH($) + 1) << 8) - $,0
+	ENDIF
+		ENDM
+
+; выравнивание до сектора с учетом адреса компиляции
+DALIGN		MACRO ADDRESS
+	IF LOW (ADDRESS)
+		DB LOW (LOW (-$)+LOW(ADDRESS)) DUP(0)
+	ELSE
+		DB LOW (-$) DUP (0)
+	ENDIF
+		ENDM
+
+; преобразование 16 битного числа в текст
+WORD2TXT	MACRO WORD
+$$DEC1 := (WORD)/10000
+$$TMP := WORD-$$DEC1*10000
+$$DEC2 := $$TMP/1000
+$$TMP := $$TMP-$$DEC2*1000
+$$DEC3 := $$TMP/100
+$$TMP := $$TMP-$$DEC3*100
+$$DEC4 := $$TMP/10
+$$TMP := $$TMP-$$DEC4*10
+$$DEC5 := $$TMP
+	DB $$DEC1+'0',$$DEC2+'0',$$DEC3+'0',$$DEC4+'0',$$DEC5+'0'
+		ENDM
+
+WINHDR		MACRO X,Y,V,H,CWIN,CCUR,FLAGS,NUMPKT,TEKPKT,NUMKOL, \
+			ADRTXT,ADRPRG,ADRMOUSE,ADRHOTKEY
+		DB X,Y,V,H,CWIN,CCUR,FLAGS,NUMPKT
+		DW TEKPKT,NUMKOL,ADRTXT,ADRPRG,ADRMOUSE,ADRHOTKEY
+		ENDM
+
+; генерация метки с резервированием места и размера области
+_SETVAR		MACRO NAME, SIZE
+NAME		EQU .CURRVAR		; номер имени
+	IFNB SIZE
+.CURRVAR := .CURRVAR + SIZE
+.NAME_Size	EQU SIZE		; размер
+	ELSE
+.CURRVAR := .CURRVAR + BYTE
+.NAME_Size	EQU BYTE
+	ENDIF
+.NAME_CurAdr	EQU $			; текущий адрес
+		ENDM
+
+; перенос метки назад на указанное число байт
+_SUBVAR		MACRO SIZE
+.CURRVAR := .CURRVAR - SIZE
+		ENDM
+
+; перенос метки вперед на указанное число байт
+_ADDVAR		MACRO SIZE
+.CURRVAR := .CURRVAR + SIZE
+		ENDM
+
+; инициализация переменной для резервирования указанным числом
+; или 0 при отсуствии второго параметра
+_INIT_VAR	MACRO START
+	IFNB START
+.CURRVAR := START
+	ELSE
+.CURRVAR := 0
+	ENDIF
+		ENDM
+
+; выравнивание для генерации меток на границу 256 байт
+_SETVAR_ALIGN	MACRO
+.CURRVAR := .CURRVAR + 0x100 - (.CURRVAR & 0xFF)
+ 		ENDM

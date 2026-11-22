@@ -1,0 +1,16 @@
+diff --git a/src/gp/ngsdec/gscode.asm b/src/gp/ngsdec/gscode.asm
+index 62f7fb2b..73f78981 100644
+--- a/src/gp/ngsdec/gscode.asm
++++ b/src/gp/ngsdec/gscode.asm
+@@ -462,7 +462,10 @@ streaminfobyte=$+1
+ 	ret
+ 
+ noper
+-	ds 18,0
++	in a,(SSTAT)		;MCRDY polling (the WDC loop above), padded to the 19 bytes of the delay
++	and M_MCRDY
++	jr z,$-4
+ 	ret
++	ds 12,0
+ end
+ 	savebin "gscode.bin",begin,end-begin

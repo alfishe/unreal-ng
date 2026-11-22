@@ -694,6 +694,20 @@ WebAPI `GET /state/audio/gs/stats[/{section}]?since=&fresh=1`, `POST /control/au
 `gs_reset_counters`; Lua and Python `gs_stats(section, since)`, `gs_reset_counters()`; the debugger's board
 `gs_stats` ([neogs-automation-design §10](../../../inprogress/2026-09-19-general-sound/neogs-automation-design.md#10-as-built-2026-11-17)).
 
+`gs firmware [object] [--profile <id>]` reads the card's firmware objects through its profile: instances (a struct at
+a symbol or address, bound to a physical page, mapped or not) as rows of fields, variables (in memory, in a register
+while the card PC is in a range, in an instruction's operand) and the fixed-window variables of the built-in tables.
+It also gives the command `dispatch` (each command's handler as the card holds it, the ROM baseline, the patched and
+unknown entries; object `dispatch`) and, while the command log records, `unknown_commands` (the commands the host sent
+that no profile names, with counts). Without `--profile` it decodes by the profile of the code running on the card (an
+upload started by `#13`), else the ROM's. Command log entries carry `card_pc` (the handler from the table) and
+`card_label`.
+`gs firmware profiles` lists the profiles known: the built-in v1.04 / v1.05a / v1.05b and the JSON files of
+`<symbols>/gs/profiles/`. Every plane: WebAPI `GET /state/audio/gs/firmware?profile=&object=` and
+`GET /state/audio/gs/firmware/profiles`; MCP `inspect_state` aspects `audio_gs_firmware[.<object>]`
+(`gs_firmware_profile`) and `audio_gs_firmware_profiles`; Lua and Python `gs_firmware(object, profile)`,
+`gs_firmware_profiles()` ([gs-debugger design §8A.9](../../../inprogress/2026-09-27-gs-debugger/design.md#8a9-firmware-metadata-m1-m12)).
+
 #### 3.1 Memory Commands
 
 The `memory` command provides unified access to emulator memory with two addressing modes:

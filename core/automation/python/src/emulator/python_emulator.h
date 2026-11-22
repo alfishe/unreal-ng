@@ -64,6 +64,7 @@
 #include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
@@ -5724,6 +5725,21 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then")
+            // The firmware objects through the card's profile (gsfirmwareobjects.h, gs-debugger §8A.9)
+            .def("gs_firmware", [](Emulator& self, const std::string& object, const std::string& profile) -> py::object {
+                GSFirmwareObjectsQuery query;
+                query.object = object;
+                query.profile = profile;
+                const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(self.GetContext(), query);
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "The GS card's firmware objects through its profile: struct instances as rows of fields, variables; "
+               "object: one by name; profile: another profile by id", py::arg("object") = "", py::arg("profile") = "")
+            .def("gs_firmware_profiles", [](Emulator& self) -> py::object {
+                (void)self;
+                return StateNodeToPy(GSFirmwareProfilesState()["profiles"]);
+            }, "The GS firmware profiles known: [{id, title, source, matches, commands, structs, instances, ...}]")
             // Device boards (debugger-model widget catalog §4, core DebugBoards): the same data as /debug/boards
             .def("boards", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DebugBoards::List(self.GetContext()).body["boards"]);

@@ -641,7 +641,13 @@ uint8_t PortDecoderP2666::ReadPort(uint16_t port, uint16_t pc)
     if ((port & 0xF8FF) == 0xF8EF)
         return _uart.Read(static_cast<uint8_t>((port >> 8) & 7));  // reg_data_out (PaE.vhd:1539-1540)
 
-    // The external data bus: the Nemo IDE (odd registers only reach here), else nothing drives it
+    // The external data bus: a General Sound on the ZX-BUS answers its mailbox (#33 / #B3 / #BB, the low byte, as the
+    // card decodes it); the Nemo IDE (odd registers only reach here); else nothing drives it
+    if (IsGsPort(low))
+    {
+        if (PortDevice* card = PeripheralDevice(low))
+            return card->portDeviceInMethod(low);
+    }
     if ((port & 0x0006) == 0)
     {
         uint8_t ide = 0xFF;
@@ -732,6 +738,12 @@ void PortDecoderP2666::WritePorts(uint16_t port, uint8_t value, uint16_t pc)
             else
                 PeripheralPortOut(static_cast<uint16_t>(((low & 0x60) | 0x1F)), value);
         }
+    }
+    // The ZX-BUS carries every write: a General Sound there takes its mailbox (#33 / #B3 / #BB by the low byte)
+    if (IsGsPort(low))
+    {
+        if (PortDevice* card = PeripheralDevice(low))
+            card->portDeviceOutMethod(low, value);
     }
 }
 

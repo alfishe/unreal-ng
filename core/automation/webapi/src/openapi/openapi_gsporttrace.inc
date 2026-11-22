@@ -89,4 +89,37 @@
         section["responses"]["200"]["description"] = "The section with implementation, frame, age_frames, since";
         section["responses"]["404"]["description"] = "No such section on this card, no card, or no such baseline";
         section["responses"]["503"]["description"] = "No frame ended within 500 ms; read again";
+
+        // The firmware objects through the card's profile (gsfirmwareobjects.h, gs-debugger §8A.9); CLI 'gs firmware',
+        // MCP inspect_state aspect audio_gs_firmware, Lua / Python gs_firmware
+        Json::Value& objects = paths["/api/v1/emulator/{id}/state/audio/gs/firmware"]["get"];
+        objects["summary"] = "General Sound firmware objects";
+        objects["description"] =
+            "The card's firmware objects as its profile declares them: instances (a struct at a symbol or address, "
+            "bound to a physical page, mapped or not) as rows of fields, variables (memory, a register valid while "
+            "the card PC is in a range, an instruction's operand), and the built-in tables' fixed-window variables. "
+            "text: the same as lines";
+        objects["tags"].append("Audio State");
+        idParameter(objects);
+        for (const char* name : {"profile", "object"})
+        {
+            Json::Value& param = objects["parameters"][objects["parameters"].size()];
+            param["name"] = name;
+            param["in"] = "query";
+            param["required"] = false;
+            param["schema"]["type"] = "string";
+            param["description"] = std::string(name) == "profile" ? "A profile id (default: the card's firmware)"
+                                                                  : "One instance or variable by name";
+        }
+        objects["responses"]["200"]["description"] = "{profile, title, source, instances, variables, window_variables, text}";
+        objects["responses"]["404"]["description"] = "Emulator not found, no card, no profile, or no such object";
+
+        Json::Value& profiles = paths["/api/v1/emulator/{id}/state/audio/gs/firmware/profiles"]["get"];
+        profiles["summary"] = "General Sound firmware profiles";
+        profiles["description"] = "The profiles known: the built-in v1.04 / v1.05a / v1.05b and the JSON files of "
+                                  "<symbols>/gs/profiles, with their matches (ROM and upload digests)";
+        profiles["tags"].append("Audio State");
+        idParameter(profiles);
+        profiles["responses"]["200"]["description"] = "{profiles: [{id, title, source, matches, commands, ...}], text}";
+        profiles["responses"]["404"]["description"] = "Emulator not found";
     }

@@ -1,0 +1,24 @@
+diff --git a/src/kernel/ngssddrv.asm b/src/kernel/ngssddrv.asm
+index e4610c31..f8c796cb 100644
+--- a/src/kernel/ngssddrv.asm
++++ b/src/kernel/ngssddrv.asm
+@@ -38,7 +38,8 @@ SDWRSN1		EX AF,AF'
+ 		OUT (GSCOM),A
+ 		CALL WC_
+ 		LD DE,0X0200
+-SDWRSN2		OUTI
++SDWRSN2		INC B			;keep A15..A8 = 0: OUTI puts B-1 on them, and #E0B3..#EFB3 also write #EFF7 (Pentagon 2.666)
++		OUTI
+ 		CALL WD_
+ 		DEC DE
+ 		LD A,D
+@@ -246,7 +247,8 @@ ISDD1		;EI
+ 		OUT (C),H
+ 		CALL WD_
+ 		LD HL,UKLAD1
+-ISDD3		OUTI
++ISDD3		INC B			;keep A15..A8 = 0: OUTI puts B-1 on them, and #E0B3..#EFB3 also write #EFF7 (Pentagon 2.666)
++		OUTI
+ 		CALL WD_
+ 		DEC DE
+ 		LD A,D

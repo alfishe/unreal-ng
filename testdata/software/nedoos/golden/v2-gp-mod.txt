@@ -1,0 +1,75 @@
+data #00
+anomaly data_before_command #0 (#23 Get number of RAM pages)
+#23 Get number of RAM pages
+card took #23 Get number of RAM pages
+reply 0 #03: pages (#23 Get number of RAM pages)
+anomaly reply_read_without_poll #3 (#23 Get number of RAM pages)
+data #00
+#1E
+card took #1E
+card reset
+#F3 Warm restart
+card took #F3 Warm restart
+data #DE
+#14 Receive block, length #DE
+card took #14 Receive block
+length #03 (#14 Receive block)
+address #00 (#14 Receive block)
+address #40 (#14 Receive block)
+block upload: 990 bytes at #4000 (#14 Receive block)
+data #00
+#13 Jump to address, address #00
+card took #13 Jump to address
+address #40 (#13 Jump to address)
+#02 Get chip id
+card took #02 Get chip id
+reply 0 #FF: VS10xx version (#02 Get chip id)
+#00 Reset (back to the ROM)
+card took #00 Reset (back to the ROM)
+#30 Load module
+card took #30 Load module
+#D1 Open stream
+card took #D1
+module upload: 61902 bytes (#30 Load module)
+#D2 Close stream
+card took #D2
+data #01
+#31 Play module, module #01
+card took #31 Play module
+#60 Get song position
+card took #60 Get song position
+reply 0 #00: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #01: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #02: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #03: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #04: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #05: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #06: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #07: song position (#60 Get song position)
+(the 3 lines above repeat)
+#60 Get song position
+card took #60 Get song position
+reply 0 #00: song position (#60 Get song position)
+#F3 Warm restart
+card took #F3 Warm restart

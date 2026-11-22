@@ -1,0 +1,94 @@
+{
+  "id": "nedoos-gp-gscode",
+  "title": "NedoOS GP / ngsplay NeoGS MP3 streamer (gscode.bin)",
+  "note": "NedoOS src/gp/ngsdec/gscode.asm; uploaded by #14 to #4000 and started by #13 #4000 (gs-debugger nedoos-gs-software.md §3.5)",
+  "symbolFile": "profiles/nedoos-gp-gscode.map",
+  "hostDataStream": true,
+  "match": [
+    {
+      "kind": "upload",
+      "addr": "#4000",
+      "length": 990,
+      "sha256": "9770df659e6981a824e13e8dd17618a4c9b3e1880675da2c184460291724fc8a"
+    }
+  ],
+  "commands": [
+    {
+      "number": "00",
+      "name": "Reset (back to the ROM)",
+      "handshake": {
+        "exit": true,
+        "barrier": true
+      }
+    },
+    {
+      "number": "01",
+      "name": "Get free buffer space",
+      "reply": 1,
+      "reply_meaning": "free ring pages",
+      "handshake": {
+        "replyWait": true
+      }
+    },
+    {
+      "number": "02",
+      "name": "Get chip id",
+      "reply": 1,
+      "reply_meaning": "VS10xx version",
+      "handshake": {
+        "replyWait": true
+      }
+    },
+    {
+      "number": "03",
+      "name": "Restart stream"
+    },
+    {
+      "number": "04",
+      "name": "Volume up"
+    },
+    {
+      "number": "05",
+      "name": "Volume down"
+    },
+    {
+      "number": "06",
+      "name": "Get stream info",
+      "reply": 1,
+      "reply_meaning": "stream info byte",
+      "handshake": {
+        "replyWait": true
+      }
+    }
+  ],
+  "variables": [
+    {
+      "name": "ringWrite",
+      "kind": "register",
+      "register": "DE",
+      "pc": [
+        "mainloop",
+        "interrupthandler"
+      ],
+      "meaning": "the ring's write pointer (#8000-#FFFF, page 2)"
+    },
+    {
+      "name": "volume",
+      "kind": "smc_operand",
+      "at": "volumevalue",
+      "meaning": "the VS10xx volume"
+    },
+    {
+      "name": "chipVersion",
+      "kind": "smc_operand",
+      "at": "vsversion",
+      "meaning": "the decoder chip version"
+    },
+    {
+      "name": "streamInfo",
+      "kind": "smc_operand",
+      "at": "streaminfo",
+      "meaning": "the stream info byte (command 6)"
+    }
+  ]
+}
