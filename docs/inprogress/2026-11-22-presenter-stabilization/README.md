@@ -121,6 +121,26 @@ low latency switched at run time (smooth motion and the sync step are not starte
 its mode is switched; sleep and wake; the timed GL swap's `glXWaitForSbcOML` without a timeout (a window hidden with
 a swap in flight).
 
+Done (2026-11-22):
+
+- The rate of the screen under the window is followed (`QScreen::refreshRateChanged`, `watchScreenRate`): the display
+  rate step and the sync step are taken again. Not exercised: gamescope's XWayland does not send it (the presenter's
+  own vblanks tell the rate there), and no desktop session was at hand to change a mode in.
+- Smooth motion that comes on again (low latency or temporal blending off, turbo ended) starts over from the frames
+  that come now. The Deck: `behind` 0 after turbo (it was 1).
+- Full screen to windowed and back: the sync timer runs whenever smooth motion is `auto` or the display rate is
+  `match` (step 1), and takes the presenter's VRR and its mode again twice a second.
+- A monitor unplugged while its mode is switched: `Restore` on a display that is gone fails without harm on the three
+  platforms (the calls' errors are dropped; X11 under its own error handler). Read, not exercised.
+
+Tried and taken back: the timed GL swap's wait for its swap by polling `glXGetSyncValuesOML` with a deadline, in
+place of `glXWaitForSbcOML` (which has none). On the Deck it moved the screen times (at once p50 9.2 -> 10.1-11.0 ms)
+and after turbo smooth motion drew half its pictures (`starved` +29 to +51 in 5 s). The wait without a deadline stays;
+the hang it can cause (a window hidden with a swap in flight, then closed) was not reproduced.
+
+Open: the hang above; sleep and wake (the frame clock's sequence break and the presenters' own recovery, not
+exercised); V7 (a VRR query on Wayland and under gamescope: no such display here).
+
 ### 1.6 Content and displays not covered (step 6)
 
 Everything measured so far is 50 (48.83) Hz on 60 Hz at 352x288.

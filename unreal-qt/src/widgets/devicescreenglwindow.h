@@ -402,6 +402,9 @@ private:
     uint64_t _smoothBehind = 0;         ///< refreshes whose plan was behind the frame due: the frame shown as it is
     uint64_t _smoothStarved = 0;        ///< frames due with no next frame fed yet (no picture between them)
     uint64_t _smoothStarvedSerial = 0;  ///< ... the last one counted
+    bool _smoothWasActive = false;      ///< smoothActive at the last feed: on again starts it over
+    QMetaObject::Connection _screenRateChanged;  ///< the window's screen's refreshRateChanged (watchScreenRate)
+    void watchScreenRate();
     /// The presenter goes (made anew, a fall back): its counters start from 0 again, so what was kept by them does too
     void dropPresenter();
     bool pictureNotPresented(int64_t now, bool failHook);

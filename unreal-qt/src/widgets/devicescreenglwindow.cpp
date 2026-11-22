@@ -196,9 +196,11 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this]() { updateDisplayRate(); });
     connect(this, &QWindow::screenChanged, this, [this]() {
         restoreDisplayRate("the window moved to another display");
+        watchScreenRate();
         updateDisplayRate();
         updateVideoSync();
     });
+    watchScreenRate();
     // Twice a second while frames come to a shown window (VRR engaging, the machine's rate); it stops once it is idle
     // or hidden, frames to a shown window start it again (refresh, Expose)
     _syncTimer = new QTimer(this);
@@ -1311,6 +1313,25 @@ void DeviceScreenGLWindow::updateDisplayRate()
     _displayReason.clear();
 }
 
+void DeviceScreenGLWindow::watchScreenRate()
+{
+    // The rate of the screen under the window: the system or the user changes it (a mode set in the display
+    // settings, back from sleep on another mode), the screen stays the same one. The display rate step and the sync
+    // step are taken again against it. Queued: the window's own mode switch gets here too, from inside its Set
+    disconnect(_screenRateChanged);
+    if (QScreen* display = screen())
+        _screenRateChanged = connect(
+            display, &QScreen::refreshRateChanged, this,
+            [this](qreal hz) {
+                if (_isShuttingDown)
+                    return;
+                qInfo() << "DeviceScreenGLWindow: the display's rate is" << hz << "Hz now";
+                updateDisplayRate();
+                updateVideoSync();
+            },
+            Qt::QueuedConnection);
+}
+
 void DeviceScreenGLWindow::dropPresenter()
 {
     _presenter.reset();
@@ -1920,7 +1941,17 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                     updateDisplayRate();
                     updateVideoSync();
                 }, Qt::QueuedConnection);
-            if (smoothActive())
+            const bool smoothNow = smoothActive();
+            if (smoothNow && !_smoothWasActive)
+            {
+                // On again (low latency or temporal blending switched off, turbo ended): from the frames that come
+                // now, not from the ones it held when it stopped
+                _smooth.Reset();
+                _smoothShown = {};
+                _smoothFed = 0;
+            }
+            _smoothWasActive = smoothNow;
+            if (smoothNow)
             {
                 // UNREAL_SMOOTH_TRACE: from a reset on, so the trace holds every frame smooth motion has
                 if (_smoothTraced && atRefresh && !_renderingImage && _smoothTrace.StartsNow(_smooth.GetMode()))
