@@ -1,5 +1,6 @@
 // unreal-debugger (not in ecat): the ZX Spectrum Next's tabs of the debugger window (NextREG, MMU, Copper, Sprites,
-// DMA, CTC / IM2), each a device catalog report read whole: its fields in a tree, its list of rows in a table
+// DMA, CTC / IM2) and a General Sound card's (Log, Protocol, Firmware, Hardware, Stats), each a device catalog report
+// read whole: its fields in a tree, its list of rows in a table
 
 #pragma once
 
@@ -30,8 +31,10 @@ public:
     void refresh();
     //The values now are the ones the next stop compares with
     void mark_stop();
-    //The machine has the report (a Next)
+    //The machine has the report (a Next, a card)
     bool present() const;
+    //The catalog report read
+    const std::string &report() const { return m_device; }
 
     //For the self-check
     QTreeWidget * fields() const { return m_fields; }
@@ -57,5 +60,8 @@ struct NextTab {
     NextReportView * view;
 };
 
-//The six tabs, in their order
+//The six tabs, in their order (each view named "next:<report>")
 std::vector<NextTab> CreateNextTabs(Emulator * e, QWidget *parent);
+//The General Sound card's five tabs (gs-debugger TODO P5.1): Log, Protocol, Firmware, Hardware, Stats, the device
+//catalog's gs-commands, gs, gs-firmware, gs, gs-stats (each view named "card:<report>")
+std::vector<NextTab> CreateCardTabs(Emulator * e, QWidget *parent);

@@ -1,9 +1,15 @@
 #include "emulator/state/devicecatalog.h"
 
+#include "debugger/history/historycontrol.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/cdaudiocontrol.h"
 #include "emulator/io/z80n/nextdivmmcjournal.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/io/z80n/nextsdjournal.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
+#include "emulator/sound/chips/gs/gsporttrace.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
 
 #include <algorithm>
@@ -20,6 +26,91 @@ StateNode BuildScreen(EmulatorContext* context)
 StateNode BuildGs(EmulatorContext* context)
 {
     return Gs(context);
+}
+
+StateNode NotAvailable(const std::string& why)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = false;
+    n["description"] = why;
+    return n;
+}
+
+/// A reply body of a GS read (firmware objects, statistics) as a catalog report: `available` with it, else its error
+StateNode GsBody(int status, const StateNode& body)
+{
+    if (status != 200)
+    {
+        const StateNode* error = body.find("error");
+        return NotAvailable(error && error->kind == StateNode::Kind::String ? error->s : std::string("not available"));
+    }
+    StateNode n = body;
+    n["available"] = true;
+    return n;
+}
+
+/// The newest entries of the GS command log a debugger pane shows (the whole log: the history verbs)
+constexpr size_t kGsCommandRows = 500;
+
+/// The GS slot card's command log (gs-debugger design §6.3): its history `<slot>.commands`, the newest entries
+StateNode GsCommands(EmulatorContext* context)
+{
+    if (!context || !context->pSoundManager || !context->pSoundManager->getGeneralSound())
+        return NotAvailable("General Sound card not fitted");
+    HistoryRequest request;
+    request.verb = "read";
+    request.device = GSHistoryDevice(context) + ".commands";
+    request.last = kGsCommandRows;
+    const HistoryReply reply = HistoryControl::Execute(context, request);
+    if (reply.httpStatus != 200)
+        return NotAvailable("no command log on this card");
+    StateNode n = reply.body;
+    n["available"] = true;
+    return n;
+}
+
+void GsCommandsCommands(const StateNode& report, StateNode& entry)
+{
+    const StateNode* device = report.find("device");
+    const std::string id = device && device->kind == StateNode::Kind::String ? device->s : std::string("gs.commands");
+    const std::string last = std::to_string(kGsCommandRows);
+    entry["route"] = "history/" + id + "?last=" + last;
+    entry["cli"] = "history " + id + " " + last;
+    entry["script"] = "history";
+    entry["mcp"] = "device_history";
+}
+
+std::string GsCommandsSummary(const StateNode& report)
+{
+    const StateNode* mode = report.find("mode");
+    const StateNode* kept = report.find("kept");
+    if (!mode || mode->kind != StateNode::Kind::String)
+        return std::string();
+    if (mode->s == "off")
+        return "off";
+    return mode->s + ", " + std::to_string(kept ? kept->i : 0) + " entries";
+}
+
+/// The firmware's objects (gsfirmwareobjects.h): instances, variables, the dispatch table, the unknown commands
+StateNode GsFirmware(EmulatorContext* context)
+{
+    const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(context, GSFirmwareObjectsQuery{});
+    return GsBody(reply.status, reply.body);
+}
+
+/// The card's statistics block (gsslotstats.h); while the machine runs and no frame has ended since, `pending`
+StateNode GsStats(EmulatorContext* context)
+{
+    const GSStatsReply reply = GSStatsRead(context, GSStatsQuery{});
+    if (reply.pending)
+    {
+        StateNode n = StateNode::Object();
+        n["available"] = true;
+        n["pending"] = true;
+        n["description"] = "the statistics come with the next frame end";
+        return n;
+    }
+    return GsBody(reply.status, reply.body);
 }
 
 StateNode BuildCdAudio(EmulatorContext* context)
@@ -150,6 +241,9 @@ const std::vector<ReportEntry>& CatalogEntries()
         {"ay", "AY sound chips", "state/audio/ay", "state audio ay", "audio_ay_state", "audio_ay", &Ay, &HasAyChip, nullptr},
         {"fm", "TurboSound FM", "state/audio/fm", "state audio fm", "audio_fm_state", "audio_fm", &Fm, nullptr, nullptr},
         {"gs", "General Sound", "state/audio/gs", "state audio gs", "gs_state", "audio_gs", &BuildGs, nullptr, nullptr},
+        {"gs-commands", "GS command log", "history/gs.commands", "history gs.commands", "history", "device_history", &GsCommands, nullptr, &GsCommandsSummary, &GsCommandsCommands},
+        {"gs-firmware", "GS firmware objects", "state/audio/gs/firmware", "gs firmware", "gs_firmware", "audio_gs_firmware", &GsFirmware, nullptr, nullptr},
+        {"gs-stats", "GS statistics", "state/audio/gs/stats", "gs stats", "gs_stats", "audio_gs_stats", &GsStats, nullptr, nullptr},
         {"covox", "Covox / SounDrive", "state/audio/covox", "state audio covox", "audio_covox_state", "audio_covox", &Covox, nullptr, nullptr},
         {"moonsound", "MoonSound", "state/audio/moonsound", "state audio moonsound", "audio_moonsound_state", "audio_moonsound", &MoonSound, nullptr, nullptr},
         {"multisound", "ZX-MultiSound", "state/audio/multisound", "multisound", "multisound_state", "audio_multisound", &MultiSound, nullptr, nullptr},
@@ -222,6 +316,8 @@ StateNode Catalog(EmulatorContext* context, bool all)
         r["cli"] = e.cli;
         r["script"] = e.script;
         r["mcp"] = e.mcp;
+        if (e.commands != nullptr && present)
+            e.commands(report, r);
         reports.push(std::move(r));
     }
     n["reports"] = std::move(reports);

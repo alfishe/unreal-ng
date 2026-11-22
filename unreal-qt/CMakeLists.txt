@@ -845,6 +845,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/nextpanes.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.h"
+        # The debugger's General Sound panes: log, protocol, firmware, hardware, stats (gs-debugger TODO P5.1)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/cardpanes_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/cardpanes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/cardpanes.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)

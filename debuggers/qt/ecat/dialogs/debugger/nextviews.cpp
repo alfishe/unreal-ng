@@ -72,7 +72,7 @@ ComputerDevice * NextReportView::device() const
     if (!e->loaded || e->dm == nullptr) return nullptr;
     for (unsigned int i = 0; i < e->dm->device_count; i++) {
         ComputerDevice * d = e->dm->get_device(i)->device.get();
-        if (d->name == m_device) return d;
+        if (d->name == m_device && d->type == "report") return d;  //"gs" is the card's CPU as well
     }
     return nullptr;
 }
@@ -178,14 +178,35 @@ void NextReportView::refresh()
     m_table->setUpdatesEnabled(true);
 }
 
+namespace {
+std::vector<NextTab> named(std::vector<NextTab> tabs, const char * group)
+{
+    for (NextTab &t : tabs) t.view->setObjectName(QString(group) + ":" + QString::fromStdString(t.view->report()));
+    return tabs;
+}
+}
+
+std::vector<NextTab> CreateCardTabs(Emulator * e, QWidget *parent)
+{
+    return named({
+        {QObject::tr("GS log"), new NextReportView(e, "gs-commands", {}, "records", {"frame", "t", "kind", "command", "name", "text"}, parent)},
+        {QObject::tr("GS protocol"), new NextReportView(e, "gs", {"protocol", "last_send", "firmware_profile", "status", "command_pending",
+                                                                   "data_pending", "command_from_host", "data_from_host", "data_to_host"},
+                                                        std::string(), {}, parent)},
+        {QObject::tr("GS firmware"), new NextReportView(e, "gs-firmware", {}, "window_variables", {"name", "at", "size", "value", "meaning"}, parent)},
+        {QObject::tr("GS hardware"), new NextReportView(e, "gs", {}, "channels", {}, parent)},
+        {QObject::tr("GS stats"), new NextReportView(e, "gs-stats", {}, std::string(), {}, parent)},
+    }, "card");
+}
+
 std::vector<NextTab> CreateNextTabs(Emulator * e, QWidget *parent)
 {
-    return {
+    return named({
         {QObject::tr("NextREG"), new NextReportView(e, "next-regs", {}, "registers", {"nr", "value", "reset", "access", "name"}, parent)},
         {QObject::tr("MMU"), new NextReportView(e, "next-mmu", {}, "slots", {}, parent)},
         {QObject::tr("Copper"), new NextReportView(e, "next-copper", {}, "instructions", {"index", "word", "current", "text"}, parent)},
         {QObject::tr("Sprites"), new NextReportView(e, "next-sprites", {}, "sprites", {}, parent)},
         {QObject::tr("DMA"), new NextReportView(e, "next-dma", {}, std::string(), {}, parent)},
         {QObject::tr("CTC / IM2"), new NextReportView(e, "next", {"interrupts", "ctc"}, "ctc", {}, parent)},
-    };
+    }, "next");
 }

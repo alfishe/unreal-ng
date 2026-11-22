@@ -282,6 +282,31 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
 13. [ ] **Card debugger** per [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md) (GS, then
     NeoGS): two Qt windows paused together, its acceptance checklists.
 
+Owner decisions 2026-11-21: phase 5 extends the two debuggers that exist (the embedded one in unreal-qt and eCat,
+debuggers/qt), not a new window system; both get each step in parallel. Both already debug the card's CPU (a tab per
+CPU, registers, disassembly with the firmware's symbols, steps, exec breakpoints, TTD on the card). The steps, each in
+both debuggers, each pane a view of a report every automation plane serves (the Next panes' rule: the debugger shows
+what an agent reads):
+
+- [x] **P5.1 The card zone (A5.2).** Done 2026-11-21: embedded `CardPanes` (unreal-qt/src/debugger/cardpanes.cpp, test
+  `cardpanes_test.cpp`), eCat `CreateCardTabs` (nextviews.cpp, `--self-check` "card tabs"), catalog
+  `devicecatalog_test.cpp`. Side tabs shown while a GS or NeoGS is fitted, as the Next tabs are: Log (the
+  `gs.commands` history, decoded), Protocol (the `gs` report's `protocol`, `last_send`), Firmware
+  (`/state/audio/gs/firmware`: objects, dispatch, unknown commands, the profile stack), Hardware (the `gs` report:
+  MPAG, mailbox, channels, NeoGS registers), Stats (`/state/audio/gs/stats`). New device catalog entries `gs-commands`,
+  `gs-firmware`, `gs-stats` (eCat reads a pane by its catalog entry, in process or over the WebAPI).
+- [ ] **P5.2 Whose pause and where the other CPU is (A6 S1-S3, A4).** The card strip / inside-an-instruction strip
+  (MainPositionNode: the main instruction, elapsed / total T, the bus cycle), the paused-by line naming the CPU, the
+  card cycle and Δ in the card's registers, the profile line (`Symbols: GS v1.05a`).
+- [ ] **P5.3 Breakpoints (A4 B1-B4, A6 S5).** The event kinds (INT, NMI, card reset, page switch) and the protocol
+  kinds on the card side and the host side in both editors; card breakpoints listed with a CPU column.
+- [ ] **P5.4 Run control (A4 S5/S7, A6 S6).** Step main / step other, Run to: card cycle, main T, next card
+  interrupt, next host command; the card CPU by its shortcut.
+- [ ] **P5.5 NeoGS and the rest of the slot (B3, A10).** NeoGS DMA, SD · MP3 · Flash tabs; the LW player inspector;
+  the MultiSound's GS.
+- [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
+  console, the protocol monitor, the analysis tabs (A5.2a).
+
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 
 Owner decision 2026-11-17: either CPU is stepped both ways; the other CPU is computed by replay from the nearest

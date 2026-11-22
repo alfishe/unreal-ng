@@ -38,6 +38,7 @@
 #include "debugger/disksectordialog.h"
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
+#include "debugger/cardpanes.h"
 #include "debugger/nextpanes.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/reportpane.h"
@@ -94,6 +95,13 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         _sideTabs->setTabToolTip(index, pane.tooltip);
         _sideTabs->setTabVisible(index, false);
         _nextPanes.push_back(pane.pane);
+    }
+    for (const CardPanes::Pane& pane : CardPanes::Create(_sideTabs))
+    {
+        const int index = _sideTabs->addTab(pane.pane, pane.title);
+        _sideTabs->setTabToolTip(index, pane.tooltip);
+        _sideTabs->setTabVisible(index, false);
+        _cardPanes.push_back(pane.pane);
     }
     historyLayout->addWidget(_sideTabs);
     ui->mainSplitter->addWidget(_sideGroup);
@@ -1864,8 +1872,18 @@ void DebuggerWindow::updateSidePane()
             pane->clearMarks();  // another machine: nothing to compare with
             _sideTabs->setTabVisible(_sideTabs->indexOf(pane), next);
         }
-        _sideGroup->setTitle(next ? "PC history / Next" : "PC history");
     }
+    const bool card = CardPanes::Fitted(context);
+    if (card != _cardFitted)
+    {
+        _cardFitted = card;
+        for (ReportPane* pane : _cardPanes)
+        {
+            pane->clearMarks();
+            _sideTabs->setTabVisible(_sideTabs->indexOf(pane), card);
+        }
+    }
+    _sideGroup->setTitle(QString("PC history") + (next ? " / Next" : "") + (card ? " / GS" : ""));
     // The PC history records while its tab is in front of a shown window (records cost every instruction); the live
     // refresh of a Next tab runs while one is in front, a paused machine is refreshed by its stop (updateState)
     const bool shown = isVisible();
@@ -1880,10 +1898,10 @@ void DebuggerWindow::updateSidePane()
 
 void DebuggerWindow::refreshNextPanes(bool live)
 {
-    if (!_emulator || !_nextMachine || !isVisible())
+    if (!_emulator || !isVisible())
         return;
     ReportPane* pane = qobject_cast<ReportPane*>(_sideTabs->currentWidget());
-    if (!pane)
+    if (!pane || !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
         return;
     if (!live && _emulator->IsDirectStepping())
         return;  // the stepping's end refreshes (updateState)

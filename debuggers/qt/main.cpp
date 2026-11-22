@@ -1013,7 +1013,7 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         QTabWidget * side = tabs_with(window, "Devices");
         QList<NextReportView *> views;  // in the tabs' order
         for (int i = 0; side != nullptr && i < side->count(); i++)
-            if (auto * v = qobject_cast<NextReportView *>(side->widget(i))) views << v;
+            if (auto * v = qobject_cast<NextReportView *>(side->widget(i)); v && v->objectName().startsWith("next:")) views << v;
         check(views.size() == 6, "next tabs: six views");
         const bool next = !views.isEmpty() && views.front()->present();
         bool shown = side != nullptr;
@@ -1025,6 +1025,25 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
             check(views[1]->table() && views[1]->table()->rowCount() == 8, "next tabs: MMU lists the eight slots");
             check(views[4]->fields()->topLevelItemCount() > 10, "next tabs: DMA fields");
             check(views[5]->table() && views[5]->table()->rowCount() == 4, "next tabs: four CTC channels");
+        }
+    }
+
+    // A General Sound card's tabs (Log, Protocol, Firmware, Hardware, Stats): there while the machine has the card
+    {
+        QTabWidget * side = tabs_with(window, "Devices");
+        QList<NextReportView *> views;  // in the tabs' order
+        for (int i = 0; side != nullptr && i < side->count(); i++)
+            if (auto * v = qobject_cast<NextReportView *>(side->widget(i)); v && v->objectName().startsWith("card:")) views << v;
+        check(views.size() == 5, "card tabs: five views");
+        const bool card = !views.isEmpty() && views.front()->present();
+        bool shown = side != nullptr;
+        for (NextReportView * v : views) shown = shown && side->isTabVisible(side->indexOf(v)) == card;
+        check(shown, card ? "card tabs: shown with a General Sound" : "card tabs: hidden without one");
+        if (card && views.size() == 5) {
+            for (NextReportView * v : views) v->refresh();
+            check(views[1]->fields()->topLevelItemCount() > 3, "card tabs: protocol and mailbox fields");
+            check(views[3]->table() && views[3]->table()->rowCount() >= 4, "card tabs: hardware lists the DAC channels");
+            check(views[4]->fields()->topLevelItemCount() > 0, "card tabs: stats");
         }
     }
 

@@ -148,6 +148,8 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     //A Next's own tabs: shown while the machine has their reports
     m_next_tabs = CreateNextTabs(e, m_side_tabs);
     for (const NextTab &t : m_next_tabs) m_side_tabs->setTabVisible(m_side_tabs->addTab(t.view, t.title), false);
+    m_card_tabs = CreateCardTabs(e, m_side_tabs);
+    for (const NextTab &t : m_card_tabs) m_side_tabs->setTabVisible(m_side_tabs->addTab(t.view, t.title), false);
     update_next_tabs();
     m_split_bottom->setStretchFactor(0, 2);
     m_split_bottom->setStretchFactor(1, 1);
@@ -703,20 +705,25 @@ void DebuggerWindow::mark_all()
     m_memory_tabs->mark_stop();
     m_stack->mark_stop();
     for (const NextTab &t : m_next_tabs) t.view->mark_stop();
+    for (const NextTab &t : m_card_tabs) t.view->mark_stop();
 }
 
-//The Next tabs while the machine is one; a tab in sight that goes leaves the side on the stack
+//The Next tabs while the machine is one, the card tabs while it has a General Sound; a tab in sight that goes leaves
+//the side on the stack
 void DebuggerWindow::update_next_tabs()
 {
-    const bool next = !m_next_tabs.empty() && m_next_tabs.front().view->present();
-    for (const NextTab &t : m_next_tabs) m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), next);
+    for (const std::vector<NextTab> *group : {&m_next_tabs, &m_card_tabs}) {
+        const bool present = !group->empty() && group->front().view->present();
+        for (const NextTab &t : *group) m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), present);
+    }
 }
 
 NextReportView * DebuggerWindow::next_view_in_sight() const
 {
     QWidget * side = m_side_tabs->currentWidget();
-    for (const NextTab &t : m_next_tabs)
-        if (t.view == side) return t.view;
+    for (const std::vector<NextTab> *group : {&m_next_tabs, &m_card_tabs})
+        for (const NextTab &t : *group)
+            if (t.view == side) return t.view;
     return nullptr;
 }
 

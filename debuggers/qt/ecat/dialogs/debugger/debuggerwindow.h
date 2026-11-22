@@ -125,6 +125,7 @@ private:
     HistoryView * m_history;
     DevicesView * m_devices;
     std::vector<NextTab> m_next_tabs;
+    std::vector<NextTab> m_card_tabs;  //a General Sound card's (gs-debugger P5.1)
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
     QLabel * m_state;

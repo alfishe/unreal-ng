@@ -234,6 +234,7 @@ public:
     /// region <For the tests>
     QTabWidget* sideTabs() const { return _sideTabs; }
     const std::vector<class ReportPane*>& nextPanes() const { return _nextPanes; }
+    const std::vector<class ReportPane*>& cardPanes() const { return _cardPanes; }
     /// endregion
 
 protected:
@@ -300,15 +301,18 @@ private:
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
     class LiveSourceWindow* _liveSourceWindow = nullptr;
     class PcHistoryPane* _pcHistoryPane = nullptr;
-    // The splitter's third pane: tabs of every view the machine has (the PC history; a Next's panes)
+    // The splitter's third pane: tabs of every view the machine has (the PC history; a Next's panes; a GS card's)
     class QGroupBox* _sideGroup = nullptr;
     class QTabWidget* _sideTabs = nullptr;
     std::vector<class ReportPane*> _nextPanes;
-    class QTimer* _nextPanesTimer = nullptr;  // a live refresh of the Next tab in front while the machine runs (5 Hz)
+    std::vector<class ReportPane*> _cardPanes;  // the General Sound card's (gs-debugger P5.1)
+    class QTimer* _nextPanesTimer = nullptr;  // a live refresh of the report tab in front while the machine runs (5 Hz)
     bool _nextMachine = false;
-    /// Refresh the Next tab in front (when shown); `live`: the machine runs
+    bool _cardFitted = false;
+    /// Refresh the report tab in front (a Next's, a card's; when shown); `live`: the machine runs
     void refreshNextPanes(bool live);
-    /// The Next tabs on a Next only; the PC history records while in front, the live refresh while a Next tab is
+    /// The Next tabs on a Next only, the card tabs with a GS card; the PC history records while in front, the live
+    /// refresh while a report tab is
     void updateSidePane();
     class DebuggerTimeTravel* _timeTravel = nullptr;   // the toolbar's time controls (debuggers.md §4)  // in the splitter, right of the disassembly
     QPointer<class PortEventsDialog> _portEventsDialog;  // not modal: open while the program runs
