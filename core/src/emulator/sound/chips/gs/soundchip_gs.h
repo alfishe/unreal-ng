@@ -170,6 +170,7 @@ public:
     double cardUnitsPerSecond() const override { return _unitsPerSecond; }
     uint32_t cardCpuClockHz() const override { return _profile.cpuClockHz; }
     int64_t cardFrameTime() const override { return totalGsCycles() - _frameStartGsCycles; }
+    int64_t cardFrameLength() const override { return _frameGsCycles; }
     bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
     bool pokeCardMemory(uint16_t addr, uint8_t value) override;
     bool setCardRegisters(const Z80CpuRegisters& regs) override;

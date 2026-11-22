@@ -23,6 +23,7 @@
 #include "emulator/machinecatalog.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
+#include <functional>
 #include <optional>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -221,9 +222,10 @@ inline LabelManager* PythonLabels(Emulator& self, const std::string& cpu)
 
 inline pybind11::object StateNodeToPy(const StateNode& node);
 
-/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`): the reply's body and ok = True,
-/// or ok = False and error. The machine runs until the card ends it, then is paused; the GIL is free meanwhile
-inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0)
+/// A card CPU's step or run (`run`: the RunControl call): the reply's body and ok = True, or ok = False and error. The
+/// machine runs until the card ends it, then is paused; the GIL is free meanwhile
+inline py::dict PythonCardRun(Emulator& self,
+                              const std::function<execution::RunReply(execution::RunControl&, const execution::Requester&)>& run)
 {
     py::dict d;
     std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
@@ -239,7 +241,8 @@ inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind,
     execution::RunReply reply;
     {
         py::gil_scoped_release release;  // the card runs until its step ends (up to 5 s)
-        reply = execution::RunControl(shared).CardStep(requester, cpu, kind, count, address);
+        execution::RunControl control(shared);
+        reply = run(control, requester);
     }
     if (reply.status == execution::RunReply::Status::Revoked)
         throw std::runtime_error(reply.message);
@@ -252,6 +255,14 @@ inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind,
     d = StateNodeToPy(reply.body).cast<py::dict>();
     d["ok"] = true;
     return d;
+}
+
+/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`)
+inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0)
+{
+    return PythonCardRun(self, [&](execution::RunControl& control, const execution::Requester& requester) {
+        return control.CardStep(requester, cpu, kind, count, address);
+    });
 }
 
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
@@ -7689,6 +7700,21 @@ namespace PythonBindings
             return d;
         }, "Step out of the current subroutine (emulation ends paused); cpu='gs' / 'ms': the sound card CPU's",
            py::arg("cpu") = "")
+
+        // card_run_to(until, value=0, cpu="gs"): a card CPU's run to a moment (RunControl::CardRunTo)
+        .def("card_run_to", [](Emulator& self, const std::string& until, uint64_t value, const std::string& cpu) {
+            const DebugCpuId card = PythonCpu(self, cpu);
+            if (!IsCardCpu(card))
+                throw py::value_error("cpu must be a card's: 'gs' or 'ms'");
+            return PythonCardRun(self, [&](execution::RunControl& control, const execution::Requester& requester) {
+                return control.CardRunTo(requester, card, until, value);
+            });
+        }, "Run a sound card CPU (the machine paused) until: 'cycle' (card cycle value of the ZX frame, the next "
+           "frame's when passed), 'int' (its next accepted interrupt: the handler's first instruction), 'command' (the "
+           "host's next command write: paused after that main instruction), 'main_t' (the main CPU to T-state value "
+           "of the frame). A breakpoint of any CPU ends it first, 5 s at most. Returns {ok, stop, until, hit, pc, sp, "
+           "main_pc, main_sp, card_cycle, main_t, frame, command, state} or {ok: False, error}",
+           py::arg("until"), py::arg("value") = 0, py::arg("cpu") = "gs")
 
         .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates, const std::string& cpu) -> py::dict {
             py::dict d;

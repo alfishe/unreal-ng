@@ -77,6 +77,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /breakpoints/hits/reset",
     "POST /breakpoints/remove",
     "POST /callbacks/{cb_id}/resume",
+    "POST /card_run_to",
     "POST /control/audio/gs",
     "POST /control/audio/gs/porttrace",
     "POST /control/audio/midi",

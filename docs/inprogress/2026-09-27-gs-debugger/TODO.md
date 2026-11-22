@@ -317,8 +317,25 @@ what an agent reads):
   Left: the hit's own byte in the banner (the stop carries no value: `BreakpointTriggeredPayload` /
   `Emulator::BreakpointStop` would need it; now the filter's value is named); eCat's CPU filter;
   `unreal-debugger --no-gs` still has the Pentagon config's NeoGS.
-- [ ] **P5.4 Run control (A4 S5/S7, A6 S6).** Step main / step other, Run to: card cycle, main T, next card
+- [x] **P5.4 Run control (A4 S5/S7, A6 S6).** Step main / step other, Run to: card cycle, main T, next card
   interrupt, next host command; the card CPU by its shortcut.
+  Done 2026-11-22. Core: `RunControl::CardRunTo(requester, cpu, until, value)` with `until`
+  `cycle` / `int` / `command` / `main_t` (`GSCardTarget::ArmUntil`, StepKind Cycle / Int / Command; main_t a direct
+  `RunTStates` run) on every plane: CLI `card_run_to`, Lua `card_run_to`, Python `emu.card_run_to`, MCP
+  `control_execution` `card_run_to`, REST / WebSocket `POST /card_run_to {cpu, until, value}`; every card step's reply
+  adds `card_cycle`, `main_t`, `frame`. "Step main" from a card view is the main CPU's own step (`POST /step` without
+  `cpu`, `RunControl::StepIn`): no new call. Tests `GSCardRunTo_Test.*`.
+  Embedded (`debuggercardrun.{h,cpp}`): the four Run-to entries in "Adv Step ▾", Step other (Alt+F11; "Step main" with
+  the card in front, "Step GS" with main), Ctrl+1 / Ctrl+2 and the CPU tab bar's menu, the run's message in the stop
+  line (test `debuggercardrun_test.cpp`). eCat: the shim's `debug_card_run_to` (in process and `POST /card_run_to`),
+  a "Run to ▾" button, Step other, Ctrl+1 / Ctrl+2 (`--self-check` "run control", also over `--connect`).
+  Found on the way: a card fitted with the machine got its firmware symbols only after a card switch
+  (`Emulator::ApplySymbolBundles` now applies the cards' too), `GET /symbols/sets` ignored `cpu`, MCP `sets` had no
+  list in its text.
+  Left: `int` / `command` reached only in core tests (the idle NeoGS loader has interrupts off); Step other from the
+  main tab steps the card live, not through the TTD history; the GUI control plane has no verbs for these.
+  Ctrl+1 / Ctrl+2 vs the disassembly's marks (owner, 2026-11-22): the focused disassembly keeps Ctrl / Alt+1..5
+  (`DisassemblyView::event`, ShortcutOverride); elsewhere they switch the CPU.
 - [ ] **P5.5 NeoGS and the rest of the slot (B3, A10).** NeoGS DMA, SD · MP3 · Flash tabs; the LW player inspector;
   the MultiSound's GS.
 - [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send

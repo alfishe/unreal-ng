@@ -526,6 +526,9 @@ public:
     /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
     /// same instruction of the frame
     virtual int64_t cardFrameTime() const { return 0; }
+    /// The ZX frame's length in card time (the unit of cardFrameTime), as the frame start set it: cardCycles of it is
+    /// the card cycles of the frame. 0 without a CPU or before the first frame
+    virtual int64_t cardFrameLength() const { return 0; }
     /// The card runs to the ZX frame's end (handleFrameEnd): the frame counter already names the next frame
     virtual bool inFrameEndCatchUp() const { return false; }
     /// A script's write to card memory as the card CPU's write would land (a ROM or flash window keeps its byte):

@@ -832,6 +832,80 @@ TEST_F(McpDebugTools_Test, CardCpu_StepsGoToTheCardsRoutes)
         << refused.text;
 }
 
+// card_run_to goes to POST /card_run_to with cpu (gs by default), until and value; the text is the server's message
+// and where both CPUs stand (an agent may read only the text); a breakpoint that ended it is named; no until is refused
+TEST_F(McpDebugTools_Test, CardCpu_RunToGoesToTheCardRunRoute)
+{
+    Json::Value reply;
+    reply["status"] = "success";
+    reply["message"] = "Ran cpu gs to card cycle 120000: stopped at card cycle 120007, #0278";
+    reply["stop"]["cpu"] = "gs";
+    reply["stop"]["reason"] = "step";
+    reply["stop"]["cpu_pc"] = 0x0278;
+    reply["cpu"] = "gs";
+    reply["until"] = "cycle";
+    reply["hit"] = true;
+    reply["pc"] = 0x0278;
+    reply["sp"] = 0x7F00;
+    reply["main_pc"] = 0x3D2F;
+    reply["card_cycle"] = 120007;
+    reply["main_t"] = 34900;
+    reply["frame"] = 12;
+    reply["state"] = "paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/card_run_to"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "card_run_to";
+    args["until"] = "cycle";
+    args["value"] = 120000;
+    const mcp::ToolResult result = Run("control_execution", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/card_run_to");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "gs") << "gs by default";
+    EXPECT_EQ(call->body["until"].asString(), "cycle");
+    EXPECT_EQ(call->body["value"].asUInt(), 120000u);
+    EXPECT_NE(result.text.find("Ran cpu gs to card cycle 120000: stopped at card cycle 120007, #0278. Card CPU gs at "
+                               "$0278 (card cycle 120007); main CPU at $3D2F (T 34900, frame 12)."),
+              std::string::npos)
+        << result.text;
+    EXPECT_EQ(result.structured["card_cycle"].asInt(), 120007);
+
+    Json::Value hit = reply;
+    hit["message"] = "Stopped before the run of cpu ms to its next host command ended";
+    hit["hit"] = false;
+    hit["cpu"] = "ms";
+    hit["stop"]["cpu"] = "main";
+    hit["stop"]["reason"] = "breakpoint";
+    hit["stop"]["breakpoint_id"] = 3;
+    hit["stop"]["access"] = "execute";
+    hit["stop"]["address"] = 0x8002;
+    _caller->routes["POST /api/v1/emulator/emu-1/card_run_to"] = {200, hit};
+    args["until"] = "command";
+    args["cpu"] = "ms";
+    args.removeMember("value");
+    const mcp::ToolResult stopped = Run("control_execution", args);
+    ASSERT_FALSE(stopped.isError) << stopped.text;
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/card_run_to")->body["cpu"].asString(), "ms");
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/card_run_to")->body.isMember("value"));
+    EXPECT_NE(stopped.text.find("Stopped at breakpoint #3 of cpu main (execute) at $8002."), std::string::npos)
+        << stopped.text;
+
+    Json::Value refusal;
+    refusal["error"] = "Bad Request";
+    refusal["message"] = "Unknown run 'sideways' (cycle, int, command, main_t)";
+    _caller->routes["POST /api/v1/emulator/emu-1/card_run_to"] = {400, refusal};
+    args["until"] = "sideways";
+    const mcp::ToolResult bad = Run("control_execution", args);
+    EXPECT_TRUE(bad.isError);
+    EXPECT_NE(bad.text.find("Unknown run 'sideways'"), std::string::npos) << bad.text;
+
+    args.removeMember("until");
+    const mcp::ToolResult missing = Run("control_execution", args);
+    EXPECT_TRUE(missing.isError);
+    EXPECT_NE(missing.text.find("card_run_to requires 'until'"), std::string::npos) << missing.text;
+}
+
 /// analyze_performance cpuprofile: every op is a POST /cpuprofile/{op} with the options as given (series is the core's
 /// frames: frames is porttrace's frame count here); the core answer's text reaches content[]
 TEST_F(McpDebugTools_Test, AnalyzePerformance_CpuProfileForwardsTheOpAndCarriesTheText)

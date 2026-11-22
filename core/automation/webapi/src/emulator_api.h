@@ -558,6 +558,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::stepOver, "/api/v1/emulator/{id}/stepover", drogon::Post);
         ADD_METHOD_TO(EmulatorAPI::stepOut, "/api/v1/emulator/{id}/stepout", drogon::Post);
         ADD_METHOD_TO(EmulatorAPI::skipUntil, "/api/v1/emulator/{id}/skip_until", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::cardRunTo, "/api/v1/emulator/{id}/card_run_to", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runTStates, "/api/v1/emulator/{id}/run_tstates", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runToScanline, "/api/v1/emulator/{id}/run_to_scanline", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runNScanlines, "/api/v1/emulator/{id}/run_scanlines", drogon::Post);
@@ -1944,6 +1945,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     ///        Fast-forwards execution until PC reaches the target (breakpoints are skipped)
     void skipUntil(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/card_run_to — body: {"cpu": "gs", "until": "cycle" | "int" | "command" |
+    ///        "main_t", "value": N}: a card CPU's run to a moment (RunControl::CardRunTo)
+    void cardRunTo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    void cardRunToNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
     void runTStates(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
     void runToScanline(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

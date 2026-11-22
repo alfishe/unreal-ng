@@ -29,6 +29,7 @@
 #include "debugger/boards/debugboards.h"
 #include "debugger/targets/cpuview.h"
 #include <algorithm>
+#include <functional>
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -547,9 +548,10 @@ protected:
         return cpu;
     }
 
-    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`): the reply's body and ok = true, or
-    /// ok = false and error. The machine runs until the card ends it, then is paused
-    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0) const
+    /// A card CPU's step or run (`run`: the RunControl call): the reply's body and ok = true, or ok = false and error.
+    /// The machine runs until the card ends it, then is paused
+    sol::table CardRun(sol::state_view lua,
+                       const std::function<execution::RunReply(execution::RunControl&, const execution::Requester&)>& run) const
     {
         sol::table result = lua.create_table();
         Emulator* emulator = effectiveEmulator();
@@ -563,8 +565,8 @@ protected:
         }
         // The automation gate as every step of a script: its session, or an implicit one
         execution::script::Check(*emulator, execution::Origin::Lua);
-        const execution::RunReply reply = execution::RunControl(shared).CardStep(
-            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count, address);
+        execution::RunControl control(shared);
+        const execution::RunReply reply = run(control, execution::script::RequesterOf(*emulator, execution::Origin::Lua));
         if (reply.status == execution::RunReply::Status::Revoked)
             throw std::runtime_error(reply.message);
         if (!reply.Ok())
@@ -577,6 +579,14 @@ protected:
             result[key] = StateNodeToLua(lua.lua_state(), value);
         result["ok"] = true;
         return result;
+    }
+
+    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`)
+    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0) const
+    {
+        return CardRun(lua, [&](execution::RunControl& control, const execution::Requester& requester) {
+            return control.CardStep(requester, cpu, kind, count, address);
+        });
     }
 
     /// A table's members as frame watch options (docs/inprogress/2026-11-03-run-until-watches)
@@ -7181,6 +7191,18 @@ public:
                 result["error"] = e.what();
             }
             return result;
+        });
+
+        // card_run_to(until, [value], [cpu]): a card CPU's run to a moment (RunControl::CardRunTo; cpu "gs" by default):
+        // "cycle" value, "int", "command", "main_t" value. The reply as a table with ok, or ok = false and error
+        lua.set_function("card_run_to", [this](const std::string& until, sol::optional<uint64_t> value,
+                                               sol::optional<std::string> cpuName, sol::this_state ts) -> sol::table {
+            const DebugCpuId cpu = ScriptCpu(cpuName ? cpuName : sol::optional<std::string>(std::string("gs")));
+            if (!IsCardCpu(cpu))
+                throw std::runtime_error("cpu must be a card's: gs or ms");
+            return CardRun(sol::state_view(ts), [&](execution::RunControl& control, const execution::Requester& requester) {
+                return control.CardRunTo(requester, cpu, until, value.value_or(0));
+            });
         });
 
         // Fast-forward until PC reaches the target (breakpoints skipped). skip_until(pc, [max_tstates], [cpu]) or

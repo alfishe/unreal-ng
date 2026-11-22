@@ -613,6 +613,11 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
     # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
     # or {ok: False, error}
+    # card_run_to(until, value=0, cpu="gs"): the card CPU's run to a moment - "cycle" (card cycle value of the ZX
+    # frame; the next frame's when passed), "int" (its next accepted interrupt: the handler's first instruction),
+    # "command" (the host's next command write: paused after that main instruction), "main_t" (the main CPU to
+    # T-state value of the frame); the step's answer plus until, hit, target_cycle / target_t, card_cycle, main_t,
+    # frame (command: command)
     # select_cpu("gs") / selected_cpu(): the CPU the front-ends show, {cpu, follows}; a card shown follows the main
     # CPU's steps of the paused machine (its state at the main CPU's moment); "main" ends it
         

@@ -1045,6 +1045,32 @@ public:
         m_http.json("POST", m_base + "/stepout" + step_query(c), QJsonObject(), nullptr, 15000);
         changed();
     }
+    // A card's run to a moment (POST /card_run_to {cpu, until, value}): it answers when the run has ended (a breakpoint
+    // or 5 s at most)
+    CardRunAnswer debug_card_run_to(ecatshim::CPU * c, const std::string &until, uint64_t value) override
+    {
+        CardRunAnswer a;
+        auto * card = dynamic_cast<RemoteCardZ80 *>(c);
+        if (card == nullptr) {
+            a.message = "A card run takes a card's CPU (gs, ms)";
+            return a;
+        }
+        drop_run_to();
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/card_run_to",
+                                          QJsonObject{{"cpu", card->cpu()}, {"until", QString::fromStdString(until)},
+                                                      {"value", (qint64)value}},
+                                          &status, 15000);
+        a.ok = status >= 200 && status < 300;
+        a.message = r.value("message").toString(status == 0 ? QString("No answer from the emulator") : QString()).toStdString();
+        a.hit = r.value("hit").toBool();
+        a.stop_reason = r.value("stop").toObject().value("reason").toString().toStdString();
+        a.card_cycle = r.contains("card_cycle") ? r.value("card_cycle").toInteger() : -1;
+        a.main_t = r.contains("main_t") ? r.value("main_t").toInteger() : -1;
+        a.frame = r.contains("frame") ? r.value("frame").toInteger() : -1;
+        changed();
+        return a;
+    }
     // The tab's CPU shown (GET / PUT /debug/selected_cpu): a card's follows the main CPU's steps of the paused machine
     void debug_select(ecatshim::CPU * c) override
     {

@@ -35,6 +35,26 @@ and the Sprinter's own events) on the main CPU. Each asks for the event's byte: 
 (value / mask). They are the core's `BRK_EVENT` breakpoints (`CPU::add_event_breakpoint` and its kin in the shim;
 over the WebAPI `POST /breakpoints {"type": "event", "event", "value", "value_mask", "cpu"}`).
 
+## Run control of a card
+
+With a sound card fitted ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A4 `Toolbar`, `Menu / shortcut`, A6 S6; gs-debugger TODO P5.4) the toolbar adds, after Run to cursor:
+
+| Control | Key | What |
+|---------|-----|------|
+| Step other (`Step main` on a card's tab, `Step gs` / `Step ms` on main's) | Alt+F11 | one instruction of the CPU not in front: the main CPU's own step, or the card's (`RunControl::CardStep`); the tab in front stays |
+| Run to ▾ Card cycle... | - | the card to its cycle N of the frame (asked; plain digits decimal, `#`, `$` or `0x` hex), parked at the next card instruction boundary |
+| Run to ▾ Main T... | - | the main CPU to T N of the frame, the card following it (it catches up lazily: its own cycle may lag) |
+| Run to ▾ Next card interrupt | - | the card to the first instruction of its next interrupt handler |
+| Run to ▾ Next host command | - | the machine to the host's next command write (OUT #BB), the card not having taken it yet |
+| - | Ctrl+1 / Ctrl+2 | the main CPU's tab / the card CPU's tab in front |
+
+The menu also holds Run to cursor (F4). The card runs act on the card in front, else the first card; they are
+`RunControl::CardRunTo` (`Emulator::debug_card_run_to` in the shim; over the WebAPI `POST /card_run_to {cpu, until,
+value}`), end at any CPU's breakpoint, and time out after 5 s (an idle card takes no interrupt and gets no command:
+that is said, not a failure). The core's message (where it stopped, a refusal, a timeout) joins the state label until
+the next command. Without a card none of them is shown.
+
 ## Time travel
 
 > TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)

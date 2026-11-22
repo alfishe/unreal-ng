@@ -1134,8 +1134,10 @@ public:
     void OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId, uint16_t address,
                                BreakpointHitKind kind, uint16_t cpuPc);
     /// Another CPU's step ended at its instruction boundary `cpuPc` (GSCardTarget::ArmStep, the emulation thread):
-    /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume()
-    void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
+    /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume().
+    /// `parkHere` false (a step the host side ended, inside the main CPU's instruction): no park here, the loop parks
+    /// at its next instruction boundary, and the stop has no `main` position
+    void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc, bool parkHere = true);
     /// WaitWhilePaused, marked as parked inside another CPU's run (IsParkedInsideCardRun)
     void ParkInsideCardRun();
     /// Where the main CPU stands as card `cpu` stops (the emulation thread, inside the card's run)

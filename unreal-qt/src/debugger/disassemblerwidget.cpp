@@ -260,11 +260,32 @@ void DisassemblyView::paintEvent(QPaintEvent*)
     }
 }
 
+namespace
+{
+/// Ctrl+1..5 sets a mark, Alt+1..5 goes to it
+bool IsMarkKey(const QKeyEvent* event)
+{
+    const Qt::KeyboardModifiers mods = event->modifiers() & ~Qt::KeypadModifier;
+    return event->key() >= Qt::Key_1 && event->key() <= Qt::Key_5 &&
+           (mods == Qt::ControlModifier || mods == Qt::AltModifier);
+}
+}  // namespace
+
+bool DisassemblyView::event(QEvent* event)
+{
+    if (event->type() == QEvent::ShortcutOverride && IsMarkKey(static_cast<QKeyEvent*>(event)))
+    {
+        event->accept();  // the key comes to keyPressEvent, not to a window shortcut
+        return true;
+    }
+    return QAbstractScrollArea::event(event);
+}
+
 void DisassemblyView::keyPressEvent(QKeyEvent* event)
 {
     const Qt::KeyboardModifiers mods = event->modifiers() & ~Qt::KeypadModifier;
     const int key = event->key();
-    if (key >= Qt::Key_1 && key <= Qt::Key_5 && (mods == Qt::ControlModifier || mods == Qt::AltModifier))
+    if (IsMarkKey(event))
     {
         if (mods == Qt::ControlModifier)
             emit markSetRequested(key - Qt::Key_1 + 1);

@@ -168,6 +168,7 @@ public:
     void catchUpToHost() override;
     int64_t hostLead() const override;
     int64_t cardFrameTime() const override { return _runner.now() - _frameStartTicks; }
+    int64_t cardFrameLength() const override { return _frameTicks; }
     bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
     bool pokeCardMemory(uint16_t addr, uint8_t value) override { return _cpu && _mem.writeRam(addr, value); }
     bool setCardRegisters(const Z80CpuRegisters& regs) override;

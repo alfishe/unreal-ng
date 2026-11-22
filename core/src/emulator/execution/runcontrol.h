@@ -23,6 +23,7 @@
 #include "emulator/state/statenode.h"
 
 class Emulator;
+class GSCardTarget;
 namespace framewatch { struct Spec; }
 class EmulatorContext;
 enum EmulatorStateEnum : uint8_t;
@@ -161,9 +162,25 @@ public:
     /// access or the frame end), so the main CPU moves on to that point. A breakpoint of any CPU on the way ends it;
     /// no end within the deadline (2 s, over / out / to 5 s) pauses the machine with the reason timeout. The body: `stop`
     /// ({cpu, reason step / breakpoint / pause / timeout, cpu_pc, breakpoint_id, address, access}), the card CPU's
-    /// pc and sp, the main CPU's main_pc and main_sp
+    /// pc and sp, the main CPU's main_pc and main_sp; card_cycle (the card's cycle of the frame), main_t (the main
+    /// CPU's T of the frame) and frame, where both stand now
     RunReply CardStep(const Requester& requester, DebugCpuId cpu, const std::string& kind, unsigned count = 1,
                       uint16_t address = 0);
+    /// A card CPU's run to a moment (gs-debugger TODO P5.4, the card debugger's Run to ▾), from the card's view
+    /// (`cpu` gs or ms), the machine paused:
+    /// - "cycle": until the card CPU reaches card cycle `value` of the ZX frame (the `gs` report's cpu.frame_cycle),
+    ///   parked at the first card instruction boundary at or after it; a cycle it already stands at or passed: the
+    ///   next frame's. `value` below the frame's card cycles
+    /// - "int": until the card CPU accepts its next interrupt, parked at the handler's first instruction (where an
+    ///   `int` event breakpoint parks)
+    /// - "command": until the host's next command write (OUT #BB, the main CPU): the machine pauses after that main
+    ///   instruction, the card has not taken it yet; the body adds `command` (the byte; in `stop` too)
+    /// - "main_t": until the main CPU reaches T-state `value` of the frame (z80 t, 0..frame - 1; the next frame's when
+    ///   at or past it): a direct run of the main CPU, the card following it
+    /// A breakpoint of any CPU on the way ends it; no end in 5 s pauses the machine with the reason timeout (main_t:
+    /// at most a frame, no deadline). The body: CardStep's (stop, cpu, pc, sp, main_pc, main_sp, state, card_cycle,
+    /// main_t, frame) and `until`, `hit` (it got there), `target_cycle` (cycle) / `target_t` (main_t)
+    RunReply CardRunTo(const Requester& requester, DebugCpuId cpu, const std::string& until, uint64_t value = 0);
     /// endregion </Steps and runs>
 
     /// region <Machine>
@@ -195,6 +212,23 @@ private:
     RunReply CountRefusal(const char* unit, uint64_t count, uint64_t max) const;
     /// Finish, then the counted run's fields (RunOutcomeNode)
     RunReply FinishRun(const RunOutcome& outcome);
+
+    /// A card step's or run's messages: it ended, its deadline passed, another cause stopped it first
+    struct CardRunTexts
+    {
+        std::string done;
+        std::string timeout;
+        std::string other;
+    };
+    /// Resumes the machine for the step armed on `target` and waits until it pauses again (`limit`: the deadline,
+    /// then a pause with the reason timeout); `ended`: the step itself ended it. The body: CardBody
+    RunReply RunCard(const Requester& requester, DebugCpuId cpu, GSCardTarget& target, std::chrono::milliseconds limit,
+                     const CardRunTexts& texts, bool& ended);
+    /// CardRunTo "main_t": the main CPU's direct run to T `value` of the frame
+    RunReply CardRunToMainT(DebugCpuId cpu, GSCardTarget& target, uint64_t value);
+    /// A card reply's body from Finish's (`reply`) and the stop: stop, cpu, the card's pc / sp, main_pc / main_sp,
+    /// card_cycle, main_t, frame, state
+    StateNode CardBody(const RunReply& reply, StateNode stop, DebugCpuId cpu, GSCardTarget& target) const;
 
     std::shared_ptr<Emulator> _emulator;
 };

@@ -20,6 +20,7 @@
 #endif
 
 #include <QAbstractButton>
+#include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -1109,6 +1110,70 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
             check(removed && !find_event(gs, "card_command", off) && !find_event(cpu, "host_command", off) &&
                       !listed("gs", "card_command") && !listed("main", "host_command"),
                   "event bp: removed, gone from the list");
+        }
+    }
+
+    // Run control of a card (gs-debugger P5.4): the card's run to a card cycle and to a main T through the shim and
+    // the window, Step other (Alt+F11) both ways, the CPU in front by Ctrl+1 / Ctrl+2; without a card all hidden
+    if (auto * cw = dynamic_cast<DebuggerWindow *>(window)) {
+        auto action = [window](const char * name) { return window->findChild<QAction *>(name); };
+        QAction * other = action("step_other");
+        QAction * by1 = action("select_main_cpu");
+        QAction * by2 = action("select_card_cpu");
+        const char * const entries[] = {"run_to_card_cycle", "run_to_main_t", "run_to_card_int", "run_to_host_command"};
+        int found = 0;
+        for (const char * name : entries) found += action(name) != nullptr ? 1 : 0;
+        check(other && by1 && by2 && other->shortcut() == QKeySequence(Qt::ALT | Qt::Key_F11) &&
+                  by1->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_1) && by2->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_2),
+              "run control: Step other (Alt+F11), Ctrl+1, Ctrl+2");
+        QApplication::processEvents();
+        if (gs == nullptr) {
+            check(other && !other->isVisible() && by2 && !by2->isEnabled(), "run control: no card, no card actions");
+        } else {
+            check(found == 4 && other && other->isVisible(), "run control: the four card Run to entries, Step other shown");
+            // Through the shim: a card cycle, a main T; each gets there, parked at the next instruction boundary
+            const uint64_t cycle = 1000, t = 30000;
+            const ecatshim::Emulator::CardRunAnswer c1 = m->debug_card_run_to(gs, "cycle", cycle);
+            check(c1.ok && c1.hit && c1.card_cycle >= (int64_t)cycle && c1.card_cycle < (int64_t)cycle + 64,
+                  "card run to: card cycle 1000 reached");
+            printf("    (%s; card cycle %lld, main T %lld)\n", c1.message.c_str(), (long long)c1.card_cycle, (long long)c1.main_t);
+            const ecatshim::Emulator::CardRunAnswer t1 = m->debug_card_run_to(gs, "main_t", t);
+            check(t1.ok && t1.hit && t1.main_t >= (int64_t)t && t1.main_t < (int64_t)t + 64, "card run to: main T 30000 reached");
+            printf("    (%s; card cycle %lld, main T %lld)\n", t1.message.c_str(), (long long)t1.card_cycle, (long long)t1.main_t);
+            // Through the window: the core's message in the state label; a refusal said there too
+            ecatshim::Emulator::CardRunAnswer w1;
+            const bool ran = cw->card_run_to("cycle", 2000, &w1);
+            check(ran && w1.ok && w1.hit && w1.card_cycle >= 2000 && !w1.message.empty() &&
+                      cw->state_text().contains(QString::fromStdString(w1.message)),
+                  "card run to (window): cycle 2000, the message shown");
+            ecatshim::Emulator::CardRunAnswer w2;
+            cw->card_run_to("cycle", 0xFFFFFFF0u, &w2);
+            check(!w2.ok && !w2.message.empty() && cw->state_text().contains(QString::fromStdString(w2.message)),
+                  "card run to (window): a cycle out of the frame refused, said");
+            if (!w2.message.empty()) printf("    (%s)\n", w2.message.c_str());
+
+            // Step other with the main CPU in front: the card steps one instruction, main stays in front
+            by1->trigger();
+            QApplication::processEvents();
+            const bool main_front = cw->current_cpu() == cpu;
+            const unsigned int gr = reg(gs, "R");
+            other->trigger();
+            wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
+            wait_for([]() { return false; }, 600);  // the step's stop event, past one long poll
+            check(main_front && reg(gs, "R") != gr && cw->current_cpu() == cpu, "step other: main in front, the card stepped");
+            // Ctrl+2: the card in front; Step other steps main, the card stays in front
+            by2->trigger();
+            QApplication::processEvents();
+            const bool card_front = cw->current_cpu() == gs;
+            const unsigned int r1 = reg(cpu, "R");
+            other->trigger();
+            wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
+            wait_for([]() { return false; }, 600);
+            check(card_front && reg(cpu, "R") != r1 && cw->current_cpu() == gs && m->debug_stop_cpu() == cpu,
+                  "step other: the card in front (Ctrl+2), main stepped");
+            by1->trigger();
+            QApplication::processEvents();
+            check(cw->current_cpu() == cpu, "Ctrl+1: the main CPU in front again");
         }
     }
 

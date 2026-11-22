@@ -126,6 +126,9 @@ signals:
     void resized();
 
 protected:
+    /// Ctrl / Alt+1..5 are the marks while the view has the focus: they win over the window's shortcuts (the CPU
+    /// switch's Ctrl+1 / Ctrl+2 with a card fitted)
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;

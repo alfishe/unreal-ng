@@ -3342,18 +3342,20 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
     ParkInsideCardRun();
 }
 
-void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
+void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc, bool parkHere)
 {
     BreakpointStop stop;
     stop.step = true;
     stop.address = cpuPc;
     stop.cpu = cpu;
     stop.cpuPc = cpuPc;
-    stop.main = MainPositionAt(cpu);
+    if (parkHere)
+        stop.main = MainPositionAt(cpu);
     _pendingPauseCause = stop;
     Pause();
     _pendingPauseCause = BreakpointStop{};
-    ParkInsideCardRun();
+    if (parkHere)
+        ParkInsideCardRun();
 }
 
 MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
@@ -4866,6 +4868,12 @@ void Emulator::ApplySymbolBundles()
     const std::string folder = SymbolBundleFolder();
     if (folder.empty())
         return;
+    // The sound cards' firmware symbols too: a card fitted with the machine is created before the debug manager, so
+    // its target saw no card creation (GSCardTarget::OnCardCreated runs on a later switch only)
+    if (_context && _context->pDebugManager)
+        for (const DebugCpuId cpu : {DebugCpuId::GS, DebugCpuId::MultiSoundGS})
+            if (GSCardTarget* target = _context->pDebugManager->GetCardTarget(cpu))
+                target->ApplySymbolBundles();
     if (!_context || !_context->pDebugManager || !_context->pMemory || !_core || !_core->GetROM())
         return;
     LabelManager* labels = _context->pDebugManager->GetLabelManager();

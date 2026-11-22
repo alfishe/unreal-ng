@@ -99,6 +99,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"stepover", &CLIProcessor::HandleStepOver},  // Execute instruction, skip calls
                         {"stepout", &CLIProcessor::HandleStepOut},      // Run until current subroutine returns
                         {"skip_until", &CLIProcessor::HandleSkipUntil},  // Fast-forward until PC reaches target
+                        {"card_run_to", &CLIProcessor::HandleCardRunTo},  // A card CPU to a cycle, INT, command, main T
                         {"run_until", &CLIProcessor::HandleRunUntil},    // Whole frames until a frame watch's rules hold
                         {"watch", &CLIProcessor::HandleWatch},           // Armed frame watches: add, list, del
                         {"watches", &CLIProcessor::HandleWatch},         // Alias for watch (list by default)
@@ -711,6 +712,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                  until the card's step ends (the main CPU moves on to the card's catch-up point)" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
     oss << "  skip_until <pc> --cpu gs|ms   - Run the sound card CPU to <pc> (a breakpoint on the way ends it)" << NEWLINE;
+    oss << "  card_run_to <cycle N|int|command|main_t N> [--cpu gs|ms] - Run the sound card CPU to card cycle N of the" << NEWLINE;
+    oss << "                                  frame, its next interrupt, the host's next command, or main T N" << NEWLINE;
     oss << "  run_until key=value ...       - Frames until if= / text= / screen= / event= holds ('run_until help')" << NEWLINE;
     oss << "  watch add|list|del            - Armed frame watches: a hit pauses and is pushed as watch_hit" << NEWLINE;
     oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;

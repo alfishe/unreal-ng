@@ -14,6 +14,7 @@
 #include <QHeaderView>
 #include <QIcon>
 #include <QImage>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QPixmap>
 #include <QLabel>
@@ -408,6 +409,79 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     addAction(m_to_cursor);
     connect(m_to_cursor, &QAction::triggered, this, [this]() { run_to_cursor(); });
 
+    //Not in ecat (gs-debugger P5.4, gui-card-debugger A4 Toolbar): Step other, the CPU not in front one instruction,
+    //and Run to, a sound card's moments. Both only with a card
+    m_step_other = tb->addAction(tr("Step other"));
+    m_step_other->setObjectName("step_other");
+    m_step_other->setShortcut(QKeySequence(Qt::ALT | Qt::Key_F11));
+    m_step_other->setShortcutContext(Qt::WindowShortcut);
+    addAction(m_step_other);
+    connect(m_step_other, &QAction::triggered, this, [this]() { step_other(); });
+
+    m_run_to_menu = new QToolButton(tb);
+    m_run_to_menu->setText(tr("Run to"));
+    m_run_to_menu->setToolTip(tr("Run the card to a moment: its cycle, a main CPU T-state, its next interrupt, the "
+                                 "host's next command"));
+    m_run_to_menu->setPopupMode(QToolButton::InstantPopup);
+    QMenu * run_to = new QMenu(m_run_to_menu);
+    m_run_to_menu->setMenu(run_to);
+    auto run_to_entry = [this, run_to](const QString &text, const char * name, const char * until, const QString &ask) {
+        QAction * a = run_to->addAction(text);
+        a->setObjectName(name);
+        const QString what = QString::fromLatin1(until);
+        connect(a, &QAction::triggered, this, [this, what, ask, text]() {
+            uint64_t value = 0;
+            if (!ask.isEmpty()) {
+                bool ok = false;
+                const QString input = QInputDialog::getText(this, text, ask, QLineEdit::Normal, QString(), &ok).trimmed();
+                if (!ok || input.isEmpty()) return;
+                //Plain digits decimal; #, $ or 0x hex
+                QString digits = input;
+                int base = 10;
+                if (digits.startsWith('#') || digits.startsWith('$')) {
+                    digits = digits.mid(1);
+                    base = 16;
+                } else if (digits.startsWith("0x", Qt::CaseInsensitive)) {
+                    digits = digits.mid(2);
+                    base = 16;
+                }
+                value = digits.toULongLong(&ok, base);
+                if (!ok) {
+                    QMessageBox::critical(this, tr("Error"), tr("Incorrect number: %1").arg(input));
+                    return;
+                }
+            }
+            card_run_to(what, value);
+        });
+    };
+    run_to->addAction(m_to_cursor);
+    run_to->addSeparator();
+    run_to_entry(tr("Card cycle..."), "run_to_card_cycle", "cycle",
+                 tr("The card cycle of the frame to run the card to (decimal; #, $ or 0x for hex):"));
+    run_to_entry(tr("Main T..."), "run_to_main_t", "main_t",
+                 tr("The main CPU's T-state of the frame to run to (decimal; #, $ or 0x for hex):"));
+    run_to_entry(tr("Next card interrupt"), "run_to_card_int", "int", QString());
+    run_to_entry(tr("Next host command"), "run_to_host_command", "command", QString());
+    m_run_to_menu_action = tb->addWidget(m_run_to_menu);
+
+    //The processor in front: the machine's own (Ctrl+1), the card's (Ctrl+2)
+    m_select_main = new QAction(tr("Main CPU"), this);
+    m_select_main->setObjectName("select_main_cpu");
+    m_select_main->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_select_main->setShortcutContext(Qt::WindowShortcut);
+    addAction(m_select_main);
+    connect(m_select_main, &QAction::triggered, this, [this]() {
+        if (CPU * c = main_cpu()) select_cpu(c);
+    });
+    m_select_card = new QAction(tr("Card CPU"), this);
+    m_select_card->setObjectName("select_card_cpu");
+    m_select_card->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
+    m_select_card->setShortcutContext(Qt::WindowShortcut);
+    addAction(m_select_card);
+    connect(m_select_card, &QAction::triggered, this, [this]() {
+        if (m_panes.size() > 1) select_cpu(m_panes[1].cpu);
+    });
+
     //Back in time (not in ecat): shown only while the machine has a recorded history
     m_ttd = new TtdControls(this, tb, e, [this]() { return main_cpu(); }, [this]() { return current_cpu(); });
     connect(m_ttd, &TtdControls::moved, this, [this]() {
@@ -652,6 +726,56 @@ bool DebuggerWindow::run_to_cursor()
     return true;
 }
 
+CPU * DebuggerWindow::card_cpu()
+{
+    if (m_panes.size() < 2) return nullptr;
+    CPU * c = current_cpu();
+    return (c != nullptr && c != main_cpu()) ? c : m_panes[1].cpu;
+}
+
+bool DebuggerWindow::card_run_to(const QString &until, uint64_t value, Emulator::CardRunAnswer * answer)
+{
+    CPU * card = card_cpu();
+    if (card == nullptr || !held()) return false;
+    mark_all();
+    Emulator * em = e;
+    Emulator::CardRunAnswer a;
+    const std::string what = until.toStdString();
+    e->invoke([em, card, what, value, &a]() { a = em->debug_card_run_to(card, what, value); });
+    //Said where the machine's state is: the core's sentence (where it stopped, or why it did not run)
+    m_run_message = QString::fromStdString(a.message);
+    //Taken as a stop of its own: every view read again (a run to a main T is a direct run, with no stop event)
+    m_serial = e->debug_serial();
+    m_paused = e->debug_paused() && !e->debug_stepping();
+    if (m_paused) {
+        refresh_all(true);
+        m_card_strip = read_card_strip();
+    }
+    show_state();
+    if (answer != nullptr) *answer = a;
+    return true;
+}
+
+bool DebuggerWindow::step_other()
+{
+    CPU * front = current_cpu();
+    if (front == nullptr || m_panes.size() < 2 || !held()) return false;
+    CPU * other = front == main_cpu() ? card_cpu() : main_cpu();
+    if (other == nullptr) return false;
+    mark_all();
+    //Its stop leaves the tab in front: the other CPU steps, the one looked at stays
+    m_keep_front = true;
+    Emulator * em = e;
+    e->invoke([em, other]() { em->debug_step(other); });
+    show_state();
+    return true;
+}
+
+QString DebuggerWindow::state_text() const
+{
+    return m_state->text();
+}
+
 bool DebuggerWindow::toggle_breakpoint_at_cursor()
 {
     CpuPane * p = pane();
@@ -701,6 +825,18 @@ void DebuggerWindow::update_actions()
     m_step_over->setEnabled(held);
     m_step_out->setEnabled(held);
     m_to_cursor->setEnabled(held);
+    //A card's actions: there with a card, made while held
+    const bool card = m_panes.size() > 1;
+    m_run_to_menu_action->setVisible(card);
+    m_run_to_menu->setEnabled(held && card);
+    m_step_other->setVisible(card);
+    m_step_other->setEnabled(held && card);
+    if (card && p != nullptr) {
+        const QString other = QString::fromStdString(p->cpu == main_cpu() ? m_panes[1].cpu->name : main_cpu()->name);
+        m_step_other->setText(tr("Step %1").arg(other));
+        m_step_other->setToolTip(tr("Step %1: one instruction of the CPU not in front (Alt+F11)").arg(other));
+    }
+    m_select_card->setEnabled(card);
     m_to_pc->setEnabled(loaded);
     m_go->setEnabled(loaded);
     m_goto->setEnabled(loaded);
@@ -729,6 +865,9 @@ void DebuggerWindow::run_command(void (*command)(Emulator *, CPU *))
 
 void DebuggerWindow::mark_all()
 {
+    //A new command: the last card run's message and the kept tab are over
+    m_run_message.clear();
+    m_keep_front = false;
     for (CpuPane &p : m_panes) {
         p.banks->mark_stop();
         p.regs->mark_stop();
@@ -822,6 +961,8 @@ void DebuggerWindow::show_state()
         if (!main.empty()) text += (QString(" ") + QChar(0x00B7) + " ") + QString::fromStdString(main);
         //The card: its CPU, PC, cycle in the frame, page, symbols
         if (!m_card_strip.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_card_strip;
+        //A card's run to a moment: the core's sentence
+        if (!m_run_message.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_run_message;
     } else {
         text = tr("Running");
     }
@@ -851,7 +992,8 @@ void DebuggerWindow::on_debug_event()
             m_stop_serial = stop;
             const int reason = e->debug_stop_reason();
             CPU * c = e->debug_stop_cpu();
-            if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE) select_cpu(c);
+            if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE && !m_keep_front)
+                select_cpu(c);
         }
         refresh_all(true);
         m_card_strip = read_card_strip();

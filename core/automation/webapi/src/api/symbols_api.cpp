@@ -149,8 +149,7 @@ void EmulatorAPI::symbolDetect(const HttpRequestPtr& req, std::function<void(con
 void EmulatorAPI::symbolSets(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
-    (void)req;
-    RespondSymbols(id, "sets", {}, callback);
+    RespondSymbols(id, "sets", OptionsFromQuery(req, "sets"), callback);  // cpu=gs / ms: the card CPU's sets
 }
 
 void EmulatorAPI::symbolSetChange(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

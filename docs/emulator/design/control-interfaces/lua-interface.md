@@ -720,6 +720,9 @@ w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"
 -- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
 -- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
 r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
+-- Its runs to a moment (cpu "gs" by default): card cycle 120000 of the frame, its next interrupt, the host's next
+-- command, the main CPU's T 30000; adds until, hit, target_cycle / target_t, card_cycle, main_t, frame (command: command)
+r = card_run_to("cycle", 120000);  r = card_run_to("int");  r = card_run_to("command", 0, "gs");  r = card_run_to("main_t", 30000)
 -- The CPU the front-ends show: a card shown follows the main CPU's steps of the paused machine; {cpu, follows}
 c = select_cpu("gs");  c = selected_cpu();  select_cpu("main")
 

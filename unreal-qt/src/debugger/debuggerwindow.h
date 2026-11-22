@@ -107,6 +107,8 @@ public:
     bool selectCpu(DebugCpuId cpu);
     DebuggerCpuTabs* cpuTabs() const { return _cpuTabs; }
     class DebuggerTimeTravel* timeTravel() const { return _timeTravel; }
+    /// The card run controls (Run to's card entries, Step other, the CPU shortcuts): gs-debugger TODO P5.4
+    class DebuggerCardRun* cardRun() const { return _cardRun; }
     /// A byte as the CPU in front sees it (no side effects)
     uint8_t readCpuByte(uint16_t address);
     /// Step In / Over / Out (`kind` "in", "over", "out") or run to `address` ("to") on the card in front
@@ -165,6 +167,8 @@ private slots:
     void onBreakpointHit(const BreakpointHit& hit);
     /// The stop line goes when the machine moves on (continue, a step, a reset)
     void clearStopBanner();
+    /// The stop line with a message of the debugger's own (a card run that did not get there): plain text
+    void showStopNotice(const QString& text);
     void onStopBannerLink(const QString& link);
     void handleCPUStepMessage(int id, Message* message);
     void handleLabelChanged(int id, Message* message);
@@ -315,6 +319,7 @@ private:
     /// The Next tabs on a Next only, the card tabs with a GS card; the PC history records while in front, the live
     /// refresh while a report tab is
     void updateSidePane();
+    class DebuggerCardRun* _cardRun = nullptr;         // Run to's card entries, Step other, Ctrl+1 / Ctrl+2
     class DebuggerTimeTravel* _timeTravel = nullptr;   // the toolbar's time controls (debuggers.md §4)  // in the splitter, right of the disassembly
     QPointer<class PortEventsDialog> _portEventsDialog;  // not modal: open while the program runs
 

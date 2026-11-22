@@ -269,6 +269,28 @@ public:
     virtual void debug_step_over(CPU * c) = 0;
     virtual void debug_step_out(CPU * c) = 0;
     virtual void debug_run_to(CPU * c, unsigned int address) = 0;
+    // A card CPU's run to a moment (not in ecat; gs-debugger P5.4, RunControl::CardRunTo), the machine paused: `until`
+    // "cycle" (to card cycle `value` of the frame), "int" (the card's next interrupt), "command" (the host's next
+    // command to the card) or "main_t" (the main CPU to T `value` of the frame, the card following it lazily). It
+    // returns when the run has ended: the core's answer
+    struct CardRunAnswer {
+        bool ok = false;          // it ran (got there or not); false: refused, nothing ran
+        bool hit = false;         // it got there
+        std::string message;      // the core's sentence (where it stopped, or why it did not run)
+        std::string stop_reason;  // step, breakpoint, timeout, pause
+        int64_t card_cycle = -1;  // where the card stands now: its cycle of the frame (-1: not known)
+        int64_t main_t = -1;      // the main CPU's T of the frame
+        int64_t frame = -1;
+    };
+    virtual CardRunAnswer debug_card_run_to(CPU * c, const std::string &until, uint64_t value)
+    {
+        (void)c;
+        (void)until;
+        (void)value;
+        CardRunAnswer a;
+        a.message = "This machine has no card run";
+        return a;
+    }
     // The CPU of the tab shown: a card's follows the main CPU's steps of the paused machine (its state at the main
     // CPU's moment); the main CPU's ends that
     virtual void debug_select(CPU * c) { (void)c; }

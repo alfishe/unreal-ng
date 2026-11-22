@@ -1145,6 +1145,33 @@ public:
         if (card_step(c, "out", 1)) return;
         m_emu->StepOut();
     }
+    // A card's run to a moment (RunControl::CardRunTo): the machine runs until it gets there, a breakpoint or 5 s
+    CardRunAnswer debug_card_run_to(ecatshim::CPU * c, const std::string &until, uint64_t value) override
+    {
+        CardRunAnswer a;
+        auto * card = dynamic_cast<CardZ80 *>(c);
+        if (card == nullptr) {
+            a.message = "A card run takes a card's CPU (gs, ms)";
+            return a;
+        }
+        clear_run_to();
+        const execution::RunReply r = execution::RunControl(m_emu).CardRunTo(kGui, card->id(), until, value);
+        a.ok = r.Ok();
+        a.message = r.message;
+        const StateNode &b = r.body;
+        auto number = [&b](const char * key) -> int64_t {
+            const StateNode * n = b.find(key);
+            return (n != nullptr && n->kind == StateNode::Kind::Int) ? n->i : -1;
+        };
+        if (const StateNode * hit = b.find("hit")) a.hit = hit->kind == StateNode::Kind::Bool && hit->b;
+        if (const StateNode * stop = b.find("stop"))
+            if (const StateNode * reason = stop->find("reason")) a.stop_reason = reason->s;
+        a.card_cycle = number("card_cycle");
+        a.main_t = number("main_t");
+        a.frame = number("frame");
+        if (!a.ok) fprintf(stderr, "ecat-debugger: card run refused: %s\n", r.message.c_str());
+        return a;
+    }
     // The tab's CPU shown (DebugManager::SelectCpu): a card's follows the main CPU's steps of the paused machine
     void debug_select(ecatshim::CPU * c) override
     {

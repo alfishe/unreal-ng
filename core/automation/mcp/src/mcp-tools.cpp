@@ -1443,7 +1443,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
-                               "run_until_pc", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
+                               "run_until_pc", "card_run_to", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
                                "bp_list", "bp_reset_hits", "bp_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
                                "callbacks", "callback_resume", "callback_remove", "callback_policy",
                                "set_register", "port_out", "select_cpu", "wait", "take_control", "release_control"})
@@ -1540,7 +1540,8 @@ void RegisterControlExecution(ToolRegistry& registry)
         "step / step_n / step_over / step_out resumes the machine until the card ends it and pauses it again; the "
         "main CPU moves on to where the card catches up (a host port access or the frame end); a breakpoint of any "
         "CPU ends it first, none within 2 s (over / out 5 s) answers timeout. run_until_pc with a card CPU runs that "
-        "CPU to pc (run to the cursor; breakpoints always end it, max_tstates not used, 5 s)";
+        "CPU to pc (run to the cursor; breakpoints always end it, max_tstates not used, 5 s). card_run_to: the card "
+        "CPU whose run (default gs; see until)";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
         "For run_until / watch_add: a game event of the profile (events:) fires. For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
@@ -1675,7 +1676,19 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["port"]["type"] = "string";
     schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
     schema["properties"]["value"]["type"] = "string";
-    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255); for set_register: 0..#FFFF";
+    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255); for set_register: 0..#FFFF; "
+                                                   "for card_run_to: the card cycle of the frame (until cycle) or the main CPU's T-state of the frame (until main_t)";
+    schema["properties"]["until"]["type"] = "string";
+    schema["properties"]["until"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* until : {"cycle", "int", "command", "main_t"})
+        schema["properties"]["until"]["enum"].append(until);
+    schema["properties"]["until"]["description"] =
+        "For card_run_to (the machine paused; cpu gs by default, or ms): cycle - the card CPU parks at the first "
+        "instruction boundary at or after card cycle value of the ZX frame (a cycle already passed: the next "
+        "frame's); int - at the handler's first instruction of the card's next accepted interrupt; command - the "
+        "machine pauses after the main CPU's next OUT to the card's command port (the card has not taken it; the "
+        "answer names the byte); main_t - the main CPU runs to T-state value of the frame (the next frame's when "
+        "past). A breakpoint of any CPU ends it first, none in 5 s answers timeout";
     schema["properties"]["since"]["type"] = "integer";
     schema["properties"]["since"]["description"] =
         "For wait: the debugger seq last seen (inspect_state snapshot shows it); omitted = the current one";
@@ -2373,6 +2386,59 @@ void RegisterControlExecution(ToolRegistry& registry)
                     if (args.isMember("interval_ms"))
                         body["interval_ms"] = args["interval_ms"];
                     ForwardCall("POST", Endpoint(id, "/run_pace"), &body, caller, "", describe);
+                    return;
+                }
+
+                // A card CPU's run to a moment (POST /card_run_to): the server's message, then where both CPUs stand
+                if (action == "card_run_to")
+                {
+                    if (!args.isMember("until"))
+                    {
+                        done(ToolResult::Error("card_run_to requires 'until': cycle, int, command or main_t"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["cpu"] = args.isMember("cpu") ? args["cpu"] : Json::Value("gs");
+                    body["until"] = args["until"];
+                    if (args.isMember("value"))
+                        body["value"] = args["value"];
+                    caller.Call("POST", Endpoint(id, "/card_run_to"), &body, [done](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            std::string hint;
+                            if (status == 409 && !IsSessionRefusal(response))
+                                hint = " Hint: the machine may need to be paused first — use action:'pause'.";
+                            done(ToolResult::Error("card_run_to failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response) + hint));
+                            return;
+                        }
+                        const Json::Value& stop = response["stop"];
+                        std::ostringstream text;
+                        text << response.get("message", "").asString() << ".";
+                        if (stop.get("reason", "").asString() == "breakpoint")
+                        {
+                            char where[128];
+                            std::snprintf(where, sizeof(where), " Stopped at breakpoint #%u of cpu %s (%s) at $%04X.",
+                                          stop.get("breakpoint_id", 0).asUInt(), stop.get("cpu", "").asString().c_str(),
+                                          stop.get("access", "").asString().c_str(), stop.get("address", 0).asUInt());
+                            text << where;
+                        }
+                        else if (stop.get("reason", "").asString() != "step")
+                            text << " Reason " << stop.get("reason", "").asString() << ".";
+                        char where[160];
+                        std::snprintf(where, sizeof(where), " Card CPU %s at $%04X", response.get("cpu", "").asString().c_str(),
+                                      response.get("pc", 0).asUInt());
+                        text << where;
+                        if (response.isMember("card_cycle"))
+                            text << " (card cycle " << response["card_cycle"].asInt64() << ")";
+                        std::snprintf(where, sizeof(where), "; main CPU at $%04X", response.get("main_pc", 0).asUInt());
+                        text << where;
+                        if (response.isMember("main_t"))
+                            text << " (T " << response["main_t"].asInt64() << ", frame " << response.get("frame", 0).asInt64()
+                                 << ")";
+                        text << ".";
+                        done(ToolResult::Ok(text.str(), std::move(response)));
+                    });
                     return;
                 }
 

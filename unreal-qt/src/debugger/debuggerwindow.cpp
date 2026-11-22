@@ -1,4 +1,5 @@
 #include "debuggerwindow.h"
+#include "debugger/debuggercardrun.h"
 #include "debugger/debuggercpu.h"
 #include "debugger/debuggertimetravel.h"
 #include "emulator/remotecontrolguard.h"
@@ -392,8 +393,25 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _disasmTitle = ui->disasmGroup->title();
     connect(_cpuTabs, &DebuggerCpuTabs::cpuChanged, this, [this](DebugCpuId cpu) {
         retargetPanes();
+        if (_cardRun)
+            _cardRun->update();
         emit cpuChanged(cpu);
     });
+
+    // With a card fitted (gs-debugger TODO P5.4): Run to's card entries, Step other beside the steps, Ctrl+1 / Ctrl+2
+    DebuggerCardRun::Hooks cardRunHooks;
+    cardRunHooks.before = [this]() {
+        clearStopBanner();  // the machine moves on
+        _breakpointTriggered = false;
+        if (m_speedControl)
+            m_speedControl->stop();
+    };
+    cardRunHooks.notice = [this](const QString& text) { showStopNotice(text); };
+    cardRunHooks.after = [this]() {
+        updateState();
+        emit screenRefreshRequested();
+    };
+    _cardRun = new DebuggerCardRun(this, _cpuTabs, atomicStepMenu, toolBar, frameStepAction, std::move(cardRunHooks));
 
     connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
         updateState();
@@ -665,6 +683,8 @@ void DebuggerWindow::propagateEmulator()
         _cpuTabs->setEmulator(_emulator);
     if (_timeTravel)
         _timeTravel->setEmulator(_emulator);
+    if (_cardRun)
+        _cardRun->setEmulator(_emulator);
     // Port events holds the machine it searches: another machine (or none) closes it
     if (_portEventsDialog && _portEventsDialog->emulator() != _emulator)
         _portEventsDialog->close();
@@ -741,7 +761,10 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
         case StateResumed:  // StateResumed = running after pause, same as StateRun
             // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON)
             updateToolbarActions(false, true, false, true, true, true);
-            clearStopBanner();
+            // A run of the debugger's own (a card run, a card step) resumes and pauses again before this queued
+            // state arrives: the machine paused by then keeps the stop line that run left
+            if (!_emulator || !_emulator->IsPaused())
+                clearStopBanner();
             break;
         case StateStopped:
         case StateUnknown:
@@ -788,6 +811,8 @@ void DebuggerWindow::onBindingReady()
     // (ready fires on the new emulator's first pause, before any CPU step refresh).
     if (_cpuTabs)
         _cpuTabs->update();  // the machine is complete now: its card CPUs have tabs
+    if (_cardRun)
+        _cardRun->update();
     ui->registersWidget->setZ80State(_emulator ? cpuState() : nullptr);
 
     // Dispatch to children via signal (widgets are connected to readyForChildren)
@@ -1155,6 +1180,8 @@ void DebuggerWindow::updateState()
             _cpuTabs->update();
             _cpuTabs->followStop();
         }
+        if (_cardRun)
+            _cardRun->update();  // a card fitted or removed: its entries show or hide
         Z80State* state = cpuState();
 
         // Refresh registers widget
@@ -1250,6 +1277,8 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     stepOutAction->setEnabled(canStep);
     frameStepAction->setEnabled(canStep);
     waitInterruptAction->setEnabled(canStep);
+    if (_cardRun)
+        _cardRun->setEnabled(canStep);
 
     // Update breakpoint management
     breakpointsAction->setEnabled(canManageBreakpoints);
@@ -1500,6 +1529,15 @@ void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
     // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
     updateToolbarActions(true, false, true, true, true, true);
     updateState();
+}
+
+void DebuggerWindow::showStopNotice(const QString& text)
+{
+    if (!_stopBanner || text.isEmpty())
+        return;
+    _stopBreakpointId = BRK_INVALID;
+    _stopBanner->setText(text.toHtmlEscaped());
+    _stopBanner->setVisible(true);
 }
 
 void DebuggerWindow::clearStopBanner()

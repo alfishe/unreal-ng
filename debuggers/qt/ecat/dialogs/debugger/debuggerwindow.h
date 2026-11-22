@@ -85,6 +85,17 @@ public:
     //F4 and F2 at the cursor of the listing in front; false when the machine is not held, or only seen
     bool run_to_cursor();
     bool toggle_breakpoint_at_cursor();
+    //Not in ecat (gs-debugger P5.4): a sound card's CPU run to a moment, the Run to menu's card entries: `until`
+    //"cycle" / "main_t" (value: the card cycle / the main CPU's T of the frame), "int", "command". The card in front,
+    //else the first one; the core's message joins the state label. False when not held or without a card
+    bool card_run_to(const QString &until, uint64_t value, Emulator::CardRunAnswer * answer = nullptr);
+    //The card CPU the card actions act on: the one in front, else the first card's; nullptr without a card
+    CPU * card_cpu();
+    //Step other (Alt+F11): one instruction of the CPU not in front (main from a card's tab, the card from main's);
+    //the tab in front stays
+    bool step_other();
+    //The state label's text
+    QString state_text() const;
     //The time travel group of the toolbar (not in ecat): the self-check drives it
     TtdControls * ttd() { return m_ttd; }
 
@@ -151,6 +162,13 @@ private:
     QAction * m_bp_toggle;
     QAction * m_bp_clear;
     QToolButton * m_bp_events;
+    QToolButton * m_run_to_menu;     //Run to: the card's moments (gs-debugger P5.4), with a card
+    QAction * m_run_to_menu_action;  //its place in the toolbar
+    QAction * m_step_other;          //Alt+F11
+    QAction * m_select_main;         //Ctrl+1
+    QAction * m_select_card;         //Ctrl+2
+    QString m_run_message;           //The last card run's message, until the next command
+    bool m_keep_front = false;       //The stop of a Step other leaves the tab in front
     TtdControls * m_ttd = nullptr;
     unsigned int m_serial;
     bool m_paused;

@@ -825,6 +825,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggercputabs_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.h"
+        # The card run controls: Run to's card entries, Step other, Ctrl+1 / Ctrl+2 (gs-debugger TODO P5.4)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggercardrun_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercardrun.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercardrun.h"
         # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"
