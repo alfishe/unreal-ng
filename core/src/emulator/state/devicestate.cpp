@@ -766,6 +766,61 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
     return GeneralSoundReport(*gs, sm, ramWindow);
 }
 
+std::string GeneralSoundStrip(const StateNode& report)
+{
+    auto number = [&report](std::initializer_list<const char*> path, int64_t& out) {
+        const StateNode* n = &report;
+        for (const char* key : path)
+            if (!(n = n->find(key)))
+                return false;
+        if (n->kind != StateNode::Kind::Int)
+            return false;
+        out = n->i;
+        return true;
+    };
+    auto text = [&report](std::initializer_list<const char*> path) {
+        const StateNode* n = &report;
+        for (const char* key : path)
+            if (!(n = n->find(key)))
+                return std::string();
+        return n->kind == StateNode::Kind::String ? n->s : std::string();
+    };
+    auto grouped = [](int64_t v) {
+        std::string digits = std::to_string(v < 0 ? -v : v);
+        for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3)
+            digits.insert(static_cast<size_t>(i), ",");
+        return (v < 0 ? "-" : "") + digits;
+    };
+    char hex[16];
+    const std::string implementation = text({"implementation"});
+    std::string line = implementation == "ngs" ? "NeoGS" : "GS";
+    int64_t value = 0;
+    if (implementation == "lightweight")
+        line += " lightweight player";
+    else if (number({"cpu", "clock_hz"}, value))
+        line += " Z80 " + std::to_string(value / 1000000) + " MHz";
+    if (number({"cpu", "pc"}, value))
+    {
+        std::snprintf(hex, sizeof(hex), "#%04X", static_cast<unsigned>(value));
+        line += std::string(" · PC ") + hex;
+        if (const StateNode* halted = report.find("cpu") ? report.find("cpu")->find("halted") : nullptr; halted && halted->b)
+            line += " HALT";
+    }
+    if (number({"cpu", "frame_cycle"}, value))
+        line += " · cycle " + grouped(value);
+    if (number({"page"}, value))
+    {
+        std::snprintf(hex, sizeof(hex), "#%02X", static_cast<unsigned>(value));
+        line += std::string(" · MPAG ") + hex;
+    }
+    if (report.find("firmware_profile"))
+    {
+        const std::string title = text({"firmware_profile", "title"});
+        line += " · Symbols: " + (!title.empty() ? title : std::string("unknown firmware"));
+    }
+    return line;
+}
+
 StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, bool ramWindow)
 {
     GeneralSoundCard* gs = &card;
@@ -847,8 +902,17 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
         cpu["sp"] = int(gs->getCPUReg(GSCpuRegister::SP));
         cpu["af"] = int(gs->getCPUReg(GSCpuRegister::AF));
         cpu["halted"] = gs->isCPUHalted();
+        // The card's cycle in the ZX frame (gs-debugger A4: `c 119,985`), in CPU cycles at its clock now
+        const uint32_t hz = gs->cardCpuClockHz();
+        const double units = gs->cardUnitsPerSecond();
+        if (hz != 0 && units > 0.0)
+        {
+            cpu["clock_hz"] = static_cast<int64_t>(hz);
+            cpu["frame_cycle"] = static_cast<int64_t>(static_cast<double>(gs->cardFrameTime()) * hz / units);
+        }
     }
     ret["cpu"] = cpu;
+    ret["strip"] = GeneralSoundStrip(ret);
 
     NeoGSStateInfo ngs;
     if (gs->neogsState(ngs))

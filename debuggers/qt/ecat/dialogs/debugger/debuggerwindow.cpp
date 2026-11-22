@@ -788,6 +788,8 @@ void DebuggerWindow::show_state()
         //A card's stop: where the main CPU stood at the card's moment
         const std::string main = e->debug_stop_main_text();
         if (!main.empty()) text += (QString(" ") + QChar(0x00B7) + " ") + QString::fromStdString(main);
+        //The card: its CPU, PC, cycle in the frame, page, symbols
+        if (!m_card_strip.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_card_strip;
     } else {
         text = tr("Running");
     }
@@ -820,9 +822,27 @@ void DebuggerWindow::on_debug_event()
             if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE) select_cpu(c);
         }
         refresh_all(true);
+        m_card_strip = read_card_strip();
         if (CpuPane * p = pane()) p->code->setFocus();
     }
     show_state();
+}
+
+QString DebuggerWindow::read_card_strip() const
+{
+    if (!e->loaded || e->dm == nullptr) return QString();
+    for (unsigned int i = 0; i < e->dm->device_count; i++) {
+        ComputerDevice * d = e->dm->get_device(i)->device.get();
+        if (d->name != "gs" || d->type != "report") continue;  //"gs" is the card's CPU as well
+        DeviceFieldValue v;
+        bool read = false;
+        e->invoke([d, &v, &read]() {
+            d->get_device_fields();
+            read = d->get_field("strip", 0, 0, v);
+        });
+        return read ? QString::fromStdString(v.text) : QString();
+    }
+    return QString();
 }
 
 //While the machine runs the views follow it; a stop that came without an

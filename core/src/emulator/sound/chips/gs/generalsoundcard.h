@@ -513,6 +513,8 @@ public:
     /// catch-up would run now. 0 without a CPU, or while the host clock has no base for this frame
     virtual int64_t hostLead() const { return 0; }
     virtual double cardUnitsPerSecond() const { return 0.0; }
+    /// The card CPU's clock now (classic GS 12 MHz, the MultiSound's 16 MHz, NeoGS by GSCFG0); 0 without a CPU
+    virtual uint32_t cardCpuClockHz() const { return 0; }
     /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
     /// same instruction of the frame
     virtual int64_t cardFrameTime() const { return 0; }

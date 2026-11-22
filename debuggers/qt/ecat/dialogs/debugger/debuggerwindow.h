@@ -172,6 +172,9 @@ private:
     //What the next stop shows changes against
     void mark_all();
     void show_state();
+    //A General Sound card's line at the last stop (gs-debugger A6 S1): the `gs` report's strip, empty without a card
+    QString m_card_strip;
+    QString read_card_strip() const;
     void update_cursor();
     //What can be done now: the steps only while the machine is held, the
     //run while it is not running already

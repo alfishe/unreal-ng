@@ -233,6 +233,7 @@ signals:
 public:
     /// region <For the tests>
     QTabWidget* sideTabs() const { return _sideTabs; }
+    QLabel* cardStrip() const { return _cardStrip; }
     const std::vector<class ReportPane*>& nextPanes() const { return _nextPanes; }
     const std::vector<class ReportPane*>& cardPanes() const { return _cardPanes; }
     /// endregion
@@ -321,6 +322,10 @@ private:
     SpeedControlWidget* m_speedControl = nullptr;
     // The stop line under the speed control: the breakpoint the machine stopped at
     QLabel* _stopBanner = nullptr;
+    // A sound card's line (gs-debugger A6 S1-S3): its CPU, PC, cycle, page, symbols; whose stop and where the main CPU
+    // stands in its instruction. Shown at a stop while a card is fitted
+    QLabel* _cardStrip = nullptr;
+    void updateCardStrip();
     uint16_t _stopBreakpointId = BRK_INVALID;
     uint64_t _breakpointObserver = 0;  // NC_EXECUTION_BREAKPOINT, filtered by the machine's id
     uint64_t _markupObserver = 0;      // NC_READOUTS_CHANGED of the markup, filtered by the machine's id

@@ -172,6 +172,7 @@ public:
     bool pokeCardMemory(uint16_t addr, uint8_t value) override { return _cpu && _mem.writeRam(addr, value); }
     bool setCardRegisters(const Z80CpuRegisters& regs) override;
     double cardUnitsPerSecond() const override { return TICKS_PER_SECOND; }
+    uint32_t cardCpuClockHz() const override { return cardClockHz(); }
 
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
     /// The card's own counters (clock switches, interrupts by source, SD and flash events)

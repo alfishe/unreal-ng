@@ -82,6 +82,9 @@ StateNode Gs(EmulatorContext* context, bool ramWindow = false);
 StateNode AyChipReport(SoundChip_AY8910& chip, int index, double clockHz);
 StateNode Ym2203ChipReport(Ym2203Chip& chip, int index, double masterClockHz, double fmTrimDb);
 StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, bool ramWindow = false);
+/// The one line a debugger shows for the card (gs-debugger A6 S1, A4): "GS Z80 12 MHz · PC #0C32 · cycle 119,985 ·
+/// MPAG #03 · Symbols: GS v1.05a", from a GeneralSoundReport (its `strip`)
+std::string GeneralSoundStrip(const StateNode& report);
 
 /// ZX-MultiSound (ZX-MultiSound tdd-integration.md §5; built beside the card, slots/cards/multisound/
 /// multisounddevicestate.cpp): `MultiSound()` the fitted card - its slot and options (DIP functions, gsRam, ctrlMask),

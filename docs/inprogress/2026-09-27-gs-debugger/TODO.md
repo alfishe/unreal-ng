@@ -298,6 +298,12 @@ what an agent reads):
 - [ ] **P5.2 Whose pause and where the other CPU is (A6 S1-S3, A4).** The card strip / inside-an-instruction strip
   (MainPositionNode: the main instruction, elapsed / total T, the bus cycle), the paused-by line naming the CPU, the
   card cycle and Δ in the card's registers, the profile line (`Symbols: GS v1.05a`).
+  - [x] 2026-11-22: the `gs` report's `strip` and `cpu.clock_hz` / `cpu.frame_cycle` (DeviceState::GeneralSoundStrip,
+    `GeneralSoundCard::cardCpuClockHz`): "GS Z80 12 MHz · PC #0C32 · cycle 119,985 · MPAG #03 · Symbols: GS v1.05a".
+    Embedded: the card line under the stop banner at every stop, with "paused by the card (gs)" and the main CPU's
+    MainPositionText after a card's stop (CardPanes::StripText). eCat: the same line in the state label.
+  - [ ] Left: the S3 strip on top of the main registers (now in the card line), the card cycle and Δ in the card's
+    register pane, a live card line while the machine runs.
 - [ ] **P5.3 Breakpoints (A4 B1-B4, A6 S5).** The event kinds (INT, NMI, card reset, page switch) and the protocol
   kinds on the card side and the host side in both editors; card breakpoints listed with a CPU column.
 - [ ] **P5.4 Run control (A4 S5/S7, A6 S6).** Step main / step other, Run to: card cycle, main T, next card

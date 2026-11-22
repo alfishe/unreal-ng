@@ -1044,6 +1044,12 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
             check(views[1]->fields()->topLevelItemCount() > 3, "card tabs: protocol and mailbox fields");
             check(views[3]->table() && views[3]->table()->rowCount() >= 4, "card tabs: hardware lists the DAC channels");
             check(views[4]->fields()->topLevelItemCount() > 0, "card tabs: stats");
+            QString strip;
+            for (QTreeWidgetItem * item : views[3]->fields()->findItems("strip", Qt::MatchExactly))
+                strip = item->text(1);
+            check(strip.contains(" Z80 ") && strip.contains(" · cycle ") && strip.contains(" · MPAG #"),
+                  "card tabs: the card's line (CPU, cycle, page)");
+            if (!strip.isEmpty()) printf("  (card line: %s)\n", strip.toUtf8().constData());
         }
     }
 

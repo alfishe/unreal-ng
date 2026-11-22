@@ -4,7 +4,9 @@
 
 #include <cstring>
 
+#include "debugger/targets/debugcpuid.h"
 #include "debugger/reportpane.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicecatalog.h"
@@ -78,6 +80,25 @@ std::vector<Pane> Create(QWidget* parent)
     ReportPane* stats = new ReportPane([](EmulatorContext* c) { return Catalogued(c, "gs-stats"); }, std::string(), {}, parent);
     panes.push_back({QObject::tr("GS stats"), QObject::tr("The card's statistics block: the mailbox, the CPU's load, the channels"), stats});
     return panes;
+}
+
+QString StripText(EmulatorContext* context, const Emulator::DebugStop& stop)
+{
+    if (!Fitted(context))
+        return QString();
+    const StateNode gs = DeviceState::Gs(context);
+    const StateNode* strip = gs.find("strip");
+    QString line = strip && strip->kind == StateNode::Kind::String ? QString::fromStdString(strip->s) : QString();
+    const bool cardStop = (stop.reason == Emulator::DebugStop::Reason::Breakpoint ||
+                           (stop.reason == Emulator::DebugStop::Reason::Step && stop.breakpoint.step)) &&
+                          stop.breakpoint.cpu != DebugCpuId::Main;
+    if (cardStop)
+    {
+        line += QStringLiteral(" · paused by the card (%1)").arg(QString::fromLatin1(DebugCpuName(stop.breakpoint.cpu)));
+        if (stop.breakpoint.main.known)
+            line += QStringLiteral(" · ") + QString::fromStdString(execution::MainPositionText(stop.breakpoint.main));
+    }
+    return line;
 }
 
 bool Fitted(EmulatorContext* context)

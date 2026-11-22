@@ -108,10 +108,33 @@ TEST_F(CardPanes_Test, AFittedCardFillsThePanes)
     EXPECT_TRUE(found) << "command #23 (35) in a row";
 }
 
+/// The card's line: the report's strip; a stop of the card's names it and where the main CPU stands
+TEST_F(CardPanes_Test, TheStripNamesTheCardAndWhosePause)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    const QString idle = CardPanes::StripText(_context, Emulator::DebugStop{});
+    EXPECT_TRUE(idle.startsWith("GS Z80 12 MHz · PC #")) << idle.toStdString();
+    EXPECT_TRUE(idle.contains(" · cycle ")) << idle.toStdString();
+    EXPECT_FALSE(idle.contains("paused by")) << idle.toStdString();
+
+    Emulator::DebugStop stop;
+    stop.reason = Emulator::DebugStop::Reason::Breakpoint;
+    stop.breakpoint.hit = true;
+    stop.breakpoint.cpu = DebugCpuId::GS;
+    stop.breakpoint.main.known = true;
+    stop.breakpoint.main.pc = 0x8003;
+    const QString card = CardPanes::StripText(_context, stop);
+    EXPECT_TRUE(card.contains(" · paused by the card (gs) · main #8003")) << card.toStdString();
+
+    stop.breakpoint.cpu = DebugCpuId::Main;
+    EXPECT_FALSE(CardPanes::StripText(_context, stop).contains("paused by")) << "the main CPU's stop: the banner says it";
+}
+
 TEST_F(CardPanes_Test, WithoutTheCardEachSaysWhy)
 {
     ASSERT_NO_FATAL_FAILURE(Create("48K", {}));  // the Pentagon's config fits a GS
     ASSERT_FALSE(CardPanes::Fitted(_context));
+    EXPECT_TRUE(CardPanes::StripText(_context, Emulator::DebugStop{}).isEmpty());
     for (const CardPanes::Pane& pane : CardPanes::Create(&_parent))
     {
         pane.pane->refresh(_context, false);

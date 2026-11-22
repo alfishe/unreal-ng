@@ -373,10 +373,17 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(_stopBanner, &QLabel::linkActivated, this, &DebuggerWindow::onStopBannerLink);
     ui->verticalLayout_2->insertWidget(2, _stopBanner);
 
+    _cardStrip = new QLabel(this);
+    _cardStrip->setObjectName("debuggerCardStrip");
+    _cardStrip->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _cardStrip->setStyleSheet("QLabel { border-left: 4px solid #E0A020; padding: 2px 6px; }");
+    _cardStrip->setVisible(false);
+    ui->verticalLayout_2->insertWidget(3, _cardStrip);
+
     // The processor tabs (debuggercpu.h): the main CPU and each sound card CPU fitted, above the panes they retarget;
     // hidden with the main CPU alone
     auto* cpuBar = new QTabBar(this);
-    ui->verticalLayout_2->insertWidget(3, cpuBar);
+    ui->verticalLayout_2->insertWidget(4, cpuBar);
     _cpuTabs = new DebuggerCpuTabs(cpuBar, this);
     _registersTitle = ui->registersGroup->title();
     _stackTitle = ui->stackGroup->title();
@@ -1166,6 +1173,7 @@ void DebuggerWindow::updateState()
         _pcHistoryPane->refresh();
         updateSidePane();  // a model switch keeps the machine: the Next panes follow it
         refreshNextPanes(false);
+        updateCardStrip();
         showMemoryAtPc();
     }
     else
@@ -1498,6 +1506,18 @@ void DebuggerWindow::clearStopBanner()
     _stopBreakpointId = BRK_INVALID;
     if (_stopBanner)
         _stopBanner->setVisible(false);
+    if (_cardStrip)
+        _cardStrip->setVisible(false);
+}
+
+// Called by a stop's refresh (updateState holds the context lease)
+void DebuggerWindow::updateCardStrip()
+{
+    if (!_cardStrip)
+        return;
+    const QString text = _emulator ? CardPanes::StripText(_emulator->GetContext(), _emulator->LastStop()) : QString();  // lifetime-ok: under updateState's lease
+    _cardStrip->setText(text);
+    _cardStrip->setVisible(!text.isEmpty());
 }
 
 void DebuggerWindow::onStopBannerLink(const QString& link)

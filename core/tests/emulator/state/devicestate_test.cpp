@@ -649,10 +649,46 @@ TEST(DeviceStateGs_Test, NeoGsReportFollowsTheMailbox)
     EXPECT_NE(neogs->find("dma")->find("zx")->find("mode"), nullptr);
     EXPECT_EQ(gs.find("fixed_window_hex"), nullptr) << "the RAM window is opt-in";
 
+    // The debugger's card line (gs-debugger A6 S1): the card's CPU, its PC, cycle in the frame and page
+    ASSERT_NE(gs.find("cpu")->find("clock_hz"), nullptr);
+    ASSERT_NE(gs.find("cpu")->find("frame_cycle"), nullptr);
+    const std::string strip = gs.find("strip")->s;
+    EXPECT_EQ(strip.rfind("NeoGS Z80 ", 0), 0u) << strip;
+    EXPECT_NE(strip.find(" · cycle "), std::string::npos) << strip;
+    EXPECT_NE(strip.find(" · MPAG #"), std::string::npos) << strip;
+
     const StateNode withRam = DeviceState::Gs(context, /*ramWindow*/ true);
     ASSERT_NE(withRam.find("fixed_window_hex"), nullptr);
     EXPECT_EQ(withRam.find("fixed_window_hex")->s.size(), 0x4000u * 2);
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(DeviceStateGs_Test, TheStripSaysTheCardInOneLine)
+{
+    StateNode report = StateNode::Object();
+    report["implementation"] = "lle";
+    StateNode cpu = StateNode::Object();
+    cpu["pc"] = 0x0C32;
+    cpu["halted"] = false;
+    cpu["clock_hz"] = int64_t(12000000);
+    cpu["frame_cycle"] = int64_t(119985);
+    report["cpu"] = cpu;
+    report["page"] = 3;
+    StateNode profile = StateNode::Object();
+    profile["known"] = true;
+    profile["title"] = "GS v1.05a";
+    report["firmware_profile"] = profile;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(report), "GS Z80 12 MHz · PC #0C32 · cycle 119,985 · MPAG #03 · Symbols: GS v1.05a");
+
+    StateNode unknown = StateNode::Object();
+    unknown["known"] = false;
+    report["firmware_profile"] = unknown;
+    EXPECT_NE(DeviceState::GeneralSoundStrip(report).find("Symbols: unknown firmware"), std::string::npos);
+
+    StateNode lw = StateNode::Object();
+    lw["implementation"] = "lightweight";
+    lw["page"] = 0;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(lw), "GS lightweight player · MPAG #00");
 }
 
 TEST(DeviceStateCovox_Test, PentagonSoundDriveSharesTwoPortsWithBeta128)
