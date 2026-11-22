@@ -22,7 +22,7 @@ PROGRAMS = {
     'NReg0x69.snx': (300, '', 'border-green'),
     '!Z80N.snx': (1200, '2@10:3,5@40:3', 'z80n-rows'),
     '!Z80Nc2.snx': (1500, '2@10:3,5@40:3', 'look'),
-    'z80bltst.sna': (500, '', 'no-red'),
+    'z80bltst.sna': (500, '', 't80-red'),
 }
 
 
@@ -61,10 +61,14 @@ def rule_result(rule, im):
         return not unexpected and not missing, detail
     if rule == 'border-green':
         return px[4, 4] in GREEN, 'border %s' % (px[4, 4],)
-    if rule == 'no-red':
+    if rule == 't80-red':
+        # The Next's CPU is the T80: on an interrupted block repeat it sets no PC-based F5 / F3, so the program paints
+        # those flag bytes red, as on the board. The rest of the table must be green. Pinned by
+        # NextRealBoard_Test.BlockInstructionFlagsInterruptedByImTwoAreTheT80sOnTheNext (red with the T80, none with
+        # the Zilog flags)
         red = sum(1 for y in range(oy, oy + 336) for x in range(ox, ox + 512) if px[x, y] in RED)
         green = sum(1 for y in range(oy, oy + 336) for x in range(ox, ox + 512) if px[x, y] in GREEN)
-        return red == 0 and green > 100, 'red %d green %d' % (red, green)
+        return red > 0 and green > 100, 'red %d green %d (T80 repeat flags)' % (red, green)
     if rule == 'z80n-rows':       # the result column: ERR rows paper red, OK rows paper green
         err = ok = 0
         for row in range(24):

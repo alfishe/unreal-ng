@@ -19,7 +19,7 @@ UNREAL_NEXT_TESTS=/path/to/ZXSpectrumNextTests tools/machines/next/realboard/run
 
 Automatic verdicts (the programs that colour their own result): `!NextReg` (no red cell but #0A: core 3.02.03 reads NR #0A bit 2
 as 0, zxnext.vhd 5912, where the program, written on 3.1.5, expects it back; `NEXTREG_EXPECTED_RED`), `NReg0x69` (green border), `!Z80N` (no
-`ERR` row), `z80bltst` (no red flag byte). Everything else is `look` - the photograph is the reference, not another emulator (the
+`ERR` row), `z80bltst` (red flag bytes expected: the T80 sets no PC-based F5 / F3 on an interrupted block repeat, as on the board; the rest green). Everything else is `look` - the photograph is the reference, not another emulator (the
 rule of [TODO.md](../../../../docs/inprogress/2026-10-07-zx-next/TODO.md), "What counts as a reference"). The same four verdicts run as
 unit tests in `core/tests/emulator/machines/next/nextrealboard_test.cpp`.
 
