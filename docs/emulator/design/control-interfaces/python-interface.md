@@ -288,7 +288,9 @@ class Emulator:
 
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
-        src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""
+        src_kind / dst_kind, holds_bus, status byte; zxnddma, and on the NEXT-DDMA core ddma: the #DF flags, ext_a / ext_b, the 22-bit
+        src / dst, the 2D block (row_length, rows, strides, row, column), transparent_value, fill_value, layer2 {x, y}, sram {board, bytes,
+        range}); reading it does not advance its read sequence; available=False elsewhere"""
 
     def next_video(self) -> dict:
         """Layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster (hc, vc, frame_t), timing"""

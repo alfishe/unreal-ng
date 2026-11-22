@@ -6,6 +6,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/z80n/nextboardissue.h"
 #include "emulator/video/ulacontention.h"
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -25,6 +26,8 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
     _readSlots8k = _readOff;    // and the CPU time profile its cells (ExecPhysOffset)
     _toolWriteRedirect = true;  // and DirectWriteToZ80Memory writes through it
     std::memset(SramTwin(), 0, kSramTwinBytes);  // a shared segment may be an old one
+    if (_context)
+        _sramMask = NextSramBytes(static_cast<NextBoardIssue>(_context->config.next_board_issue), _context->config.ramsize) - 1;
     ResetMmu();
 }
 
@@ -186,7 +189,7 @@ void NextMemory::DmaWrite(uint16_t addr, uint8_t value)
 
 uint8_t NextMemory::PhysicalRead(uint32_t address)
 {
-    address &= 0x3FFFFF;
+    address &= _sramMask;  // the board's SRAM address lines: Issue 4 drops bit 21, Issue 2 bit 20 too (without the expansion)
     constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
     if (address < kSystemBytes)
         return ROMPageHostAddress(static_cast<uint8_t>(address / PAGE_SIZE))[address % PAGE_SIZE];
@@ -198,7 +201,7 @@ uint8_t NextMemory::PhysicalRead(uint32_t address)
 
 void NextMemory::PhysicalWrite(uint32_t address, uint8_t value)
 {
-    address &= 0x3FFFFF;
+    address &= _sramMask;
     constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
     if (address < kSystemBytes)
     {
@@ -213,6 +216,18 @@ void NextMemory::PhysicalWrite(uint32_t address, uint8_t value)
     _memory[SramPageOffset(page8k) + (offset & (kSlotSize - 1))] = value;  // banks 5 and 7: the SRAM side, not the ULA's block RAM
     if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr && SramTwinOffset(page8k) < 0)
         _ttdDirtyTracker->MarkDirty(static_cast<ttd::PhysPage>(bank));
+}
+
+const char* NextMemory::PhysicalKind(uint32_t address) const
+{
+    address &= _sramMask;
+    constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
+    if (address < kSystemBytes)
+        return "system area";
+    const uint32_t offset = address - kSystemBytes;
+    if (offset / PAGE_SIZE >= InstalledRamPages())
+        return "not fitted";
+    return SramTwinOffset(offset / kSlotSize) >= 0 ? "ram (sram side)" : "ram";
 }
 
 void NextMemory::PokeSlot(uint16_t addr, uint8_t value)

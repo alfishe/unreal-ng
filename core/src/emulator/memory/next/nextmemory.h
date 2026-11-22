@@ -170,11 +170,16 @@ public:
     /// slots take nothing, Layer 2's write mapping and the DivMMC / Multiface views apply, and the odd and even 8K slots of a 16K
     /// window may show unrelated pages. Breakpoints do not see it; the TTD dirty pages and the video flag are kept
     void DmaWrite(uint16_t addr, uint8_t value);
-    /// zxnDDMA physical mode (no MMU): a byte of the 4 MB SRAM, #000000-#03FFFF the system area (ROM pages), #040000 + 16K x bank the RAM.
-    /// Banks 5 and the first 8K of bank 7 are their SRAM side (SramTwin: not what the ULA shows). A RAM bank the board does not have reads
-    /// #FF and ignores writes
+    /// zxnDDMA physical mode (no MMU): a byte of the SRAM, #000000-#03FFFF the system area (ROM pages), #040000 + 16K x bank the RAM.
+    /// The address wraps in the board's SRAM (PhysicalAddressMask: NextSramBytes of the issue). Banks 5 and the first 8K of bank 7 are
+    /// their SRAM side (SramTwin: not what the ULA shows). A RAM bank the machine does not have (beyond config.ramsize) reads #FF and
+    /// ignores writes
     uint8_t PhysicalRead(uint32_t address);
     void PhysicalWrite(uint32_t address, uint8_t value);
+    /// The SRAM address lines of the board: #3FFFFF (Issue 5), #1FFFFF (Issue 4, Issue 2 with the expansion), #0FFFFF (Issue 2)
+    uint32_t PhysicalAddressMask() const { return _sramMask; }
+    /// What a physical address reaches, for reports: "system area", "ram", "ram (sram side)" (banks 5 / 7), "not fitted"
+    const char* PhysicalKind(uint32_t address) const;
 
     /// region <The SRAM side of banks 5 and 7>
     /// Banks 5 and 7 exist twice on the board (zxnext.vhd 2961-2962, 3039-3041, 3061-3063, 6562-6702). The ULA's 16K bank 5 (8K pages
@@ -232,6 +237,7 @@ private:
     bool _bootRom = false;
     bool _bootRomLoaded = false;
     uint8_t _cfgBank = 0;
+    uint32_t _sramMask = 0x1FFFFF;  // the SRAM address lines (NextSramBytes - 1): what a zxnDDMA physical address wraps in
     const char* _kind[kSlots] = {};
     uint32_t _readOff[kSlots] = {};
     uint32_t _writeOff[kSlots] = {};

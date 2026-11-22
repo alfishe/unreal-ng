@@ -21,7 +21,11 @@ Planned, in this order:
   sampled BUSRQ. POC 036 `dmaprescb` / `dmaburst` / `dmaprescc` / `dmacont` on 48K / 128K / +3: 0 durations differ. `mod_player.nex`
   NEXT-DDMA 3 blocks ahead of NEXT: no SRAM wait at 28 MHz on core 3.03, the init is shorter (audit section "The bus inside an
   instruction, 2026-11-19")
-- [ ] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state
+- [x] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state (2026-11-21):
+  physical addresses wrap in the board's SRAM (`zxnddma.gde` 2.5: Issue 5 `#3FFFFF`, Issue 4 `#1FFFFF`, Issue 2 `#0FFFFF` or `#1FFFFF`
+  with the expansion; `NextSramBytes`, `NextMemory::PhysicalAddressMask`), banks 5 / 7 stay the SRAM side through a wrapped address;
+  `next_dma` gains `zxnddma` + `ddma` (flags, 22-bit addresses, 2D block, values, Layer 2 X,Y, SRAM range) on every plane, the `dma`
+  history the same per block. `NextDdmaBoard_Test`, `NextDdmaReport_Test`; `design-zxnddma.md` section 9
 - [x] Host hard reset on every plane (2026-11-12): `Reset()` is the board's soft reset, `Reset(true)` the power-on (boot ROM + firmware);
   CLI `reset hard`, Python `reset(hard=True)`, Lua `reset{hard = true}`, MCP `emulator_manage {action: reset, hard: true}`, REST / WebSocket
   `POST /reset {"hard": true}`, Qt Run > Hard Reset (Power Cycle); gdb stays soft. `design-boot-and-firmware.md` section 3
@@ -271,6 +275,7 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 ## Real-board suite V1 on the whole machine (2026-10-09)
 The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked on real boards, photos in the repo) run on the NEXT machine with the state NextZXOS leaves (`#7FFD` = #30, core id 0, ULA palette of the 16 defaults); the same files on ZEsarUX are the second reference (`scratch/v1run.sh`-style loop: bring-up `UNREAL_NEX=<file.snx>`, `UNREAL_NEX_KEYS`). `NextRealBoard_Test` (UNREAL_NEXT_TESTS) pins what is decided:
 - [x] NextReg_defaults: no red cell (was 6): NR #08 bit 7 reads the inverse of the #7FFD lock (and writing 1 unlocks), NR #09 bit 3 reads 0, NR #6E / #6F bit 6 reads 0 and reset to #2C / #0C, ULA palette entries 32-255 repeat the 16 defaults after the firmware; core id 0 after the boot
+- [x] NextReg_defaults "error cell #2C" (2026-11-21) was the checker, not the register: since the 720 x 576 HDMI frame (7f23574ca) the paper starts at (96, 96), and `run-all.py` / `NextRealBoard_Test` still sampled the 640 x 512 grid (paper at 64), two cells up and left, so the red #0A cell read as #2C. NR #2C / #2D / #2E themselves are bright cyan like the board (the program writes #7F and does not test the read back; the read is the Pi's I2S sample, zxnext.vhd 6006-6015). The one red cell is #0A by the VHDL: the program (3.1.5) writes #07 and expects #07, 3.02.03 reads bit 2 as 0 (zxnext.vhd 5912), the LOG shows `03 0A`. Both checkers take the paper origin from the frame (NextPictureWindow::Origin) and expect #0A; tests `NextRealBoard_Test.GridCellIsSampledAtThePaperOfTheHdmiFrame`, `DacMirrorsReadTheI2sSampleNotTheWrite`
 - [x] NextReg #69: 10 of 10 (was 7): bit 6 is bit 3 of #7FFD (shadow screen) both ways, the video state follows the copper per line
 - [x] Z80N: all rows OK at 28 MHz (also `!Z80Nc2`)
 - [x] LayersMixingHiRes: Timex hi-res attribute = bright | paper << 3 | ink through ULANext, border = paper colour

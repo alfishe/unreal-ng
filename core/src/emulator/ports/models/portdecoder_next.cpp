@@ -254,6 +254,20 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         r.length = dma.BlockLength();
         r.mode = dma.Mode();
         r.restart = dma.AutoRestart();
+        if (dma.Extended())
+        {
+            const NextDma::DdmaView d = dma.Ddma();
+            r.ddma = true;
+            r.flags = static_cast<uint8_t>((d.physical ? 0x01 : 0) | (d.twoD ? 0x02 : 0) | (d.transparent ? 0x04 : 0) | (d.fill ? 0x08 : 0) |
+                                           (d.layer2Xy ? 0x10 : 0) | (d.hidden ? 0x20 : 0));
+            r.sourceExt = dma.AToB() ? d.extA : d.extB;
+            r.destinationExt = dma.AToB() ? d.extB : d.extA;
+            r.rowLength = d.rowLength;
+            r.rows = d.rows;
+            r.value = d.fill ? d.fillValue : d.transparentValue;
+            r.layer2X = d.layer2X;
+            r.layer2Y = d.layer2Y;
+        }
         _dmaHistory.Push(r);
     });
     _uart.SetHistory(&_uartHistory, [context = _context](uint64_t& frame) {

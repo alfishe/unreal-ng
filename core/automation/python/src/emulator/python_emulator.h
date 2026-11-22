@@ -5185,8 +5185,9 @@ namespace PythonBindings
             }, py::arg("enabled") = py::none(), py::arg("port") = py::none(), py::arg("mode") = "", py::arg("clear") = false,
                "Switch the magic debug port (enabled=True/False), choose its port (0..65535) and mode (hex, dec, ascii, line), clear its output")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
-               "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
-               "does not advance its read sequence; available=False elsewhere")
+               "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte; on the "
+               "NEXT-DDMA core the ddma part: #DF flags, 22-bit addresses, 2D block, transparent / fill values, Layer 2 X,Y, SRAM range); "
+               "reading it does not advance its read sequence; available=False elsewhere")
             .def("next_video", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextVideo(self.GetContext())); },
                "The Next video layers: layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster")
             .def("next_palette", [](Emulator& self, py::object palette, py::object range) -> py::object {
