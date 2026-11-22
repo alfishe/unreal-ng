@@ -143,3 +143,37 @@ run. Build host (Apple M-class), ms per frame, JIT and interpreter (`UNREAL_XTEN
 The last step unloads the renderer thread (64 to 60 % busy), not the frame: the emulation thread is now the
 bottleneck (about 90 % busy). Steam Deck, offscreen: 8.3 to 6.4 ms per frame (-23 %); GUI in game with fire: 48.9
 fps (full speed) before and after, threads 41 / 38 / 28 % busy before, 39 / 33 / 26 % after, 0 frames dropped.
+
+### 6.2 The emulation thread (2026-11-22)
+
+With the drawing off the critical path the emulation thread is the bottleneck (about 90 % busy). Same run, master
+`b84699fa5` vs the changes, four interleaved rounds:
+
+| Step | JIT | Interpreter |
+|------|-----|-------------|
+| master | 2.34 | 3.35 |
+| DRAM arbiter fast path: an access outside the line's fetch blocks takes its cycle without the cycle walk; inline in `DramWait` over the quiet span of the line (`TsConfArbiter::QuickAccess`) | | |
+| a DRAM stall with no frame INT in reach leaves the interrupt catch-up to the next one (`TsConfInterrupts::OnWait`) | 2.12 (-9.5 %) | 3.15 (-6 %) |
+
+Tried and not kept: a fast path for the engine's per-instruction catch-up (-1.5 %, in the noise). Left: the waits
+for the ESP jobs at a command and at the frame end (about 9 %: synchronisation, not work) and the TS-Conf screen
+drawn under the VDAC4 picture (the same work, only earlier).
+
+The same builds on R-Type VDAC4 (`_rtype_vdac4.spg`, 6 x 500 frames with a picture hash after each step, three
+interleaved rounds): 2.46 -> 2.22 ms per frame (-9.7 %), the six pictures equal bit for bit. The ESP waits are
+measured in [research-esp-waits.md](research-esp-waits.md).
+
+### 6.3 R-Type: the renderer is next (2026-11-22)
+
+A sampled R-Type run after §6.2 (8 s, 1429 samples of the emulation thread):
+
+| Thread | Busy | Where |
+|--------|------|-------|
+| emulation | 100 % | Z80 and TS-Conf 80 %, of it `DramWait` 7.5 %, port OUT to the ESP 8 % (half of it the command flush); `AsyncFramesBarrier` 11.5 % |
+| eve-emu renderer | about 67 % | `DrawBitmapFast` with the row fetch 37 %, `BlendSrcAlpha` 8 %, `PresentPicture` 7 % |
+| ESP worker | about 30 % jobs | the rest spins for the next job (`cthread_yield`, not on the critical path) |
+
+R-Type draws far more bitmap pixels than DOOM, so the renderer carries two thirds of a frame and the emulation
+thread already waits for it at 11.5 % of its time (DOOM: 2.3 %). Speeding up the emulation thread further gains less
+there until the bitmap path (`DrawBitmapFast` row fetch, alpha blend) gets faster as well. HMM2 cannot be measured
+(the game's `HMM2.DAT` is not shipped, §8) and DEMO3D is not in the collection.

@@ -161,7 +161,10 @@ void TsConfMemory::DramWait(TsConfArbiter::Access kind)
     if (!fclkTicks || !_arbiter)
         return;
     const uint32_t start = _waitCpu->tt - 3u * _waitCpu->rate;  // T1 of the access (rd / wd charged its 3 T)
-    const uint32_t fclks = _arbiter->CpuAccess(start / fclkTicks + 3u, kind);
+    const uint32_t request = start / fclkTicks + 3u;
+    uint32_t fclks = 0;
+    if (!_arbiter->QuickAccess(request, kind, fclks))
+        fclks = _arbiter->CpuAccess(request, kind);
     if (fclks)
         _waitCpu->AddWaitTicks(fclks * fclkTicks);
 }
