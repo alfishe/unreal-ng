@@ -32,22 +32,44 @@ def frame(path):
     return Image.frombytes('RGBA', (w, h), b[8:8 + w * h * 4]).convert('RGB')
 
 
+# Where the 256 x 192 paper (doubled) starts in the frame. The NEXT frame is the HDMI picture of zxula_timing.vhd, 720 x 576: the
+# 320 x 256 grid sits 16 grid pixels in from the left and the top in the 48K / 128K family (NextPictureWindow::Origin), the paper
+# 32 more, so (16 + 32) * 2 = 96. The 640 x 512 frame of before 2026-11-13 was the bare grid (paper at 64). Pentagon timing would
+# move it to (104, 112); the programs run as 48K snapshots, so it does not apply.
+PAPER_ORIGIN = {(720, 576): (96, 96), (640, 512): (64, 64)}
+
+# !NextReg cells that are red on core 3.02.03 by the VHDL, against the program written on 3.1.5 (its board photo shows them cyan)
+NEXTREG_EXPECTED_RED = {
+    0x0A: 'writes #07, reads #03: 3.02.03 reads NR #0A bit 2 as 0 (zxnext.vhd 5912 mf_type & sd_swap & automap & reverse & 0 & dpi)',
+}
+
+
 def rule_result(rule, im):
     px = im.load()
-    if rule == 'nextreg-cells':   # 16 x 16 cells of the register grid; red = R/W/default ERROR
-        bad = [r * 16 + c for r in range(16) for c in range(16) if px[66 + c * 16 + 8, 64 + r * 16 + 8] in RED]
-        return not bad, 'error cells: ' + (' '.join('%02X' % n for n in bad) or 'none')
+    if im.size not in PAPER_ORIGIN:
+        return False, 'unknown frame size %dx%d' % im.size
+    ox, oy = PAPER_ORIGIN[im.size]
+    if rule == 'nextreg-cells':   # 16 x 16 cells of the register grid (attribute cells 0-15); red = R/W/default ERROR
+        bad = [r * 16 + c for r in range(16) for c in range(16) if px[ox + c * 16 + 10, oy + r * 16 + 8] in RED]
+        unexpected = [n for n in bad if n not in NEXTREG_EXPECTED_RED]
+        missing = [n for n in NEXTREG_EXPECTED_RED if n not in bad]
+        detail = 'error cells: ' + (' '.join('%02X' % n for n in bad) or 'none')
+        if bad and not unexpected:
+            detail += ' (expected on 3.02.03)'
+        if missing:
+            detail += '; expected red but not: ' + ' '.join('%02X' % n for n in missing)
+        return not unexpected and not missing, detail
     if rule == 'border-green':
         return px[4, 4] in GREEN, 'border %s' % (px[4, 4],)
     if rule == 'no-red':
-        red = sum(1 for y in range(64, 400) for x in range(64, 576) if px[x, y] in RED)
-        green = sum(1 for y in range(64, 400) for x in range(64, 576) if px[x, y] in GREEN)
+        red = sum(1 for y in range(oy, oy + 336) for x in range(ox, ox + 512) if px[x, y] in RED)
+        green = sum(1 for y in range(oy, oy + 336) for x in range(ox, ox + 512) if px[x, y] in GREEN)
         return red == 0 and green > 100, 'red %d green %d' % (red, green)
     if rule == 'z80n-rows':       # the result column: ERR rows paper red, OK rows paper green
         err = ok = 0
         for row in range(24):
             for col in range(28, 32):
-                p = px[64 + col * 16 + 2, 64 + row * 16 + 2]
+                p = px[ox + col * 16 + 2, oy + row * 16 + 2]
                 err += p in RED
                 ok += p in GREEN
         return err == 0 and ok > 0, 'err %d ok %d' % (err, ok)

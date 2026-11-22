@@ -17,9 +17,13 @@ UNREAL_NEXT_TESTS=/path/to/ZXSpectrumNextTests tools/machines/next/realboard/run
 | `<out>/report.md` | the table: area, test, program, verdict (`PASS` / `FAIL` / `look`), detail |
 | exit status | non-zero when a program with an automatic verdict fails |
 
-Automatic verdicts (the programs that colour their own result): `!NextReg` (no red cell), `NReg0x69` (green border), `!Z80N` (no
+Automatic verdicts (the programs that colour their own result): `!NextReg` (no red cell but #0A: core 3.02.03 reads NR #0A bit 2
+as 0, zxnext.vhd 5912, where the program, written on 3.1.5, expects it back; `NEXTREG_EXPECTED_RED`), `NReg0x69` (green border), `!Z80N` (no
 `ERR` row), `z80bltst` (no red flag byte). Everything else is `look` - the photograph is the reference, not another emulator (the
 rule of [TODO.md](../../../../docs/inprogress/2026-10-07-zx-next/TODO.md), "What counts as a reference"). The same four verdicts run as
 unit tests in `core/tests/emulator/machines/next/nextrealboard_test.cpp`.
+
+The rules sample the frame relative to the paper: the 720 x 576 HDMI frame has it at (96, 96) (`PAPER_ORIGIN`, the 48K / 128K
+family of `NextPictureWindow::Origin`); a frame of another size fails with "unknown frame size".
 
 To add a verdict: write the rule in `rule_result` and name it in `PROGRAMS` (frames, keys `"key@frame:count"`, rule).
