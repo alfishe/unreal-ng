@@ -1,0 +1,42 @@
+data #00
+anomaly data_before_command #0 (#23 Get number of RAM pages)
+#23 Get number of RAM pages
+card took #23 Get number of RAM pages
+reply 0 #3E: pages (#23 Get number of RAM pages)
+anomaly reply_read_without_poll #3E (#23 Get number of RAM pages)
+data #00
+#1E
+card took #1E
+card reset
+#F3 Warm restart
+card took #F3 Warm restart
+data #DE
+#14 Receive block, length #DE
+card took #14 Receive block
+length #03 (#14 Receive block)
+address #00 (#14 Receive block)
+address #40 (#14 Receive block)
+block upload: 990 bytes at #4000 (#14 Receive block)
+data #00
+#13 Jump to address, address #00
+card took #13 Jump to address
+address #40 (#13 Jump to address)
+#02 Get chip id
+card took #02 Get chip id
+reply 0 #00: VS10xx version (#02 Get chip id)
+#00 Reset (back to the ROM)
+card took #00 Reset (back to the ROM)
+data #DE
+#14 Receive block, length #DE
+card took #14 Receive block
+length #03 (#14 Receive block)
+address #00 (#14 Receive block)
+address #40 (#14 Receive block)
+block upload: 990 bytes at #4000 (#14 Receive block)
+data #00
+#13 Jump to address, address #00
+card took #13 Jump to address
+address #40 (#13 Jump to address)
+stream: 162970 bytes of host data
+#00 Reset (back to the ROM)
+card took #00 Reset (back to the ROM)

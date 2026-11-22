@@ -1,0 +1,25 @@
+data #00
+anomaly data_before_command #0 (#23 Get number of RAM pages)
+#23 Get number of RAM pages
+card took #23 Get number of RAM pages
+reply 0 #03: pages (#23 Get number of RAM pages)
+anomaly reply_read_without_poll #3 (#23 Get number of RAM pages)
+data #00
+#1E
+card took #1E
+#F3 Warm restart
+card took #F3 Warm restart
+#30 Load module
+card took #30 Load module
+#D1 Open stream
+card took #D1
+module upload: 61902 bytes (#30 Load module)
+#D2 Close stream
+card took #D2
+data #01
+#31 Play module, module #01
+card took #31 Play module
+#60 Get song position
+card took #60 Get song position
+reply 0 #00: song position (#60 Get song position)
+(the 3 lines above repeat)

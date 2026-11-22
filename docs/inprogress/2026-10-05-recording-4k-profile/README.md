@@ -61,11 +61,38 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   | 352x288 (fit, 7.5x) | 2.95 ms | 2.66 ms | 3.2 ms | 2.9 ms |
 
   No threads: a 4K frame is now near the memory bandwidth on arm64 and well under a frame's time on both. The RGBA
-  `ScaleInto` is 1-2 ms at 4K; its `SIMD-CANDIDATE(frame scaler row expand)` stays a candidate. The fit path (a column
-  gather per pixel) gains little and is not the videowall's.
+  `ScaleInto` is 1-2 ms at 4K. Its row expansion was measured 2026-11-21 and stays scalar: for k = 2..4 the
+  compiler's fills beat NEON vst2q / vst3q / vst4q, and broadcast stores for k >= 5 halve the row on arm64 but
+  that is 5-8 % of the frame (the repeated-row copies and bars are memory-bound) and slower on x86. The fit path
+  chroma is the item below.
+- ~~VideoToolbox integer upscale (`video/record` `scale` 2..4) as a per-pixel swizzle loop on the emulation
+  thread~~ done 2026-11-21: `FrameScaler::ScaleInto` with the red / blue swap (SIMD swap, a factor-3 expand case, the
+  1x swap straight into the output), byte-identical to the loop it replaced. Per frame on an M1 Ultra: 352x288 x2
+  154 -> 41 us, x3 271 -> 89 us, x4 458 -> 229 us, 960x540 x2 819 -> 252 us (the x86-64 build, SSE2, run under
+  Rosetta: 2-3x as well). The encoder's own NEON / SSSE3 copy stays for 1x (ScaleInto is 6-19 % slower there).
+- ~~NV12 chroma of the fitted picture and of odd whole factors (a per-block loop with four lookups and branches)~~
+  done 2026-11-21: `ChromaPlaneBuilder` reduces each source row once to the R, G, B sums of the two pixels under each
+  chroma column; a block row is the sum of two such rows through a NEON / SSE2 kernel. Byte-identical on arm64 and
+  x86-64 (the old and new outputs compared, `ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte` widened). To
+  3840x2160 on an M1 Ultra: 352x288 (7.5x fit) 2.40 -> 1.38 ms, 320x256 2.17 -> 1.27 ms, 2048x1536 (fit) 9.2 ->
+  6.4 ms, 1280x720 (3x) 5.17 -> 2.4 ms, 768x432 (5x) 4.43 -> 2.98 ms; even factors and 1x unchanged.
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
-- Videowall: the `QWidget::grab()` + `toImage()` + RGBA convert per tick is the remaining 4K cost; a direct
-  `QOpenGLWidget` / window-buffer read would remove it.
+- ~~Stepped window recording (`video/window/record/frames`) through ffmpeg with sound stalls ("recorded nothing
+  within 10 s", then "the recording stopped")~~ fixed 2026-11-21, found under Xvfb on Linux. ffmpeg analysed the raw
+  sound input for its default 5 s before reading more picture; a paused machine makes sound only as its pictures are
+  taken, so both sides waited. The FIFO input gets `-probesize 32 -analyzeduration 0` (its format is all given).
+  3 x 50 steps now take 0.4-0.6 s each, the file 150 frames = 3.072 s of picture and sound; running is unchanged
+  (195 frames in 4 s, both streams from 0). The Mac's default `native` engine does not use ffmpeg; `engine: ffmpeg`
+  has the same arguments.
+- ~~Videowall: the `QWidget::grab()` + `toImage()` + RGBA convert per tick~~ done 2026-11-21. With the GPU grid
+  (`--gpu`, a `QOpenGLWindow` in a window container) the recording and the wall screenshot were an empty grey frame:
+  `grab()` of the container does not see the GL window. The GL grid now reads its framebuffer back after each paint
+  while recording (`TileGridGL::setCaptureEnabled`, `glReadPixels` RGBA, 3.4-3.6 ms at 2048x1536 on an M1 Ultra) and
+  the recorder takes the last frame; the screenshot uses `grabFramebuffer()`. The CPU grid is painted with `render()`
+  into a reused RGB32 image instead of a new pixmap per tick (16 tiles, 2048x1536 into the 4K profile, three
+  interleaved rounds: 8.7-10.3 ms against 10.6-15.2 ms; painting into RGBA8888 directly was 2-2.5x slower, the
+  raster engine's slow path). Open: an asynchronous read (two pixel-pack buffers) would take the 3.5 ms stall off the
+  GUI thread; the CPU grid's cost is the tiles' own painting.
 - Qt toolbar widget offers h264 only (the dialog also h265).

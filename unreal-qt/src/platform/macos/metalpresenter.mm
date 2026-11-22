@@ -56,6 +56,28 @@ int64_t SecondsToNs(CFTimeInterval s)
     return static_cast<int64_t>(std::llround(s * 1e9));
 }
 
+/// Core Animation's clock (CACurrentMediaTime, presentDrawable:atTime:, presentedTime, the display link's timestamps)
+/// is mach_absolute_time, which stops while the Mac sleeps; steady_clock (SteadyNowNs, the frames' times) is
+/// mach_continuous_time, which goes on. They part by every sleep since the boot (hours on a Mac that slept: each
+/// present then asked for hours ahead, the window black or frozen), so times cross between them through the offset
+/// read now
+int64_t SteadyMinusMediaNs()
+{
+    return SteadyNowNs() - SecondsToNs(CACurrentMediaTime());
+}
+
+/// A Core Animation time as a steady one
+int64_t MediaToSteadyNs(CFTimeInterval media)
+{
+    return SecondsToNs(media) + SteadyMinusMediaNs();
+}
+
+/// A steady time as a Core Animation one
+CFTimeInterval SteadyToMedia(int64_t steadyNs)
+{
+    return static_cast<CFTimeInterval>(steadyNs - SteadyMinusMediaNs()) / 1e9;
+}
+
 /// IOSurfaces in the ring: one being drawn, one waiting for its time, one on screen
 constexpr size_t kSlots = 3;
 /// The adaptive lead's first margin over a refresh (LeadNs: presentDrawable:atTime: wants the drawable a refresh ahead)
@@ -196,7 +218,7 @@ struct MetalPresenter::Impl
         if (@available(macOS 14.0, *))
         {
             CADisplayLink* l = static_cast<CADisplayLink*>(tick);
-            const int64_t refreshNs = SecondsToNs(l.targetTimestamp);
+            const int64_t refreshNs = MediaToSteadyNs(l.targetTimestamp);
             const int64_t periodNs = SecondsToNs(l.targetTimestamp - l.timestamp);
             refreshHandler(refreshContext, refreshNs, periodNs > 0 ? periodNs : SecondsToNs(l.duration));
         }
@@ -554,7 +576,7 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
         const int64_t refreshNs = fb->shortestRefreshNs.load(std::memory_order_relaxed);
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
           const CFTimeInterval t = d.presentedTime;
-          const int64_t screenNs = t > 0 ? SecondsToNs(t) : 0;
+          const int64_t screenNs = t > 0 ? MediaToSteadyNs(t) : 0;
           if (fb->trace.Active())
           {
               std::lock_guard<std::mutex> lock(fb->statsMutex);
@@ -574,7 +596,7 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
           fb->beat.Shown(traced.picture, traced.targetNs, screenNs, refreshNs);
         }];
         if (atNs > now)
-            [cb presentDrawable:drawable atTime:static_cast<CFTimeInterval>(atNs) / 1e9];
+            [cb presentDrawable:drawable atTime:SteadyToMedia(atNs)];
         else
             [cb presentDrawable:drawable];
         [cb commit];
@@ -612,6 +634,11 @@ int64_t MetalPresenter::LeadNs(int64_t refreshPeriodNs) const
 
 bool MetalPresenter::IsVisible() const
 {
+    // The GUI thread asks AppKit again: a hidden window draws nothing, so BeginFrame never refreshes the cache, and a
+    // view that joined an already visible window (or a presenter made before the window was shown) gets no occlusion
+    // notification. The cache stayed "occluded" for good there (a Screen Sharing virtual display: a black window)
+    if ([NSThread isMainThread])
+        CacheWindowState(_impl->view, *_impl->fb);
     return _impl->fb->visible.load(std::memory_order_relaxed);
 }
 
@@ -727,18 +754,22 @@ MetalPresenter::Stats MetalPresenter::GetStats() const
 std::string MetalPresenter::Describe() const
 {
     const Stats s = GetStats();
-    char line[448];
+    char line[512];
     std::snprintf(line, sizeof(line),
                   "Metal %s: %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead %.1f ms); "
                   "error p50 %.2f p99 %.2f max %.2f ms; "
                   "GL wait p50 %.2f max %.2f ms, %llu timed out; drawable wait p50 %.2f max %.2f ms; display "
-                  "%.1f-%.1f Hz%s, %s%s",
+                  "%.1f-%.1f Hz%s, %s%s%s",
                   PacesRefreshes() ? "display link" : "present-at-time", static_cast<unsigned long long>(s.presented),
                   static_cast<unsigned long long>(s.shown), static_cast<unsigned long long>(s.dropped),
                   static_cast<unsigned long long>(s.late), s.leadMs,
                   s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50, s.gpuWaitMax,
                   static_cast<unsigned long long>(s.gpuWaitTimeouts), s.drawableWaitP50, s.drawableWaitMax,
                   s.minRefreshHz, s.maxRefreshHz, s.maxRefreshHz - s.minRefreshHz > 1.0 ? " (VRR)" : " (fixed)",
-                  s.vrr ? "each frame at its time" : "on the refresh grid", s.visible ? "" : "; occluded");
+                  s.vrr ? "each frame at its time" : "on the refresh grid", s.visible ? "" : "; occluded",
+                  // A display that reports no presentedTime at all (a Screen Sharing virtual one) shows the frames
+                  // all the same: "dropped" there means untimed
+                  s.shown == 0 && s.dropped > 0 ? "; no presented times from the display (virtual?), drops unknown"
+                                                : "");
     return line;
 }

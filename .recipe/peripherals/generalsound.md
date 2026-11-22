@@ -115,6 +115,15 @@ to watch. For "how many during this action": `emulator_manage {"action":"gs_rese
 then read with `"gs_stats_since": <baseline>`. Rates (`commands`, `zx_dma_bytes`, `cpu_steps` per second) need the
 machine running; add `"gs_stats_fresh": true` for a block from after the call.
 
+The firmware's data as named structures: `inspect_state {"aspects":["audio_gs_firmware"]}` (or
+`audio_gs_firmware.<instance or variable>`) reads the instances and variables the card's profile declares, from their
+physical page even when it is not mapped; `"gs_firmware_profile": "<id>"` reads through another profile,
+`audio_gs_firmware_profiles` lists them. A new firmware gets a JSON profile in `data/symbols/gs/profiles/` (schema:
+gs-debugger design §8A.9) with its `symbolFile` (relative to `data/symbols/gs`); no code changes.
+`audio_gs_firmware.dispatch` shows each command's handler against the ROM (patched entries, e.g. the NedoOS SD driver's
+`#1E`), and `unknown_commands` the commands the host sent that no profile names. A profile from the firmware's
+sources: `tools/gsfirmware/profile_from_source.py --source DIR --map FILE --id ID`.
+
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on
 activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`

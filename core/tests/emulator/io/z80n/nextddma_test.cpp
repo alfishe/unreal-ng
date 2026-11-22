@@ -256,3 +256,103 @@ TEST(NextDdmaVariant_Test, OnlyCore30203WaitsForTheSramAt28MHz)
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
 }
+
+#include "emulator/io/z80n/nextboardissue.h"
+#include "emulator/memory/next/nextmemory.h"
+
+namespace
+{
+/// A NEXT-DDMA machine on a board: the issue and the machine's RAM (Issue 2 with more than 1024K is the one with the 2 MB expansion)
+struct DdmaBoard
+{
+    const char* name;
+    NextBoardIssue issue;
+    unsigned ramKb;
+    uint32_t mask;  ///< zxnddma.gde 2.5: the SRAM the board's address lines reach
+};
+constexpr DdmaBoard kDdmaBoards[] = {
+    {"issue 5", NextBoardIssue::Issue5, 2048, 0x3FFFFF},
+    {"issue 4", NextBoardIssue::Issue4, 2048, 0x1FFFFF},
+    {"issue 2", NextBoardIssue::Issue2, 1024, 0x0FFFFF},
+    {"issue 2 + expansion", NextBoardIssue::Issue2, 2048, 0x1FFFFF},
+};
+
+Emulator* CreateDdmaBoard(const DdmaBoard& board)
+{
+    return EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [&board](CONFIG& config) {
+        MachineVariants::Find("NEXT-DDMA")->apply(config);
+        config.next_board_issue = static_cast<uint8_t>(board.issue);
+        config.ramsize = board.ramKb;
+    });
+}
+
+/// A one-byte physical fill (#DF physical + fill, #F7 value) at the 22-bit address `to`, through port #6B, run to its end
+void PhysicalFill(PortDecoder_Next& ports, uint32_t to, uint8_t value)
+{
+    const uint8_t lo = static_cast<uint8_t>(to), hi = static_cast<uint8_t>(to >> 8), ext = static_cast<uint8_t>(to >> 16);
+    for (uint8_t b : {uint8_t(0xC3), uint8_t(0x7D), uint8_t(0x00), uint8_t(0x00), uint8_t(0x01), uint8_t(0x00), uint8_t(0x14), uint8_t(0x10),
+                      uint8_t(0xAD), lo, hi, uint8_t(0xDB), ext, uint8_t(0xDF), uint8_t(0x09), uint8_t(0xF7), value, uint8_t(0xCF),
+                      uint8_t(0x87)})
+        ports.DecodePortOut(0x6B, b, 0);
+    for (int i = 0; i < 16 && ports.Dma().Active(); i++)
+        ports.Dma().Run(256, 0);
+}
+}  // namespace
+
+// zxnddma.gde 2.5 / 2.9 note 5: the DMA puts out 22 bits ({extended bits 5:0, address}); the board's SRAM takes what its address lines
+// reach: Issue 5 all 22 (4 MB), Issue 4 21 (2 MB, bit 21 dropped: #210000 is #010000), Issue 2 20 (1 MB) or 21 with the 2 MB expansion
+TEST(NextDdmaBoard_Test, PhysicalAddressesWrapInTheBoardsSram)
+{
+    for (const DdmaBoard& board : kDdmaBoards)
+    {
+        Emulator* emulator = CreateDdmaBoard(board);
+        ASSERT_NE(emulator, nullptr) << board.name;
+        auto* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+        auto* memory = dynamic_cast<NextMemory*>(emulator->GetContext()->pMemory);
+        ASSERT_NE(ports, nullptr);
+        ASSERT_NE(memory, nullptr);
+        EXPECT_EQ(memory->PhysicalAddressMask(), board.mask) << board.name;
+        EXPECT_EQ(NextSramBytes(board.issue, board.ramKb), board.mask + 1) << board.name;
+
+        // #210000 (bit 21 set, RAM bank 116 on a 4 MB SRAM) and #150000 (bit 20 set, bank 68)
+        const uint8_t low0 = memory->PhysicalRead(0x010000), low1 = memory->PhysicalRead(0x050000);
+        PhysicalFill(*ports, 0x210000, 0xA1);
+        PhysicalFill(*ports, 0x150000, 0xA2);
+        EXPECT_EQ(memory->PhysicalRead(0x210000), 0xA1) << board.name;
+        EXPECT_EQ(memory->PhysicalRead(0x150000), 0xA2) << board.name;
+        EXPECT_EQ(memory->PhysicalRead(0x010000), board.mask < 0x200000 ? uint8_t{0xA1} : low0)
+            << board.name << ": #210000 is #010000 (the system area) only when bit 21 is dropped";
+        EXPECT_EQ(memory->PhysicalRead(0x050000), board.mask < 0x100000 ? uint8_t{0xA2} : low1)
+            << board.name << ": #150000 is #050000 (bank 4) only when bit 20 is dropped";
+        if (board.mask >= 0x200000)
+            EXPECT_EQ(memory->RAMPageAddress(116)[0], 0xA1) << board.name << ": bank 116, the upper half of a 4 MB SRAM";
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+// Banks 5 and 7 are block RAM for the ULA (zxnddma.gde 2.5): a physical write to their SRAM address, or to one that wraps onto it on the
+// smaller boards, lands in the SRAM side (NextMemory::SramTwin) and not on the ULA screen; the MMU address reaches the screen
+TEST(NextDdmaBoard_Test, PhysicalWritesToBanks5And7MissTheUlaScreenOnEveryBoard)
+{
+    for (const DdmaBoard& board : kDdmaBoards)
+    {
+        Emulator* emulator = CreateDdmaBoard(board);
+        ASSERT_NE(emulator, nullptr) << board.name;
+        auto* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+        auto* memory = dynamic_cast<NextMemory*>(emulator->GetContext()->pMemory);
+        ASSERT_NE(ports, nullptr);
+        ASSERT_NE(memory, nullptr);
+        const uint32_t alias = (board.mask + 1) & 0x3FFFFF;  // the first address above the SRAM (0 on Issue 5: the DMA's own 22 bits)
+        const uint8_t ula5 = memory->RAMPageAddress(5)[0x40], ula7 = memory->RAMPageAddress(7)[0x40];
+        PhysicalFill(*ports, alias + 0x054040, 0xB5);  // bank 5 (8K page #0A)
+        PhysicalFill(*ports, alias + 0x05C040, 0xB7);  // bank 7, first 8K (page #0E)
+        PhysicalFill(*ports, alias + 0x05E040, 0xBF);  // bank 7, second 8K (page #0F): SRAM only, one instance
+        EXPECT_EQ(memory->SramTwin()[NextMemory::SramTwinOffset(0x0A) + 0x40], 0xB5) << board.name;
+        EXPECT_EQ(memory->SramTwin()[NextMemory::SramTwinOffset(0x0E) + 0x40], 0xB7) << board.name;
+        EXPECT_EQ(memory->RAMPageAddress(7)[0x2040], 0xBF) << board.name;
+        EXPECT_EQ(memory->RAMPageAddress(5)[0x40], ula5) << board.name << ": not the ULA screen";
+        EXPECT_EQ(memory->RAMPageAddress(7)[0x40], ula7) << board.name << ": not the shadow screen";
+        EXPECT_EQ(memory->PhysicalKind(alias + 0x054040), std::string("ram (sram side)")) << board.name;
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}

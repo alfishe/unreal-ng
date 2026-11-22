@@ -38,6 +38,16 @@ struct NextDmaRecord
     bool destinationIo = false;
     uint8_t mode = 0;        ///< WR4 bits 6:5: 0 byte, 1 continuous, 2 burst
     bool restart = false;    ///< auto restart: the next block follows
+    /// zxnDDMA (core 3.03.00): set only on that core; the rest below is shown only then
+    bool ddma = false;
+    uint8_t flags = 0;       ///< #DF: bit 0 physical, 1 2D, 2 transparent, 3 fill, 4 Layer 2 X,Y, 5 hidden screen
+    uint8_t sourceExt = 0;   ///< #D7 / #DB of the source / destination port: address bits 21:16 (physical mode)
+    uint8_t destinationExt = 0;
+    uint16_t rowLength = 0;  ///< 2D: #E3 / #E7
+    uint16_t rows = 0;
+    uint8_t value = 0;       ///< the fill value (#F7) with bit 3, else the transparent value (#F3)
+    uint16_t layer2X = 0;    ///< Layer 2 X,Y destination
+    uint8_t layer2Y = 0;
 
     void ToState(StateNode& node) const;
 };

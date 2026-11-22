@@ -23,8 +23,10 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/z80n/z80nengine.h"
+#include "emulator/memory/memory.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/video/next/nextpicturewindow.h"
 #include "loaders/nex/loadernex.h"
 
 namespace
@@ -83,6 +85,18 @@ protected:
         }
         return true;
     }
+    /// Where the doubled 256 x 192 paper starts in the 720 x 576 frame: the grid's outer border of the family plus 32 grid pixels
+    /// of border (48K / 128K: (16 + 32) * 2 = 96)
+    unsigned PaperX() const
+    {
+        const auto origin = NextPictureWindow::Origin(_context->emulatorState.ula_timing_class, _context->emulatorState.ula_sixty_hz != 0);
+        return static_cast<unsigned>((origin.left + NextPictureWindow::kPaperLeft) * NextPictureWindow::kScale);
+    }
+    unsigned PaperY() const
+    {
+        const auto origin = NextPictureWindow::Origin(_context->emulatorState.ula_timing_class, _context->emulatorState.ula_sixty_hz != 0);
+        return static_cast<unsigned>((origin.top + NextPictureWindow::kPaperTop) * NextPictureWindow::kScale);
+    }
     uint32_t Pixel(unsigned x, unsigned y) const
     {
         const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
@@ -101,7 +115,7 @@ TEST_F(NextRealBoard_Test, NextRegDefaultsShowNoErrorCell)
     std::string where;
     for (unsigned row = 0; row < 16; row++)
         for (unsigned col = 0; col < 16; col++)
-            if (Pixel(66 + col * 16 + 8, 64 + row * 16 + 8) == red)
+            if (Pixel(PaperX() + col * 16 + 10, PaperY() + row * 16 + 8) == red)
             {
                 redCells++;
                 char buffer[16];
@@ -112,6 +126,60 @@ TEST_F(NextRealBoard_Test, NextRegDefaultsShowNoErrorCell)
     // mf_type & sd_swap & automap_en & button_reverse & '0' & dpi), so its board shows this one cell red
     EXPECT_EQ(where, " 0A") << "NextReg cells in error:" << where;
     EXPECT_EQ(redCells, 1u);
+}
+
+// What the checks above (and tools/machines/next/realboard/run-all.py) rely on, without the clone. The NextReg grid is attribute
+// cells 0-15 of rows 0-15: cell #2C is attribute (12, 2). The frame is the 720 x 576 HDMI picture with the paper at (96, 96); the
+// old 640 x 512 sampling (paper at 64) landed two cells up and left, so the red #0A cell was reported as #2C
+TEST_F(NextRealBoard_Test, GridCellIsSampledAtThePaperOfTheHdmiFrame)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    _ports = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+    ASSERT_NE(_ports, nullptr);
+    Memory* memory = _context->pMemory;
+    memory->DirectWriteToZ80Memory(0xC000, 0xF3);  // DI; JR $: the ROM writes nothing behind the test
+    memory->DirectWriteToZ80Memory(0xC001, 0x18);
+    memory->DirectWriteToZ80Memory(0xC002, 0xFE);
+    _context->pCore->GetZ80()->pc = 0xC000;
+    LoaderNex::FillUlaPalette(_ports->Board());
+    uint8_t* attributes = memory->RAMPageAddress(5) + 0x1800;
+    attributes[2 * 32 + 12] = 0x50;  // cell #2C: bright, paper red
+    attributes[0 * 32 + 10] = 0x68;  // cell #0A: bright, paper cyan
+    for (int i = 0; i < 2; i++)
+        _emulator->RunFrame(true);
+    const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+    ASSERT_EQ(fb.width, 720u);
+    ASSERT_EQ(fb.height, 576u);
+    EXPECT_EQ(PaperX(), 96u);
+    EXPECT_EQ(PaperY(), 96u);
+    EXPECT_EQ(Pixel(PaperX() + 12 * 16 + 10, PaperY() + 2 * 16 + 8), 0xFF0000FFu) << "cell #2C: bright red (R G B A bytes)";
+    EXPECT_EQ(Pixel(PaperX() + 10 * 16 + 10, PaperY() + 0 * 16 + 8), 0xFFFFFF00u) << "cell #0A: bright cyan";
+}
+
+// NextReg_defaults writes #7F to NR #2C / #2D / #2E and does not test the read back (its table: default "any", after-write "no
+// test"), so the cells are bright cyan whatever a read gives. The read is the Pi's I2S sample, not the DAC write (zxnext.vhd
+// 6006-6015: pi_audio_L(9 downto 2), nr_2d_i2s_sample & "000000", pi_audio_R(9 downto 2)); with the I2S off it is the silence #200
+TEST_F(NextRealBoard_Test, DacMirrorsReadTheI2sSampleNotTheWrite)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    _ports = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+    ASSERT_NE(_ports, nullptr);
+    auto read = [this](uint8_t reg) {
+        _ports->DecodePortOut(0x243B, reg, 0);
+        return _ports->DecodePortIn(0x253B, 0);
+    };
+    for (uint8_t reg : {uint8_t(0x2C), uint8_t(0x2D), uint8_t(0x2E)})
+    {
+        _ports->DecodePortOut(0x243B, reg, 0);
+        _ports->DecodePortOut(0x253B, 0x7F, 0);
+    }
+    EXPECT_EQ(read(0x2C), 0x80);  // #200 >> 2
+    EXPECT_EQ(read(0x2D), 0x00);  // its low two bits
+    EXPECT_EQ(read(0x2E), 0x80);
 }
 
 // NextReg #69 and the ports it aliases (#123B bit 1, #7FFD bit 3, #FF): 10 checks both ways; the border turns green when all pass
@@ -149,8 +217,8 @@ TEST_F(NextRealBoard_Test, BlockInstructionFlagsInterruptedByImTwoAreTheT80sOnTh
 {
     auto count = [this](unsigned& red, unsigned& green) {
         red = green = 0;
-        for (unsigned y = 64; y < 400; y++)
-            for (unsigned x = 64; x < 576; x++)
+        for (unsigned y = PaperY(); y < PaperY() + 336; y++)
+            for (unsigned x = PaperX(); x < PaperX() + 512; x++)
             {
                 const uint32_t p = Pixel(x, y);
                 red += (p == 0xFF0000FF || p == 0xFF0000B6) ? 1 : 0;   // R G B A bytes: bright red (255,0,0) / red (182,0,0)

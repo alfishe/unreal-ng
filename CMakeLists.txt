@@ -502,7 +502,11 @@ if (BUILD_QT_APPS)
         endif()
     endforeach()
     list(APPEND SUITE_DEPS ${SUITE_DEBUGGERS})
-    
+
+    # Qt's plugin targets are imported per directory: the packaging below copies the offscreen platform plugin
+    # (Qt6::QOffscreenIntegrationPlugin, a Gui plugin) that windeployqt / macdeployqt leave out
+    find_package(Qt6 QUIET COMPONENTS Gui)
+
     # macOS: Combined DMG with all apps
     if(APPLE)
         # Find macdeployqt in the Qt installation
@@ -608,6 +612,14 @@ if (BUILD_QT_APPS)
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite
         )
+        # macdeployqt deploys cocoa only; headless runs (QT_QPA_PLATFORM=offscreen: automation, benchmarks, CI)
+        # need offscreen beside it. It finds Qt through the executable's rpath (Contents/Frameworks); signed below
+        if(TARGET Qt6::QOffscreenIntegrationPlugin)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
+                    "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/PlugIns/platforms/"
+            )
+        endif()
 
         if(TARGET unreal-streamdeck-studio)
             # Guard: no absolute (build tree / SDK) rpath left in the nested studio, the container's frameworks on its
@@ -747,6 +759,14 @@ if (BUILD_QT_APPS)
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations ${_win_deploy_runtime_options}
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-videowall.exe" --no-translations ${_win_deploy_runtime_options}
         )
+        # windeployqt deploys qwindows only; headless runs (QT_QPA_PLATFORM=offscreen: automation, benchmarks, CI)
+        # need offscreen beside it
+        if(TARGET Qt6::QOffscreenIntegrationPlugin)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
+                    "${SUITE_STAGING_DIR}/platforms/"
+            )
+        endif()
         if(_win_deploy_studio)
             list(APPEND WIN_PACKAGE_COMMANDS
                 COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${_win_deploy_studio}" --no-translations ${_win_deploy_runtime_options}

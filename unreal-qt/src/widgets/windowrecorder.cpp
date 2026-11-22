@@ -1115,9 +1115,13 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // The picture in Matroska with each frame's time (see MatroskaStreamHeader), the output's frame rate variable:
     // those times, microsecond-exact, are the file's
     QStringList args{"-v", "error", "-y", "-f", "matroska", "-i", "-"};
+    // The raw sound's format is all given: no analysis. With ffmpeg's default (5 s of sound read before it goes on)
+    // it stopped reading the picture meanwhile, and a paused machine stepped by record/frames makes sound only as the
+    // picture is taken: both waited for good ("recorded nothing within 10 s"); running, it only started 5 s late
     if (!fifo.isEmpty())
-        args << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
-             << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
+        args << "-thread_queue_size" << "512" << "-probesize" << "32" << "-analyzeduration" << "0" << "-f" << "s16le"
+             << "-ar" << QString::number(_sampleRate) << "-ac" << QString::number(AUDIO_CHANNELS) << "-i" << fifo
+             << "-map" << "0:v:0" << "-map" << "1:a:0";
     const bool h265 = request.codec == "h265";
     const HardwareEncoder hardware =
         request.codec != "prores" && request.hardware ? FfmpegHardwareEncoder(ffmpeg, h265) : HardwareEncoder{};

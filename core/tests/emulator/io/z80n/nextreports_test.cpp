@@ -17,6 +17,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/machinevariants.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
@@ -171,6 +172,102 @@ TEST_F(NextReports_Test, DmaGolden)
 {
     Dma({0x7D, 0x00, 0x80, 0x00, 0x01, 0x14, 0x78, 0x22, 0x40, 0xCD, 0xFE, 0x00, 0xB2, 0xCF});
     GoldenText::Expect("next", "dma", DeviceState::ToText(DeviceState::NextDma(_context)));
+}
+
+TEST_F(NextReports_Test, DmaWithoutTheZxnDdmaCoreHasNoDdmaPart)
+{
+    const StateNode r = DeviceState::NextDma(_context);
+    EXPECT_EQ(P(r, "zxnddma"), "off") << "the plain NEXT is core 3.02.03";
+    EXPECT_EQ(NextReportHelper::Find(r, "ddma"), nullptr);
+}
+
+namespace
+{
+/// A NEXT-DDMA (core 3.03.00) machine, on another board than the KS2's Issue 4 when `issue5`
+Emulator* CreateDdmaMachine(bool issue5)
+{
+    return EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [issue5](CONFIG& config) {
+        MachineVariants::Find("NEXT-DDMA")->apply(config);
+        if (issue5)
+            MachineVariants::Find("NEXT-KS3")->apply(config);
+    });
+}
+}  // namespace
+
+// zxnDDMA (zxnddma.gde 2.5): the #DF flags, the 22-bit addresses, the 2D block and where it is, the transparent value, the board's SRAM
+TEST(NextDdmaReport_Test, PhysicalTwoDimensionalTransparentCopy)
+{
+    Emulator* emulator = CreateDdmaMachine(false);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* ports = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    // A #0C0000 (bank 32) -> B #064000 (bank 9), 16 x 8 bytes, strides 16 / 256, transparent #E3
+    for (uint8_t b : {0x7D, 0x00, 0x00, 0x00, 0x01, 0x14, 0x10, 0xAD, 0x00, 0x40, 0xD7, 0x0C, 0xDB, 0x06, 0xDF, 0x07, 0xE3, 16, 0, 0xE7, 8, 0,
+                      0xEB, 16, 0, 0xEF, 0x00, 0x01, 0xF3, 0xE3, 0xCF})
+        ports->DecodePortOut(0x6B, static_cast<uint8_t>(b), 0);
+    StateNode r = DeviceState::NextDma(context);
+    auto p = [&r](const char* path) { return NextReportHelper::Path(r, path); };
+    EXPECT_EQ(p("zxnddma"), "on");
+    EXPECT_EQ(p("ddma.physical"), "on");
+    EXPECT_EQ(p("ddma.two_d"), "on");
+    EXPECT_EQ(p("ddma.transparent"), "on");
+    EXPECT_EQ(p("ddma.fill"), "off");
+    EXPECT_EQ(p("ddma.layer2_xy"), "off");
+    EXPECT_EQ(p("ddma.ext_a"), "0x0C");
+    EXPECT_EQ(p("ddma.ext_b"), "0x06");
+    EXPECT_EQ(p("ddma.src"), "0x0C0000");
+    EXPECT_EQ(p("ddma.dst"), "0x064000");
+    EXPECT_EQ(p("ddma.row_length"), "16");
+    EXPECT_EQ(p("ddma.rows"), "8");
+    EXPECT_EQ(p("ddma.stride_a"), "16");
+    EXPECT_EQ(p("ddma.stride_b"), "256");
+    EXPECT_EQ(p("ddma.transparent_value"), "0xE3");
+    EXPECT_EQ(p("ddma.sram.board"), "issue4");
+    EXPECT_EQ(p("ddma.sram.bytes"), "2097152");
+    EXPECT_EQ(p("ddma.sram.range"), "0x000000-0x1FFFFF");
+    EXPECT_EQ(p("src_kind"), "ram") << "the SRAM behind the physical address, not the slot of #0000";
+    EXPECT_EQ(p("dst_kind"), "ram");
+
+    ports->DecodePortOut(0x6B, 0x87, 0);
+    EXPECT_EQ(ports->Dma().Run(20, 0), 20u);  // continuous: a run of 20 bytes leaves the block at row 1, column 4
+    r = DeviceState::NextDma(context);
+    EXPECT_EQ(p("ddma.row"), "1");
+    EXPECT_EQ(p("ddma.column"), "4");
+    EXPECT_EQ(p("ddma.src"), "0x0C0014");
+    EXPECT_EQ(p("ddma.dst"), "0x064104");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// The Layer 2 X,Y destination with the hidden screen and fill on the KS3's Issue 5: X, Y, the destination worked out from NR #13 and the
+// 4 MB SRAM
+TEST(NextDdmaReport_Test, Layer2XyFillOnIssue5)
+{
+    Emulator* emulator = CreateDdmaMachine(true);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* ports = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    auto out = [ports](uint16_t port, uint8_t value) { ports->DecodePortOut(port, value, 0); };
+    out(0x243B, 0x13);
+    out(0x253B, 10);  // the hidden Layer 2 at bank 10
+    out(0x243B, 0x70);
+    out(0x253B, 0x00);  // 256 x 192
+    for (uint8_t b : {0x7D, 0x00, 0x00, 0x01, 0x00, 0x14, 0x10, 0xAD, 0x00, 0x00, 0xDF, 0x39, 5, 0, 3, 0xF7, 0x5A, 0xCF})
+        out(0x6B, static_cast<uint8_t>(b));
+    const StateNode r = DeviceState::NextDma(context);
+    auto p = [&r](const char* path) { return NextReportHelper::Path(r, path); };
+    EXPECT_EQ(p("ddma.layer2_xy"), "on");
+    EXPECT_EQ(p("ddma.hidden"), "on");
+    EXPECT_EQ(p("ddma.fill"), "on");
+    EXPECT_EQ(p("ddma.fill_value"), "0x5A");
+    EXPECT_EQ(p("ddma.layer2.x"), "5");
+    EXPECT_EQ(p("ddma.layer2.y"), "3");
+    EXPECT_EQ(p("ddma.stride_b"), "256") << "the Layer 2 destination moves a row at a time";
+    EXPECT_EQ(p("ddma.dst"), "0x068305") << "#40000 + 10 x #4000 + Y x 256 + X";
+    EXPECT_EQ(p("ddma.sram.board"), "issue5");
+    EXPECT_EQ(p("ddma.sram.range"), "0x000000-0x3FFFFF");
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 // -------------------------------------------------------------------------------------------------------------- next_video

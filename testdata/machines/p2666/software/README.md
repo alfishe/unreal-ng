@@ -19,6 +19,8 @@ environment variables at its top) runs any of them with a key script and saves s
 | `nedoos/sdcard/bin/cmd.com` | NedoOS command line interpreter | `b8745382` | `e477a445e1f55d0a…` |
 | `nedoos/sdcard/bin/autoexec.bat` | ours: `echo UNREALNGSDBOOT` | `c2a5a457` | `e62363a0196efbaf…` |
 | `nedoos/sdcard/{bin,doc,ini,nedodemo,nedogame}/` | the rest of the NedoOS release: the demo SD card (21 MB, see below) | | |
+| `nedoos/kernel-ngsfix/osp26sd-ngsfix.$C` | the same kernel rebuilt from source with the NGS SD driver fix (see below) | `6f027469` | `25909c08721b0581…` |
+| `nedoos/kernel-ngsfix/0001-ngssddrv-outi-keeps-b.patch` | the fix, against `d1d011f8` | | |
 
 ## Sources
 
@@ -89,6 +91,19 @@ on, one sector per restore. The P26 kernel on the SD card has no such writes.
 
 ATM CP/M disks (`atm-turbo/cpm-software`, 113 disks) do not boot: they need the ATM BIOS ROM with CP/M, and the board's
 ROM set is BASIC 48 / 128, TR-DOS, Gluk and FATALL.
+
+## The NGS SD driver fix (`nedoos/kernel-ngsfix/`)
+
+The `NGSSD` kernel's NeoGS SD driver (`src/kernel/ngssddrv.asm`) sends the 768-byte installer (`ISDD3`) and every
+written sector (`SDWRSN2`) with `LD BC,GSDAT` : `OUTI`. OUTI puts B - 1 on A15..A8, so the bytes go to `#FFB3`,
+`#FEB3`, ... `#00B3`, and `#E0B3`..`#EFB3` also match the board's `#EFF7` decode (`A15..13 = 111`, `A12 = 0`,
+`A5 = 1`, `A3 = 0`, `A0 = 1`, PaE.vhd:1280): 16 bytes of every 256 land in `#EFF7`. After the installer it holds
+`#8F` (RAM 0 at `#0000`, the 128 lock), and the next interrupt's call of the TR-DOS gadget at `#3D2F` runs RAM and
+ends at `#0000`: with a NeoGS fitted the release kernel hangs after "Drive M mounted", on the real board as well. The
+patch adds `INC B` before both OUTIs, so every byte goes to `#00B3`. `osp26sd-ngsfix.$C` is `d1d011f8` with the
+patch, built by [.recipe/software/nedoos-build.md](../../../../.recipe/software/nedoos-build.md) (preset `pe26sd`).
+The same build without the patch matches `release/osp26sd.$C` in every code byte; they differ only in the hobeta
+padding after the code. Used by `GSNedoOsP2666_Test.V5KernelDrivesTheNeoGsSdCard`.
 
 ## Why not the latest NedoOS release
 

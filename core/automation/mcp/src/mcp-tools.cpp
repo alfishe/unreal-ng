@@ -2806,7 +2806,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
-                               "board.neogs_flash", "board.gs_stats", "audio_gs_stats"})
+                               "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
+                               "audio_gs_firmware_profiles"})
     {
         allowed.append(aspect);
     }
@@ -2858,6 +2859,11 @@ void RegisterInspectState(ToolRegistry& registry)
         "interrupts, cpu, audio, dma, spi, sd, mp3, flash, rates, errors); 'gs_stats_since' a baseline from "
         "emulator_manage gs_reset_counters (the counters since then), 'gs_stats_fresh' a block from a frame end after "
         "the call; "
+        "'audio_gs_firmware' = the GS card's firmware objects through its profile (GET /state/audio/gs/firmware): "
+        "struct instances bound to a physical page as rows of fields, variables in memory, in a register over a PC "
+        "range or in an instruction's operand; 'audio_gs_firmware.<object>' one instance or variable; "
+        "'gs_firmware_profile' reads through another profile by id; 'audio_gs_firmware_profiles' = the profiles known "
+        "(built-in and the files of <symbols>/gs/profiles); "
         "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
         "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
@@ -2929,7 +2935,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'next_uart' = the two UARTs (ESP and Pi): prescaler / baud, frame, RTS, the Rx and Tx FIFOs, the status byte as a read gives it, "
         "the byte counters, the NR #C6 interrupt enables and requests and what is on the line (ComPort= / ComPort2=); "
         "'next_dma' = the DMA as programmed (mode zxn / z80, ports A / B, direction, burst, prescaler, counters, status byte; reading does not "
-        "step its read sequence), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
+        "step its read sequence; with the zxnDDMA core the 'ddma' part: #DF flags, 22-bit addresses, 2D block, transparent / fill, "
+        "Layer 2 X,Y, the board's SRAM range), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
         "position, 'next_palette' = the 9-bit palettes (nr_palette = '0'-'7' | name | 'all', default the selected one; nr_range = '16-31'), "
         "'next_ports' = the internal port enable word NR #82-#85 and, with nr_port = '6B' (nr_access = 'r' | 'w'), which device answers it, "
         "'next_nextreg' = one NextREG (nr_reg = '07') with its decoded bits or all (nr_changed = true: only the ones that differ from their "
@@ -2986,6 +2993,8 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["nr_journal_limit"]["description"] = "'next_reg_journal': the newest N matches (default 40)";
     schema["properties"]["gs_stats_since"]["type"] = "integer";
     schema["properties"]["gs_stats_since"]["description"] = "'audio_gs_stats': a baseline id from emulator_manage gs_reset_counters";
+    schema["properties"]["gs_firmware_profile"]["type"] = "string";
+    schema["properties"]["gs_firmware_profile"]["description"] = "'audio_gs_firmware': a profile id (default: the card's)";
     schema["properties"]["gs_stats_fresh"]["type"] = "boolean";
     schema["properties"]["gs_stats_fresh"]["description"] = "'audio_gs_stats': a block from a frame end after this call";
     schema["properties"]["nr_sd_kinds"]["type"] = "string";
@@ -3145,11 +3154,13 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
                     aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices" && aspect != "boards" &&
-                    aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0)
+                    aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0 &&
+                    aspect != "audio_gs_firmware" && aspect.rfind("audio_gs_firmware.", 0) != 0 &&
+                    aspect != "audio_gs_firmware_profiles")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>]"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles"));
                     return;
                 }
             }
@@ -3253,6 +3264,9 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (text("gs_stats_fresh") == "true")
                     add("fresh", "1");
                 nrReports["audio_gs_stats"] = q;
+                q.clear();
+                add("profile", text("gs_firmware_profile"));
+                nrReports["audio_gs_firmware"] = q;
                 q.clear();
                 add("kinds", text("nr_nmi_kinds"));
                 add("since", text("nr_nmi_since"));
@@ -3881,6 +3895,26 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "audio_gs_firmware" || aspect.rfind("audio_gs_firmware.", 0) == 0 ||
+                                 aspect == "audio_gs_firmware_profiles")
+                        {
+                            // The firmware objects through the profile via the WebAPI (gsfirmwareobjects.h)
+                            std::string path = "/state/audio/gs/firmware/profiles";
+                            if (aspect != "audio_gs_firmware_profiles")
+                            {
+                                std::string query = nrReports.at("audio_gs_firmware");
+                                if (aspect.size() > 17)
+                                    query += (query.empty() ? "?" : "&") + std::string("object=") + aspect.substr(18);
+                                path = "/state/audio/gs/firmware" + query;
+                            }
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "boards" || aspect.rfind("board.", 0) == 0)
                         {
                             // Device boards via the WebAPI (core DebugBoards); a missing board answers 404 with the list
@@ -4440,11 +4474,34 @@ void RegisterInspectState(ToolRegistry& registry)
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();
                                 else if (aspect == "next_dma")
+                                {
                                     out << "\n[next_dma] " << value["mode"].asString() << " mode, " << (value["enabled"].asBool() ? "enabled" : "idle")
                                         << ", " << value["direction"].asString() << ", A " << value["a"]["address"].asString() << " ("
                                         << value["a"]["type"].asString() << ") B " << value["b"]["address"].asString() << " (" << value["b"]["type"].asString()
                                         << "), " << value["burst"].asString() << ", counter " << value["counter"].asInt() << "/" << value["block_length"].asInt()
                                         << ", status " << value["status"].asString();
+                                    if (value.isMember("ddma"))
+                                    {
+                                        // zxnDDMA (core 3.03): the #DF flags that are on, the 22-bit working addresses, the 2D block, the SRAM range
+                                        const Json::Value& d = value["ddma"];
+                                        std::string flags;
+                                        for (const char* f : {"physical", "two_d", "transparent", "fill", "layer2_xy", "hidden"})
+                                            if (d[f].asBool())
+                                                flags += (flags.empty() ? "" : "+") + std::string(f);
+                                        out << "\n[next_dma] zxnDDMA " << (flags.empty() ? std::string("no flags") : flags) << ", src " << d["src"].asString()
+                                            << " dst " << d["dst"].asString();
+                                        if (d["two_d"].asBool())
+                                            out << ", 2D " << d["row_length"].asInt() << "x" << d["rows"].asInt() << " at row " << d["row"].asInt()
+                                                << " column " << d["column"].asInt() << ", strides " << d["stride_a"].asInt() << "/" << d["stride_b"].asInt();
+                                        if (d["transparent"].asBool())
+                                            out << ", transparent " << d["transparent_value"].asString();
+                                        if (d["fill"].asBool())
+                                            out << ", fill " << d["fill_value"].asString();
+                                        if (d["layer2_xy"].asBool())
+                                            out << ", Layer 2 X " << d["layer2"]["x"].asInt() << " Y " << d["layer2"]["y"].asInt();
+                                        out << ", SRAM " << d["sram"]["range"].asString() << " (" << d["sram"]["board"].asString() << ")";
+                                    }
+                                }
                                 else if (aspect == "next_video")
                                     out << "\n[next_video] order " << value["layer_order"]["name"].asString() << ", ULA " << value["ula"]["mode"].asString()
                                         << (value["ula"]["enabled"].asBool() ? "" : " (off)") << ", Layer 2 "
@@ -5097,7 +5154,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                 if (value["boards"].empty())
                                     out << value.get("description", " none (no device publishes a board on this machine)").asString();
                             }
-                            else if (aspect == "audio_gs_stats" || aspect.rfind("audio_gs_stats.", 0) == 0)
+                            else if (aspect == "audio_gs_stats" || aspect.rfind("audio_gs_stats.", 0) == 0 ||
+                                     aspect == "audio_gs_firmware" || aspect.rfind("audio_gs_firmware.", 0) == 0 ||
+                                     aspect == "audio_gs_firmware_profiles")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();

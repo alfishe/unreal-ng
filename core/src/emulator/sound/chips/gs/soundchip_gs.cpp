@@ -579,6 +579,7 @@ uint8_t SoundChip_GeneralSound::portDeviceInMethod(uint16_t port)
         case 0xBB: // GSCOM read: status, bits 1-6 read as 1 (pull-ups)
             flush();
             _activityCounters.hostStatusPolls++;
+            logHostStatusRead(_mb.status);
             traceEvent(GSTraceSide::Host, PORT_COMMAND, _mb.status | 0x7E, false);
             return _mb.status | 0x7E;
         default:
@@ -1199,6 +1200,13 @@ const uint8_t* SoundChip_GeneralSound::cardRomPage(uint32_t page) const
     if (!_cpu || (static_cast<size_t>(page) + 1) * PAGE_SIZE > _rom.size())
         return nullptr;
     return _rom.data() + static_cast<size_t>(page) * PAGE_SIZE;
+}
+
+const uint8_t* SoundChip_GeneralSound::cardRamPage(uint32_t page) const
+{
+    if (!_cpu || (static_cast<size_t>(page) + 1) * PAGE_SIZE > _ram.size())
+        return nullptr;
+    return _ram.data() + static_cast<size_t>(page) * PAGE_SIZE;
 }
 
 bool SoundChip_GeneralSound::cardRegisters(Z80CpuRegisters& out) const

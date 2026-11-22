@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include "emulator/sound/chips/gs/gshostdriver.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/gsslotstats.h"
 #include "cli-processor.h"
 #include <emulator/state/devicestate.h>
@@ -218,6 +219,8 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs conversation [id]              - a send by id (none: the last)
 ///   gs stats [section] [--since <id>] [--fresh] - the slot's statistics (gsslotstats.h, gs-debugger N7)
 ///   gs stats reset                    - a statistics baseline: its id for --since
+///   gs firmware [object] [--profile <id>] - the firmware objects through the profile (gsfirmwareobjects.h, M1-M3)
+///   gs firmware profiles              - the firmware profiles known (built-in and files)
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
 ///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - the card in the GS slot replaced (slots gs: a restart)
@@ -247,7 +250,8 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     static const char* kUsage =
         "Usage: gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|"
         "read_status|read_data|send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>]|"
-        "conversation [id]|stats [section] [--since <id>] [--fresh]|stats reset|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
+        "conversation [id]|stats [section] [--since <id>] [--fresh]|stats reset|firmware [object] [--profile <id>]|"
+        "firmware profiles|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
         "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
     if (args.empty())
@@ -401,6 +405,39 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
             ss << reply.text;
             if (reply.text.empty() || reply.text.back() != '\n')
                 ss << NEWLINE;
+        }
+    }
+    else if (sub == "firmware")
+    {
+        GSFirmwareObjectsQuery query;
+        bool bad = false;
+        bool profiles = false;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            if (args[i] == "--profile" && i + 1 < args.size())
+                query.profile = args[++i];
+            else if (args[i] == "profiles" && i == 1)
+                profiles = true;
+            else if (query.object.empty() && args[i].rfind("--", 0) != 0)
+                query.object = args[i];
+            else
+                bad = true;
+        }
+        std::string text;
+        if (bad)
+            ss << "Usage: gs firmware [object] [--profile <id>] | gs firmware profiles" << NEWLINE;
+        else if (profiles)
+        {
+            GSFirmwareProfilesState(&text);
+            ss << text;
+        }
+        else
+        {
+            const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(context, query);
+            if (reply.status != 200)
+                ss << "Error: " << reply.text << NEWLINE;
+            else
+                ss << reply.text;
         }
     }
     else if (sub == "switch_personality")

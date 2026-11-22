@@ -18,6 +18,7 @@ materials/
 │
 ├── neogs/                       # NeoGS FPGA-based successor
 │   ├── neogs-differences.md     # Key differences vs GS
+│   ├── ngs-firmware/            # Firmware sources (NedoPC SVN ngs /z80, r193): main ROM, loader
 │   ├── ngs_c_cpld.pdf           # Rev C CPLD documentation
 │   ├── ngs_b.pdf                # Rev B full documentation
 │   ├── NGS_b_scheme.pdf         # Schematic
@@ -70,6 +71,7 @@ materials/
 | File | Source | Description |
 |:-----|:-------|:------------|
 | `neogs-differences.md` | — | Key differences vs original GS |
+| `ngs-firmware/` | NedoPC SVN `svn://svn.nedopc.com/ngs`, `/z80/`, r193 | Firmware sources (main ROM v1.11, loader); see its README |
 | `vs1001_datasheet.pdf` | [VLSI](https://www.vlsi.fi/fileadmin/datasheets/vs1001.pdf) | VS1001K MP3 decoder datasheet |
 | `acex.pdf` | [GitHub](https://raw.githubusercontent.com/alfishe/neogs/master/docs/acex.pdf) | Altera ACEX 1K (EP1K30/50) FPGA datasheet |
 | `ma8201_dac.pdf` | [GitHub](https://raw.githubusercontent.com/alfishe/neogs/master/docs/_chips/ma8201.pdf) | MA8201 I2S audio DAC datasheet |

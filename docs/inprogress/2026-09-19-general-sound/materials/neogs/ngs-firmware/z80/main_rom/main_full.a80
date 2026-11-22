@@ -1,0 +1,11 @@
+
+;LAST UPDATE: 24.04.2014 savelij
+
+		include ../macros.a80
+
+		binclude ../loader_ngs/loader_ngs.rom
+		
+		DUPL 0X10000-$,0
+		binclude neogs.rom
+
+		DUPL 0X80000-$,0
