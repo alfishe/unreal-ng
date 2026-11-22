@@ -66,7 +66,9 @@ Artix-7, `zxnext_top_issue5.vhd`). What a program can see:
 | +3 FDC lines on the expansion bus (NR `#81` bit 3) | none | none | driven | `zxnext_top_issue5.vhd`; not modelled (no expansion bus FDC) |
 
 Nothing else differs: NR `#00` is `#0A` on all three, the RAM the core addresses is 2048K on all three (the 4096K KS3 is
-MAME's alone, Q3 / Q4). The firmware's `.XPER` dot command (`c/DotCommands/xper/xper.c`) reads the DNA and the XADC the way
+MAME's alone, Q3 / Q4). Core 3.03.00's zxnDDMA guide (`zxnddma.gde` 2.5, 2026-11-05) is a second source for the SRAM sizes: Issue 5 4 MB,
+Issue 4 2 MB, Issue 2 1 MB or 2 MB with the expansion; the zxnDDMA's physical addresses wrap in them (`NextSramBytes`, design-zxnddma.md
+section 9). The firmware's `.XPER` dot command (`c/DotCommands/xper/xper.c`) reads the DNA and the XADC the way
 `NextBoardIssue_Test` does and stops with "ISSUE 4 REQUIRED" on Issue 2.
 
 Implementation: `NextBoardIssue` (`core/src/emulator/io/z80n/nextboardissue.h`) on `NextBoard`, the Artix peripherals in

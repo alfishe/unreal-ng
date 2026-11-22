@@ -70,12 +70,12 @@ no core-version switch (we emulate 3.02.03; the guide says "every core > 3.02.16
 | # | Phase | Content | Done when |
 |:--|:--|:--|:--|
 | 0 | RTL (checked 2026-11-11: the official repo `SpectrumNext/ZX_Spectrum_Next_FPGA`, branches `master`, `30204`, `30205` hold no `new_dma.vhd`; their `dma.vhd` is byte-identical to our 3.02.03 copy, so the RTL of core 3.03.00 is not public and the guide is the only source) | fetch `new_dma.vhd`, `zxnext.vhd` of the core 3.03.00 into the RTL collection (`zx-next/fpga`, checksums), read, list differences from this document | this document corrected; open questions closed or marked |
-| 1 | Physical memory path | `Bus` gains `readPhysical(uint32_t)` / `writePhysical`; Next memory exposes the 4 MB SRAM (issue-dependent wrap: bit 21 on issue 4, 20 on issue 2 without the expansion), banks 5/7 as BRAM (writes do not reach the ULA screen) | unit tests: bank addresses `$40000+bank*$4000`, wrap per issue, bank 5/7 |
+| 1 | Physical memory path (done 2026-11-21, section 9) | `Bus` gains `readPhysical(uint32_t)` / `writePhysical`; Next memory exposes the 4 MB SRAM (issue-dependent wrap: bit 21 on issue 4, 20 on issue 2 without the expansion), banks 5/7 as BRAM (writes do not reach the ULA screen) | unit tests: bank addresses `$40000+bank*$4000`, wrap per issue, bank 5/7 |
 | 2 | Command decode | `$D7 $DB $DF $E3 $E7 $EB $EF $F3 $F7 $FB` + follow bytes in the sequencer; port `$0B` ignores them (follow bytes then fall through as registers); `$C3`/`$CF` extended; state in the codec (version bump), the history entry and the status/report (`portdecoder_next_reports.cpp`) | tests: every command's follow bytes on `$6B` and the drop on `$0B` and on 3.02.03 mode; reset/load tables of the guide 2.6 |
 | 3 | Engine | physical addressing with carry; 2D rows with strides; transparent; fill; Layer 2 X,Y destination from NR `$12/$13/$70` for the three modes; hidden screen; fixed-address and burst/prescaler interplay; WR5 restart | unit tests from the guide's formulas (all three Layer 2 modes, clipping edge cases, row length/rows 0 = one byte) |
 | 4 | Timing | per-byte cost with fill discount, 2+2 cycle bytes, contention as in the audit; IM2 hold under DI | pinned cases: the five numbers of zxnddma_compare within the existing timing tolerance |
 | 5 | Examples as tests | build the 11 examples with sjasmplus into `testdata`/the verification folder, run headless, compare with a CPU model (LDIR/loops) frame by frame for the deterministic ones (examples, sprites, clip, lemmings, modes, scroll, windows, scroller); `zxnddma_compare` run in both modes (on = detects, off = takes the plain path with `FORCE_PLAIN`) | tools/verification/next-ddma + a gtest that runs the compare program and checks the detection byte |
-| 6 | Automation and docs | WebAPI/MCP/CLI/Python/Lua status of the new DMA state per the automation-planes rule; DMA history shows flags and rectangle; docs chain (`command-interface.md` -> Next module doc -> plane docs), `.recipe` for Next DMA | automation-gaps list updated |
+| 6 | Automation and docs (done 2026-11-21, section 9) | WebAPI/MCP/CLI/Python/Lua status of the new DMA state per the automation-planes rule; DMA history shows flags and rectangle; docs chain (`command-interface.md` -> Next module doc -> plane docs), `.recipe` for Next DMA | automation-gaps list updated |
 | 7 | All systems | gcc, MSVC, MinGW (batched, memory notes) | green |
 
 ## 5. Test material
@@ -137,3 +137,37 @@ tested before the timing phase.
   accesses skip `contend` (the video logic decodes contention from the CPU address, which a physical access does not carry).
 - Fill mode costs one write cycle set a byte (the guide: twice as fast as a fixed source); not measured against a number.
 - Not checked: the IM2 + DI hold, 2D with auto restart, the burst/prescaler interplay with 2D.
+
+## 9. The SRAM range per board and the automation planes (2026-11-21)
+
+**Range.** The DMA puts out 22 bits (`{extended bits 5:0, address}`, `NextDma` masks `#3FFFFF`); the board's SRAM address lines take
+what they reach (`zxnddma.gde` 2.5 "Full addresses" and 2.9 note 5; the RTL of 3.03.00 is not public, phase 0):
+
+| Board | SRAM | Physical range | Above it |
+|:--|:--|:--|:--|
+| Issue 5 (KS3, `NEXT-KS3`) | 4 MB | `#000000-#3FFFFF` | the DMA's own 22 bits wrap |
+| Issue 4 (KS2, `NEXT`, `NEXT-DDMA`) | 2 MB | `#000000-#1FFFFF` | bit 21 dropped: `#210000` is `#010000` |
+| Issue 2 (KS1, `NEXT-KS1`, 1024K) | 1 MB | `#000000-#0FFFFF` | bits 21:20 dropped |
+| Issue 2 with the 2 MB expansion (Board=issue2 and more than 1024K) | 2 MB | `#000000-#1FFFFF` | bit 21 dropped |
+
+`NextSramBytes(issue, ramKb)` (`nextboardissue.h`) gives the size, `NextMemory` keeps the mask (`PhysicalAddressMask`, set when the
+machine is built: the board is part of the config and of the TTD image, so no state) and `PhysicalRead` / `PhysicalWrite` apply it.
+Inside the range the existing rules stay: `#000000-#03FFFF` the system area, `#040000 + bank x #4000` the RAM, banks 5 and the first 8K
+of bank 7 their SRAM side (`NextMemory::SramTwin`, landed 2026-11-20: the ULA's block RAM is not reached, also not through an address
+that wraps onto them on the smaller boards), a bank beyond the machine's RAM (`config.ramsize`, at most 2 MB of RAM in this model)
+reads `#FF` and takes nothing. So on Issue 5 `#200000-#23FFFF` (banks 112-127) is real SRAM and `#240000-#3FFFFF` reads `#FF` until a
+4 MB machine is modelled (the MMU of this core addresses 2 MB; research-variants.md Q3). The transfer loop is unchanged (the mask is a
+member load in `PhysicalRead` / `PhysicalWrite` instead of a constant), so no A/B was run. Tests: `NextDdmaBoard_Test.*` (each board:
+the mask, `#210000` and `#150000` aliasing or not, banks 5 / 7 through the wrapped address).
+
+**Planes.** `next_dma` (`DeviceState::NextDma`, one report for CLI `state next dma`, Python `emu.next_dma()`, Lua `next_dma()`, MCP
+`inspect_state` aspect `next_dma`, REST `GET /state/next/dma`, WebSocket `call` of that route) adds `zxnddma` (the core has the blitter)
+and, on that core only, `ddma`: the `#DF` flags, `ext_a` / `ext_b`, the 22-bit `src` / `dst`, `row_length`, `rows`, `stride_a` /
+`stride_b`, `row` / `column`, `transparent_value`, `fill_value`, `layer2 {x, y}`, `sram {board, bytes, range}`; in physical mode
+`src_kind` / `dst_kind` name the SRAM behind the address (`NextMemory::PhysicalKind`). The MCP text adds a `[next_dma] zxnDDMA ...`
+line. The DMA's device history (`dma`) adds on that core `physical`, the 22-bit `source` / `destination`, `two_d` with `row_length` /
+`rows`, `fill` / `transparent` with the value and `layer2_x` / `layer2_y` / `hidden`. Tests: `NextDdmaReport_Test.*`,
+`NextReports_Test.DmaWithoutTheZxnDdmaCoreHasNoDdmaPart`, `NextHistory_Test.DmaBlocksOfTheZxnDdmaCoreShowItsState`,
+`McpTools_Test.InspectState_NextDmaShowsTheZxnDdmaPart`, live `tools/verification/mcp/test_next.py`
+`test_dma_aspect_shows_the_zxnddma_state`. Docs: command-interface.md, design-automation-coverage.md section 3, the plane docs,
+`.recipe/machines/next.md`.
