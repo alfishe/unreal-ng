@@ -85,6 +85,24 @@ public:
     /// still open before its request, its own wait, and the refused-cycle stops
     /// that already fall into this machine cycle
     uint32_t CpuAccess(uint32_t request, Access kind);
+    /// CpuAccess's fast path without the call: an access in the quiet span the last fast one found (cycles of one
+    /// line outside its fetch blocks, the line's V_CONFIG and G_X_OFFS still as they were then). False: call
+    /// CpuAccess
+    bool QuickAccess(uint32_t request, Access kind, uint32_t& fclks)
+    {
+        const uint32_t d0 = request >> 2;
+        if (_refused.open || d0 < _quietFrom || d0 >= _quietTo || *_quietConfig != _quietConfigWas ||
+            *_quietOffs != _quietOffsWas)
+            return false;
+        const bool seek = d0 < _cycle || d0 - _cycle > 4 * kLineCycles;
+        if (!seek && !(_blkRem == 0 && (d0 - _cycle != 1 || d0 - 1u >= _quietFrom)))
+            return false;
+        _cycle = d0 + 1;
+        _blkRem = 0;
+        _vidRem = 0;
+        fclks = kind == Access::Write ? 0u : (4u * d0 + 4u - request) + (kind == Access::M1 ? 2u : 3u);
+        return true;
+    }
 
     /// A machine cycle with T1 at fclk `t1` that takes no DRAM cycle (ROM, a
     /// cache hit, a write the window does not take): the refused-cycle stops
@@ -153,4 +171,12 @@ private:
     uint32_t _fetchLine = UINT32_MAX;
     uint16_t _fetchOffs = 0;
     uint8_t _fetchConfig = 0;
+    // QuickAccess's span (derived): frame cycles [_quietFrom, _quietTo) of one line, valid while that line's
+    // settings (read through the pointers, into the engine's lines) are what they were
+    uint32_t _quietFrom = 0;
+    uint32_t _quietTo = 0;
+    const uint8_t* _quietConfig = &_quietConfigWas;
+    const uint16_t* _quietOffs = &_quietOffsWas;
+    uint8_t _quietConfigWas = 0;
+    uint16_t _quietOffsWas = 0;
 };

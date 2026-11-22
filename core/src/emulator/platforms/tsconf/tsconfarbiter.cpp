@@ -45,6 +45,7 @@ void TsConfArbiter::Reset()
     _blkRem = 0;
     _vidRem = 0;
     _refused.open = false;
+    _quietTo = 0;
 }
 
 void TsConfArbiter::Step(bool cpuRequest)
@@ -112,6 +113,39 @@ uint32_t TsConfArbiter::CpuAccess(uint32_t request, Access kind)
     }
 
     uint32_t d0 = request >> 2;
+
+    // Fast path, the same result as the walk below. The walk ends in a clean state at d0: SeekClean(d0) (a new
+    // frame, far away, or a block boundary passed with no request before d0), no step (d0 is the cycle after the
+    // last access), or one step from a block boundary outside the fetch blocks. d0 lies outside them too, so the
+    // CPU gets d0 itself and no block starts with it: nothing refused, nothing carried over
+    if (!_refused.open)
+    {
+        const uint32_t h = d0 % kLineCycles;
+        const bool seek = d0 < _cycle || d0 - _cycle > 4 * kLineCycles;
+        const Fetch& f = FetchAt(d0 / kLineCycles);
+        // Outside the blocks: before the first decision, or a block length past the last one (SeekClean's bound)
+        auto outside = [&f](uint32_t at) { return !f.active || at < f.h0 || at >= static_cast<uint32_t>(f.h1) + f.length; };
+        if (outside(h) &&
+            (seek || (_blkRem == 0 && (d0 - _cycle != 1 || (h > 0 && outside(h - 1u))))))
+        {
+            // The quiet part of the line this access is in, for QuickAccess
+            const uint32_t lineStart = d0 - h;
+            const TsConfLine& set = _engine.Line(d0 / kLineCycles);
+            _quietConfig = &set.vConfig;
+            _quietOffs = &set.gxOffs;
+            _quietConfigWas = set.vConfig;
+            _quietOffsWas = set.gxOffs;
+            _quietFrom = !f.active || h < f.h0 ? lineStart : lineStart + f.h1 + f.length;
+            _quietTo = !f.active || h >= f.h0 ? lineStart + kLineCycles : lineStart + f.h0;
+            _cycle = d0 + 1;
+            _blkRem = 0;
+            _vidRem = 0;
+            if (kind == Access::Write)
+                return 0;
+            return (4u * d0 + 4u - request) + (kind == Access::M1 ? 2u : 3u);
+        }
+    }
+
     if (d0 < _cycle || d0 - _cycle > 4 * kLineCycles)
         SeekClean(d0);  // a new frame, or far away: nothing carries over
 
