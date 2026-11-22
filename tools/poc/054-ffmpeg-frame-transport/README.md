@@ -48,38 +48,64 @@ the transport is never the limit?
 From the repo's `scratch/` (the FIFO and the socket are made in the working directory):
 
 ```bash
-c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/transport.cpp -o poc054
-../tools/poc/054-ffmpeg-frame-transport/run.sh ./poc054 3
+c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/transport.cpp ../core/recording/src/common/framescaler.cpp -o poc054
+../tools/poc/054-ffmpeg-frame-transport/run.sh ./poc054 3              # ingest only, per transport
+../tools/poc/054-ffmpeg-frame-transport/e2e.sh ./poc054 SRC.rgba 3       # 4K libx264 end to end, SRC = 352x288 RGBA frames
 ```
 
-## Results (2026-11-21)
+## Answer
 
-ffmpeg ingest (`-c copy -f null`), 3 interleaved rounds, the range of the rounds. Mac: M1 Ultra, ffmpeg 9.0.2, a
-loaded host (load average 80-120 on 20 cores). Linux: i7-11850H, ffmpeg 8.0.1, `pipe-max-size` 1 MB.
+**Do not send 4K frames to ffmpeg at all.** For a fixed profile (4K / 1080p) send the emulator's picture at its own
+size (352x288 RGBA = 0.4 MB, 80x less than 33 MB) and let ffmpeg build the frame:
+
+```
+-vf scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv444p,
+    scale=PW:PH:flags=neighbor,pad=W:H:X:Y:black,scale=flags=area,format=yuv420p
+```
+
+(PW x PH at X, Y = `FrameScaler::ComputeLayout`). The colour conversion runs on the 0.1 M source pixels instead of the
+8.3 M of a 4K frame and the transport carries 20 MB/s at 50 Hz: neither the pipe nor ffmpeg's RGB conversion is a
+limit any more, on every platform and with the FIFO kept as it is. The scaling path of `scale > 1` already works this
+way; only the fixed profiles upscale on our side and ship 33 MB.
+
+End to end, 4K libx264 ultrafast, 200 real (changing) frames, 3 interleaved rounds:
+
+| Host | Today: FrameScaler 4K RGBA, FIFO | Today through a unix socket | Source picture, ffmpeg builds 4K |
+|------|---------------------------------|-----------------------------|----------------------------------|
+| M1 Ultra (load 33-63) | 12.9-17.3 fps | 16.8-42.5 fps | **33.8-95.4 fps** (2.2-5.5x) |
+| i7-11850H (load 74-84 on 16) | 8.8-9.5 fps | 8.3-10.0 fps | **16.9-17.6 fps** (1.8-2x, x264 is the limit) |
+
+Picture fidelity against today, measured on real frames (`exact.py`, `q420.py`):
+
+- 4:4:4 output (what the window recorder and x264 4:4:4 use): byte-identical to today at whole factors and at
+  352x288 -> 4K (7.5x). Converting a pixel and then repeating it is repeating the converted pixel.
+- Other fractional factors (352x288 -> 1080p is 3.75x, 256x192 -> 4K 11.25x): swscale's nearest mapping puts the
+  k / k+1 column boundaries elsewhere than FrameScaler (0.5-2.9 % of pixels differ). Either FrameScaler adopts
+  swscale's mapping, or those layouts keep today's path, or the picture is pre-scaled by the whole part on our side.
+- 4:2:0 output: not the same bytes (today swscale averages the chroma from the 4K RGB), PSNR against the exact 4K
+  picture after a round trip: today 33.02 / 32.30 / 38.92 / 38.85 dB, `area` 33.12 / 32.37 / 39.00 / 38.91 dB
+  (+0.06..0.10, 4 pictures). `bicubic` was -0.14, `bilinear` -0.5, `neighbor` -2.6.
+
+## Transport alone (ingest, `-c copy -f null`, 2026-11-21)
+
+When the bytes cannot shrink (the window recorder sends the window's picture), the transport matters on macOS only:
 
 | Transport | Mac 4K RGBA | Mac 4K NV12 | Linux 4K RGBA | Linux 4K NV12 |
 |-----------|-------------|-------------|---------------|---------------|
 | A FIFO (today) | 6-19 fps, 0.2-0.6 GB/s | 17-54 fps | 37-47 fps, 1.2-1.6 GB/s | 112-181 fps |
-| B FIFO 1 MB (`F_SETPIPE_SZ`) | n/a (no such call) | n/a | 32-46 fps | 156-173 fps |
+| B FIFO 1 MB (`F_SETPIPE_SZ`) | n/a | n/a | 32-46 fps | 156-173 fps |
 | C unix socket, 8 MB buffer | 60-184 fps, 2.0-6.1 GB/s | 146-513 fps | 38-42 fps | 178-185 fps |
 | D TCP loopback, 8 MB buffer | 100-194 fps, 3.3-6.4 GB/s | 376-534 fps | 37-43 fps | 151-165 fps |
 
-- macOS: the FIFO is the limit, as in the live recording (~10 fps at 4K). A socket moves 10x more. FIFO and socket
-  both take ~0.4 MB frames at thousands of fps: only the large frames suffer.
-- Linux: the transport is never the limit; a bigger FIFO changes nothing. ffmpeg's own ingest of a 33 MB packet is
-  (~40 fps RGBA); NV12 frames, 2.7x smaller, ingest 4x more frames.
-- Less data (E): sending the 352x288 picture and scaling in ffmpeg. The graph of today in that order (`scale=neighbor`
-  of packed RGBA to 4K, pad, convert) runs at 15-25 fps against 28-37 fps for today's 4K RGBA input (Mac, from the
-  page cache): slower. Converting first (yuv444p at the source size, neighbor scale of planes, 444 -> 420) runs at
-  69-115 fps, but its chroma is 0.05-0.2 dB below today (the 8-bit intermediate), with `flags=neighbor` also on the
-  420 step 3 dB below; its nearest mapping is ffmpeg's, not FrameScaler's (the window's). An NV12 of our own
-  (FrameScaler, BT.709) was 0.12-0.5 dB below swscale after x264 (2x2 box chroma against swscale's filter).
+- macOS: the FIFO moves 0.2-0.6 GB/s; a socket 10x more. Linux: every transport ~1.2 GB/s for 33 MB frames; ffmpeg
+  reads 64 KB per `read` (strace: 10k reads of 65536 for 20 frames); a 1 MB pipe changes nothing, nor does glibc's
+  mmap threshold (33 MB packets above 32 MB). ffmpeg has no shared-memory input; an in-process libavcodec would be
+  the only copy-free way and a new build dependency on every platform.
+- Windows: not measured (no ffmpeg on the Windows host).
 
-## Recommendation
+## Next steps
 
-- macOS (and Linux, harmless there): feed the video through a `unix:` socket instead of the FIFO. The producer
-  listens, ffmpeg connects (`-i unix:PATH`); writes stay blocking, whole frames. Expected: the 4K software recording
-  goes from the FIFO's ~10 fps to the next limit (ffmpeg's conversion + x264, 25-45 fps at 4K ultrafast on the Mac).
-- Windows: not measured (the Windows host has no ffmpeg); a named pipe against TCP loopback is the open question.
-- Status 2026-11-22: recorded only, the switch is not scheduled.
-- Keep RGBA: every lever that sends fewer bytes measured a quality loss against today.
+1. Fixed profiles in `FfmpegPipeEncoder`: send the source picture with the graph above; A/B on macOS / Linux / Windows,
+   fidelity per layout (exact 4:4:4 where the mapping matches, `area` 4:2:0).
+2. VA-API through ffmpeg: the same, the picture uploaded small (`hwupload` before the scaling, `scale_vaapi`).
+3. Window recorder on macOS: a unix socket instead of stdin if its window-size frames stay the limit.

@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+#include "../../../core/recording/src/common/framescaler.h"
 extern char** environ;
 
 static bool WriteAll(int fd, const uint8_t* p, size_t n)
@@ -54,6 +55,23 @@ int main(int argc, char** argv)
     const size_t frameBytes = static_cast<size_t>(w) * h * (bpp == 4 ? 4 : 3) / (bpp == 4 ? 1 : 2);
     std::vector<uint8_t> frame(frameBytes);
     for (size_t i = 0; i < frameBytes; i++) frame[i] = static_cast<uint8_t>(i * 7);
+    // POC_SRC=FILE:SWxSH: real pictures (all of the file's frames, in turn) instead of the pattern. With an output larger
+    // than SWxSH each one goes through FrameScaler first, as the encoder's fixed profiles do
+    std::vector<std::vector<uint8_t>> sources;
+    uint32_t srcW = 0, srcH = 0;
+    if (const char* spec = std::getenv("POC_SRC"))
+    {
+        std::string path = spec;
+        const size_t colon = path.rfind(':');
+        std::sscanf(path.c_str() + colon + 1, "%ux%u", &srcW, &srcH);
+        path.resize(colon);
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) { perror("POC_SRC"); return 1; }
+        std::vector<uint8_t> one(static_cast<size_t>(srcW) * srcH * 4);
+        while (std::fread(one.data(), 1, one.size(), f) == one.size()) sources.push_back(one);
+        std::fclose(f);
+    }
+    const bool scaled = !sources.empty() && (srcW != static_cast<uint32_t>(w) || srcH != static_cast<uint32_t>(h));
     signal(SIGPIPE, SIG_IGN);
 
     // Relative to the working directory (run from the repo scratch/): a unix socket path must stay short
@@ -93,10 +111,21 @@ int main(int argc, char** argv)
     else { std::fprintf(stderr, "unknown mode\n"); return 2; }
 
     const std::string size = std::to_string(w) + "x" + std::to_string(h);
-    const char* args[] = {"ffmpeg", "-nostdin", "-v", "error", "-probesize", "32", "-analyzeduration", "0", "-f", "rawvideo",
-                          "-pix_fmt", pixfmt, "-s", size.c_str(), "-r", "50", "-i", url.c_str(), "-c", "copy", "-f", "null", "-", nullptr};
+    std::vector<std::string> words = {"ffmpeg", "-nostdin", "-v", "error", "-probesize", "32", "-analyzeduration", "0", "-f", "rawvideo",
+                                      "-pix_fmt", pixfmt, "-s", size, "-r", "50", "-i", url};
+    // POC_OUT: the output side, space separated (default: ingest only)
+    const std::string out = std::getenv("POC_OUT") ? std::getenv("POC_OUT") : "-c copy -f null -";
+    for (size_t at = 0; at < out.size();)
+    {
+        const size_t end = std::min(out.find(' ', at), out.size());
+        if (end > at) words.push_back(out.substr(at, end - at));
+        at = end + 1;
+    }
+    std::vector<char*> args;
+    for (auto& word : words) args.push_back(word.data());
+    args.push_back(nullptr);
     pid_t pid;
-    if (posix_spawnp(&pid, "ffmpeg", nullptr, nullptr, const_cast<char**>(args), environ) != 0) { perror("spawn"); return 1; }
+    if (posix_spawnp(&pid, "ffmpeg", nullptr, nullptr, args.data(), environ) != 0) { perror("spawn"); return 1; }
 
     int fd = -1;
     if (listenFd >= 0)
@@ -122,7 +151,18 @@ int main(int argc, char** argv)
 
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < frames; i++)
-        if (!WriteAll(fd, frame.data(), frameBytes)) { perror("write"); break; }
+    {
+        const uint8_t* data = frame.data();
+        if (!sources.empty())
+        {
+            const auto& src = sources[static_cast<size_t>(i) % sources.size()];
+            if (scaled)
+                FrameScaler::ScaleInto(src.data(), srcW, srcH, frame.data(), static_cast<size_t>(w) * 4, w, h, false);
+            else
+                data = src.data();
+        }
+        if (!WriteAll(fd, data, frameBytes)) { perror("write"); break; }
+    }
     const double sendS = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     ::close(fd);
     int status = 0;
