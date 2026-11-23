@@ -1,6 +1,9 @@
 // Smooth motion's live trace (UNREAL_SMOOTH_TRACE, core/src/emulator/video/smoothtrace.h) replayed through the core.
 //
 //   replay <trace dir> <out dir>
+//   replay <trace dir> --time [rounds]     what the CPU takes: each Push (the motion field, the flicker search) and
+//                                          each Draw by its kind, p50 / p95 / max ms over `rounds` replays (3);
+//                                          UNREAL_SMOOTH_THREADS sets the engine's pool
 //
 // 1. Equivalence: the same frames pushed and the same refresh times planned, in the trace's order, on the CPU: every
 //    plan and every picture must be the window's (which may have drawn on the GPU). Prints the refreshes that differ.
@@ -13,6 +16,7 @@
 #include "emulator/video/smoothmotion.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -162,7 +166,21 @@ bool Load(const std::string& dir)
 
 /// Replays the trace's order with `mode` on the CPU; `pictures` gets each refresh's picture (the frame due when the
 /// plan has none); `plans` the plans
-void Replay(Mode mode, std::vector<uint32_t>& pictures, std::vector<SmoothMotion::Result>& plans)
+/// --time: the CPU's time for each Push and each Draw by kind, ms
+struct Timing
+{
+    std::vector<double> push;
+    std::map<int, std::vector<double>> draw;
+    uint64_t sum = 1469598103934665603ull;  ///< FNV-1a of every picture drawn: the same bits before and after a change
+};
+
+double MsSince(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+void Replay(Mode mode, std::vector<uint32_t>& pictures, std::vector<SmoothMotion::Result>& plans,
+            Timing* timing = nullptr)
 {
     SmoothMotion sm;
     sm.SetMode(mode);
@@ -175,7 +193,10 @@ void Replay(Mode mode, std::vector<uint32_t>& pictures, std::vector<SmoothMotion
         if (e.frame)
         {
             const FrameEvent& f = g_frames[e.index];
+            const auto start = std::chrono::steady_clock::now();
             sm.Push(f.serial, f.target, FramePixels(f.index), g_width, g_height);
+            if (timing)
+                timing->push.push_back(MsSince(start));
             continue;
         }
         const RefreshEvent& r = g_refreshes[e.index];
@@ -187,8 +208,17 @@ void Replay(Mode mode, std::vector<uint32_t>& pictures, std::vector<SmoothMotion
             std::memcpy(out, RefreshPixels(r.index), Pixels() * 4);  // the frame due: not smooth motion's
             continue;
         }
+        const auto start = std::chrono::steady_clock::now();
         if (!(plan == shown) && sm.Draw(plan, shownPixels.data()))
+        {
             shown = plan;
+            if (timing)
+            {
+                timing->draw[static_cast<int>(plan.kind)].push_back(MsSince(start));
+                for (size_t q = 0; q < Pixels(); q++)
+                    timing->sum = (timing->sum ^ (shownPixels[q] & 0x00FFFFFFu)) * 1099511628211ull;
+            }
+        }
         std::memcpy(out, shownPixels.data(), Pixels() * 4);
     }
 }
@@ -226,6 +256,37 @@ int main(int argc, char** argv)
         return 1;
     std::printf("trace: %s, %d x %d, %zu frames, %zu refreshes\n", ModeName(g_mode), g_width, g_height,
                 g_frames.size(), g_refreshes.size());
+
+    if (outDir == "--time")
+    {
+        // What the CPU takes for the trace's frames and refreshes
+        const int rounds = argc > 3 ? std::max(1, std::atoi(argv[3])) : 3;
+        Timing timing;
+        for (int round = 0; round < rounds; round++)
+        {
+            std::vector<uint32_t> pictures;
+            std::vector<SmoothMotion::Result> replans;
+            Replay(g_mode, pictures, replans, &timing);
+        }
+        auto line = [](const char* name, std::vector<double> v) {
+            if (v.empty())
+                return;
+            std::sort(v.begin(), v.end());
+            double sum = 0;
+            for (double x : v)
+                sum += x;
+            std::printf("  %-12s %6zu  p50 %7.3f  p95 %7.3f  max %7.3f  mean %7.3f ms\n", name, v.size(),
+                        v[v.size() / 2], v[v.size() * 95 / 100], v.back(), sum / static_cast<double>(v.size()));
+        };
+        const char* threads = std::getenv("UNREAL_SMOOTH_THREADS");
+        std::printf("time on the CPU, %d rounds, UNREAL_SMOOTH_THREADS=%s:\n", rounds, threads ? threads : "(unset)");
+        line("push", timing.push);
+        const char* kinds[] = {"none", "frame", "blend", "interpolate", "cadence", "carry"};
+        for (const auto& [kind, v] : timing.draw)
+            line(kinds[kind], v);
+        std::printf("  pictures' sum %016llx\n", static_cast<unsigned long long>(timing.sum));
+        return 0;
+    }
 
     // 1. Equivalence
     std::vector<uint32_t> replayed;

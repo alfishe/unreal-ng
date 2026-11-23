@@ -172,6 +172,27 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range, Thread
         const int x1 = std::min(x0 + kBlock, a.width);
         const int y1 = std::min(y0 + kBlock, a.height);
         int bad = 0;
+        // The block's two warped copies inside the pictures (every block but the ones near an edge): rows compared
+        // whole through their pointers, the count looked at once a row. It may pass the limit by more than one
+        // then; the callers ask only whether it did. (A clamped read per pixel was 30 % of an interpolated
+        // picture's time: 290 vectors by 64 pixels a block)
+        if (x0 + k.ax >= 0 && x0 + k.bx >= 0 && x1 + k.ax <= a.width && x1 + k.bx <= b.width && y0 + k.ay >= 0 &&
+            y0 + k.by >= 0 && y1 + k.ay <= a.height && y1 + k.by <= b.height)
+        {
+            const int n = x1 - x0;
+            for (int y = y0; y < y1; y++)
+            {
+                const uint32_t* const rowA = a.pixels + static_cast<size_t>(y + k.ay) * a.width + (x0 + k.ax);
+                const uint32_t* const rowB = b.pixels + static_cast<size_t>(y + k.by) * b.width + (x0 + k.bx);
+                int row = 0;
+                for (int x = 0; x < n; x++)
+                    row += rowA[x] != rowB[x];
+                bad += row;
+                if (bad > limit)
+                    return bad;
+            }
+            return bad;
+        }
         for (int y = y0; y < y1; y++)
             for (int x = x0; x < x1; x++)
                 if (a.At(x + k.ax, y + k.ay) != b.At(x + k.bx, y + k.by) && ++bad > limit)

@@ -173,8 +173,36 @@ set to judge them by):
 - Hi-res and hi-colour modes: the guard covers their cost; their picture quality under interpolation is not judged.
 - Scrolls over 8 pixels a frame, fades, border effects, static multicolour, interlace: scenes to write.
 
-The interpolation itself on the Deck stays to do: 18.9 ms a picture is the GPU's own time (the read-backs between
-its steps, frame presenter DONE.md: "`Decide` on the GPU").
+### 1.7 What an interpolated picture costs (2026-11-22)
+
+The Deck's GPU takes 18.9 ms a picture; its CPU was measured with the window's own frames: a smooth motion trace
+of Across the Edge taken on the Deck (`UNREAL_SMOOTH_TRACE`, 300 refreshes, 352x288, 31.8 vectors a picture: the
+cap) replayed through the core by `tools/verification/smoothmotion/live/replay --time`, which times every `Draw` and
+sums the pictures' pixels (the same sum before and after every change below: the same bits).
+
+| Deck CPU, a picture | 1 thread p50 / p95 | 4 threads p50 / p95 |
+|---------------------|--------------------|---------------------|
+| before | 64.3 / 88.0 ms | 22.7 / 30.0 ms |
+| after | 29.8 / 42.6 ms | 14.2 / 17.6 ms |
+
+What was found, by a profile (callgrind) and by timing `Compose`'s stages on the Deck:
+
+- `MotionField::Estimate` read every pixel through `Picture::At` (two clamps): 30 % of a picture. Blocks whose two
+  warped copies lie inside the pictures compare whole rows through pointers now.
+- `LayerFlow::Compose`'s per-vector pixel loop stored 32-bit compares as bytes: a byte store may alias any of the
+  nine rows read, so the loop stayed scalar (14 of 32 ms). It writes a chunk of 64 pixels into arrays of its own
+  scope and narrows them after; the same for the `usable` pass. `BlockCounts` called `std::popcount` through the
+  library (no popcnt in the build's baseline): the bytes' sum by a multiply.
+- Instruction counts mislead here: a first rewrite of the pixel loop that only split the loops by width changed
+  nothing, and reordering `CpuEvidence::Own`'s loops for the cache did not either. Each step was kept only for the
+  time it took off on the Deck.
+
+Where the 4-thread picture's time is now (ms): the vectors' pass 5.4 (the pixel loop and two window sums per
+vector, 32 vectors), `Decide` 3.2 (one thread), the field 2.3, the pixels' pass 1.3, the rest 2. Still over the
+8 ms a picture has before its refresh on a 60 Hz display, so the Deck keeps the guard's blend; the Deck's own way
+to a smooth picture is its display at the machine's rate (`display_rate=match`, gamescope's 50 Hz: frame for frame).
+Next, should the Deck interpolate: `Decide` split over the pool or its per-block reads laid out by block, the
+window sums only over the rows a vector is allowed in, and the GPU path's read-backs.
 
 ## 2. Platform by mode, from the code (before the steps)
 

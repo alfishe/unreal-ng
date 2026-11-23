@@ -121,9 +121,11 @@ void BlockCounts(const uint8_t* ones, int width, int height, uint8_t* counts)
         int i = 0;
         for (; (i + 1) * kb <= width; i++)
         {
+            // Eight bytes of 0 or 1: their sum is the top byte of the word times 0x01..01 (no carry: 8 at most).
+            // std::popcount without a popcnt instruction in the build's baseline is a library call per word
             uint64_t word;
             std::memcpy(&word, row + i * kb, sizeof(word));
-            line[i] = static_cast<uint8_t>(line[i] + std::popcount(word));
+            line[i] = static_cast<uint8_t>(line[i] + ((word * 0x0101010101010101ull) >> 56));
         }
         for (int x = i * kb; x < width; x++)
             line[i] = static_cast<uint8_t>(line[i] + row[x]);
@@ -727,15 +729,35 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
                 const uint32_t *hereA = a.Row(0, y), *hereB = b.Row(0, y), *hereP = p.Row(0, y);
                 const uint32_t *onB = b.Row(v.x, y + v.y), *fromA = a.Row(-v.x, y - v.y);
                 const size_t row = static_cast<size_t>(y) * width;
-                for (int x = 0; x < width; x++)
+                // A chunk of the row at a time: the pixels' compares into arrays of this scope (nothing else can
+                // point into them, so the compiler makes vector code of the loop), then narrowed to the byte
+                // buffers. Written straight to the bytes the loop stayed scalar (a byte store may alias any of
+                // the nine rows read): 14 of an interpolated picture's 32 ms on the Steam Deck
+                constexpr int kChunk = 64;
+                const uint8_t moving = still ? 0 : 1;
+                for (int x0 = 0; x0 < width; x0 += kChunk)
                 {
-                    const uint32_t va = sampleA[x], vb = sampleB[x];
-                    const uint8_t fit = (va == sampleOn[x]) & ((hereA[x] == onB[x]) | (hereB[x] == fromA[x]));
-                    // still3: zero fits only a pixel the same in k - 1, k and k + 1 (static stays static at any
-                    // cadence); stopped: or where nothing changes round the pixel either (the layer stopped)
-                    fitsOf[row + x] = fit & (!still | (hereP[x] == va) | calmOf[row + x]);
-                    fittingOf[row + x] = fit;
-                    changesOf[row + x] = fit & (va != vb) & (vb == sampleFrom[x]);
+                    const int count = std::min(kChunk, width - x0);
+                    uint32_t fit32[kChunk], stay32[kChunk], change32[kChunk];
+                    for (int i = 0; i < count; i++)
+                    {
+                        const int x = x0 + i;
+                        const uint32_t va = sampleA[x], vb = sampleB[x];
+                        const uint32_t fit = (va == sampleOn[x]) & ((hereA[x] == onB[x]) | (hereB[x] == fromA[x]));
+                        fit32[i] = fit;
+                        stay32[i] = hereP[x] == va;
+                        change32[i] = fit & (va != vb) & (vb == sampleFrom[x]);
+                    }
+                    for (int i = 0; i < count; i++)
+                    {
+                        const size_t q = row + static_cast<size_t>(x0 + i);
+                        const uint8_t fit = static_cast<uint8_t>(fit32[i]);
+                        // still3: zero fits only a pixel the same in k - 1, k and k + 1 (static stays static at any
+                        // cadence); stopped: or where nothing changes round the pixel either (the layer stopped)
+                        fitsOf[q] = fit & (moving | static_cast<uint8_t>(stay32[i]) | calmOf[q]);
+                        fittingOf[q] = fit;
+                        changesOf[q] = static_cast<uint8_t>(change32[i]);
+                    }
                 }
                 if (!still)
                     for (int x = 0; x < width; x++)
@@ -803,8 +825,21 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
             const uint16_t* supportOf = support.data() + static_cast<size_t>(c) * pixels;
             uint8_t* usableOf = usableAt.data() + static_cast<size_t>(c) * pixels;
             const int* const bar = unexplained.data();
-            for (size_t q = 0; q < pixels; q++)
-                usableOf[q] = fitsOf[q] & (supportOf[q] > 0) & (supportOf[q] >= bar[q]);
+            // A chunk at a time through an array of this scope, as the fits above: 16- and 32-bit compares stored
+            // as bytes in one loop stayed scalar
+            constexpr size_t kChunk = 256;
+            for (size_t q0 = 0; q0 < pixels; q0 += kChunk)
+            {
+                const size_t count = std::min(kChunk, pixels - q0);
+                int32_t reached[kChunk];
+                for (size_t i = 0; i < count; i++)
+                {
+                    const int32_t s = supportOf[q0 + i];
+                    reached[i] = (s > 0) & (s >= bar[q0 + i]);
+                }
+                for (size_t i = 0; i < count; i++)
+                    usableOf[q0 + i] = fitsOf[q0 + i] & static_cast<uint8_t>(reached[i]);
+            }
         }
     });
     const auto usable = [&](int c, size_t q) { return usableAt[static_cast<size_t>(c) * pixels + q] != 0; };
