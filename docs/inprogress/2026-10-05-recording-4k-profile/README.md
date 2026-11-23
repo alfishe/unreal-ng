@@ -128,6 +128,37 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   (6 of 6); the new path's sound is one AAC track of the whole recording. Overscan toggled twice mid-recording:
   3 segments, 443 frames, no frame lost. Side fix: `FFmpegProbe::searchPath` looked for `ffmpeg.exe.exe` on Windows,
   ffmpeg on PATH was never found there.
+- ~~The fixed-profile ffmpeg graph: `remap` over the whole 4K frame (~40-60 ms of ffmpeg CPU per frame), the bars
+  padded before 4:2:0~~ done 2026-11-23. swscale's nearest (`neighbor`) takes FrameScaler's source pixel at some
+  factors (7.5x: 352x288 into 4K, 256x192 into 1440p) and is one pixel off at others (3.75x, 4.5x, 5.625x, 11.25x,
+  8.4375x), the same on ffmpeg 8.0.1, 9.0.2 and master: so each segment asks its ffmpeg
+  (`FFmpegPipeEncoder::NeighborIsFrameScaler`: two thin pictures holding their column / row index, cached) and uses
+  `neighbor` where it agrees, `remap` tables of the picture only (not the frame) elsewhere. The bars come after
+  4:2:0 when the picture sits on whole chroma blocks (even size and offsets). Every variant is the same bytes as
+  before (yuv420p md5, 9 source / target pairs, three ffmpeg builds). ffmpeg CPU per frame, the graph alone,
+  3 interleaved rounds:
+
+  | Case | Windows (64 threads) | Linux i7-11850H | macOS M1 Ultra |
+  |:--|--:|--:|--:|
+  | 352x288 -> 4K, `neighbor` instead of `remap` | 41 -> 17 ms | 61 -> 22 ms | |
+  | 256x192 -> 4K, `remap` of the picture | 44 -> 38 ms | 61 -> 52 ms | |
+  | 352x288 -> 1080p, `remap` of the picture | 14 -> 10 ms | 16 -> 13 ms | |
+  | 352x288 -> 4K, bars after 4:2:0 | 16.5 -> 10.7 ms | -17 % | 18.6 -> 13.3 ms |
+
+  The `remap` of the picture costs Windows wall time (1.2 -> 1.5 s per 300 frames, still 200 fps). Live on macOS
+  (windowless unreal-qt, `video/record` libx264, 9 s): 4K 447 frames, 1080p 445, the picture and bars in place.
+- ~~VA-API in `FFmpegPipeEncoder`: never worked~~ fixed 2026-11-23. The encoder chose `h264_vaapi` / `hevc_vaapi`
+  whenever the build listed them (every Ubuntu ffmpeg does) and gave ffmpeg neither the device nor the upload:
+  ffmpeg refused the graph ("Impossible to convert between the formats"), so with acceleration `auto` (the default)
+  every core recording failed on a Linux machine with an Intel driver. Now a trial encode per render node finds the
+  device (none: NVENC / software as before), the frame goes up as NV12 (`format=nv12,hwupload`) and the bars are
+  added on the GPU (`pad_vaapi`, ffmpeg 7.0 and later; before that on the CPU). Tiger Lake, 4K from 352x288, 500
+  frames: 4K frame uploaded 36 ms CPU per frame at 34 fps; the picture uploaded and padded on the GPU 25 % less
+  CPU at ~60 fps; same bytes after `hwdownload`. Live on Linux (windowless unreal-qt, `video/record`, 9 s): 4K
+  `auto` (VA-API, High profile) 444 frames with 10 s of ffmpeg CPU against libx264's 445 frames with 18 s, 1080p
+  `auto` 450 frames; the picture and bars in place. Scaling on the GPU (`scale_vaapi`, the POC 054 plan) was dropped:
+  2.6 ms CPU per frame, but every mode blurs the pixels (no nearest) and the colour drifts (PSNR 15 dB against
+  the CPU frame).
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
@@ -163,5 +194,6 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   | llvmpipe (Mesa 26; Qt's opengl32sw on Windows) | unchanged (synchronous) | unchanged |
 
   The buffer on Qt's Windows llvmpipe was 4.3 -> 5.0 ms (one more copy in memory), hence the software exclusion.
-  Live wall recording was not driven: the wall starts recording from its dialog only (no automation verb).
+  Live wall recording through the wall's menu and dialog (2026-11-23, macOS, `--gpu`, 5 tiles): 403 frames in
+  8 s at 800x600, the picture upright, colours right, AAC sound.
 - Qt toolbar widget offers h264 only (the dialog also h265).

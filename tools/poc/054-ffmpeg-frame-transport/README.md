@@ -113,5 +113,7 @@ When the bytes cannot shrink (the window recorder sends the window's picture), t
    factors with `neighbor` + `pad`, others with the `remap` tables, `area` 4:2:0 at the target size given
    explicitly; one segment per picture size, joined with the sound at the end. Results in
    `docs/inprogress/2026-10-05-recording-4k-profile/README.md`.
-2. VA-API through ffmpeg: the same, the picture uploaded small (`hwupload` before the scaling, `scale_vaapi`).
+2. ~~VA-API through ffmpeg: the picture uploaded small, `scale_vaapi`~~ dropped 2026-11-23: no nearest mode, the
+   pixels blur and the colour drifts (PSNR 15 dB). VA-API takes the CPU graph's 4:2:0 picture and pads on the GPU
+   (recording-4k-profile README).
 3. Window recorder on macOS: a unix socket instead of stdin if its window-size frames stay the limit.

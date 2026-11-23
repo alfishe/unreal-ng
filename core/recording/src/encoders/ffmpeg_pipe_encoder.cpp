@@ -10,7 +10,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <map>
+#include <mutex>
 #include <sstream>
 
 #ifndef _WIN32
@@ -111,6 +115,7 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _config = config;
     _segmented = false;
     _segmentWidth = _segmentHeight = 0;
+    _vaapiDevice.clear();
     _segmentFiles.clear();
     {
         const size_t frameBytes = static_cast<size_t>(_width) * _height * 4;
@@ -735,9 +740,95 @@ uint64_t FFmpegPipeEncoder::GetOutputFileSize() const
 // FFmpeg argument construction
 // ============================================================================
 
+namespace
+{
+#ifdef __linux__
+/// True when this ffmpeg runs these arguments to the end (a trial encode into the null muxer)
+bool FFmpegRuns(const std::string& ffmpeg, const std::vector<std::string>& args)
+{
+    Subprocess trial;
+    if (!trial.spawn(ffmpeg, args))
+        return false;
+    trial.closeStdin();
+    trial.readAllStderr();  // EOF when ffmpeg exits; -v error keeps it short
+    const int exitCode = trial.waitForFinished(15000);
+    if (exitCode == -1)
+        trial.kill();
+    return exitCode == 0;
+}
+
+/// The render node VA-API encodes on with this encoder, empty when none: every build lists h264_vaapi / hevc_vaapi,
+/// whatever the card, and a laptop has an Intel and an NVIDIA node with the driver on one. A trial of a few frames
+/// per node; cached per ffmpeg and encoder
+std::string VaapiRenderNode(const std::string& ffmpeg, const std::string& encoder)
+{
+    static std::mutex cacheMutex;
+    static std::map<std::string, std::string> cache;
+    const std::string key = ffmpeg + "|" + encoder;
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const auto found = cache.find(key);
+        if (found != cache.end())
+            return found->second;
+    }
+    std::vector<std::string> nodes;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator("/dev/dri", ec))
+    {
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("renderD", 0) == 0)
+            nodes.push_back(entry.path().string());
+    }
+    std::sort(nodes.begin(), nodes.end());
+    std::string chosen;
+    for (const std::string& node : nodes)
+    {
+        if (FFmpegRuns(ffmpeg, {"-v", "error", "-nostdin", "-vaapi_device", node, "-f", "lavfi", "-i",
+                                "color=size=256x256:rate=10", "-frames:v", "3", "-vf", "format=nv12,hwupload", "-c:v",
+                                encoder, "-f", "null", "-"}))
+        {
+            chosen = node;
+            break;
+        }
+    }
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cache[key] = chosen;
+    return chosen;
+}
+#endif
+
+/// Whether this ffmpeg has the filter (pad_vaapi: ffmpeg 7.0 and later). Cached per ffmpeg and filter
+bool FilterAvailable(const std::string& ffmpeg, const std::string& filter)
+{
+    static std::mutex cacheMutex;
+    static std::map<std::string, bool> cache;
+    const std::string key = ffmpeg + "|" + filter;
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const auto found = cache.find(key);
+        if (found != cache.end())
+            return found->second;
+    }
+    // The filter list on stdout: " ... pad_vaapi         V->V       Pad the input video."
+    bool available = false;
+    Subprocess list;
+    if (list.spawn(ffmpeg, {"-hide_banner", "-filters"}))
+    {
+        list.closeStdin();
+        available = list.readAllStdout().find(" " + filter + " ") != std::string::npos;
+        if (list.waitForFinished(5000) == -1)
+            list.kill();
+    }
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cache[key] = available;
+    return available;
+}
+}  // namespace
+
 std::string FFmpegPipeEncoder::resolveVideoEncoder(const EncoderConfig& config, const std::string& container)
 {
     std::string codec = config.videoCodec;
+    _vaapiDevice.clear();
 
     // Normalize codec name
     std::transform(codec.begin(), codec.end(), codec.begin(), ::tolower);
@@ -785,7 +876,11 @@ std::string FFmpegPipeEncoder::resolveVideoEncoder(const EncoderConfig& config, 
             return "h264_qsv";
 #elif defined(__linux__)
         if (hwInfo.vaapi && FFmpegProbe::isEncoderAvailable("h264_vaapi", _ffmpegPath))
-            return "h264_vaapi";
+        {
+            _vaapiDevice = VaapiRenderNode(_ffmpegPath, "h264_vaapi");
+            if (!_vaapiDevice.empty())
+                return "h264_vaapi";
+        }
         if (hwInfo.nvenc && FFmpegProbe::isEncoderAvailable("h264_nvenc", _ffmpegPath))
             return "h264_nvenc";
 #endif
@@ -807,7 +902,11 @@ std::string FFmpegPipeEncoder::resolveVideoEncoder(const EncoderConfig& config, 
             return "hevc_qsv";
 #elif defined(__linux__)
         if (hwInfo.vaapi && FFmpegProbe::isEncoderAvailable("hevc_vaapi", _ffmpegPath))
-            return "hevc_vaapi";
+        {
+            _vaapiDevice = VaapiRenderNode(_ffmpegPath, "hevc_vaapi");
+            if (!_vaapiDevice.empty())
+                return "hevc_vaapi";
+        }
         if (hwInfo.nvenc && FFmpegProbe::isEncoderAvailable("hevc_nvenc", _ffmpegPath))
             return "hevc_nvenc";
 #endif
@@ -994,6 +1093,11 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
     if (_hasVideo)
     {
         std::string videoEncoder = resolveVideoEncoder(config, ext);
+        if (!_vaapiDevice.empty())
+        {
+            args.push_back("-vaapi_device");  // a global option: before the output it applies to
+            args.push_back(_vaapiDevice);
+        }
         args.push_back("-c:v");
         args.push_back(videoEncoder);
 
@@ -1017,7 +1121,9 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
         {
             if (!vf.empty())
                 vf += ",";
-            vf += "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p";
+            vf += "scale=in_range=full:out_range=limited:out_color_matrix=bt709,";
+            // VA-API encodes GPU surfaces: the 4:2:0 frame uploaded as NV12 to the render node the trial found
+            vf += _vaapiDevice.empty() ? "format=yuv420p" : "format=nv12,hwupload";
         }
 
         if (!vf.empty())
@@ -1305,26 +1411,23 @@ std::string TempFile(const std::string& dir, const std::string& name)
 #endif
 }
 
-/// A remap table of the output frame, gray16le: per pixel the source column (xAxis) or row of FrameScaler's nearest
-/// mapping (output pixel i of the picture takes source pixel i * src / picture), 65535 on the bars (remap fills them)
-bool WriteMap(const std::string& path, const FrameScaler::Layout& layout, uint32_t source, uint32_t frameWidth,
-              uint32_t frameHeight, bool xAxis)
+/// A remap table of the picture, gray16le: per pixel the source column (xAxis) or row of FrameScaler's nearest mapping
+/// (output pixel i of the picture takes source pixel i * src / picture). The bars are pad's, outside the table
+bool WriteMap(const std::string& path, const FrameScaler::Layout& layout, uint32_t source, bool xAxis)
 {
-    const uint32_t length = xAxis ? frameWidth : frameHeight;
-    const uint32_t offset = xAxis ? layout.offsetX : layout.offsetY;
     const uint32_t picture = xAxis ? layout.width : layout.height;
-    std::vector<uint16_t> axis(length, 0xFFFF);
-    for (uint32_t i = 0; i < picture && offset + i < length; ++i)
-        axis[offset + i] = static_cast<uint16_t>(static_cast<uint64_t>(i) * source / picture);
+    std::vector<uint16_t> axis(picture);
+    for (uint32_t i = 0; i < picture; ++i)
+        axis[i] = static_cast<uint16_t>(static_cast<uint64_t>(i) * source / picture);
 
-    std::vector<uint8_t> row(static_cast<size_t>(frameWidth) * 2);
+    std::vector<uint8_t> row(static_cast<size_t>(layout.width) * 2);
     std::FILE* file = std::fopen(path.c_str(), "wb");
     if (!file)
         return false;
     bool ok = true;
-    for (uint32_t y = 0; y < frameHeight && ok; ++y)
+    for (uint32_t y = 0; y < layout.height && ok; ++y)
     {
-        for (uint32_t x = 0; x < frameWidth; ++x)
+        for (uint32_t x = 0; x < layout.width; ++x)
         {
             const uint16_t value = xAxis ? axis[x] : axis[y];
             row[2 * static_cast<size_t>(x)] = static_cast<uint8_t>(value & 0xFF);  // little-endian
@@ -1334,13 +1437,97 @@ bool WriteMap(const std::string& path, const FrameScaler::Layout& layout, uint32
     }
     return std::fclose(file) == 0 && ok;
 }
+
+bool WriteFile(const std::string& path, const std::vector<uint8_t>& bytes)
+{
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+    if (!file)
+        return false;
+    const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
+    return std::fclose(file) == 0 && ok;
+}
+
+std::vector<uint8_t> ReadFile(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return std::vector<uint8_t>(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
 }  // namespace
+
+/// swscale's nearest (`flags=neighbor`) against FrameScaler's i * src / picture. When they agree the frame needs no
+/// remap tables: `remap` costs ~38 ms of CPU per 4K frame, `neighbor` next to nothing. swscale rounds its own way
+/// (exact at 7.5x: 352x288 into 4K, 256x192 into 1440p; off by one pixel at 3.75x, 4.5x, 5.625x, 11.25x; ffmpeg 8.0
+/// and 9.0), so it is asked rather than assumed: two thin pictures, every plane holding the low byte of its column
+/// (row) index (a nearest mapping is monotonic, any wrong pixel is a neighbour with another low byte)
+bool FFmpegPipeEncoder::NeighborIsFrameScaler(const std::string& ffmpeg, const std::string& dir, uint32_t width,
+                                              uint32_t height, uint32_t pictureWidth, uint32_t pictureHeight)
+{
+    static std::mutex cacheMutex;
+    static std::map<std::string, bool> cache;
+    const std::string key = ffmpeg + "|" + std::to_string(width) + "x" + std::to_string(height) + "|" +
+                            std::to_string(pictureWidth) + "x" + std::to_string(pictureHeight);
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const auto found = cache.find(key);
+        if (found != cache.end())
+            return found->second;
+    }
+
+    // yuv444p, 3 planes: columns as a width x 2 picture, rows as a 2 x height one
+    std::vector<uint8_t> columns(static_cast<size_t>(width) * 2 * 3);
+    for (size_t i = 0; i < columns.size(); ++i)
+        columns[i] = static_cast<uint8_t>(i % width);
+    std::vector<uint8_t> rows(static_cast<size_t>(height) * 2 * 3);
+    for (size_t i = 0; i < rows.size(); ++i)
+        rows[i] = static_cast<uint8_t>((i / 2) % height);
+    const std::string columnsIn = TempFile(dir, "probe-x.yuv");
+    const std::string rowsIn = TempFile(dir, "probe-y.yuv");
+    const std::string columnsOut = TempFile(dir, "probe-x-out.yuv");
+    const std::string rowsOut = TempFile(dir, "probe-y-out.yuv");
+    bool exact = false;
+    if (WriteFile(columnsIn, columns) && WriteFile(rowsIn, rows))
+    {
+        const std::string pw = std::to_string(pictureWidth);
+        const std::string ph = std::to_string(pictureHeight);
+        Subprocess probe;
+        const std::vector<std::string> args = {
+            "-y", "-nostdin", "-v", "error",
+            "-f", "rawvideo", "-pix_fmt", "yuv444p", "-s", std::to_string(width) + "x2", "-i", columnsIn,
+            "-f", "rawvideo", "-pix_fmt", "yuv444p", "-s", "2x" + std::to_string(height), "-i", rowsIn,
+            "-filter_complex", "[0:v]scale=" + pw + ":2:flags=neighbor[x];[1:v]scale=2:" + ph + ":flags=neighbor[y]",
+            "-map", "[x]", "-f", "rawvideo", columnsOut, "-map", "[y]", "-f", "rawvideo", rowsOut};
+        if (probe.spawn(ffmpeg, args))
+        {
+            probe.closeStdin();
+            probe.readAllStderr();  // EOF when ffmpeg exits
+            if (probe.waitForFinished(10000) == 0)
+            {
+                const std::vector<uint8_t> x = ReadFile(columnsOut);
+                const std::vector<uint8_t> y = ReadFile(rowsOut);
+                exact = x.size() == static_cast<size_t>(pictureWidth) * 2 * 3 &&
+                        y.size() == static_cast<size_t>(pictureHeight) * 2 * 3;
+                for (size_t i = 0; exact && i < x.size(); ++i)
+                    exact = x[i] == static_cast<uint8_t>((i % pictureWidth) * width / pictureWidth);
+                for (size_t i = 0; exact && i < y.size(); ++i)
+                    exact = y[i] == static_cast<uint8_t>((i / 2 % pictureHeight) * height / pictureHeight);
+            }
+            else
+                probe.kill();
+        }
+    }
+    for (const std::string* file : {&columnsIn, &rowsIn, &columnsOut, &rowsOut})
+        std::remove(file->c_str());
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cache[key] = exact;
+    return exact;
+}
 
 std::vector<std::string> FFmpegPipeEncoder::buildSegmentArgs(uint32_t width, uint32_t height,
                                                              const std::string& segmentFile, const Segment& segment)
 {
     const FrameScaler::Layout layout = FrameScaler::ComputeLayout(width, height, _width, _height);
-    const std::string frameSize = std::to_string(_width) + "x" + std::to_string(_height);
     std::vector<std::string> args = {"-y", "-nostats", "-loglevel", "warning", "-threads", "0",
                                      "-probesize", "32", "-analyzeduration", "0", "-f", "rawvideo",
                                      "-pix_fmt", "rgba", "-s", std::to_string(width) + "x" + std::to_string(height),
@@ -1348,35 +1535,60 @@ std::vector<std::string> FFmpegPipeEncoder::buildSegmentArgs(uint32_t width, uin
                                      "-i", getFFmpegPipePath(segment.pipePath)};
 
     // The colour first, at the source size: converting a pixel and repeating it is repeating the converted pixel, so
-    // the 4:4:4 picture is byte for byte the conversion of FrameScaler's frame. 4:2:0 last, at the output frame's size
-    // (the target, given explicitly): the area average of the chroma, 0.06-0.10 dB above swscale's conversion of the
-    // RGB frame (POC 054)
+    // the 4:4:4 picture is byte for byte the conversion of FrameScaler's frame. 4:2:0 next: the area average of the
+    // chroma, 0.06-0.10 dB above swscale's conversion of the RGB frame (POC 054). The bars last when the picture sits
+    // on whole chroma blocks (even size and offsets): the same bytes as 4:2:0 over the padded frame, 17 % less CPU
+    // (4K, Linux), a third fewer pixels in the 4:2:0 step and a 4:2:0 pad. VA-API: the frame uploaded as NV12, the
+    // bars added on the GPU (pad_vaapi, ffmpeg 7.0 and later), 25 % less CPU than the 4K frame uploaded
     const std::string convert = "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv444p";
-    const std::string to420 =
-        "scale=" + std::to_string(_width) + ":" + std::to_string(_height) + ":flags=area,format=yuv420p";
-    if (layout.scale > 0)
+    const std::string pad = "pad=" + std::to_string(_width) + ":" + std::to_string(_height) + ":" +
+                            std::to_string(layout.offsetX) + ":" + std::to_string(layout.offsetY) + ":black";
+    const bool vaapi = !_vaapiDevice.empty();
+    const bool barsLast = layout.width % 2 == 0 && layout.height % 2 == 0 && layout.offsetX % 2 == 0 &&
+                          layout.offsetY % 2 == 0;
+    const std::string format420 = vaapi ? "format=nv12" : "format=yuv420p";
+    const std::string upload = vaapi ? ",hwupload" : "";
+    std::string tail;
+    if (!barsLast)
     {
-        // A whole factor: every source pixel a k x k block (swscale's nearest is exact there), then the bars
+        tail = pad + ",scale=" + std::to_string(_width) + ":" + std::to_string(_height) + ":flags=area," + format420 +
+               upload;
+    }
+    else
+    {
+        tail = "scale=" + std::to_string(layout.width) + ":" + std::to_string(layout.height) + ":flags=area,";
+        if (vaapi && FilterAvailable(_ffmpegPath, "pad_vaapi"))
+            tail += "format=nv12,hwupload,pad_vaapi=w=" + std::to_string(_width) + ":h=" + std::to_string(_height) +
+                    ":x=" + std::to_string(layout.offsetX) + ":y=" + std::to_string(layout.offsetY);
+        else
+            tail += "format=yuv420p," + pad + (vaapi ? ",format=nv12,hwupload" : "");
+    }
+    if (vaapi)
+        args.insert(args.begin(), {"-vaapi_device", _vaapiDevice});
+
+    if (segment.neighbor)
+    {
+        // A whole factor, or swscale's nearest is FrameScaler's mapping (NeighborIsFrameScaler)
         args.push_back("-vf");
         args.push_back(convert + ",scale=" + std::to_string(layout.width) + ":" + std::to_string(layout.height) +
-                       ":flags=neighbor,pad=" + std::to_string(_width) + ":" + std::to_string(_height) + ":" +
-                       std::to_string(layout.offsetX) + ":" + std::to_string(layout.offsetY) + ":black," + to420);
+                       ":flags=neighbor," + tail);
     }
     else
     {
         // Any other factor: swscale's nearest puts the k / k+1 boundaries elsewhere; FrameScaler's own mapping goes in
-        // as remap tables (startSegment writes them), read once and repeated; the bars are where they point outside
+        // as remap tables of the picture (startSegment writes them), read once and repeated
+        const std::string pictureSize = std::to_string(layout.width) + "x" + std::to_string(layout.height);
         for (const std::string* map : {&segment.xmapPath, &segment.ymapPath})
         {
             for (const char* word : {"-f", "rawvideo", "-pix_fmt", "gray16le", "-s"})
                 args.push_back(word);
-            args.push_back(frameSize);
+            args.push_back(pictureSize);
             args.push_back("-i");
             args.push_back(*map);
         }
         args.push_back("-filter_complex");
         args.push_back("[0:v]" + convert + "[s];[1:v]loop=loop=-1:size=1[x];[2:v]loop=loop=-1:size=1[y];" +
-                       "[s][x][y]remap=fill=black," + to420 + "[v]");
+                       "[s][x][y]remap," + tail + "[v]");
         args.push_back("-map");
         args.push_back("[v]");
     }
@@ -1400,13 +1612,14 @@ bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
 
     const std::string index = std::to_string(_segmentFiles.size());
     auto segment = std::make_unique<Segment>();
-    if (layout.scale == 0)
+    segment->neighbor =
+        layout.scale > 0 || NeighborIsFrameScaler(_ffmpegPath, _tempDir, width, height, layout.width, layout.height);
+    if (!segment->neighbor)
     {
         // Per segment: a retired segment's ffmpeg may still be reading its own tables
         segment->xmapPath = TempFile(_tempDir, "xmap-" + index + ".raw");
         segment->ymapPath = TempFile(_tempDir, "ymap-" + index + ".raw");
-        if (!WriteMap(segment->xmapPath, layout, width, _width, _height, true) ||
-            !WriteMap(segment->ymapPath, layout, height, _width, _height, false))
+        if (!WriteMap(segment->xmapPath, layout, width, true) || !WriteMap(segment->ymapPath, layout, height, false))
         {
             _lastError = "Failed to write the scaling tables in " + _tempDir;
             std::remove(segment->xmapPath.c_str());
