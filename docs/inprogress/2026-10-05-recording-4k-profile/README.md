@@ -145,6 +145,23 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   the recorder takes the last frame; the screenshot uses `grabFramebuffer()`. The CPU grid is painted with `render()`
   into a reused RGB32 image instead of a new pixmap per tick (16 tiles, 2048x1536 into the 4K profile, three
   interleaved rounds: 8.7-10.3 ms against 10.6-15.2 ms; painting into RGBA8888 directly was 2-2.5x slower, the
-  raster engine's slow path). Open: an asynchronous read (two pixel-pack buffers) would take the 3.5 ms stall off the
-  GUI thread; the CPU grid's cost is the tiles' own painting.
+  raster engine's slow path). The CPU grid's cost is the tiles' own painting.
+- ~~Videowall GL grid: the synchronous `glReadPixels` after each paint~~ done 2026-11-22. `GLFrameReader` queues the
+  copy into a pixel-pack buffer at the paint and maps it at the recorder's tick (`TileGridGL::capturedFrame`), the
+  newest frame, no extra latency. A software renderer (llvmpipe, softpipe, SwiftShader, GDI Generic) and contexts
+  without the buffers (ES 2, GL < 2.1) keep the synchronous read. GUI-thread time per frame (paint + take, median of
+  interleaved rounds; offscreen bench: 16 tiles of 352x288 uploaded and drawn per frame, 50 Hz, the tick 10 ms after
+  the paint), frames byte-identical to the old read on every driver:
+
+  | GPU / driver | 2048x1536 old -> new | 3840x2160 old -> new |
+  |--------------|----------------------|----------------------|
+  | M3 Ultra (idle) | 2.5 -> 0.35 ms | 3.6 -> 1.1 ms |
+  | M1 Ultra (load 160-300) | 11-82 -> 1.1-27 ms (9 of 9 pairs better) | 10-25 -> 6-36 ms (7 of 9 better) |
+  | RTX 4090, Windows | 8.8 -> 1.4 ms | 17.4 -> 3.4 ms |
+  | Intel UHD (TGL), Mesa 26, Wayland | 12.1 -> 2.3 ms | 20.1 -> 5.9 ms |
+  | T1200 (PRIME offload), Linux | 14.9 -> 5.5 ms | 30.9 -> 21.2 ms |
+  | llvmpipe (Mesa 26; Qt's opengl32sw on Windows) | unchanged (synchronous) | unchanged |
+
+  The buffer on Qt's Windows llvmpipe was 4.3 -> 5.0 ms (one more copy in memory), hence the software exclusion.
+  Live wall recording was not driven: the wall starts recording from its dialog only (no automation verb).
 - Qt toolbar widget offers h264 only (the dialog also h265).

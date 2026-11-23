@@ -13,7 +13,6 @@
 #include <QPainter>
 #include <QUrl>
 #include <cmath>
-#include <cstring>
 
 #include <3rdparty/message-center/messagecenter.h>
 #include <emulator/emulatorcontext.h>
@@ -62,6 +61,7 @@ TileGridGL::~TileGridGL()
     {
         delete tile.texture;
     }
+    _reader.Reset();
     delete _shader;
     doneCurrent();
 }
@@ -413,30 +413,33 @@ void TileGridGL::setCaptureEnabled(bool enable)
     _captureEnabled = enable;
     if (!enable)
     {
-        _captured = QImage();
-        _readBack.clear();
-        _readBack.shrink_to_fit();
+        if (context())
+        {
+            makeCurrent();
+            _reader.Reset();
+            doneCurrent();
+        }
     }
     else
         update();
 }
 
-/// The frame just drawn (overlays included), before the swap: GL rows run bottom-up, the image's top-down
+/// The frame just drawn (overlays included), before the swap: the copy is queued on the GPU, capturedFrame() maps it
 void TileGridGL::readBackFrame()
 {
     const qreal dpr = devicePixelRatio();
-    const int w = qRound(width() * dpr);
-    const int h = qRound(height() * dpr);
-    if (w <= 0 || h <= 0)
-        return;
-    const size_t rowBytes = static_cast<size_t>(w) * 4;
-    _readBack.resize(rowBytes * static_cast<size_t>(h));
-    glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, _readBack.data());
-    if (_captured.width() != w || _captured.height() != h)
-        _captured = QImage(w, h, QImage::Format_RGBA8888);
-    for (int y = 0; y < h; y++)
-        std::memcpy(_captured.scanLine(y), _readBack.data() + static_cast<size_t>(h - 1 - y) * rowBytes, rowBytes);
+    _reader.Queue(this, qRound(width() * dpr), qRound(height() * dpr));
+}
+
+const QImage& TileGridGL::capturedFrame()
+{
+    if (_reader.HasPending() && context())
+    {
+        makeCurrent();
+        _reader.Take();
+        doneCurrent();
+    }
+    return _reader.Image();
 }
 
 void TileGridGL::drawGrid()
