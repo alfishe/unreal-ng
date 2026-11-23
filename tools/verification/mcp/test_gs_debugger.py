@@ -199,22 +199,29 @@ def test_the_card_cpus_registers_memory_and_code(s):
 
 
 def test_the_card_names_its_firmware(s):
-    """The GS report's firmware_profile (gs-debugger design §6.1, L4): the PENTAGON's NeoGS runs its own flash, no
-    built-in profile: known false with the digest, and the text says unknown firmware, no symbols"""
+    """The GS report's firmware_profile (gs-debugger design §6.1, L4): the PENTAGON's NeoGS runs its flash v1.11, which
+    has a built-in profile: known true with the digests, the text names the firmware, and the card CPU has its symbols"""
     r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs'})
     profile = (r.structured or {}).get('body', {}).get('firmware_profile', {})
-    expect(profile.get('known') is False and len(profile.get('sha256', '')) == 64 and len(profile.get('page_sha256', [])) == 2,
-           'an unknown firmware with its digests', profile)
+    expect(profile.get('known') is True and profile.get('id') == 'neogs' and len(profile.get('sha256', '')) == 64
+           and len(profile.get('page_sha256', [])) == 2, 'a known firmware with its digests', profile)
+    expect(profile.get('title') and profile.get('symbols', '').startswith('bundle:gs:'), 'its title and symbol set',
+           profile)
     r = s.call('inspect_state', {'aspects': ['audio_gs']})
-    expect('unknown firmware' in r.text and 'no symbols' in r.text, 'said in the text', r.text)
+    expect('firmware ' + profile['title'] in r.text and 'unknown firmware' not in r.text, 'named in the text', r.text)
     r = s.call('manage_symbols', {'action': 'sets', 'cpu': 'gs'})
-    expect('bundle:gs:' not in r.text, 'no firmware symbols for the card CPU', r.text)
+    body = r.structured or {}
+    expect(body.get('cpu') == 'gs' and profile['symbols'] in [x.get('id') for x in body.get('sets', [])],
+           'the firmware symbols are the card CPU\'s set', body)
+    r = s.call('manage_symbols', {'action': 'sets'})
+    expect(profile['symbols'] not in [x.get('id') for x in (r.structured or {}).get('sets', [])],
+           'and not the main CPU\'s', r.structured)
 
 
 def test_the_command_log_is_a_device_history(s):
     """The host's GS commands (gs-debugger design §6.3): `<slot>.commands` in device_history, off until configured; a
-    port write of the host's (#B3 then #BB) is a data and a command record, each with its text. The NeoGS runs its own
-    firmware: no profile, the records raw"""
+    port write of the host's (#B3 then #BB) is a data and a command record, each with its text (the firmware profile
+    may add the command's name)"""
     r = s.call('device_history', {'action': 'list'})
     logs = sorted(set(re.findall(r'([\w-]+(?:\.[\w-]+)*\.commands)\b', r.text)))
     expect(logs, 'a command log among the histories', r.text)
@@ -230,9 +237,10 @@ def test_the_command_log_is_a_device_history(s):
 
 
 def test_the_debugger_sends_a_command(s):
-    """The protocol state and the debugger's send (gs-debugger design §6.4, F3, F6). The NeoGS loader polls its SD card:
-    the #2C written above is pending while the machine is paused, the protocol says so. Running, the loader clears the
-    command flag but takes no data byte, so the send fails at the byte the card did not take and names its status bit"""
+    """The protocol state and the debugger's send (gs-debugger design §6.4, F3, F6). The #2C written above is pending
+    while the machine is paused, the protocol says so and names the command from the firmware profile. Running, the
+    conversation ends one of two ways, both told in full: the firmware took the bytes and answered (done, the reply
+    decoded), or the card was still in its loader and did not take a byte (failed, the status bit named)"""
     r = s.call('device_history', {'action': 'list'})
     device = sorted(set(re.findall(r'([\w-]+(?:\.[\w-]+)*\.commands)\b', r.text)))[0]
     r = s.call('inspect_state', {'aspects': ['audio_gs']})
@@ -241,20 +249,25 @@ def test_the_debugger_sends_a_command(s):
     s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/ports/out',
                           'body': {'port': '0xBB', 'value': '0x2C'}})
     r = s.call('inspect_state', {'aspects': ['audio_gs']})
-    expect('protocol: #2C: not taken yet' in r.text, 'the command not taken', r.text)
+    # The firmware profile names the command between the code and the colon
+    expect(re.search(r'protocol: #2C[^:\n]*: not taken yet', r.text), 'the command not taken', r.text)
 
+    # The profile knows #2C: a pre byte (the module) and nothing after it; other shapes are refused with the reason
     r = s.call('emulator_manage', {'action': 'gs_send', 'value': 0x2C, 'params': [1, 2]}, ok=False)
-    expect('GS send' in r.text, 'no profile: the bytes as given', r.text)
+    expect(r.is_error and 'takes a pre byte' in r.text, 'the profile refuses a send without the pre byte', r.text)
+    r = s.call('emulator_manage', {'action': 'gs_send', 'value': 0x2C, 'pre': 1}, ok=False)
+    expect('GS send' in r.text, 'the send as the profile shapes it', r.text)
     s.call('control_execution', {'action': 'resume'})
     r = s.call('emulator_manage', {'action': 'gs_conversation', 'wait_ms': 0})
     for _ in range(40):
-        if 'failed' in r.text or 'done' in r.text:
+        if 'failed' in r.text or 'done' in r.text or '-> #' in r.text:
             break
         time.sleep(0.1)
         r = s.call('emulator_manage', {'action': 'gs_conversation'})
     s.call('control_execution', {'action': 'pause'}, ok=False)
-    expect('failed' in r.text and re.search(r'status bit [07] stays set', r.text), 'failed, the byte not taken named',
-           r.text)
+    done = re.search(r'GS send \d+: #2C[^\n]*-> #[0-9A-F]{2}', r.text)
+    failed = 'failed' in r.text and re.search(r'status bit [07] stays set', r.text)
+    expect(done or failed, 'the conversation ended: the reply, or the byte not taken named', r.text)
     r = s.call('inspect_state', {'aspects': ['audio_gs']})
     expect('last send' in r.text, 'the report carries the last send', r.text)
     s.call('device_history', {'action': 'config', 'device': device, 'mode': 'off'})

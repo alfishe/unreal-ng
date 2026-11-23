@@ -19,6 +19,7 @@
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testwaithelper.h"
+#include "unrealasm/symbols/symbol.h"
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -33,6 +34,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/runcontrol.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
@@ -555,6 +557,29 @@ TEST(GSCardTarget_Test, TheFirmwareSymbolsNameTheCardsCode)
     DecodedInstruction decoded;
     disassembler.disassembleSingleCommand(bytes, 0x026B, &length, &decoded);
     EXPECT_EQ(decoded.label, "COMINT");
+}
+
+// The card a machine is built with (the PENTAGON's NeoGS) has its firmware's symbols from the start, with no switch of
+// the card: the set the GS report names (firmware_profile.symbols) is in the card CPU's store
+TEST(GSCardTarget_Test, TheCardAMachineIsBuiltWithHasItsFirmwareSymbols)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    GeneralSoundCard* card = context->pSoundManager->getGeneralSound();
+    ASSERT_NE(card, nullptr);
+    ASSERT_TRUE(card->hasCoprocessor());
+    const GSFirmwareIdentity identity = IdentifyGSFirmware(*card);
+    ASSERT_NE(identity.profile, nullptr) << "the shipped flash has a profile";
+    const std::string wanted = std::string("bundle:gs:") + identity.profile->id;
+    LabelManager* labels = context->pDebugManager->GetLabelManager(DebugCpuId::GS);
+    ASSERT_NE(labels, nullptr);
+    bool found = false;
+    for (const auto& set : labels->GetSymbolSets())
+        found = found || set.id == wanted;
+    EXPECT_TRUE(found) << wanted;
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 // The machine's card takes its firmware's symbols when it is fitted; the main CPU's labels do not get them

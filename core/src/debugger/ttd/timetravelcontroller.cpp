@@ -9,6 +9,7 @@
 /// ttdcheckpoint.cpp) go to the engine's capture (FeedShadow).
 
 #include "emulator/readoutschanged.h"
+#include "emulator/jobs/jobregistry.h"
 #include "timetravelcontroller.h"
 #include "debugger/ttd/engine/ttdbytes.h"
 #include "debugger/ttd/ttdsessionfacts.h"
@@ -6988,10 +6989,26 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
         size_t i = firstIndex;
         while (i + 1 < endIndex && ViewLineageCheckpoint(i)->time.frame < result.fromFrame)
             ++i;
+        // Run as a job (S2): the frames done are its progress, a cancel ends the window where it stands
+        const size_t windowStart = i;
+        const uint64_t windowFrames = result.toFrame >= result.fromFrame ? result.toFrame - result.fromFrame + 1 : 0;
+        jobs::Context* job = jobs::Current();
         for (; i + 1 < endIndex && ViewLineageCheckpoint(i)->time.frame <= result.toFrame; ++i)
         {
             const TTDCheckpoint& cp = *ViewLineageCheckpoint(i);
             const uint64_t frame = cp.time.frame;
+            if (job != nullptr)
+            {
+                job->Progress(i - windowStart, windowFrames, "frames");
+                if (job->CancelRequested() && i > windowStart)
+                {
+                    result.cancelled = true;
+                    result.truncated = true;
+                    result.nextFromFrame = frame;
+                    result.toFrame = frame - 1;
+                    break;
+                }
+            }
             if (const std::optional<TTDExternalEvent> barrier =
                     FirstBarrierBetween(cp.time, TTDTimePoint{frame, FrameSpan()}))
             {

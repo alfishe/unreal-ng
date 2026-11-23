@@ -20,6 +20,7 @@
 #include "mcp-media.h"
 #include "mcp-bus.h"
 #include "mcp-history.h"
+#include "mcp-jobs.h"
 #include "mcp-slots.h"
 #include "mcp-actions.h"
 #include "mcp-gui.h"
@@ -45,6 +46,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace mcp
@@ -6343,6 +6345,13 @@ void CallAndSummarize(const std::string& method, const std::string& path, const 
                       std::function<std::string(const Json::Value&)> summarize, ToolCallback done)
 {
     caller.Call(method, path, body, [summarize, done](int status, Json::Value responseBody) {
+        if (status == 202 && responseBody.isObject() && responseBody.isMember("job"))
+        {
+            // async=true: queued as a job; the body is {job, state, status_url, text}, not the verb's answer
+            const std::string text = responseBody.get("text", "").asString();
+            done(ToolResult::Ok(text, std::move(responseBody)));
+            return;
+        }
         if (status >= 200 && status < 300 && responseBody.isObject() && responseBody.isMember("ok") &&
             !responseBody["ok"].asBool())
         {
@@ -6823,6 +6832,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "branch_list / branch_prune: only branches created at or after this time (Unix seconds)";
     schema["properties"]["created_before"]["description"] =
         "branch_list / branch_prune: only branches created before this time (Unix seconds)";
+    schema["properties"]["async"]["type"] = "boolean";
+    schema["properties"]["async"]["description"] =
+        "dump, load, probe_frames, memory_series, journal_build, export_clip: run it as a job (default false): the "
+        "answer is the job id at once; the jobs tool (action 'wait', job=<id>) waits for the result. Other long "
+        "verbs: jobs action 'start'";
     schema["properties"]["lineage"]["type"] = "boolean";
     schema["properties"]["lineage"]["description"] =
         "dump: only the active branch's lineage, as one linear history (default false: every branch)";
@@ -7572,6 +7586,26 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     }
                     (*body)["lineage"] = args["lineage"].asBool();
                 }
+            }
+
+            // A long action as a job (PLAN #122 S2): async=true answers {job, state} at once, `jobs` waits for it
+            if (args.isMember("async"))
+            {
+                static const std::set<std::string> asyncActions = {"dump",          "load",         "probe_frames",
+                                                                   "memory_series", "journal_build", "export_clip"};
+                if (!args["async"].isBool())
+                {
+                    done(ToolResult::Error("'async' must be true or false"));
+                    return;
+                }
+                if (args["async"].asBool() && asyncActions.count(action) == 0)
+                {
+                    done(ToolResult::Error("'async' is for dump, load, probe_frames, memory_series, journal_build and "
+                                           "export_clip; other long verbs: the jobs tool, action 'start'"));
+                    return;
+                }
+                if (asyncActions.count(action) != 0)
+                    (*body)["async"] = args["async"].asBool();
             }
 
             auto forward = [&caller, &args, action, body, done](const std::string& id) {
@@ -9366,6 +9400,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
     RegisterDeviceHistory(*registry);
+    // jobs: the long verbs run as jobs, list / status / wait (long-poll) / cancel / start (PLAN #122 S2)
+    RegisterJobs(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
     // vdac4_state: the TS-Conf VDAC4 board (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2)

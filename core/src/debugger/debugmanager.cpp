@@ -141,6 +141,15 @@ void DebugManager::OnGeneralSoundCardCreated()
     PublishTargetsIfChanged();
 }
 
+void DebugManager::ApplyCardSymbolBundles()
+{
+    for (GSCardTarget* target : {_gsTarget.get(), _msTarget.get()})
+    {
+        if (target)
+            target->ApplySymbolBundles();
+    }
+}
+
 void DebugManager::OnSlotCardsChanged()
 {
     if (_msTarget)

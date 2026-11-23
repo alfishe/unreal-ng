@@ -78,6 +78,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "emulator/jobs/jobcontrol.h"
 #include "debugger/markup/markupcontrol.h"
 #include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/labels/labelmanager.h>
@@ -3983,6 +3984,31 @@ namespace PythonBindings
                "top=8) | export (format='kit' | 'json' | 'entries' | 'sym' | 'ann', path=, since=). The reply's fields "
                "plus text; a refusal: ok = False, error = why",
                py::arg("op") = "status")
+            .def("jobs", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
+                jobs::Options options;
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                jobs::Reply reply;
+                {
+                    // wait blocks up to wait_ms: other Python threads run meanwhile
+                    py::gil_scoped_release release;
+                    reply = jobs::Execute(&self, action, options);
+                }
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Long verbs as jobs (emulator/jobs/jobcontrol.h, PLAN #122 S2): action list (instance='this' | 'all' | "
+               "<id>, state='active' | 'finished' | 'all', limit=50) | status (job=N, result=True) | wait (job=N, "
+               "wait_ms=30000 (<= 60000): blocks until the job ends or the time is up, then as status) | cancel (job=N) "
+               "| start (domain='ttd' | 'analysis', verb='dump', <the verb's options>: path='/tmp/a.ttd'). "
+               "analysis(action, **{'async': True}, ...) starts one too. The reply's fields plus "
+               "text; a refusal: ok = False, error = why",
+               py::arg("action") = "list")
             .def("analysis", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
                 analysis::Options options;
                 for (const auto& [key, value] : kwargs)

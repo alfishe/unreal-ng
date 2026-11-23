@@ -97,6 +97,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "emulator/jobs/jobcontrol.h"
 #include "debugger/markup/markupcontrol.h"
 #include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
@@ -7945,6 +7946,29 @@ public:
                                                              : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The long verbs as jobs through jobs::Execute (emulator/jobs/jobcontrol.h, PLAN #122 S2): jobs(action, opts)
+        // with action list {instance= ('this', 'all' or an id), state= (active, finished, all), limit=} | status
+        // {job=, result=} (or the job id) | wait {job=, wait_ms= (default 30000, <= 60000), result=} (blocks this
+        // script up to wait_ms) | cancel {job=} | start {domain= ('ttd' or 'analysis'), verb=, <the verb's options>}.
+        // analysis(action, {async=true, ...}) answers {job=, state=} the same way. The answer: the reply's
+        // fields plus text; a refusal: ok = false, error = why
+        lua.set_function("jobs", [this](sol::this_state ts, sol::optional<std::string> action,
+                                        sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = action.value_or("list");
+            Emulator* emulator = effectiveEmulator();
+            const jobs::Reply reply =
+                jobs::Execute(emulator, verb,
+                              opts ? SymbolOptions(*opts, verb == "list" ? "instance" : verb == "start" ? "domain" : "job")
+                                   : jobs::Options{});
             StateNode value = reply.ToValue();
             if (!reply.Ok())
             {

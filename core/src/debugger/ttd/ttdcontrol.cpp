@@ -38,6 +38,7 @@
 #include "emulator/emulator.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/jobs/jobcontrol.h"
 #include "emulator/mainloop.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/notifications.h"
@@ -457,13 +458,13 @@ private:
     TimeTravelController* _manager = nullptr;
 };
 
-TTDControl::TTDControl(EmulatorContext* context)
+TTDControl::TTDControl(EmulatorContext* context) : _context(context)
 {
     _backend = std::make_unique<TTDControlBackend>(context, context ? context->pTimeTravelController : nullptr);
 }
 
 TTDControl::TTDControl(EmulatorContext* context, TimeTravelController* controller)
-    : _backend(std::make_unique<TTDControlBackend>(context, controller))
+    : _context(context), _backend(std::make_unique<TTDControlBackend>(context, controller))
 {
 }
 
@@ -581,12 +582,35 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "unknown time-travel verb '" + request.verb + "' (verbs: " + known + ")");
     }
 
+    // A long verb as a job (PLAN #122 S2): async=true queues it and answers the job at once; async=false is the
+    // call as before
+    bool async = false;
+    if (const auto it = request.options.find("async"); it != request.options.end())
+    {
+        if (!jobs::ParseAsync(it->second, async))
+            return Fail(TTDControlError::BadRequest, "async must be true or false (got '" + it->second + "')");
+        if (async)
+        {
+            const auto& asyncVerbs = AsyncVerbs();
+            if (std::find(asyncVerbs.begin(), asyncVerbs.end(), verb) == asyncVerbs.end())
+            {
+                std::string list;
+                for (const std::string& v : asyncVerbs)
+                    list += (list.empty() ? "" : ", ") + v;
+                return Fail(TTDControlError::BadRequest,
+                            "'" + verb + "' answers at once: async=true is for the long verbs (" + list + ")");
+            }
+        }
+    }
+
     // Every option name is checked, so a typo fails the same way on every surface
     const auto& allowed = OptionsFor(verb);
     const bool anyName = allowed.size() == 1 && allowed.front() == "*";
     for (const auto& [name, value] : request.options)
     {
         (void)value;
+        if (name == "async")
+            continue;
         if (!anyName && std::find(allowed.begin(), allowed.end(), name) == allowed.end())
         {
             std::string list;
@@ -598,7 +622,62 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
         }
     }
 
+    if (request.options.count("async") != 0)
+    {
+        TTDRequest inner{verb, request.options};
+        inner.options.erase("async");
+        if (async)
+            return SubmitJob(verb, inner);
+        return _backend->Execute(verb, inner);
+    }
     return _backend->Execute(verb, request);
+}
+
+const std::vector<std::string>& TTDControl::AsyncVerbs()
+{
+    static const std::vector<std::string> verbs = {"dump",         "load",         "probe-frames",
+                                                   "memory-series", "find-event",  "replay-check",
+                                                   "export-clip",  "journal-build", "branch-create"};
+    return verbs;
+}
+
+TTDReply TTDControl::SubmitJob(const std::string& verb, const TTDRequest& request)
+{
+    Emulator* emulator = _context != nullptr ? _context->pEmulator : nullptr;
+    if (emulator == nullptr)
+        return Fail(TTDControlError::NotAvailable, "async needs an emulator instance");
+    // The verbs whose loops poll the job's cancel (jobs::CurrentCancelRequested) or that have their own stop
+    static const std::set<std::string> cancellable = {"probe-frames", "memory-series", "journal-build"};
+    const bool canStop = cancellable.count(verb) != 0;
+    std::function<void(Emulator&)> onCancel;
+    if (verb == "journal-build")
+        onCancel = [](Emulator& e) { (void)TTDControl(e.GetContext()).Execute({"journal-build-cancel", {}}); };
+    std::string error;
+    const uint64_t id = jobs::SubmitOnInstance(
+        emulator->GetId(), "ttd." + verb, "ttd@" + emulator->GetId(), jobs::Summary(verb, request.options), canStop,
+        [request](Emulator& e, jobs::Context& job) {
+            const TTDReply reply = TTDControl(e.GetContext()).Execute(request);
+            jobs::Outcome outcome;
+            outcome.ok = reply.Ok();
+            outcome.status = reply.HttpStatus();
+            outcome.error = reply.message;
+            outcome.result = reply.ToValue();
+            const StateNode* cancelled = reply.body.find("cancelled");
+            outcome.cancelled = job.CancelRequested() && cancelled != nullptr && cancelled->b;
+            if (const StateNode* text = reply.body.find("text"); text != nullptr && text->kind == StateNode::Kind::String)
+                outcome.text = text->s;
+            else
+                outcome.text = jobs::ResultText(outcome.status, outcome.result);
+            return outcome;
+        },
+        std::move(onCancel), error);
+    if (id == 0)
+        return Fail(TTDControlError::Conflict, "the job was not queued: " + error);
+    TTDReply reply;
+    reply.accepted = true;
+    reply.body = jobs::AcceptedBody(id);
+    reply.body["verb"] = verb;
+    return reply;
 }
 
 TTDReply TTDControlBackend::Execute(const std::string& verb, const TTDRequest& request)
@@ -4022,6 +4101,9 @@ TTDReply TTDControlBackend::ProbeFrames(const TTDRequest& request)
     // The next page: pass it back as from_frame
     if (r.truncated)
         reply.body["next_from_frame"] = r.nextFromFrame;
+    // Run as a job and cancelled: the frames searched so far, the rest from next_from_frame
+    if (r.cancelled)
+        reply.body["cancelled"] = true;
     return reply;
 }
 
@@ -6471,6 +6553,8 @@ TTDReply TTDControlBackend::MemorySeries(const TTDRequest& request)
     reply.body["truncated"] = r.truncated;
     if (r.truncated)
         reply.body["next_from_frame"] = r.nextFrame;
+    if (r.cancelled)
+        reply.body["cancelled"] = true;
     StateNode limits = StateNode::Object();
     limits["limit"] = rows;
     limits["max_bytes"] = bytes;

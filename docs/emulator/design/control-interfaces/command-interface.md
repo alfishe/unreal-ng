@@ -4788,6 +4788,43 @@ controllers match eyeache2.trd
 # OK: user/game-9b41... (signature trdset:sha256:9b41...)
 ```
 
+### 19. Jobs
+
+The long verbs (an analysis build, a TTD dump or load, `probe-frames`, `memory-series`, ...) run as jobs with
+`async=true`: the call answers the job's id at once (HTTP 202), the work runs on a registry worker, and any plane
+reads it, long-polls for its end or cancels it (PLAN #122 S2). Without `async` the verbs answer as before. Module doc:
+[jobs.md](./jobs.md) (states, lanes, retention, the long-poll, topics).
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `jobs [list]` | `[all\|this\|<instance>] [state=active\|finished\|all] [limit=N]` | The jobs, oldest first: id, kind, summary, state, progress, times (default: the selected instance's, the newest 50) | ✅ Implemented |
+| `jobs status` | `<job> [result=false]` | One job: state, progress; when it ended its status, error, text and result | ✅ Implemented |
+| `jobs wait` | `<job> [wait_ms] [result=false]` | Block up to `wait_ms` (default 30000, at most 60000) for its end, then as `status` with `ended` | ✅ Implemented |
+| `jobs cancel` | `<job>` | A queued job ends cancelled; a running one is asked to stop (`probe-frames`, `memory-series`, `journal-build`, `analysis build`); 409 when it cannot stop or ended | ✅ Implemented |
+| `jobs start` | `<ttd\|analysis> <verb> [name=value ...]` | Run a long verb as a job: TTD `dump`, `load`, `probe-frames`, `memory-series`, `find-event`, `replay-check`, `export-clip`, `journal-build`, `branch-create`; analysis `build`, `trace`, `experiment`, `cover` | ✅ Implemented |
+| `<verb> async=true` | | The same through the verb itself (TTD routes, `analysis build\|trace\|experiment\|cover async=true`) | ✅ Implemented |
+
+| Surface | Start | Wait | List, status, cancel |
+| :--- | :--- | :--- | :--- |
+| CLI | `jobs start ttd dump path=/tmp/a.ttd`, `analysis build async=true` | `jobs wait 12 60000` | `jobs`, `jobs status 12`, `jobs cancel 12` |
+| WebAPI | `POST /api/v1/emulator/{id}/ttd/dump {"path", "async": true}`, `POST /api/v1/emulator/{id}/jobs {"domain", "verb", ...}` | `GET /api/v1/jobs/{job}?wait_ms=30000` (long-poll, no thread held) | `GET /api/v1/jobs`, `GET /api/v1/emulator/{id}/jobs`, `GET /api/v1/jobs/{job}`, `DELETE /api/v1/jobs/{job}` or `POST /api/v1/jobs/{job}/cancel` |
+| WebSocket | the same routes as `call`s | the `call` of the long-poll (its `result` comes at the end) | `call`s; topics `jobs.progress`, `jobs.done` |
+| MCP | `time_travel` / `analysis` with `async: true`; `jobs` action `start` | `jobs` action `wait` (`job`, `wait_ms`) | `jobs` actions `list`, `status`, `cancel` |
+| Python | `emu.jobs('start', domain='ttd', verb='dump', path=...)`, `emu.analysis('build', **{'async': True})` | `emu.jobs('wait', job=12, wait_ms=60000)` | `emu.jobs('list')`, `emu.jobs('status', job=12)`, `emu.jobs('cancel', job=12)` |
+| Lua | `emu.jobs('start', {domain='ttd', verb='dump', path=...})`, `emu.analysis('build', {async=true})` | `emu.jobs('wait', {job=12, wait_ms=60000})` | `emu.jobs('list')`, `emu.jobs('status', 12)`, `emu.jobs('cancel', 12)` |
+
+Errors: `bad-request` (400: unknown action or option, `async` on a short verb, `wait_ms` over 60000), `not-found`
+(404: no such job, or forgotten: 64 finished jobs are kept for 30 min), `conflict` (409: it ended already, cannot
+stop, the queue is full), `unavailable` (503: the registry stops).
+
+```
+jobs start ttd dump path=/tmp/a.ttd
+# Job 12 (ttd.dump: dump path=/tmp/a.ttd) queued on 0f3a.... Its end: GET /api/v1/jobs/12?wait_ms=30000 ...
+jobs wait 12
+# job 12 ttd.dump on 0f3a... (dump path=/tmp/a.ttd): done in 41 ms
+# Session written to /tmp/a.ttd ...
+```
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.
