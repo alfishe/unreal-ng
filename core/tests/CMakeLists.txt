@@ -265,6 +265,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-streamdeck.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-bus.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-history.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-jobs.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-audio.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-vdac4.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp

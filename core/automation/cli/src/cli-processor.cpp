@@ -189,6 +189,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
                         {"analysis", &CLIProcessor::HandleAnalysis},          // Analysis layers: start/stop/status/explain
+                        {"jobs", &CLIProcessor::HandleJobs},                  // Long verbs as jobs: list/status/wait/cancel/start
                         {"markup", &CLIProcessor::HandleMarkup},              // Memory markup: show/layers/mark/unmark/save
                         {"cpuprofile", &CLIProcessor::HandleCpuProfile},      // CPU time profile: start/stop/report/frames/export
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
@@ -853,6 +854,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage export [<path>] [--start A] [--end B] [--merge] - SkoolKit code execution map ($HHHH lines)" << NEWLINE;
     oss << "  analysis start [facts|counters] [z80|physical]|stop|status - Analysis layers: L0 access facts" << NEWLINE;
     oss << "  analysis explain <addr> [page] [--json] - What L0 knows of a byte: kinds, last reader/writer, frames, values" << NEWLINE;
+    oss << "  jobs [list] | status <job> | wait <job> [ms] | cancel <job> | start <ttd|analysis> <verb> [k=v] - Long verbs as jobs" << NEWLINE;
     oss << "  markup [show] [range] | layers | mark <range> <kind> [title] | unmark <range> | comment <addr> [text] | clear [layer] | save [profile] [keep] - Memory markup" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;

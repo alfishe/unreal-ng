@@ -260,14 +260,14 @@ TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentySixTools)
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 29u);
+    EXPECT_EQ(tools.size(), 30u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
                               "type_input",       "mouse_input",       "joystick_input",    "time_travel",       "manage_symbols",    "asm_source",
                               "signature_info",
                               "debug_code",       "analyze_performance", "capture_media",  "search_api",
                               "invoke_api",       "media",             "rzx_playback",      "memory_access",     "bus_analyzer",
-                              "device_history",
+                              "device_history",   "jobs",
                               "companion_manage", "controllers",       "actions",           "streamdeck",
                               "audio_mixer",      "analysis",          "vdac4_state",       "vdac4_esp_memory"};
     for (const char* name : expected)

@@ -116,6 +116,9 @@ static std::map<std::string, std::string> OptionsFromQuery(const HttpRequestPtr&
         if (!value.empty())
             options[name] = value;
     }
+    // A long verb run as a job (PLAN #122 S2): ?async=true answers 202 {job, state, status_url} at once
+    if (const std::string async = req->getParameter("async"); !async.empty())
+        options["async"] = async;
     return options;
 }
 

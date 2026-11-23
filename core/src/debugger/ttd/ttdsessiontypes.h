@@ -699,6 +699,7 @@ struct TTDSeriesResult
     uint64_t piecesDecoded = 0;  ///< 4 KB pieces decoded (a piece unchanged since the frame before is not decoded again)
     bool truncated = false;      ///< the row or byte limit stopped the walk
     uint64_t nextFrame = 0;      ///< truncated: the first frame not answered (go on from there)
+    bool cancelled = false;      ///< run as a job and cancelled: truncated at nextFrame
 };
 
 /// @brief The picture and the screens of one past frame (screen-at, PLAN #122 V2).
@@ -776,6 +777,7 @@ struct TTDProbeFramesResult
     std::vector<TTDProbeFrames> probes;   ///< In the order asked
     bool truncated = false;           ///< Every probe's list is full and the window goes on: ask again from nextFromFrame
     uint64_t nextFromFrame = 0;
+    bool cancelled = false;           ///< Run as a job and cancelled: the window ends at toFrame, the rest from nextFromFrame
 };
 
 /// @brief What ReverseContinue looks for and how far.

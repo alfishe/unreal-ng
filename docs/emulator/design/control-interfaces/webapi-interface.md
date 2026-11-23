@@ -845,7 +845,9 @@ GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, record
 POST /api/v1/emulator/{id}/analysis/build     {frames?, from_frame?, from_tinframe?, to_frame?, path?,
                                                wait?: ms <= 30000}: the L1 build job (a window: one stage,
                                                analysis-layers.md#stages-and-windows)
-                                              {job, state, bundle, progress, ready, text}
+                                              {job, state, bundle, progress, ready, text}; async: true instead
+                                              of wait answers 202 with the job (Jobs below); trace, experiment
+                                              and cover take async too
 POST /api/v1/emulator/{id}/analysis/cancel    cancel the running build: {job, state, text}
 GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3][&what=auto|routine|byte]
                                               routine (L1 ready, auto or what=routine): {what: "routine", address,
@@ -2413,6 +2415,38 @@ At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value` is r
 | 503 | The emulator is shutting down. |
 
 Everything else is reported in a 200 body: `reached: false`, `stepped: false`, `resumed: false`, `found: false`, `matched: false`.
+
+### Jobs
+
+The long verbs as jobs (PLAN #122 S2, [jobs.md](./jobs.md); `jobs_api.cpp` over `jobs::Execute`; OpenAPI tag `Jobs`).
+`"async": true` in the body (or `?async=true` on a GET verb) of TTD `dump`, `load`, `probe-frames`, `memory-series`,
+`find-event`, `replay-check`, `export-clip`, `journal/build`, `branches` (create) and analysis `build`, `trace`,
+`experiment`, `cover` answers **202** at once; the job holds the answer the call gives without `async`.
+
+```
+POST   /api/v1/emulator/{id}/ttd/dump       {"path": "/tmp/a.ttd", "async": true}
+       202 {job, state, kind, emulator_id, summary, async: true, status_url, wait_url, text}
+POST   /api/v1/emulator/{id}/jobs           {"domain": "ttd" | "analysis", "verb": "dump", <the verb's options>}: 202, the same
+GET    /api/v1/jobs[?instance=all|<id>&state=active|finished|all&limit=50]
+       {instance, state, count, total, active, jobs: [job], limits {workers, max_queued, keep_finished, keep_ms,
+        keep_result_bytes, max_wait_ms}, text}
+GET    /api/v1/emulator/{id}/jobs[?state=&limit=]   the instance's
+GET    /api/v1/jobs/{job}[?result=false]    {job, kind, emulator_id, summary, state, progress {done, total, unit,
+                                             percent}, cancellable, cancel_requested, created_ms, started_ms,
+                                             ended_ms, elapsed_ms, queue_position?, status?, error?, result?, text}
+GET    /api/v1/jobs/{job}?wait_ms=30000     the long-poll: answered when the job ends or after wait_ms (1..60000,
+                                             more: 400), with ended and wait_ms; no server thread waits
+DELETE /api/v1/jobs/{job}                   cancel; also POST /api/v1/jobs/{job}/cancel
+       {..., cancel: "cancelled" | "requested", text}; 409: it ended, or cannot stop
+```
+
+| HTTP | When |
+| :--- | :--- |
+| 202 | A job was queued (`async=true`, `POST .../jobs`). |
+| 400 | Unknown option, `async` on a verb that is not long, `async` and `wait` on a build, `wait_ms` over 60000. |
+| 404 | No such job (never was, or forgotten: 64 finished jobs kept, 30 min), no such emulator. |
+| 409 | The job ended already or cannot stop (cancel); the queue is full (64). |
+| 503 | The emulator is shutting down, the registry stops. |
 
 ## WebSocket
 

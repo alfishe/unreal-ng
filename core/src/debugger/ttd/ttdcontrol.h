@@ -61,12 +61,16 @@ struct TTDReply
     std::string message;  ///< one sentence a user can act on; every surface shows it verbatim
     StateNode body = StateNode::Object();
     bool created = false;  ///< success that made a new thing (a bookmark): HTTP 201
+    bool accepted = false; ///< async=true: the verb was queued as a job, the body is {job, state, ...} (HTTP 202)
 
     bool Ok() const { return error == TTDControlError::None; }
     /// Success: the body. Failure: {"error": <phrase>, "message": ...} then the body's
     /// fields (a body that names its own "error" keeps it)
     StateNode ToValue() const;
-    int HttpStatus() const { return Ok() && created ? 201 : TTDControlErrorHttpStatus(error); }
+    int HttpStatus() const
+    {
+        return Ok() && accepted ? 202 : Ok() && created ? 201 : TTDControlErrorHttpStatus(error);
+    }
 };
 
 class TTDControl
@@ -80,10 +84,15 @@ public:
     TTDControl(const TTDControl&) = delete;
     TTDControl& operator=(const TTDControl&) = delete;
 
-    /// Check the verb and its options, then run it
+    /// Check the verb and its options, then run it. Option async=true (the long verbs, AsyncVerbs): queue it as a job
+    /// (emulator/jobs/jobregistry.h) and answer {job, state, ...} at once (accepted, HTTP 202); the job's result is
+    /// the reply the call would have given
     TTDReply Execute(const TTDRequest& request);
 
     static const std::vector<std::string>& Verbs();
+    /// The verbs that take async=true: dump, load, probe-frames, memory-series, find-event, replay-check,
+    /// export-clip, journal-build, branch-create
+    static const std::vector<std::string>& AsyncVerbs();
     /// The option names @p verb takes; {"*"} = any (port-events forwards them to its parser)
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
 
@@ -98,6 +107,9 @@ public:
     class Backend;
 
 private:
+    TTDReply SubmitJob(const std::string& verb, const TTDRequest& request);
+
+    EmulatorContext* _context = nullptr;
     std::unique_ptr<Backend> _backend;
 };
 }  // namespace ttd

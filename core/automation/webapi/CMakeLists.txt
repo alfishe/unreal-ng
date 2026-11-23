@@ -175,6 +175,7 @@ set(COMMON_SOURCES
     src/openapi_spec.cpp
     src/api/lifecycle_api.cpp
     src/api/operations_api.cpp
+    src/api/jobs_api.cpp
     src/api/session_api.cpp
     src/api/callbacks_api.cpp
     src/api/watch_api.cpp
