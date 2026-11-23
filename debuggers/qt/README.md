@@ -22,6 +22,41 @@ and is adapted freely.
 The views and the adapter never share a translation unit: ecat's Emulator / CPU / Memory (namespace `ecatshim`) and
 the core's classes of the same names would clash.
 
+## Card tabs
+
+With a sound card fitted the side tabs add GS log, GS protocol, GS firmware, GS hardware and GS stats (the catalog
+reports `gs-commands`, `gs`, `gs-firmware`, `gs-stats`; a line over each names the card read). On a NeoGS ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+B3; gs-debugger TODO P5.5) the NeoGS tabs show the core's device boards, the same data as unreal-qt's Embedded
+debugger (`DebugBoards::Read`, `Emulator::read_board` in the shim; over the WebAPI `GET /debug/boards/{board}`), with
+the `gs_stats` board's counters:
+
+| Tab | Boards | What |
+|-----|--------|------|
+| GS hardware | `neogs` | Config (GSCFG0), Paging (windows, MPAG), Clock with its switch count, DAC mode (the channels in the table), Output (DAC levels, listening mode), Interrupts, SPI (SCTRL), Status (SSTAT), LED, Mailbox, Firmware; the mailbox, interrupt and SPI counters |
+| NeoGS DMA | `neogs_dma` | the ZX / SD / MP3 modules as rows (selected, running, address, page, starts, done, bytes, errors, aborts, stall clocks, last), the ZX-DMA block, the DMA rates and errors |
+| SD · MP3 · Flash | `neogs_sd`, `neogs_mp3`, `neogs_flash` | the SD card of slot `sd.ngs` (medium, protocol), the decoder and its SCI registers, the flash chip; each with its counters |
+
+The last two come only with a NeoGS. Insert image..., Insert folder..., Eject and Save flash are the boards' actions
+(`Emulator::board_action`; over the WebAPI `POST /debug/boards/{board}/actions/{action} {arg}`). A machine whose
+boards cannot be read falls back on the `gs` report's `neogs` part. On a GS, GS hardware is the report as it is.
+
+**The lightweight player** (`--card gs-lw`; [gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A10, requirements W2-W3) has no CPU: no card CPU tab, no card run controls. Its two tabs, read-only, come only with it
+(the `gs` report's `interpreter` and `player` parts); Log, Protocol, Firmware (the window variables the interpreter
+mirrors), Hardware and Stats stay:
+
+| Tab | What |
+|-----|------|
+| GS interpreter | the state diagram `Idle Command Params Upload Reply` with the current state marked `●`, the ready line (`Upload, 2,000 of 3,196 bytes`); the command and its name, bytes expected / received, the selector; the params and replies queues of 16, the reply pending and the next byte; the upload (module or FX, received of total, %) |
+| GS player | the song (state, playing, position / length, pattern of patterns, row, tick, speed, BPM, MTSTAT), the module row (`1 (P)` or `(S)`, its name and length), the FX; the four channels as a table (sample, volume, period, note, rate Hz); the samples as a table (number, name, volume, note, priority, rate Hz, channel, length, the current effect `*`, the loop `(L)`) |
+
+**The MultiSound's GS** (`--card multisound`, CPU `ms`): the card tabs read its reports: GS log `ms-gs-commands`, GS
+protocol and GS hardware the `multisound` report's `gs` part, GS firmware `ms-gs-firmware` and GS stats `ms-gs-stats`
+(the core reads them with `cpu=ms`: over the WebAPI `state/audio/gs/firmware?cpu=ms`, `state/audio/gs/stats?cpu=ms`);
+a line over each tab names the card, and the state's card line reads `MultiSound GS Z80 ...`. With a General Sound and
+a MultiSound's GS both, the tabs follow the card CPU's tab in front; with the main CPU in front, the first card CPU (the
+same card the card runs act on); with one of them, that one.
+
 ## Breakpoints
 
 The Breakpoints tab lists every processor's breakpoints, a row each with its CPU (`main`, `gs`, `ms`): the
@@ -107,7 +142,7 @@ a step, brings its tab forward).
 ## Run
 
 ```text
-unreal-debugger [--model PENTAGON] [--card neogs|multisound | --no-gs] [file.sna|.z80|.tap|.trd|...]
+unreal-debugger [--model PENTAGON] [--card neogs|gs|gs-lw|multisound | --no-gs] [file.sna|.z80|.tap|.trd|...]
 unreal-debugger --connect 127.0.0.1:8090 [--emulator id]   a running emulator (unreal-qt) through its WebAPI
 unreal-debugger --zoom 1.5                                  the window's scale (Ctrl+= / Ctrl+- / Ctrl+0)
 unreal-debugger --self-check                                the debugger API and the window's editors; exit 2 on a failure

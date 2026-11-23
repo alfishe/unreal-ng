@@ -6069,17 +6069,19 @@ public:
         // The GS slot's statistics (gsslotstats.h, gs-debugger N7): the block or one section, counters since a
         // baseline; a running machine answers from the next frame end (at most 500 ms; {error} after that)
         lua.set_function("gs_stats", [this](sol::this_state s, sol::optional<std::string> section,
-                                            sol::optional<uint32_t> since) -> sol::object {
+                                            sol::optional<uint32_t> since, sol::optional<std::string> cpu) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             GSStatsQuery query;
             query.section = section.value_or("");
             query.since = since.value_or(0);
+            query.cpu = cpu.value_or(""); // "ms": the ZX-MultiSound's GS
             query.waitMs = 500;
             return StateNodeToLua(s, GSStatsRead(ctx, query).body);
         });
-        lua.set_function("gs_reset_counters", [this](sol::this_state s) -> sol::object {
+        lua.set_function("gs_reset_counters", [this](sol::this_state s, sol::optional<std::string> cpu) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             GSStatsQuery query;
+            query.cpu = cpu.value_or("");
             query.waitMs = 500;
             return StateNodeToLua(s, GSStatsResetCounters(ctx, query).body);
         });
@@ -6087,11 +6089,13 @@ public:
         // The firmware objects through the card's profile (gsfirmwareobjects.h, gs-debugger §8A.9): struct instances
         // as rows of fields, variables; one object by name; another profile by id
         lua.set_function("gs_firmware", [this](sol::this_state s, sol::optional<std::string> object,
-                                               sol::optional<std::string> profile) -> sol::object {
+                                               sol::optional<std::string> profile,
+                                               sol::optional<std::string> cpu) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             GSFirmwareObjectsQuery query;
             query.object = object.value_or("");
             query.profile = profile.value_or("");
+            query.cpu = cpu.value_or(""); // "ms": the ZX-MultiSound's GS
             return StateNodeToLua(s, GSFirmwareObjectsRead(ctx, query).body);
         });
         lua.set_function("gs_firmware_profiles", [](sol::this_state s) -> sol::object {

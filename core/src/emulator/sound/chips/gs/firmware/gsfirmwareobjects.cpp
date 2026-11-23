@@ -9,6 +9,8 @@
 #include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gscommandlog.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
+#include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace
@@ -355,7 +357,9 @@ StateNode GSReadFirmwareObjects(const GeneralSoundCard& card, const GSFirmwarePr
             variables.push(ReadVariable(card, bytes, v));
     body["variables"] = variables;
 
-    // The built-in tables' variables of the fixed RAM window
+    // The built-in tables' variables of the fixed RAM window; the lightweight card has no RAM, its interpreter mirrors
+    // the variables it keeps (`source` mirror)
+    const auto* lightweight = dynamic_cast<const SoundChip_GSLightweight*>(&card);
     StateNode window = StateNode::Array();
     for (size_t i = 0; i < profile.variableCount; i++)
     {
@@ -370,6 +374,11 @@ StateNode GSReadFirmwareObjects(const GeneralSoundCard& card, const GSFirmwarePr
         uint32_t value = 0;
         if (bytes.Value(GSPlace::Window, 0, v.address, v.size <= 4 ? v.size : 4, value))
             node["value"] = static_cast<int64_t>(value);
+        else if (lightweight && lightweight->mirroredVariable(v.name, value))
+        {
+            node["value"] = static_cast<int64_t>(value);
+            node["source"] = std::string("mirror");
+        }
         window.push(node);
     }
     body["window_variables"] = window;
@@ -397,11 +406,14 @@ StateNode GSReadFirmwareObjects(const GeneralSoundCard& card, const GSFirmwarePr
 GSFirmwareObjectsReply GSFirmwareObjectsRead(EmulatorContext* context, const GSFirmwareObjectsQuery& query)
 {
     GSFirmwareObjectsReply reply;
-    const GeneralSoundCard* card = context && context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
+    bool known = true;
+    const GeneralSoundCard* card = GSCardForCpu(context, query.cpu, nullptr, &known);
     if (!card)
     {
         reply.status = 404;
-        reply.body = Error("No General Sound card is fitted");
+        reply.body = Error(!known             ? "No card CPU '" + query.cpu + "' (gs: the GS slot's card, ms: the ZX-MultiSound's)"
+                           : query.cpu == "ms" ? std::string("No ZX-MultiSound with a General Sound fitted")
+                                               : std::string("No General Sound card is fitted"));
         reply.text = reply.body.find("error")->s;
         return reply;
     }
@@ -422,6 +434,7 @@ GSFirmwareObjectsReply GSFirmwareObjectsRead(EmulatorContext* context, const GSF
         return reply;
     }
     reply.body = GSReadFirmwareObjects(*card, *profile, query.object);
+    reply.body["cpu"] = std::string(query.cpu.empty() ? "gs" : query.cpu);
     if (!query.object.empty() && reply.body.find("instances")->items.empty() &&
         reply.body.find("variables")->items.empty() && reply.body.find("window_variables")->items.empty() &&
         !reply.body.find("dispatch") && !reply.body.find("unknown_commands"))

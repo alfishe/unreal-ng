@@ -224,6 +224,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         m_stack->set_cpu(current_cpu());
         refresh_side();
         update_cursor();
+        show_state();  //the card tabs' card, its line, may have followed the tab
         //The time group follows the tab: a card's back steps are the card's, the moment names where it stands
         if (m_ttd != nullptr && this->e->loaded && m_ttd->shown()) m_ttd->poll(true);
     });
@@ -879,13 +880,31 @@ void DebuggerWindow::mark_all()
     for (const NextTab &t : m_card_tabs) t.view->mark_stop();
 }
 
-//The Next tabs while the machine is one, the card tabs while it has a General Sound; a tab in sight that goes leaves
-//the side on the stack
+//The Next tabs while the machine is one, the card tabs while it has a General Sound, a NeoGS's own while the card is
+//one, the lightweight player's while it is (the report's part they need, read once); a tab in sight that goes leaves
+//the side on the stack. The card tabs follow a card (gs-debugger P5.5): with a General Sound and a MultiSound's GS
+//both, the card CPU's tab in front, else the first card CPU (as the card runs); else the one there
 void DebuggerWindow::update_next_tabs()
 {
+    CPU * card = card_cpu();
+    const std::string source = CardTabsCard(e, card != nullptr ? card->name : std::string());
+    if (source != m_card_source) {
+        m_card_source = source;
+        CardTabsFollow(m_card_tabs, source);
+        m_card_strip = read_card_strip();
+    }
     for (const std::vector<NextTab> *group : {&m_next_tabs, &m_card_tabs}) {
         const bool present = !group->empty() && group->front().view->present();
-        for (const NextTab &t : *group) m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), present);
+        std::map<std::string, bool> needed;
+        for (const NextTab &t : *group) {
+            bool shown = present;
+            if (shown && !t.view->needs().empty()) {
+                auto it = needed.find(t.view->needs());
+                if (it == needed.end()) it = needed.emplace(t.view->needs(), t.view->present()).first;
+                shown = it->second;
+            }
+            m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), shown);
+        }
     }
 }
 
@@ -1004,10 +1023,22 @@ void DebuggerWindow::on_debug_event()
 
 QString DebuggerWindow::read_card_strip() const
 {
-    if (!e->loaded || e->dm == nullptr) return QString();
+    if (!e->loaded || e->dm == nullptr || m_card_source.empty()) return QString();
+    const bool ms = m_card_source == "ms";
     for (unsigned int i = 0; i < e->dm->device_count; i++) {
         ComputerDevice * d = e->dm->get_device(i)->device.get();
-        if (d->name != "gs" || d->type != "report") continue;  //"gs" is the card's CPU as well
+        if (d->name != (ms ? "multisound" : "gs") || d->type != "report") continue;  //"gs" is the card's CPU as well
+        if (ms) {
+            //The MultiSound's GS: its part of the multisound report (read whole: past the fields' bound)
+            DeviceNode report;
+            bool read = false;
+            e->invoke([d, &report, &read]() { read = d->get_tree(true, report); });
+            for (const DeviceNode &part : report.children)
+                if (read && part.name == "gs")
+                    for (const DeviceNode &field : part.children)
+                        if (field.name == "strip") return tr("MultiSound %1").arg(QString::fromStdString(field.value));
+            return QString();
+        }
         DeviceFieldValue v;
         bool read = false;
         e->invoke([d, &v, &read]() {

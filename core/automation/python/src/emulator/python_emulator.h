@@ -5704,10 +5704,11 @@ namespace PythonBindings
                 return StateNodeToPy(reply.body);
             }, "A send by id (0: the last): its bytes, replies and state", py::arg("id") = 0)
             // The GS slot's statistics (gsslotstats.h, gs-debugger N7)
-            .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since) -> py::object {
+            .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since, const std::string& cpu) -> py::object {
                 GSStatsQuery query;
                 query.section = section;
                 query.since = since;
+                query.cpu = cpu; // "ms": the ZX-MultiSound's GS
                 query.waitMs = 500;
                 GSStatsReply reply;
                 {
@@ -5720,11 +5721,12 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "The GS slot's statistics: the block or one section (card, mailbox, interrupts, cpu, audio, dma, spi, sd, "
-               "mp3, flash, rates, errors); since: a baseline from gs_reset_counters", py::arg("section") = "",
-               py::arg("since") = 0)
-            .def("gs_reset_counters", [](Emulator& self) -> py::object {
+               "mp3, flash, rates, errors); since: a baseline from gs_reset_counters; cpu: 'ms' the ZX-MultiSound's GS",
+               py::arg("section") = "", py::arg("since") = 0, py::arg("cpu") = "")
+            .def("gs_reset_counters", [](Emulator& self, const std::string& cpu) -> py::object {
                 GSStatsQuery query;
                 query.waitMs = 500;
+                query.cpu = cpu;
                 GSStatsReply reply;
                 {
                     py::gil_scoped_release release;
@@ -5735,18 +5737,22 @@ namespace PythonBindings
                 if (reply.status != 200)
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
-            }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then")
+            }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then; cpu: "
+               "'ms' the ZX-MultiSound's GS", py::arg("cpu") = "")
             // The firmware objects through the card's profile (gsfirmwareobjects.h, gs-debugger §8A.9)
-            .def("gs_firmware", [](Emulator& self, const std::string& object, const std::string& profile) -> py::object {
+            .def("gs_firmware", [](Emulator& self, const std::string& object, const std::string& profile,
+                                   const std::string& cpu) -> py::object {
                 GSFirmwareObjectsQuery query;
                 query.object = object;
                 query.profile = profile;
+                query.cpu = cpu;
                 const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(self.GetContext(), query);
                 if (reply.status != 200)
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "The GS card's firmware objects through its profile: struct instances as rows of fields, variables; "
-               "object: one by name; profile: another profile by id", py::arg("object") = "", py::arg("profile") = "")
+               "object: one by name; profile: another profile by id; cpu: 'ms' the ZX-MultiSound's GS",
+               py::arg("object") = "", py::arg("profile") = "", py::arg("cpu") = "")
             .def("gs_firmware_profiles", [](Emulator& self) -> py::object {
                 (void)self;
                 return StateNodeToPy(GSFirmwareProfilesState()["profiles"]);

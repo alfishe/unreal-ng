@@ -6,6 +6,8 @@
 #include "emulator/io/z80n/nextdivmmcjournal.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/io/z80n/nextsdjournal.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsslotstats.h"
@@ -52,14 +54,12 @@ StateNode GsBody(int status, const StateNode& body)
 /// The newest entries of the GS command log a debugger pane shows (the whole log: the history verbs)
 constexpr size_t kGsCommandRows = 500;
 
-/// The GS slot card's command log (gs-debugger design §6.3): its history `<slot>.commands`, the newest entries
-StateNode GsCommands(EmulatorContext* context)
+/// The newest entries of a command log history (`<device>`), as a catalog report
+StateNode CommandLogReport(EmulatorContext* context, const std::string& device)
 {
-    if (!context || !context->pSoundManager || !context->pSoundManager->getGeneralSound())
-        return NotAvailable("General Sound card not fitted");
     HistoryRequest request;
     request.verb = "read";
-    request.device = GSHistoryDevice(context) + ".commands";
+    request.device = device;
     request.last = kGsCommandRows;
     const HistoryReply reply = HistoryControl::Execute(context, request);
     if (reply.httpStatus != 200)
@@ -67,6 +67,36 @@ StateNode GsCommands(EmulatorContext* context)
     StateNode n = reply.body;
     n["available"] = true;
     return n;
+}
+
+/// The GS slot card's command log (gs-debugger design §6.3): its history `<slot>.commands`, the newest entries
+StateNode GsCommands(EmulatorContext* context)
+{
+    if (!context || !context->pSoundManager || !context->pSoundManager->getGeneralSound())
+        return NotAvailable("General Sound card not fitted");
+    return CommandLogReport(context, GSHistoryDevice(context) + ".commands");
+}
+
+/// The slot of the card that carries a General Sound (the ZX-MultiSound: the debugger's `ms` CPU); "" when none
+std::string MsGsSlot(EmulatorContext* context)
+{
+    if (!context || !context->pSlotManager)
+        return std::string();
+    for (const std::unique_ptr<ICard>& card : context->pSlotManager->Cards())
+        if (card->DebugGeneralSound())
+            return card->SlotId();
+    return std::string();
+}
+
+constexpr const char* kMsGsNotFitted = "No ZX-MultiSound with a General Sound fitted (slots plug zxbus.next multisound)";
+
+/// The ZX-MultiSound GS's command log: its history `<slot>.gs.commands`
+StateNode MsGsCommands(EmulatorContext* context)
+{
+    const std::string slot = MsGsSlot(context);
+    if (slot.empty())
+        return NotAvailable(kMsGsNotFitted);
+    return CommandLogReport(context, slot + ".gs.commands");
 }
 
 void GsCommandsCommands(const StateNode& report, StateNode& entry)
@@ -91,17 +121,34 @@ std::string GsCommandsSummary(const StateNode& report)
     return mode->s + ", " + std::to_string(kept ? kept->i : 0) + " entries";
 }
 
-/// The firmware's objects (gsfirmwareobjects.h): instances, variables, the dispatch table, the unknown commands
-StateNode GsFirmware(EmulatorContext* context)
+/// The firmware's objects (gsfirmwareobjects.h): instances, variables, the dispatch table, the unknown commands; on the
+/// card the debugger CPU `cpu` names
+StateNode GsFirmwareOf(EmulatorContext* context, const std::string& cpu)
 {
-    const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(context, GSFirmwareObjectsQuery{});
+    GSFirmwareObjectsQuery query;
+    query.cpu = cpu;
+    const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(context, query);
     return GsBody(reply.status, reply.body);
 }
 
-/// The card's statistics block (gsslotstats.h); while the machine runs and no frame has ended since, `pending`
-StateNode GsStats(EmulatorContext* context)
+StateNode GsFirmware(EmulatorContext* context)
 {
-    const GSStatsReply reply = GSStatsRead(context, GSStatsQuery{});
+    return GsFirmwareOf(context, std::string());
+}
+
+StateNode MsGsFirmware(EmulatorContext* context)
+{
+    if (MsGsSlot(context).empty())
+        return NotAvailable(kMsGsNotFitted);
+    return GsFirmwareOf(context, "ms");
+}
+
+/// The card's statistics block (gsslotstats.h); while the machine runs and no frame has ended since, `pending`
+StateNode GsStatsOf(EmulatorContext* context, const std::string& cpu)
+{
+    GSStatsQuery query;
+    query.cpu = cpu;
+    const GSStatsReply reply = GSStatsRead(context, query);
     if (reply.pending)
     {
         StateNode n = StateNode::Object();
@@ -111,6 +158,18 @@ StateNode GsStats(EmulatorContext* context)
         return n;
     }
     return GsBody(reply.status, reply.body);
+}
+
+StateNode GsStats(EmulatorContext* context)
+{
+    return GsStatsOf(context, std::string());
+}
+
+StateNode MsGsStats(EmulatorContext* context)
+{
+    if (MsGsSlot(context).empty())
+        return NotAvailable(kMsGsNotFitted);
+    return GsStatsOf(context, "ms");
 }
 
 StateNode BuildCdAudio(EmulatorContext* context)
@@ -247,6 +306,11 @@ const std::vector<ReportEntry>& CatalogEntries()
         {"covox", "Covox / SounDrive", "state/audio/covox", "state audio covox", "audio_covox_state", "audio_covox", &Covox, nullptr, nullptr},
         {"moonsound", "MoonSound", "state/audio/moonsound", "state audio moonsound", "audio_moonsound_state", "audio_moonsound", &MoonSound, nullptr, nullptr},
         {"multisound", "ZX-MultiSound", "state/audio/multisound", "multisound", "multisound_state", "audio_multisound", &MultiSound, nullptr, nullptr},
+        // The ZX-MultiSound's General Sound (the debugger's `ms` CPU): the card panes of the GS slot's for it; its
+        // hardware and protocol are the `multisound` report's `gs`
+        {"ms-gs-commands", "MultiSound GS command log", "history/zxbus.1.gs.commands", "history zxbus.1.gs.commands", "history", "device_history", &MsGsCommands, nullptr, &GsCommandsSummary, &GsCommandsCommands},
+        {"ms-gs-firmware", "MultiSound GS firmware objects", "state/audio/gs/firmware?cpu=ms", "gs firmware --cpu ms", "gs_firmware", "audio_gs_firmware", &MsGsFirmware, nullptr, nullptr},
+        {"ms-gs-stats", "MultiSound GS statistics", "state/audio/gs/stats?cpu=ms", "gs stats --cpu ms", "gs_stats", "audio_gs_stats", &MsGsStats, nullptr, nullptr},
         {"midi", "MIDI synthesizer", "state/audio/midi", "midi", "midi_state", "audio_midi", &Midi, nullptr, nullptr},
         {"wildsound", "Wild Sound", "state/audio/wildsound", "wildsound", "wildsound_state", "audio_wildsound", &WildSound, nullptr, nullptr},
         {"fdc", "Disk controller", "state/fdc", "state fdc", "fdc_state", "fdc", &Fdc, nullptr, nullptr},

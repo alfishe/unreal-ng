@@ -137,7 +137,8 @@ private:
     HistoryView * m_history;
     DevicesView * m_devices;
     std::vector<NextTab> m_next_tabs;
-    std::vector<NextTab> m_card_tabs;  //a General Sound card's (gs-debugger P5.1)
+    //a General Sound card's (or the MultiSound's GS), a NeoGS's and the LW player's own too (gs-debugger P5.1, P5.5)
+    std::vector<NextTab> m_card_tabs;
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
     QLabel * m_state;
@@ -194,9 +195,12 @@ private:
     //What the next stop shows changes against
     void mark_all();
     void show_state();
-    //A General Sound card's line at the last stop (gs-debugger A6 S1): the `gs` report's strip, empty without a card
+    //The followed card's line at the last stop (gs-debugger A6 S1): the `gs` report's strip (the MultiSound's: its
+    //gs part's), empty without a card
     QString m_card_strip;
     QString read_card_strip() const;
+    //The card the card tabs follow: "gs", "ms", "" none; "?" before the first look
+    std::string m_card_source = "?";
     void update_cursor();
     //What can be done now: the steps only while the machine is held, the
     //run while it is not running already

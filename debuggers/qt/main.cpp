@@ -1,6 +1,6 @@
 // unreal-debugger: eCat3's debugger window over an unreal-ng machine.
 //
-//   unreal-debugger [--model PENTAGON] [--card neogs|multisound | --no-gs] [file.sna|.z80|.tap|.trd|...]
+//   unreal-debugger [--model PENTAGON] [--card neogs|gs|gs-lw|multisound | --no-gs] [file.sna|.z80|.tap|.trd|...]
 //   unreal-debugger --measure 10 [...]   frames/s, process and GUI-thread CPU: screen only, debug mode, window
 //   unreal-debugger --screenshot out.png  stop, step, breakpoint; saves the window (cpu and card tabs) and exits
 //   unreal-debugger --self-check          the debugger API and the window's editors and buttons; exit code 2 on a failure
@@ -45,6 +45,7 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QTableWidget>
+#include <QPushButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolBar>
@@ -1029,28 +1030,156 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         }
     }
 
-    // A General Sound card's tabs (Log, Protocol, Firmware, Hardware, Stats): there while the machine has the card
+    // A General Sound card's tabs (Log, Protocol, Firmware, Hardware, Stats): there while the machine has the card;
+    // a NeoGS's DMA and SD · MP3 · Flash only on a NeoGS, whose Hardware tab is the NeoGS board; the lightweight
+    // player's Interpreter and Player only on it; on a MultiSound's GS the tabs read its reports (gs-debugger P5.5)
     {
         QTabWidget * side = tabs_with(window, "Devices");
-        QList<NextReportView *> views;  // in the tabs' order
+        QList<NextReportView *> views, neogs_views, lw_views;  // in the tabs' order
         for (int i = 0; side != nullptr && i < side->count(); i++)
-            if (auto * v = qobject_cast<NextReportView *>(side->widget(i)); v && v->objectName().startsWith("card:")) views << v;
+            if (auto * v = qobject_cast<NextReportView *>(side->widget(i)); v && v->objectName().startsWith("card:"))
+                (v->needs().empty() ? views : v->objectName().startsWith("card:lw-") ? lw_views : neogs_views) << v;
         check(views.size() == 5, "card tabs: five views");
+        check(neogs_views.size() == 2 && neogs_views[0]->objectName() == "card:neogs-dma" &&
+                  neogs_views[1]->objectName() == "card:neogs-media",
+              "card tabs: a NeoGS's DMA and SD · MP3 · Flash views");
+        check(lw_views.size() == 2 && lw_views[0]->objectName() == "card:lw-interpreter" &&
+                  lw_views[1]->objectName() == "card:lw-player",
+              "card tabs: the LW player's Interpreter and Player views");
         const bool card = !views.isEmpty() && views.front()->present();
+        const bool neogs = card && !neogs_views.isEmpty() && neogs_views.front()->present();
+        const bool lw = card && !lw_views.isEmpty() && lw_views.front()->present();
         bool shown = side != nullptr;
         for (NextReportView * v : views) shown = shown && side->isTabVisible(side->indexOf(v)) == card;
         check(shown, card ? "card tabs: shown with a General Sound" : "card tabs: hidden without one");
+        shown = side != nullptr;
+        for (NextReportView * v : neogs_views) shown = shown && side->isTabVisible(side->indexOf(v)) == neogs;
+        check(shown, neogs ? "card tabs: DMA and SD · MP3 · Flash shown with a NeoGS" : "card tabs: DMA and SD · MP3 · Flash hidden without a NeoGS");
+        shown = side != nullptr;
+        for (NextReportView * v : lw_views) shown = shown && side->isTabVisible(side->indexOf(v)) == lw;
+        check(shown, lw ? "card tabs: Interpreter and Player shown with the LW player" : "card tabs: Interpreter and Player hidden without the LW player");
+        // The card CPUs: the LW player has none; the card the tabs read (gs, the MultiSound's ms)
+        bool cpu_gs = false, cpu_ms = false;
+        for (ecatshim::CPU * c : cpus) {
+            cpu_gs = cpu_gs || c->name == "gs";
+            cpu_ms = cpu_ms || c->name == "ms";
+        }
+        if (lw) check(!cpu_gs && !cpu_ms && cpus.size() == 1, "card tabs: the LW player has no card CPU tab");
+        const bool ms = card && views.size() == 5 && views[4]->report() == "ms-gs-stats";
+        if (cpu_ms && !cpu_gs) {
+            check(ms && views[0]->report() == "ms-gs-commands" && views[1]->report() == "multisound" && views[1]->part() == "gs" &&
+                      views[2]->report() == "ms-gs-firmware" && views[3]->report() == "multisound" && views[3]->part() == "gs",
+                  "card tabs: the MultiSound's GS (ms-gs-commands, multisound.gs, ms-gs-firmware, ms-gs-stats)");
+            bool captioned = true;
+            for (NextReportView * v : views) captioned = captioned && v->caption()->text().contains("MultiSound");
+            check(captioned, "card tabs: each says the MultiSound's GS");
+            auto * dw = dynamic_cast<DebuggerWindow *>(window);
+            check(dw != nullptr && dw->state_text().contains("MultiSound GS"), "card tabs: the state's card line is the MultiSound's GS");
+            if (dw != nullptr) printf("  (state: %s)\n", dw->state_text().toUtf8().constData());
+        } else if (card && views.size() == 5) {
+            check(!ms && views[4]->report() == "gs-stats" && views[0]->caption()->text().contains("General Sound card"),
+                  "card tabs: the General Sound's reports (gs-commands, gs, gs-firmware, gs-stats)");
+        }
+        // A field anywhere in a view's tree, by its name; one of a group's, by both
+        auto field = [](NextReportView * v, const char * name) {
+            const QList<QTreeWidgetItem *> found = v->fields()->findItems(name, Qt::MatchExactly | Qt::MatchRecursive);
+            return found.isEmpty() ? QString() : found.front()->text(1);
+        };
+        auto in_group = [](NextReportView * v, const char * group, const char * name) {
+            for (QTreeWidgetItem * g : v->fields()->findItems(group, Qt::MatchExactly))
+                for (int i = 0; i < g->childCount(); i++)
+                    if (g->child(i)->text(0) == name) return g->child(i)->text(1);
+            return QString();
+        };
         if (card && views.size() == 5) {
             for (NextReportView * v : views) v->refresh();
             check(views[1]->fields()->topLevelItemCount() > 3, "card tabs: protocol and mailbox fields");
             check(views[3]->table() && views[3]->table()->rowCount() >= 4, "card tabs: hardware lists the DAC channels");
             check(views[4]->fields()->topLevelItemCount() > 0, "card tabs: stats");
+            if (ms) {
+                // Read with cpu ms: the MultiSound's own statistics and the firmware objects of its GS
+                check(views[2]->table() && views[2]->table()->rowCount() > 0, "card tabs: the MultiSound GS's firmware variables");
+                printf("  (ms: %d stats fields, %d firmware variables, %d log records)\n", views[4]->fields()->topLevelItemCount(),
+                       views[2]->table() ? views[2]->table()->rowCount() : -1, views[0]->table() ? views[0]->table()->rowCount() : -1);
+            }
             QString strip;
             for (QTreeWidgetItem * item : views[3]->fields()->findItems("strip", Qt::MatchExactly))
                 strip = item->text(1);
-            check(strip.contains(" Z80 ") && strip.contains(" · cycle ") && strip.contains(" · MPAG #"),
-                  "card tabs: the card's line (CPU, cycle, page)");
+            if (lw)
+                check(strip.startsWith("GS lightweight player"), "card tabs: the card's line (the lightweight player)");
+            else
+                check(strip.contains(" Z80 ") && strip.contains(" · cycle ") && strip.contains(" · MPAG #"),
+                      "card tabs: the card's line (CPU, cycle, page)");
             if (!strip.isEmpty()) printf("  (card line: %s)\n", strip.toUtf8().constData());
+            const QString gscfg0 = field(views[3], "GSCFG0"), clock = field(views[3], "clock");
+            if (neogs) {
+                // The core's neogs board (DebugBoards), read through the shim, with the statistics' counters
+                const ecatshim::Emulator::Board board = m->read_board("neogs");
+                check(board.ok && board.control("sstat") != nullptr, "card tabs: the neogs board read through the shim");
+                const QString sstat = field(views[3], "SSTAT"), switches = in_group(views[3], "Clock", "switches");
+                check(gscfg0.startsWith("#") && clock.endsWith("MHz") && sstat.startsWith("#") &&
+                          !field(views[3], "window 0 page").isEmpty() && !field(views[3], "left").isEmpty() &&
+                          !switches.isEmpty() && switches != "-" && views[3]->table()->rowCount() == 8,
+                      "card tabs: hardware is the NeoGS board (GSCFG0, clock and its switches, PG0-PG3, SSTAT, DAC levels, 8 channels)");
+                check(views[3]->fields()->findItems("Mailbox counters", Qt::MatchExactly).size() == 1,
+                      "card tabs: hardware has the mailbox counters");
+                printf("  (NeoGS board: GSCFG0 %s; clock %s, %s switches; SSTAT %s; SCTRL %s)\n", gscfg0.toUtf8().constData(),
+                       clock.toUtf8().constData(), switches.toUtf8().constData(), sstat.toUtf8().constData(),
+                       field(views[3], "SCTRL").toUtf8().constData());
+            } else {
+                check(gscfg0.isEmpty(), "card tabs: hardware is the GS board (no GSCFG0)");
+            }
+        }
+        if (lw && lw_views.size() == 2) {
+            // A10: the interpreter's state (Idle on a quiet card, or its line) and the player's
+            for (NextReportView * v : lw_views) v->refresh();
+            NextReportView * interpreter = lw_views[0];
+            NextReportView * player = lw_views[1];
+            const QString state = in_group(interpreter, "Interpreter", "state"), line = in_group(interpreter, "Interpreter", "text");
+            const QString diagram = in_group(interpreter, "Interpreter", "diagram");
+            check(!state.isEmpty() && (state == "Idle" || !line.isEmpty()) && diagram.contains(QString::fromUtf8("● ") + state) &&
+                      in_group(interpreter, "Queues", "params").endsWith("/ 16") && !in_group(interpreter, "Upload", "progress").isEmpty(),
+                  "card tabs: the LW interpreter's state, diagram, queues of 16, upload");
+            const QString song = in_group(player, "Song", "state");
+            check(!song.isEmpty() && !in_group(player, "Song", "position").isEmpty() && !in_group(player, "Song", "BPM").isEmpty() &&
+                      player->table(0) && player->table(0)->rowCount() == 4 && player->table(1) &&
+                      player->table(1)->columnCount() == 10 && player->fields()->findItems("Module", Qt::MatchExactly).size() == 1,
+                  "card tabs: the LW player's song, four channels, module row and samples table");
+            printf("  (LW interpreter: %s, \"%s\"; %s; player %s, position %s, BPM %s, %d samples)\n", state.toUtf8().constData(),
+                   line.toUtf8().constData(), diagram.toUtf8().constData(), song.toUtf8().constData(),
+                   in_group(player, "Song", "position").toUtf8().constData(), in_group(player, "Song", "BPM").toUtf8().constData(),
+                   player->table(1) ? player->table(1)->rowCount() : -1);
+        }
+        if (neogs && neogs_views.size() == 2) {
+            for (NextReportView * v : neogs_views) v->refresh();
+            NextReportView * dma = neogs_views[0];
+            NextReportView * media = neogs_views[1];
+            const QString mode = in_group(dma, "ZX-DMA", "mode");
+            QTableWidget * rows = dma->table();
+            int starts = -1;
+            for (int k = 0; rows && k < rows->columnCount(); k++)
+                if (rows->horizontalHeaderItem(k) && rows->horizontalHeaderItem(k)->text() == "starts") starts = k;
+            const QString zx_starts = starts >= 0 && rows->item(0, starts) ? rows->item(0, starts)->text() : QString();
+            check(!mode.isEmpty() && rows && rows->rowCount() == 3 && rows->item(0, 0) && rows->item(0, 0)->text() == "zx",
+                  "card tabs: DMA shows the ZX-DMA mode and the three modules");
+            check(!zx_starts.isEmpty() && zx_starts != "-", "card tabs: DMA rows carry the statistics' starts");
+            const QString present = in_group(media, "SD: Medium", "present"), state = in_group(media, "SD: Protocol", "state");
+            const QString flash = in_group(media, "Flash", "title"), flash_mode = in_group(media, "Flash", "mode");
+            check(!present.isEmpty() && !state.isEmpty() && !in_group(media, "MP3: Decoder", "chip").isEmpty() && !flash.isEmpty() &&
+                      !flash_mode.isEmpty() && !in_group(media, "MP3 counters", "underruns").isEmpty(),
+                  "card tabs: SD · MP3 · Flash shows the SD (present, state), the MP3 chip and underruns, the flash title and mode");
+            printf("  (ZX-DMA mode %s, ZX starts %s; SD present %s, state %s; MP3 %s; flash %s, mode %s, vendor %s)\n",
+                   mode.toUtf8().constData(), zx_starts.toUtf8().constData(), present.toUtf8().constData(),
+                   state.toUtf8().constData(), in_group(media, "MP3: Decoder", "chip").toUtf8().constData(),
+                   flash.toUtf8().constData(), flash_mode.toUtf8().constData(),
+                   in_group(media, "Flash", "vendor").toUtf8().constData());
+            int buttons = 0;
+            for (const char * b : {"Insert image...", "Insert folder...", "Eject", "Save flash"})
+                buttons += media->findChild<QPushButton *>(QString("action:") + b) != nullptr;
+            check(buttons == 4, "card tabs: SD · MP3 · Flash has Insert image / folder, Eject, Save flash");
+            // The verb's road, nothing changed: an unknown action comes back refused, with the core's words
+            const ecatshim::Emulator::BoardAnswer refused = m->board_action("neogs_sd", "no_such_action", std::string());
+            check(!refused.ok && !refused.message.empty(), "card tabs: a board action reaches the core and its refusal comes back");
         }
     }
 
@@ -1101,8 +1230,8 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
                   "event bp: each listed by its own CPU, value kept");
             find_event(gs, "card_command", cb);
             find_event(cpu, "host_command", hb);
-            check(listed("gs", "card_command") && listed("main", "host_command"),
-                  "event bp: the breakpoint list's rows say gs / main");
+            check(listed(gs->name.c_str(), "card_command") && listed("main", "host_command"),
+                  "event bp: the breakpoint list's rows say the card CPU / main");
             ecatshim::EventBreakpoint off;
             check(gs->enable_event_breakpoint(cb.id, false) && find_event(gs, "card_command", off) && !off.enabled,
                   "event bp: switched off");
@@ -1379,7 +1508,7 @@ int main(int argc, char * argv[])
     parser.addHelpOption();
     QCommandLineOption modelOpt("model", "Machine model (PENTAGON, 48K, 128K, ...)", "model", "PENTAGON");
     QCommandLineOption noGsOpt("no-gs", "No General Sound card");
-    QCommandLineOption cardOpt("card", "The card in zxbus.1: neogs (default), multisound, ...", "card", "neogs");
+    QCommandLineOption cardOpt("card", "The card in zxbus.1: neogs (default), gs, gs-lw, multisound, ...", "card", "neogs");
     QCommandLineOption measureOpt("measure", "Measure N seconds without and with the window, then exit", "seconds");
     parser.addOption(modelOpt);
     parser.addOption(noGsOpt);

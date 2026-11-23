@@ -325,6 +325,55 @@ public:
         bool ok = false;
         std::string json;
     };
+    // A device board (not in ecat; gs-debugger P5.5, debugger-model widget catalog §4): the core's DebugBoards::Read
+    // (over the WebAPI GET /debug/boards/{id}), its columns' groups in order. A control's value as text: numbers
+    // decimal, true / false; its type (hex8, hex16, hex21, dec, counter, rate, bool, led, text, bits, enum, bar) says
+    // how it reads; bits name their bits (bit 0 first), a bar has its max. ok false: no such board here (message why)
+    struct BoardControl {
+        std::string id, label, type, value, note;
+        std::vector<std::string> names;
+        long long max = 0;
+    };
+    struct BoardGroup {
+        std::string title, raw;
+        std::vector<BoardControl> controls;
+    };
+    struct Board {
+        bool ok = false;
+        bool available = false;
+        std::string message, id, title;
+        std::vector<BoardGroup> groups;
+        std::vector<std::pair<std::string, std::string>> actions;  // id, title
+        const BoardControl * control(const std::string &control_id) const
+        {
+            for (const BoardGroup &g : groups)
+                for (const BoardControl &c : g.controls)
+                    if (c.id == control_id) return &c;
+            return nullptr;
+        }
+    };
+    virtual Board read_board(const std::string &id)
+    {
+        Board b;
+        b.id = id;
+        b.message = "This machine has no device boards";
+        return b;
+    }
+    // A board's action (DebugBoards::Action; over the WebAPI POST /debug/boards/{board}/actions/{action} {arg}):
+    // neogs_sd insert <path: an image or a host folder> / eject (the media manager's slot sd.ngs), neogs_flash save.
+    // ok false on a refusal, the core's words in message
+    struct BoardAnswer {
+        bool ok = false;
+        std::string message;
+    };
+    virtual BoardAnswer board_action(const std::string &board, const std::string &action, const std::string &arg)
+    {
+        (void)board;
+        (void)action;
+        (void)arg;
+        return {false, "This machine has no device boards"};
+    }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {

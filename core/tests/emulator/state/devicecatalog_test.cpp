@@ -94,7 +94,7 @@ TEST(DeviceCatalog_Test, TheCardPanesGoWithTheCard)
     const StateNode all = DeviceState::Catalog(emulator->GetContext(), true);
     EmulatorTestHelper::CleanupEmulator(emulator);
 
-    for (const char* id : {"gs-commands", "gs-firmware", "gs-stats"})
+    for (const char* id : {"gs-commands", "gs-firmware", "gs-stats", "ms-gs-commands", "ms-gs-firmware", "ms-gs-stats"})
     {
         const StateNode* r = Report(all, id);
         ASSERT_NE(r, nullptr) << id;

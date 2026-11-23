@@ -27,6 +27,7 @@
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
+#include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/covox.h"
@@ -818,6 +819,17 @@ std::string GeneralSoundStrip(const StateNode& report)
         const std::string title = text({"firmware_profile", "title"});
         line += " · Symbols: " + (!title.empty() ? title : std::string("unknown firmware"));
     }
+    // The lightweight player (gs-debugger A10): its interpreter when busy, its song position while it plays
+    if (const std::string state = text({"interpreter", "state"}); !state.empty() && state != "idle")
+        line += " · " + text({"interpreter", "text"});
+    if (const StateNode* player = report.find("player"); player && player->find("playing") && player->find("playing")->b)
+    {
+        int64_t position = 0;
+        int64_t row = 0;
+        number({"player", "position"}, position);
+        number({"player", "row"}, row);
+        line += " · playing pos " + std::to_string(position) + " row " + std::to_string(row);
+    }
     return line;
 }
 
@@ -910,6 +922,12 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
         }
     }
     ret["cpu"] = cpu;
+    // The lightweight player's inspector (gs-debugger A10, W2-W3): the interpreter and the player, read-only
+    if (const auto* lw = dynamic_cast<const SoundChip_GSLightweight*>(gs))
+    {
+        ret["interpreter"] = lw->interpreterState();
+        ret["player"] = lw->playerState();
+    }
     ret["strip"] = GeneralSoundStrip(ret);
 
     NeoGSStateInfo ngs;

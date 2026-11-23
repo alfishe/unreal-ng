@@ -80,7 +80,10 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
     EmulatorContext* context = emulator->GetContext();
     SoundManager* soundManager = context ? context->pSoundManager : nullptr;
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
-    if (!gs)
+    // `stats` and `firmware` read another card by its CPU (--cpu ms: the ZX-MultiSound's GS) without a GS slot card
+    const bool otherCard = !args.empty() && (args[0] == "stats" || args[0] == "firmware") &&
+                           std::find(args.begin(), args.end(), "--cpu") != args.end();
+    if (!gs && !otherCard)
     {
         session.SendResponse(std::string("Error: General Sound card is not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs).") + NEWLINE);
         return;
@@ -217,9 +220,9 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///                                     - the debugger's send (gs-debugger design §6.4, F6): each byte when the
 ///                                       card may take it, the replies read, decoded by the firmware profile
 ///   gs conversation [id]              - a send by id (none: the last)
-///   gs stats [section] [--since <id>] [--fresh] - the slot's statistics (gsslotstats.h, gs-debugger N7)
+///   gs stats [section] [--since <id>] [--fresh] [--cpu gs|ms] - the statistics (gsslotstats.h, N7); ms: the MultiSound GS
 ///   gs stats reset                    - a statistics baseline: its id for --since
-///   gs firmware [object] [--profile <id>] - the firmware objects through the profile (gsfirmwareobjects.h, M1-M3)
+///   gs firmware [object] [--profile <id>] [--cpu gs|ms] - the firmware objects through the profile (gsfirmwareobjects.h, M1-M3)
 ///   gs firmware profiles              - the firmware profiles known (built-in and files)
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
@@ -241,7 +244,10 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     EmulatorContext* context = emulator->GetContext();
     SoundManager* soundManager = context ? context->pSoundManager : nullptr;
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
-    if (!gs)
+    // `stats` and `firmware` read another card by its CPU (--cpu ms: the ZX-MultiSound's GS) without a GS slot card
+    const bool otherCard = !args.empty() && (args[0] == "stats" || args[0] == "firmware") &&
+                           std::find(args.begin(), args.end(), "--cpu") != args.end();
+    if (!gs && !otherCard)
     {
         session.SendResponse(std::string("Error: General Sound card is not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs).") + NEWLINE);
         return;
@@ -250,7 +256,8 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     static const char* kUsage =
         "Usage: gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|"
         "read_status|read_data|send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>]|"
-        "conversation [id]|stats [section] [--since <id>] [--fresh]|stats reset|firmware [object] [--profile <id>]|"
+        "conversation [id]|stats [section] [--since <id>] [--fresh] [--cpu gs|ms]|stats reset [--cpu gs|ms]|"
+        "firmware [object] [--profile <id>] [--cpu gs|ms]|"
         "firmware profiles|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
         "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
@@ -383,6 +390,8 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         {
             if (args[i] == "--fresh")
                 query.fresh = true;
+            else if (args[i] == "--cpu" && i + 1 < args.size())
+                query.cpu = args[++i];
             else if (args[i] == "--since" && i + 1 < args.size() && !args[i + 1].empty() && args[i + 1].size() <= 9 &&
                      args[i + 1].find_first_not_of("0123456789") == std::string::npos)
                 query.since = static_cast<uint32_t>(std::stoul(args[++i]));
@@ -395,7 +404,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         }
         const GSStatsReply reply = bad ? GSStatsReply{} : reset ? GSStatsResetCounters(context, query) : GSStatsRead(context, query);
         if (bad)
-            ss << "Usage: gs stats [section] [--since <id>] [--fresh] | gs stats reset" << NEWLINE;
+            ss << "Usage: gs stats [section] [--since <id>] [--fresh] [--cpu gs|ms] | gs stats reset [--cpu gs|ms]" << NEWLINE;
         else if (reply.pending)
             ss << "Error: no frame ended within 500 ms (the machine runs); read again." << NEWLINE;
         else if (reply.status != 200)
@@ -416,6 +425,8 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         {
             if (args[i] == "--profile" && i + 1 < args.size())
                 query.profile = args[++i];
+            else if (args[i] == "--cpu" && i + 1 < args.size())
+                query.cpu = args[++i];
             else if (args[i] == "profiles" && i == 1)
                 profiles = true;
             else if (query.object.empty() && args[i].rfind("--", 0) != 0)
@@ -425,7 +436,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         }
         std::string text;
         if (bad)
-            ss << "Usage: gs firmware [object] [--profile <id>] | gs firmware profiles" << NEWLINE;
+            ss << "Usage: gs firmware [object] [--profile <id>] [--cpu gs|ms] | gs firmware profiles" << NEWLINE;
         else if (profiles)
         {
             GSFirmwareProfilesState(&text);

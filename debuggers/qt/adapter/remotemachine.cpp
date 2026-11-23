@@ -738,6 +738,61 @@ public:
     QString endpoint() const { return QString("http://%1:%2").arg(m_host).arg(m_port); }
 
     bool debug_online() const override { return m_online.load(); }
+    // A device board: GET /debug/boards/{id}, its layout as the shim's board
+    Board read_board(const std::string &id) override
+    {
+        Board out;
+        out.id = id;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        int status = 0;
+        const QJsonObject body = m_http.json("GET", m_base + "/debug/boards/" + QString::fromStdString(id), QJsonObject(), &status);
+        out.ok = status == 200;
+        if (!out.ok) {
+            out.message = status == 0 ? std::string("No answer from the emulator") : body.value("message").toString().toStdString();
+            return out;
+        }
+        auto str = [](const QJsonObject &o, const char * key) { return o.value(key).toString().toStdString(); };
+        out.title = str(body, "title");
+        out.available = body.value("available").toBool();
+        for (const QJsonValue &column : body.value("columns").toArray())
+            for (const QJsonValue &gv : column.toObject().value("groups").toArray()) {
+                const QJsonObject g = gv.toObject();
+                BoardGroup group{str(g, "title"), str(g, "raw"), {}};
+                for (const QJsonValue &cv : g.value("controls").toArray()) {
+                    const QJsonObject c = cv.toObject();
+                    BoardControl control;
+                    control.id = str(c, "id");
+                    control.label = str(c, "label");
+                    control.type = str(c, "type");
+                    control.note = str(c, "note");
+                    control.value = scalar_text(c.value("value"));
+                    for (const QJsonValue &name : c.value("names").toArray()) control.names.push_back(name.toString().toStdString());
+                    if (c.value("max").isDouble()) control.max = (long long)c.value("max").toDouble();
+                    group.controls.push_back(std::move(control));
+                }
+                out.groups.push_back(std::move(group));
+            }
+        for (const QJsonValue &a : body.value("actions").toArray())
+            out.actions.emplace_back(str(a.toObject(), "id"), str(a.toObject(), "title"));
+        return out;
+    }
+    // A board's action: POST /debug/boards/{board}/actions/{action} {arg}
+    BoardAnswer board_action(const std::string &board, const std::string &action, const std::string &arg) override
+    {
+        if (!m_online.load()) return {false, "The emulator is not connected"};
+        QJsonObject body;
+        if (!arg.empty()) body.insert("arg", QString::fromStdString(arg));
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/debug/boards/" + QString::fromStdString(board) + "/actions/" +
+                                                      QString::fromStdString(action), body, &status);
+        if (status == 0) return {false, "No answer from the emulator"};
+        if (status != 200) return {false, r.value("message").toString().toStdString()};
+        return {true, board + " " + action + ": " + r.value("status").toString().toStdString()};
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }

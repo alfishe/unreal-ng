@@ -39,7 +39,9 @@
 #include "debugger/disksectordialog.h"
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
+#include "debugger/boardpane.h"
 #include "debugger/cardpanes.h"
+#include "debugger/gslwpane.h"
 #include "debugger/nextpanes.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/reportpane.h"
@@ -97,12 +99,15 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         _sideTabs->setTabVisible(index, false);
         _nextPanes.push_back(pane.pane);
     }
-    for (const CardPanes::Pane& pane : CardPanes::Create(_sideTabs))
+    for (const CardPanes::Pane& pane : CardPanes::Create(_sideTabs, _cardFollow))
     {
-        const int index = _sideTabs->addTab(pane.pane, pane.title);
+        const int index = _sideTabs->addTab(pane.widget(), pane.title);
         _sideTabs->setTabToolTip(index, pane.tooltip);
         _sideTabs->setTabVisible(index, false);
-        _cardPanes.push_back(pane.pane);
+        if (BoardPane* board = pane.board)
+            connect(board, &BoardPane::actionRequested, this,
+                    [this, board](const QString& id, const QString& action, const QString& arg) { runBoardAction(board, id, action, arg); });
+        _cardPanes.push_back(pane);
     }
     historyLayout->addWidget(_sideTabs);
     ui->mainSplitter->addWidget(_sideGroup);
@@ -395,6 +400,9 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         retargetPanes();
         if (_cardRun)
             _cardRun->update();
+        // The card panes follow the card CPU in front (the GS slot's card or the MultiSound's)
+        updateSidePane();
+        refreshNextPanes(_emulator && !_emulator->IsPaused());
         emit cpuChanged(cpu);
     });
 
@@ -1554,7 +1562,7 @@ void DebuggerWindow::updateCardStrip()
 {
     if (!_cardStrip)
         return;
-    const QString text = _emulator ? CardPanes::StripText(_emulator->GetContext(), _emulator->LastStop()) : QString();  // lifetime-ok: under updateState's lease
+    const QString text = _emulator ? CardPanes::StripText(_emulator->GetContext(), _emulator->LastStop(), currentCpu()) : QString();  // lifetime-ok: under updateState's lease
     _cardStrip->setText(text);
     _cardStrip->setVisible(!text.isEmpty());
 }
@@ -1933,24 +1941,42 @@ void DebuggerWindow::updateSidePane()
             _sideTabs->setTabVisible(_sideTabs->indexOf(pane), next);
         }
     }
-    const bool card = CardPanes::Fitted(context);
-    if (card != _cardFitted)
+    // The card panes show the card CPU in front's card (CardPanes::Front): a tab switch between `gs` and `ms` retargets them
+    const DebugCpuId front = currentCpu();
+    *_cardFollow = front;
+    const CardPanes::Target target = CardPanes::Front(context, front);
+    std::vector<bool> cardShown;
+    cardShown.reserve(_cardPanes.size());
+    for (const CardPanes::Pane& pane : _cardPanes)
+        cardShown.push_back(CardPanes::Shown(pane.card, context, front));
+    if (cardShown != _cardShown || target != _cardTarget)
     {
-        _cardFitted = card;
-        for (ReportPane* pane : _cardPanes)
+        _cardShown = cardShown;
+        _cardTarget = target;
+        for (size_t i = 0; i < _cardPanes.size(); i++)
         {
-            pane->clearMarks();
-            _sideTabs->setTabVisible(_sideTabs->indexOf(pane), card);
+            const CardPanes::Pane& pane = _cardPanes[i];
+            if (pane.pane)
+                pane.pane->clearMarks();  // another card: nothing to compare with
+            if (pane.board)
+                pane.board->clearMarks();
+            _sideTabs->setTabVisible(_sideTabs->indexOf(pane.widget()), cardShown[i]);
         }
     }
-    _sideGroup->setTitle(QString("PC history") + (next ? " / Next" : "") + (card ? " / GS" : ""));
+    const bool neogs = target == CardPanes::Target::Slot && CardPanes::NeoGSFitted(context);
+    const char* card = target == CardPanes::Target::MultiSound ? " / MultiSound GS"
+                       : neogs                                 ? " / NeoGS"
+                       : target == CardPanes::Target::Slot     ? " / GS"
+                                                               : "";
+    _sideGroup->setTitle(QString("PC history") + (next ? " / Next" : "") + card);
     // The PC history records while its tab is in front of a shown window (records cost every instruction); the live
     // refresh of a Next tab runs while one is in front, a paused machine is refreshed by its stop (updateState)
     const bool shown = isVisible();
     const bool history = shown && _sideTabs->currentWidget() == _pcHistoryPane;
     if (_pcHistoryPane->isRecording() != history)
         _pcHistoryPane->setRecording(history);
-    if (shown && qobject_cast<ReportPane*>(_sideTabs->currentWidget()))
+    if (shown && (qobject_cast<ReportPane*>(_sideTabs->currentWidget()) || qobject_cast<BoardPane*>(_sideTabs->currentWidget()) ||
+                  qobject_cast<GsLwPane*>(_sideTabs->currentWidget())))
         _nextPanesTimer->start();
     else
         _nextPanesTimer->stop();
@@ -1961,14 +1987,34 @@ void DebuggerWindow::refreshNextPanes(bool live)
     if (!_emulator || !isVisible())
         return;
     ReportPane* pane = qobject_cast<ReportPane*>(_sideTabs->currentWidget());
-    if (!pane || !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
+    BoardPane* board = qobject_cast<BoardPane*>(_sideTabs->currentWidget());
+    GsLwPane* inspector = qobject_cast<GsLwPane*>(_sideTabs->currentWidget());
+    if ((!pane && !board && !inspector) || !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
         return;
     if (!live && _emulator->IsDirectStepping())
         return;  // the stepping's end refreshes (updateState)
     Emulator::ContextLease lease = _emulator->LeaseContext();
     if (!lease)
         return;
-    pane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    if (pane)
+        pane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else if (board)
+        board->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else
+        inspector->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+}
+
+void DebuggerWindow::runBoardAction(BoardPane* pane, const QString& board, const QString& action, const QString& arg)
+{
+    if (!_emulator)
+        return;
+    {
+        Emulator::ContextLease lease = _emulator->LeaseContext();
+        if (!lease)
+            return;
+        pane->runAction(_emulator->GetContext(), board, action, arg);  // lifetime-ok: the lease holds it for this request
+    }
+    refreshNextPanes(!_emulator->IsPaused());
 }
 
 void DebuggerWindow::showPortWatch()

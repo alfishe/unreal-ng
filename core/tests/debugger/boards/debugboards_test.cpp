@@ -113,6 +113,10 @@ TEST_F(DebugBoards_Test, TheNeoGSBoardsCarryTheCardsState)
     const DebugBoardReply dma = DebugBoards::Read(_ctx, "neogs_dma", true);
     EXPECT_EQ(Value(dma, "zx.mode").s, s.zxMode);
     EXPECT_EQ(Value(dma, "modules[sd].address").i, s.dmaAddress[1] & 0x1FFFFF);
+    // DMA_MOD numbers the modules from 1 (1 ZX, 2 SD, 3 MP3); 0 selects none
+    const char* const modules[3] = {"modules[zx].selected", "modules[sd].selected", "modules[mp3].selected"};
+    for (int m = 0; m < 3; m++)
+        EXPECT_EQ(Value(dma, modules[m]).b, s.dmaSelect == m + 1) << modules[m] << ", DMA_MOD " << int(s.dmaSelect);
 
     const DebugBoardReply sd = DebugBoards::Read(_ctx, "neogs_sd", true);
     EXPECT_TRUE(Value(sd, "present").b);

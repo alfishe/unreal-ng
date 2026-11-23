@@ -302,7 +302,7 @@ DebugBoardBuilder NeoGsDmaBoard(const GeneralSoundCard& gs, const NeoGSStateInfo
     {
         const std::string module = std::string("modules[") + kModules[m] + "]";
         b.Group(kTitles[m])
-            .Led(module + ".selected", "selected", s.dmaSelect == m, "DMA_MOD")
+            .Led(module + ".selected", "selected", s.dmaSelect == m + 1, "DMA_MOD: 1 ZX, 2 SD, 3 MP3")
             .Led(module + ".running", "running", s.dmaRunning[m], "CST bit 7")
             .Hex21(module + ".address", "address", s.dmaAddress[m])
             .Dec(module + ".page", "page", s.dmaAddress[m] >> 14, "its 16 KB page");

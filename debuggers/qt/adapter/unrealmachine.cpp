@@ -27,6 +27,7 @@
 #include <set>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/boards/debugboards.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/history/exechistory.h"
@@ -1273,6 +1274,61 @@ private:
         const execution::RunReply r = execution::RunControl(m_emu).CardStep(kGui, card->id(), kind, std::max(1u, count));
         if (!r.Ok()) fprintf(stderr, "ecat-debugger: card step refused: %s\n", r.message.c_str());
         return true;
+    }
+
+    // A device board in process: DebugBoards::Read where the machine stands still, its layout as the shim's board
+    Board read_board(const std::string &id) override
+    {
+        DebugBoardReply reply;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&reply, emu, &id]() { reply = DebugBoards::Read(emu->GetContext(), id); });
+        Board out;
+        out.id = id;
+        out.ok = reply.status == 200;
+        if (!out.ok) {
+            out.message = reply.text;
+            return out;
+        }
+        const StateNode &body = reply.body;
+        auto str = [](const StateNode &n, const char * key) {
+            const StateNode * v = n.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::String ? v->s : std::string();
+        };
+        out.title = str(body, "title");
+        if (const StateNode * available = body.find("available")) out.available = available->kind == StateNode::Kind::Bool && available->b;
+        if (const StateNode * columns = body.find("columns"))
+            for (const StateNode &column : columns->items)
+                if (const StateNode * groups = column.find("groups"))
+                    for (const StateNode &g : groups->items) {
+                        BoardGroup group{str(g, "title"), str(g, "raw"), {}};
+                        if (const StateNode * controls = g.find("controls"))
+                            for (const StateNode &c : controls->items) {
+                                BoardControl control;
+                                control.id = str(c, "id");
+                                control.label = str(c, "label");
+                                control.type = str(c, "type");
+                                control.note = str(c, "note");
+                                if (const StateNode * v = c.find("value")) control.value = scalar_text(*v);
+                                if (const StateNode * names = c.find("names"))
+                                    for (const StateNode &name : names->items) control.names.push_back(name.s);
+                                if (const StateNode * max = c.find("max"); max != nullptr && max->kind == StateNode::Kind::Int) control.max = max->i;
+                                group.controls.push_back(std::move(control));
+                            }
+                        out.groups.push_back(std::move(group));
+                    }
+        if (const StateNode * actions = body.find("actions"))
+            for (const StateNode &a : actions->items) out.actions.emplace_back(str(a, "id"), str(a, "title"));
+        return out;
+    }
+    // A board's action in process: DebugBoards::Action (the NeoGS media requests: checked here, applied on the
+    // machine's thread)
+    BoardAnswer board_action(const std::string &board, const std::string &action, const std::string &arg) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * context = lease.get();
+        if (context == nullptr) return {false, "No machine"};
+        const DebugBoardReply reply = DebugBoards::Action(context, board, action, arg);
+        return {reply.status == 200, reply.text};
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads

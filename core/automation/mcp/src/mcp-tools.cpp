@@ -329,6 +329,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "operations: only entries after this seq (the last_seq of a previous answer)";
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["description"] = "operations: only the newest N entries (default 20; 0: every entry kept)";
+    schema["properties"]["gs_cpu"]["type"] = "string";
+    schema["properties"]["gs_cpu"]["description"] =
+        "gs_reset_counters: the card whose counters ('gs' or empty: the slot's General Sound, 'ms': the ZX-MultiSound's)";
     schema["properties"]["personality"]["type"] = "string";
     schema["properties"]["personality"]["description"] =
         "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
@@ -893,6 +896,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         }
                         body["mode"] = args["mode"].asString();
                     }
+                    else if (action == "gs_reset_counters" && args.isMember("gs_cpu") && args["gs_cpu"].isString())
+                        body["cpu"] = args["gs_cpu"].asString();  // "ms": the ZX-MultiSound's GS
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
                         if (action == "gs_switch_personality" && response.isMember("status"))
                         {
@@ -2893,7 +2898,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
-        "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; "
+        "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; on the "
+        "lightweight player 'interpreter' (state idle/params/command/upload/reply/covox, command, upload received/total) and "
+        "'player' (position, row, tick, speed, BPM, four channels, module and samples); "
         "reports unavailable when the card is not fitted), 'audio_covox' = Covox / SoundDrive (fitment, the ports this model "
         "decodes, ports shared with Beta-128, the four DAC latches), 'audio_moonsound' = MoonSound OPL4 overview (NEW/NEW2, "
         "address latches, #F8/#F9 mix, wave memory, keyed FM channels and PCM slots), 'audio_opl4_fm' = its 18 FM channels "
@@ -2933,7 +2940,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
         "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
-        "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report, DACs, MIDI summary), "
+        "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report under 'gs' with the "
+        "audio_gs fields (its firmware objects and statistics: audio_gs_firmware / audio_gs_stats with gs_cpu=ms), DACs, "
+        "MIDI summary), "
         "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
         "notes sounding; polyphony, counters, bank; a panic is invoke_api POST /api/v1/emulator/{id}/control/audio/midi "
         "{action: panic}), "
@@ -3061,6 +3070,10 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["gs_stats_since"]["description"] = "'audio_gs_stats': a baseline id from emulator_manage gs_reset_counters";
     schema["properties"]["gs_firmware_profile"]["type"] = "string";
     schema["properties"]["gs_firmware_profile"]["description"] = "'audio_gs_firmware': a profile id (default: the card's)";
+    schema["properties"]["gs_cpu"]["type"] = "string";
+    schema["properties"]["gs_cpu"]["description"] =
+        "'audio_gs_stats' / 'audio_gs_firmware': the card by its debugger CPU: gs (default, the GS slot's) or ms (the "
+        "ZX-MultiSound's GS; its hardware and protocol are in 'audio_multisound')";
     schema["properties"]["gs_stats_fresh"]["type"] = "boolean";
     schema["properties"]["gs_stats_fresh"]["description"] = "'audio_gs_stats': a block from a frame end after this call";
     schema["properties"]["nr_sd_kinds"]["type"] = "string";
@@ -3329,9 +3342,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 add("since", text("gs_stats_since"));
                 if (text("gs_stats_fresh") == "true")
                     add("fresh", "1");
+                add("cpu", text("gs_cpu"));
                 nrReports["audio_gs_stats"] = q;
                 q.clear();
                 add("profile", text("gs_firmware_profile"));
+                add("cpu", text("gs_cpu"));
                 nrReports["audio_gs_firmware"] = q;
                 q.clear();
                 add("kinds", text("nr_nmi_kinds"));
@@ -5204,6 +5219,36 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (Json::ArrayIndex i = 0; i < gsChannels.size(); ++i)
                                         out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
                                             << " vol " << gsChannels[i]["volume"].asUInt();
+                                    // The lightweight player (no CPU): its interpreter and player, read-only
+                                    if (value["interpreter"].isObject())
+                                    {
+                                        const Json::Value& in = value["interpreter"];
+                                        char command[8];
+                                        std::snprintf(command, sizeof(command), "#%02X", in["command"].asUInt() & 0xFF);
+                                        out << "\n  interpreter: " << in["text"].asString() << " (state "
+                                            << in["state"].asString() << ", last command " << command
+                                            << (in.isMember("command_name") ? " " + in["command_name"].asString() : std::string())
+                                            << ", params " << in["params_queued"].asUInt() << ", replies "
+                                            << in["replies_queued"].asUInt() << ")";
+                                    }
+                                    if (value["player"].isObject())
+                                    {
+                                        const Json::Value& pl = value["player"];
+                                        out << "\n  player: " << pl["state"].asString();
+                                        if (pl["loaded"].asBool())
+                                        {
+                                            out << " '" << pl["modules"][0]["name"].asString() << "', pos "
+                                                << pl["position"].asUInt() << "/" << pl["song_length"].asUInt() << " pattern "
+                                                << pl["pattern"].asUInt() << " row " << pl["row"].asUInt() << " tick "
+                                                << pl["tick"].asUInt() << ", speed " << pl["speed"].asUInt() << ", "
+                                                << pl["bpm"].asUInt() << " BPM, " << pl["samples"].size() << " sample(s)";
+                                            for (const Json::Value& c : pl["channels"])
+                                                out << "\n    voice" << c["channel"].asUInt() << ": sample " << c["sample"].asUInt()
+                                                    << " vol " << c["volume"].asUInt() << " period " << c["period"].asUInt()
+                                                    << (c["note"].asString().empty() ? std::string() : " " + c["note"].asString());
+                                        }
+                                        out << "; FX " << pl["fx"]["count"].asUInt() << " counted, none stored";
+                                    }
                                 }
                             }
                             else if (aspect == "boards")
@@ -5313,6 +5358,19 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << value["midi"]["active_voices"].asUInt() << " voice(s)";
                                     for (const Json::Value& device : value["shadowed_devices"])
                                         out << "\n  built-in " << device["id"].asString() << ": " << device["state"].asString();
+                                    // Its General Sound: the GS slot report's fields under `gs` (debugger CPU `ms`)
+                                    const Json::Value& msGs = value["gs"];
+                                    if (msGs.isMember("device"))
+                                    {
+                                        out << "\n  gs (cpu ms): " << msGs["strip"].asString() << "; " << msGs["device"].asString()
+                                            << ", ram " << msGs["ram_kb"].asUInt() << " KB"
+                                            << (msGs["command_pending"].asBool() ? ", cmd pending" : "")
+                                            << (msGs["data_pending"].asBool() ? ", data pending" : "");
+                                        if (msGs["protocol"].isObject())
+                                            out << "\n  gs protocol: " << msGs["protocol"]["text"].asString();
+                                        out << "\n  gs panes: audio_gs_firmware / audio_gs_stats with gs_cpu=ms, "
+                                               "device_history " << value["slot"].asString() << ".gs.commands";
+                                    }
                                 }
                             }
                             else if (aspect == "audio_midi")

@@ -124,6 +124,13 @@ gs-debugger design §8A.9) with its `symbolFile` (relative to `data/symbols/gs`)
 `#1E`), and `unknown_commands` the commands the host sent that no profile names. A profile from the firmware's
 sources: `tools/gsfirmware/profile_from_source.py --source DIR --map FILE --id ID`.
 
+The lightweight player (no CPU) is read through `audio_gs` itself: `interpreter` (`state` idle / params / command /
+upload / reply / covox, `text` such as "Upload, 2,000 of 3,196 bytes", the queues) and `player` (position, row, tick,
+speed, BPM, the four channels with sample, volume, period, note, rate; the module (P) / (S) and its samples);
+`audio_gs_firmware` answers the v1.05a variables its interpreter mirrors (`source: mirror`). The ZX-MultiSound's GS
+(debugger CPU `ms`): `audio_multisound`'s `gs` has the `audio_gs` fields; its firmware objects and statistics are
+`audio_gs_firmware` / `audio_gs_stats` with `"gs_cpu": "ms"`, its command log `device_history` `<slot>.gs.commands`.
+
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on
 activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`

@@ -336,8 +336,33 @@ what an agent reads):
   main tab steps the card live, not through the TTD history; the GUI control plane has no verbs for these.
   Ctrl+1 / Ctrl+2 vs the disassembly's marks (owner, 2026-11-22): the focused disassembly keeps Ctrl / Alt+1..5
   (`DisassemblyView::event`, ShortcutOverride); elsewhere they switch the CPU.
-- [ ] **P5.5 NeoGS and the rest of the slot (B3, A10).** NeoGS DMA, SD · MP3 · Flash tabs; the LW player inspector;
+- [x] **P5.5 NeoGS and the rest of the slot (B3, A10).** NeoGS DMA, SD · MP3 · Flash tabs; the LW player inspector;
   the MultiSound's GS.
+  Core data (2026-11-22): the `gs` report on the LW card carries `interpreter` (state idle / params / command /
+  upload / reply / covox, the command, the state's byte counts, the queues, the upload's received of total from the
+  module header) and `player` (position, pattern, row, tick, speed, BPM, the four channels with period, note and
+  rate, the module row (P) / (S), the samples with the Unreal GS dialog's columns, the FX count); the strip adds both;
+  `gs firmware` answers the v1.05a window variables the interpreter mirrors (`source: mirror`), so the Firmware pane
+  works on LW unchanged. The MultiSound's GS: its `gs` report part was already the GS report; the catalog adds
+  `ms-gs-commands` (history `<slot>.gs.commands`), `ms-gs-firmware`, `ms-gs-stats`; firmware and statistics take the
+  card by CPU (`--cpu ms`, `?cpu=ms`, Lua / Python `cpu`, MCP `gs_cpu`; the card publishes its own statistics at its
+  frame ends). Fields: [command-interface `state audio gs`](../../emulator/design/control-interfaces/command-interface.md).
+  Tests `SoundChip_GSLightweight_Test.Inspector_*`, `GSModPlayer_Notes.*`,
+  `MultiSoundDeviceState_Test.TheCardsGsHasTheGsReportAndTheCardPanes`.
+  UI done 2026-11-22, both debuggers on the same sources: the NeoGS board, "NeoGS DMA" and "SD · MP3 · Flash" read
+  the debug boards (`neogs`, `neogs_dma`, `neogs_sd`, `neogs_mp3`, `neogs_flash`) plus the `gs_stats` counters, with
+  the boards' actions (SD insert image / folder, eject, save flash). Embedded: `boardpane.{h,cpp}` renders any board;
+  `gslwpane.{h,cpp}` the LW "GS interpreter" (state chips, the queues of 16, the upload's progress) and "GS player"
+  (song, module, channels, samples); the card panes follow the card CPU tab in front (ms in front or no slot card:
+  the MultiSound's GS) — tests `CardPanes_Test.*`. eCat: the shim's `read_board` / `board_action` (in process, `GET
+  /debug/boards/{id}`), the two LW tabs, the ms tabs (same rule) — `--self-check` with neogs, gs, gs-lw, multisound,
+  in process and over `--connect`.
+  Fixed on the way: `neogs_dma` named the selected module one off (DMA_MOD 1 ZX, 2 SD, 3 MP3); MCP
+  `gs_reset_counters` takes `gs_cpu`.
+  Left: MPAGEX (no field anywhere), the ZX-DMA trace (Trace ▸), "Open media panel" (N8); the LW panes do not mark
+  the values changed since the last stop; the card strip follows a CPU-tab switch only at the next stop; LW checked
+  live only idle (an upload and a module in the Qt test); gs + ms together not run; the LW FX upload counter is not
+  in the TTD state.
 - [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
   console, the protocol monitor, the analysis tabs (A5.2a).
 

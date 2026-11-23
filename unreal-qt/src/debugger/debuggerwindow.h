@@ -13,6 +13,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorbinding.h>
 #include "debugger/breakpointstopline.h"
+#include "debugger/cardpanes.h"
 #include "debugger/targets/debugcpuid.h"
 #include "emulator/cpu/z80.h"
 
@@ -239,7 +240,7 @@ public:
     QTabWidget* sideTabs() const { return _sideTabs; }
     QLabel* cardStrip() const { return _cardStrip; }
     const std::vector<class ReportPane*>& nextPanes() const { return _nextPanes; }
-    const std::vector<class ReportPane*>& cardPanes() const { return _cardPanes; }
+    const std::vector<CardPanes::Pane>& cardPanes() const { return _cardPanes; }
     /// endregion
 
 protected:
@@ -310,12 +311,18 @@ private:
     class QGroupBox* _sideGroup = nullptr;
     class QTabWidget* _sideTabs = nullptr;
     std::vector<class ReportPane*> _nextPanes;
-    std::vector<class ReportPane*> _cardPanes;  // the General Sound card's (gs-debugger P5.1)
+    std::vector<CardPanes::Pane> _cardPanes;  // the General Sound card's (gs-debugger P5.1; NeoGS boards P5.5)
     class QTimer* _nextPanesTimer = nullptr;  // a live refresh of the report tab in front while the machine runs (5 Hz)
     bool _nextMachine = false;
-    bool _cardFitted = false;
-    /// Refresh the report tab in front (a Next's, a card's; when shown); `live`: the machine runs
+    // The card panes' CPU tab in front (they follow it: the GS slot's card or the MultiSound's, CardPanes::Front), and
+    // which of them were shown last (a change: their tabs shown or hidden, their marks forgotten)
+    CardPanes::Follow _cardFollow = std::make_shared<DebugCpuId>(DebugCpuId::Main);
+    std::vector<bool> _cardShown;
+    CardPanes::Target _cardTarget = CardPanes::Target::None;
+    /// Refresh the report or board tab in front (a Next's, a card's; when shown); `live`: the machine runs
     void refreshNextPanes(bool live);
+    /// A board pane's action (NeoGS SD insert / eject, flash save) under the context's lease, then its refresh
+    void runBoardAction(class BoardPane* pane, const QString& board, const QString& action, const QString& arg);
     /// The Next tabs on a Next only, the card tabs with a GS card; the PC history records while in front, the live
     /// refresh while a report tab is
     void updateSidePane();

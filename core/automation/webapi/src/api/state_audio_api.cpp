@@ -585,6 +585,7 @@ void GetGSStats(const std::shared_ptr<Emulator>& emulator, const HttpRequestPtr&
     GSStatsQuery query;
     query.section = section;
     query.fresh = req->getParameter("fresh") == "1";
+    query.cpu = req->getParameter("cpu"); // "ms": the ZX-MultiSound's GS
     const std::string since = req->getParameter("since");
     if (!since.empty())
     {
@@ -649,6 +650,7 @@ void EmulatorAPI::getStateAudioGSFirmware(const HttpRequestPtr& req,
     GSFirmwareObjectsQuery query;
     query.profile = req->getParameter("profile");
     query.object = req->getParameter("object");
+    query.cpu = req->getParameter("cpu"); // "ms": the ZX-MultiSound's GS
     const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(emulator->GetContext(), query);
     if (reply.status != 200)
         return ReplyNotFound(callback, reply.text);
@@ -911,7 +913,9 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     // reset_counters: a statistics baseline (gsslotstats.h); read with ?since=<baseline>. Nothing on the card changes
     if (action == "reset_counters")
     {
-        ReplyGSStats(context, GSStatsQuery{}, true, std::move(callback));
+        GSStatsQuery query;
+        query.cpu = json->get("cpu", "").asString(); // "ms": the ZX-MultiSound's GS
+        ReplyGSStats(context, query, true, std::move(callback));
         return;
     }
 

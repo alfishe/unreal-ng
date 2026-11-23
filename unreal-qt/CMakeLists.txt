@@ -855,6 +855,12 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/cardpanes_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/cardpanes.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/cardpanes.h"
+        # The NeoGS boards (gs-debugger TODO P5.5): the core's device boards drawn by one renderer
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/boardpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/boardpane.h"
+        # The lightweight player's inspector panes: interpreter, player (gs-debugger TODO P5.5, A10)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)
