@@ -12,6 +12,7 @@
 # bm7_file rows updated 2026-11-17 (F3, chunked streams): the header declares the chunked twins of the write journal and the holder streams (stream 0x8000 + S, "chunked-<name>"), 102 bytes more in every file; no other row changed.
 # ATM3/idle, PENTAGON/idle and PENTAGON/game rows updated 2026-11-17 (card-positions, gs-debugger design §8): the NeoGS blob (id 12) carries the card CPU's instruction count, which advances every frame: the device-blob, bm3_ram_payload and NeoGS bm9 rows grow by ~6 bytes per frame, the file by ~5 (first NeoGS blob +13 / +14 bytes); no other row moved beyond its tolerance.
 # 48K/idle, PENTAGON/idle and PENTAGON/game bm7_file rows updated 2026-11-19 (re-api-efficiency F2, split-independent RunNFrames): the bench runs one RunNFrames(1) per frame; each call used to drop the overshoot of its last instruction, so the live end drifted a few T-states per frame into the next frame, and the saved file's tail (the part of the frame after the last capture) was that much longer. Now every call ends a few T past the boundary: 1 / 4 / 18 bytes less; no other row changed.
+# PENTAGON/game bm3_coverage_bpf and bm3_total_bpf updated 2026-11-22 (P1.S10 follow-up, coverage block summaries): the coverage index builds each block's summary as its frames seal (the keys united with their first and last frame, per-frame counts and written rows), so its open block holds that block's keys and a sparse bit set (a 512-byte leaf per 4 KB of key space reached): about 1.2 MB more over the 60 frames, which never seal a block; sealed summaries add about 180-225 bytes a frame in long sessions. No other row moved beyond its tolerance.
 48K/idle bm2_work_compress_calls_opf 1.033333 0
 48K/idle bm2_work_compress_input_bpf 4232.533333 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -220,14 +221,14 @@ PENTAGON/game bm2_work_pages_visited_opf 0.000000 0
 PENTAGON/game bm2_work_scanned_bpf 34406.400000 0
 PENTAGON/game bm2_work_scanned_ram_bpf 0.000000 0
 PENTAGON/game bm3_checkpoint_core_bpf 499.200000 25
-PENTAGON/game bm3_coverage_bpf 69894.966667 25
+PENTAGON/game bm3_coverage_bpf 90241.133333 25
 PENTAGON/game bm3_device_blobs_bpf 0.000000 0
 PENTAGON/game bm3_device_regions_bpf 0.000000 0
 PENTAGON/game bm3_input_journal_bpf 2.666667 0
 PENTAGON/game bm3_journal_writes_opf 0.000000 0
 PENTAGON/game bm3_page_refs_bpf 1458.450000 25
 PENTAGON/game bm3_ram_payload_bpf 3008.783333 0
-PENTAGON/game bm3_total_bpf 80760.800000 25
+PENTAGON/game bm3_total_bpf 101146.983333 25
 PENTAGON/game bm3_write_journal_bpf 5902.616667 25
 PENTAGON/game bm4_resident_bpf 104389.133333 25
 PENTAGON/game bm4_resident_bytes 6263348.000000 25

@@ -172,9 +172,10 @@ void EveHostCard::OnFrameEnd()
     AdvanceTo(_time.frameBase + kFrameTacts);
     _time.frameBase += kFrameTacts;
     // The FT812 frames finished by now are on the Screen at the machine's frame end, as with the drawing on
-    // this thread (a screenshot after a pause, a test's picture)
+    // this thread (a screenshot after a pause, a test's picture). The lines of the FT812 frame in flight are
+    // drawn on meanwhile: the next machine frame runs while the renderer finishes them
     if (_async)
-        EveDrawingBarrier(_chip);
+        EveFramesBarrier(_chip);
 }
 
 void EveHostCard::Synchronize()
@@ -390,11 +391,9 @@ void EveHostCard::OnChipFrame()
     if (!drew || _async)
         return;  // nothing new was drawn: the Screen keeps its last frame; or the renderer presents it
 
-    ConvertFrameToPicture();
     // Not from a throwaway TTD replay (it composes a position's picture and publishes it itself): a latch there
     // would push frames nobody asked to see into the present queue, as MainLoop's native latch gate explains
-    if (Screen* screen = _context ? _context->pScreen : nullptr; screen && !(_context && _context->ttdReplayActive))
-        screen->LatchExternalFrame();
+    PresentPicture();
     _latchedFrames++;
     if (_measureAlways.load())
         KeepPresentedMetrics(false);  // the FT812 Debug window shows what the monitor shows
@@ -424,10 +423,7 @@ void EveHostCard::OnRendererFrame(void* user, uint64_t /*frame*/, int drawn)
     auto* card = static_cast<EveHostCard*>(user);
     if (!drawn || !card->_asyncPresent.load())
         return;
-    card->ConvertFrameToPicture();
-    if (Screen* screen = card->_context ? card->_context->pScreen : nullptr;
-        screen && !(card->_context && card->_context->ttdReplayActive))
-        screen->LatchExternalFrame();
+    card->PresentPicture();
     card->_latchedFrames++;
     if (card->_measureAlways.load())
         card->KeepPresentedMetrics(false);  // the library answers the renderer without waiting
@@ -435,31 +431,51 @@ void EveHostCard::OnRendererFrame(void* user, uint64_t /*frame*/, int drawn)
 
 void EveHostCard::ConvertFrameToPicture()
 {
+    ConvertFrame(_picture.data(), nullptr, _chipFrame.size());
+}
+
+void EveHostCard::ConvertFrame(uint8_t* out, uint8_t* copy, size_t pixels) const
+{
     // ARGB8888 (0xAARRGGBB) -> the framebuffer's RGBA8888 (bytes R, G, B, A), whole words so the compiler
-    // vectorises it
-    const size_t pixels = _chipFrame.size();
+    // vectorises it; into a second buffer in the same pass (the present slot: one read of the frame, not two)
     const uint32_t* in = _chipFrame.data();
-    uint8_t* out = _picture.data();
-    if constexpr (std::endian::native == std::endian::little)
+    for (size_t i = 0; i < pixels; i++)
     {
-        for (size_t i = 0; i < pixels; i++)
-        {
-            const uint32_t argb = in[i];
-            const uint32_t rgba = ((argb >> 16) & 0xFFu) | (argb & 0xFF00u) | ((argb & 0xFFu) << 16) | 0xFF000000u;
-            std::memcpy(out + i * 4, &rgba, 4);
-        }
+        const uint32_t argb = in[i];
+        uint32_t rgba;
+        if constexpr (std::endian::native == std::endian::little)
+            rgba = ((argb >> 16) & 0xFFu) | (argb & 0xFF00u) | ((argb & 0xFFu) << 16) | 0xFF000000u;
+        else
+            rgba = ((argb << 8) & 0xFFFFFF00u) | 0xFFu;
+        std::memcpy(out + i * 4, &rgba, 4);
+        if (copy)
+            std::memcpy(copy + i * 4, &rgba, 4);
     }
-    else
+}
+
+void EveHostCard::PresentPicture()
+{
+    Screen* screen = _context ? _context->pScreen : nullptr;
+    if (!screen || (_context && _context->ttdReplayActive))
     {
-        for (size_t i = 0; i < pixels; i++)
-        {
-            const uint32_t argb = in[i];
-            out[i * 4 + 0] = static_cast<uint8_t>(argb >> 16);
-            out[i * 4 + 1] = static_cast<uint8_t>(argb >> 8);
-            out[i * 4 + 2] = static_cast<uint8_t>(argb);
-            out[i * 4 + 3] = 0xFF;
-        }
+        ConvertFrameToPicture();
+        return;
     }
+    // The picture and the present slot in one pass; no slot to latch: the picture alone
+    auto fill = [](void* self, uint8_t* slot, size_t bytes) {
+        auto* card = static_cast<EveHostCard*>(self);
+        const size_t pixels = card->_chipFrame.size();
+        if (bytes == pixels * 4 && card->_picture.size() == bytes)
+        {
+            card->ConvertFrame(card->_picture.data(), slot, pixels);
+            return;
+        }
+        // Not the picture's size (the Screen latches only its own size): the copy the latch makes
+        card->ConvertFrameToPicture();
+        std::memcpy(slot, card->_picture.data(), std::min(bytes, card->_picture.size()));
+    };
+    if (!screen->LatchExternalFrame(fill, this))
+        ConvertFrameToPicture();
 }
 
 void EveHostCard::SetLineBudgetMargin(uint32_t percent)
@@ -970,6 +986,35 @@ void EveHostCard::Transaction(const uint8_t* mosi, uint8_t* miso, size_t count)
     PlanNextEvent();
 }
 
+void EveHostCard::WriteWords(uint32_t address, const uint8_t* words, size_t count)
+{
+    // A capture or a history records the bytes of each transaction: those go as transactions
+    const bool pass = _chip && !(_capture.IsOpen() && CaptureLive()) && !_history.On();
+    size_t done = 0;
+    while (done < count)
+    {
+        const uint32_t at = address + 4 * static_cast<uint32_t>(done);
+        if (pass)
+        {
+            Synchronize();
+            const size_t stored = EveWriteRamGWords(_chip, at & 0x3FFFFF, words + 4 * done, count - done);
+            if (stored != 0)
+            {
+                // RAM_G stores change neither INT_N nor the next event: once, as the last transaction did
+                SampleInt(_time.position);
+                PlanNextEvent();
+                done += stored;
+                continue;
+            }
+        }
+        const uint8_t* word = words + 4 * done;
+        const uint8_t mosi[7] = {static_cast<uint8_t>(0x80 | ((at >> 16) & 0x3F)), static_cast<uint8_t>(at >> 8),
+                                 static_cast<uint8_t>(at), word[0], word[1], word[2], word[3]};
+        EveHostCard::Transaction(mosi, nullptr, sizeof(mosi));
+        ++done;
+    }
+}
+
 #else // ENABLE_VDAC2
 
 // A build without the FT812 library: the decoder never fits a card (a
@@ -1007,6 +1052,7 @@ void EveHostCard::Transaction(const uint8_t*, uint8_t* miso, size_t count)
         for (size_t i = 0; i < count; i++)
             miso[i] = 0xFF;
 }
+void EveHostCard::WriteWords(uint32_t, const uint8_t*, size_t) {}
 std::vector<ttd::TTDTimeField> EveHostCard::TtdTimeFields() { return {}; }
 size_t EveHostCard::TtdStateSize() const { return 0; }
 void EveHostCard::TtdSaveState(uint8_t*) const {}

@@ -122,8 +122,12 @@ types:
           6 configuration, 7 write journal, 13 bus reads, 14 bus writes,
           15 bus vectors, 16 media (sector) reads; 0x0100-0x013F frame-boundary
           streams. The holder's streams (ancillary, opaque to the engine, written
-          whole with the last part): 8 coverage, 12 bookmarks, 17 controller facts,
-          18 branch state (payload_branch_state); 9-11 and 19-0xFF free for it.
+          with the last part): 8 coverage, 12 bookmarks, 17 controller facts,
+          18 branch state (payload_branch_state), 19 coverage-from (u8 x8: in a
+          recording folder each pause's file holds a part of the coverage index,
+          the blocks from this frame on; a reader joins the parts in file order,
+          a later one replacing the blocks it repeats; absent: 8 is whole);
+          9-11 and 20-0xFF free for it.
           Branches (ancillary, so a reader without them loads the trunk):
           0x0200 the branch table (payload_branch_table), 0x0200 + S (0x0201-0x023F)
           the twin of stream S for a branch's records (same layout, except the
@@ -732,9 +736,17 @@ types:
 
   payload_write_journal:
     doc: |
-      Stream 7 (ancillary, D40), with the session's last part: the records in
-      blocks of 2,048 in v1's column layout (EncodeWriteBlock,
-      ttdwritejournal.cpp), then the segments the journal covers
+      Stream 7 (ancillary, D40): the records in blocks of 2,048 in v1's
+      column layout (EncodeWriteBlock, ttdwritejournal.cpp), then the
+      segments the journal covers. A saved session holds it whole with its
+      last part. A recording folder's file (since 2026-11-21) holds it with
+      every part: that part's own records, a write at machine time t
+      belonging to the part whose (first checkpoint's start, next part's
+      start] holds t (the line's first part from the line's start, the part
+      at the session's end up to its end), and the segments clipped to that
+      range; a reader appends the parts' records in order and joins their
+      segments. Older folder files held it whole with the part a stop or a
+      pause for browsing finished
     seq:
       - id: record_count
         type: vlq

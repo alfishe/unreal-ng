@@ -85,6 +85,8 @@ constexpr uint32_t kFrameStreamFullEvery = 50;
 constexpr uint16_t kCoverage = 8;
 constexpr uint16_t kBookmarks = 12;
 constexpr uint16_t kHolderFirstFree = 17;
+/// 19 (holder): a recording folder's coverage part starts at this frame (U64); the part's kCoverage record follows
+constexpr uint16_t kCoverageFrom = kHolderFirstFree + 2;
 inline bool IsHolderStream(uint16_t id)
 {
     return (id >= 8 && id <= 12) || (id >= kHolderFirstFree && id <= 0x00FF);
@@ -150,6 +152,17 @@ struct TTDSessionSaveParams
     std::map<uint32_t, std::vector<TTDHolderStream>> lineHolderStreams;
     /// Tests: the container's record limit (0: kMaxRecordRaw, 1 GiB), so a chunked stream takes milliseconds
     uint32_t recordLimit = 0;
+    /// A folder file after a pause: the paused file ended at the pause, this one starts at the next baseline, and
+    /// the records between (the rest of the frame recorded after the resume) open this file's first part. Where the
+    /// paused file's journals ended (TTDSessionWriter::JournalEnds); unset: the file's first checkpoint
+    struct JournalStart
+    {
+        bool set = false;
+        uint64_t cursors[4] = {};   ///< IN, OUT, sectors, vectors (as TTDSessionWriter::_base)
+        uint64_t time = 0;          ///< events and memory writes after this machine time
+        size_t eventsAtTime = 0;    ///< events at exactly that time already written
+    };
+    JournalStart journalsFrom;
 };
 
 struct TTDSessionLoadReport
@@ -162,6 +175,10 @@ struct TTDSessionLoadReport
     std::string stoppedAt;       ///< why the load stopped early
     std::vector<std::string> notes;   ///< the container's notes (scan, skipped streams)
     std::map<uint16_t, std::vector<uint8_t>> holderStreams;   ///< by id, as saved (absent: none, or not reached)
+    /// The trunk's coverage records in file order, each with the frame its part starts at (kCoverageFrom; 0: the
+    /// whole index). A recording folder writes a part at each pause; they are joined (TTDCoverageIndex::AppendLater).
+    /// holderStreams keeps no kCoverage entry when this is filled
+    std::vector<std::pair<uint64_t, std::vector<uint8_t>>> coverageParts;
     /// Branches: the lines loaded (the trunk is line 0, branches in file order 1..), per line the holder's record
     /// and its holder streams (by the trunk's ids)
     size_t lines = 1;
@@ -217,6 +234,10 @@ public:
     bool Finish(const TimeTravelEngine& engine, size_t end = SIZE_MAX);
     /// The holder streams' bytes for the last part (ids declared at Begin)
     void SetHolderStreams(std::vector<TTDHolderStream> streams) { _params.holderStreams = std::move(streams); }
+    /// Holder streams for the file's last part when the file ends before the session does (a recording folder's
+    /// segment file closed at the next baseline: the coverage index's part, so a later pause writes only what came
+    /// since). Ids declared at Begin; the trunk's files only
+    void SetFileEndStreams(std::vector<TTDHolderStream> streams) { _fileEndStreams = std::move(streams); }
     /// Save with branches: every live line one after another (the trunk first, as a file without branches), each
     /// branch in its streams' twins, then the index. Instead of Finish; the engine's active line is kept
     bool WriteAllLines(TimeTravelEngine& e);
@@ -231,6 +252,8 @@ public:
     bool Behind() const { return QueuedBytes() > _limits.lagSoftBytes; }
     uint32_t PartsQueued() const { return _part; }
     size_t CheckpointsWritten() const { return _next; }
+    /// Where a file finished at the session's end leaves the journals (the next file's journalsFrom after a pause)
+    static TTDSessionSaveParams::JournalStart JournalEnds(const TimeTravelEngine& engine, uint64_t time);
 
 private:
     struct PartJob
@@ -257,6 +280,7 @@ private:
     ITTDByteSink* _sink = nullptr;
     TTDContainerWriter _writer;
     TTDSessionSaveParams _params;
+    std::vector<TTDHolderStream> _fileEndStreams;   ///< SetFileEndStreams
 
     // The layout's state (the engine's thread)
     std::unordered_map<uint32_t, uint32_t> _itemOf;   ///< store id -> number in the file
@@ -326,8 +350,9 @@ public:
     /// Two tiers (P3): the versions of a recording folder's segment file, per checkpoint, imported into @p store
     /// (each with one reference: ReleaseSegmentPieces) for TimeTravelEngine::ReadBackSegment. False with the reason
     /// when a part is damaged or a version does not fit; nothing is held then
+    /// @p upToFrame: only the parts from the file's start to the one holding that frame and one more are read
     static bool ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
-                                  std::string& error);
+                                  std::string& error, uint64_t upToFrame = UINT64_MAX);
     static void ReleaseSegmentPieces(TTDPieceStore& store, TTDSegmentPieces& pieces);
 
     /// The copy frame-boundary stream @p stream (the engine's id) took at

@@ -1059,12 +1059,35 @@ void CatchUp(EveChip& chip)
         // passed: nothing to queue (a portrait frame's repeated catch-up only forgets kept lines again)
         const uint32_t next = draw && Portrait(chip) ? due : (chip.drawnLines > due ? chip.drawnLines : due);
         if (next == chip.drawnLines)
+        {
+            // Lines drawn ahead count from here (REG_TAG as the drawing on this thread has it now)
+            if (chip.drawnAhead)
+                AsyncCatchUpPoint(chip);
+            chip.drawnAhead = false;
             return;
+        }
         AsyncLines(chip, due, draw);
         chip.drawnLines = next;
+        chip.drawnAhead = false;
         return;
     }
     DrawLinesTo(chip, due, draw);
+}
+
+void CatchUpAhead(EveChip& chip)
+{
+    // The renderer draws along the scan instead of a whole frame at its event. What the host sees of the drawing,
+    // REG_TAG, is the renderer's as of the last catch-up (before a change, at the frame event), as the drawing on
+    // this thread leaves it: lines drawn ahead do not move it (AsyncLines `ahead`). A portrait frame is drawn at its
+    // catch-ups only
+    if (!chip.asyncDrawing || !chip.drawing || !ScanRunning(chip) || Portrait(chip))
+        return;
+    const uint32_t due = LinesDue(chip);
+    if (due <= chip.drawnLines)
+        return;
+    AsyncLines(chip, due, true, true);
+    chip.drawnLines = due;
+    chip.drawnAhead = true;
 }
 
 void DrawLinesTo(EveChip& chip, uint32_t due, bool draw)

@@ -38,6 +38,17 @@ not. Measured over 100 idle recorded frames per model (2026-11-21):
 | in every frame (a clock or counter) | `covox` (Pentagon, Scorpion, ATM3, ATM710, Profi, TS-Conf, GMX), `ds12887` (ATM3), `atm2kbc`, `profixtkbc`, `tsconfstate`, `nextstate`, `p2666board` / `p2666sound` / `p2666uart` |
 | in some frames | ATM3 `betadisk` 57-58, `evoavrvolatile` 30-78 (TS-Conf 35; the count differs run to run), Sprinter `sprinterpld` 76 / `betadisk` 7 / `z84c15` 4, GMX `betadisk` 41 / `scorpionprofrom` 22 / `smuc` 25 / `gmxpaging` 16, TS-Conf `ds12887` 8; 1-3 frames: ATM3 `atmpaging`, ATM710 `betadisk`, Sprinter and GMX `tape`, `ds12887` |
 
+Why the ATM3 counts differ from run to run (checked 2026-11-22, `ttddeterminism_test.cpp`): the machine is
+deterministic - the same clock anchor and zero power-on RAM give the same blobs in every frame, as on every other
+model - but two of its inputs differ between application runs by design. The CMOS clock reads the host's live time
+until a recording anchors it at the session's wall time (the anchor is in the `ds12887` blob, so a replay
+reads the recorded time), and the ROM's menu reads the Gluk clock every frame through the AVR: the clock's sub-second
+phase moves the /WAIT timing in `evoavrvolatile` (its time fields follow a line only between accesses). Over 100 idle
+frames after a 500-frame boot the anchor alone gave 31, 32, 61, 58, 31, 31 frames for anchors 0.17 s apart; the
+power-on RAM noise (`RAMPowerOn=Random`) changes the ROM's paths too (31 against 57, `betadisk` and the CPU differing
+from the first frame). Both inputs are in the recording (the RTC blob, the baseline RAM), so the timeline counts what
+the machine did; the number is not a property of the model.
+
 On the synthetic program (Pentagon) the keyboard matrix changes in 2 of the 23 idle frames (the key presses), the
 tape blob in the frames that poll it (its poll counter). So the rule is generic, no per-device list: a blob that
 changed in every frame of the window (of more than one frame) carries no "when" and is named once in

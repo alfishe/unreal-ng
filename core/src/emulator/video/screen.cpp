@@ -1362,16 +1362,24 @@ uint8_t Screen::ExternalDelayFrames(uint8_t nativeFrames) const
 
 void Screen::LatchExternalFrame()
 {
+    LatchExternalFrame(nullptr, nullptr);
+}
+
+bool Screen::LatchExternalFrame(ExternalFill fill, void* context)
+{
     if (!IsExternalPictureActive() || _external.memoryBuffer == nullptr)
-        return;
+        return false;
 
     std::unique_lock<std::mutex> lock(_presentMutex);
     while (_presentSlotPins[_presentLatchCounter % PRESENT_SLOTS] != 0)  // a reader copies the slot to be written
         WaitSlotUnpinnedLocked(lock, _presentLatchCounter % PRESENT_SLOTS);
     if (_presentSlots[0] == nullptr || _presentBufferSize != _external.memoryBufferSize)
-        return;
+        return false;
     const size_t index = _presentLatchCounter % PRESENT_SLOTS;
-    VideoUtils::CopyFrameBuffer(_presentSlots[index], _external.memoryBuffer, _presentBufferSize);
+    if (fill)
+        fill(context, _presentSlots[index], _presentBufferSize);
+    else
+        VideoUtils::CopyFrameBuffer(_presentSlots[index], _external.memoryBuffer, _presentBufferSize);
     _presentPlaneB[index].clear();  // plane B belongs to the ZX raster
     _presentSlotWindow[index] = TemporalWindow{};  // no temporal output for an external frame
     _presentSlotGeometry[index] = DescribeExternalFrame();
@@ -1391,6 +1399,7 @@ void Screen::LatchExternalFrame()
     }
     _lastLatchTimestampUs.store(std::chrono::duration_cast<std::chrono::microseconds>(now).count(),
                                 std::memory_order_release);
+    return true;
 }
 
 void Screen::LatchFramebuffer()

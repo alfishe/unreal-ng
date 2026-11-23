@@ -153,3 +153,71 @@ TEST(TTDWriteIndex_Test, DropAfterKeepsWhatLiesUpToTheCut)
         EXPECT_EQ(uint64_t(x->globalT), uint64_t(y->globalT));
     }
 }
+
+/// The timeline counts a range's memory writes from the blocks' running counts: the same as a scan, with port OUTs left
+/// out, after a cut at either end, and at most one block decoded per count (P1.S10: a whole-journal pass per timeline
+/// grew with the session)
+TEST(TTDWriteIndex_Test, MemoryWritesUpToCountsLikeAScan)
+{
+    std::vector<TTDWriteRecord> records = MakeRecords(5 * kWriteBlockRecords + 300);
+    for (size_t i = 0; i < records.size(); i += 7)
+        records[i].isIo = 1;
+    TTDWriteIndex index;
+    for (const TTDWriteRecord& r : records)
+        index.Append(r);
+    std::vector<TTDWriteRecord> kept = records;
+    auto check = [&](const char* step) {
+        std::mt19937 rng(3);
+        const uint64_t first = kept.front().globalT, last = kept.back().globalT;
+        for (int q = 0; q < 200; ++q)
+        {
+            const uint64_t t = q == 0 ? 0 : q == 1 ? UINT64_MAX : first - 3 + rng() % (last - first + 6);
+            uint64_t want = 0;
+            for (const TTDWriteRecord& r : kept)
+                want += r.globalT <= t && !r.isIo ? 1u : 0u;
+            const uint64_t decodedBefore = index.BlocksDecoded();
+            ASSERT_EQ(index.MemoryWritesUpTo(t), want) << step << " t " << t;
+            EXPECT_LE(index.BlocksDecoded() - decodedBefore, 1u) << step;
+        }
+    };
+    check("whole");
+    const uint64_t front = records[kWriteBlockRecords + 5].globalT;
+    index.DropBefore(front);
+    kept.erase(kept.begin(), kept.begin() + kWriteBlockRecords);   // the first block, wholly before
+    check("after DropBefore");
+    const uint64_t back = records[3 * kWriteBlockRecords + 99].globalT;
+    index.DropAfter(back);
+    while (kept.back().globalT > back)
+        kept.pop_back();
+    check("after DropAfter");
+    for (size_t i = 0; i < kWriteBlockRecords + 10; ++i)
+    {
+        TTDWriteRecord r = records[i];
+        r.globalT = back + 1 + i;
+        index.Append(r);
+        kept.push_back(r);
+    }
+    check("appended again");
+}
+
+/// A recording folder's file takes its part's records: ForEachInRange visits exactly [from, to), in order
+TEST(TTDWriteIndex_Test, ForEachInRangeVisitsThePartsRecords)
+{
+    const std::vector<TTDWriteRecord> records = MakeRecords(3 * kWriteBlockRecords + 500);
+    TTDWriteIndex index;
+    for (const TTDWriteRecord& r : records)
+        index.Append(r);
+    std::mt19937 rng(5);
+    const uint64_t first = records.front().globalT, last = records.back().globalT;
+    for (int q = 0; q < 100; ++q)
+    {
+        const uint64_t a = first - 5 + rng() % (last - first + 10);
+        const uint64_t b = q % 10 == 0 ? UINT64_MAX : a + rng() % 60000;
+        std::vector<uint64_t> want, got;
+        for (const TTDWriteRecord& r : records)
+            if (r.globalT >= a && r.globalT < b)
+                want.push_back(r.globalT);
+        index.ForEachInRange(a, b, [&](const TTDWriteRecord& r) { got.push_back(r.globalT); });
+        ASSERT_EQ(got, want) << "query " << q;
+    }
+}

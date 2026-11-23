@@ -148,6 +148,24 @@ public:
         uint32_t rawSize = 0;
         uint64_t baseFrame = 0;
         uint32_t frameCount = 0;
+        /// Query-side summary (the timeline's ranges): the block's keys united, as delta varints, and each frame's
+        /// key count. Built as the block seals (from the keys the frames had sorted anyway), else (a loaded block, a
+        /// block cut inside) by the first query that needs it; not written to files
+        mutable std::vector<uint8_t> unionKeys;   ///< compressed as the blocks are
+        mutable uint32_t unionRawSize = 0;
+        mutable std::vector<uint32_t> frameKeyCounts;
+        /// One bit per 4 KB of the key space that a key of the block falls in (kSummaryPieceWords words)
+        mutable std::vector<uint64_t> pieceMask;
+        /// Per key of the union, in its order: the first and the last frame of the block holding it (two bytes),
+        /// compressed. A range holding the block's start counts the keys first seen inside it, a range holding its
+        /// end the keys last seen inside it: the frames need not be decoded
+        mutable std::vector<uint8_t> unionSpans;
+        mutable uint32_t unionCount = 0;
+        /// Written kind only: each frame's 256-byte rows holding a key (a varint count, then the rows as delta
+        /// varints), compressed. Tells a frame that wrote a range from one that did not without its keys
+        mutable std::vector<uint8_t> frameRows;
+        mutable uint32_t frameRowsRawSize = 0;
+        mutable bool summarized = false;
     };
 
     TTDCoverageIndex();
@@ -262,6 +280,29 @@ public:
     /// @brief Number of sealed frames for a kind.
     size_t SealedFrameCount(TTDCoverageKind kind) const;
 
+    /// @brief Distinct keys of @p kind over the watched frames of [@p first, @p last], counted with the caller's
+    /// @p stamp (one slot per key, keys at or past its size not counted): a key whose slot holds @p mark is not
+    /// counted again, a new one gets it.
+    ///
+    /// A sealed block the range holds whole is visited by its keys united (the block summary, built once), a block
+    /// the range cuts frame by frame: a long range costs its distinct keys per block, not its keys per frame (a
+    /// 240k-frame timeline visited 260 million keys, P1.S10 soak 2026-11-21)
+    uint32_t CountDistinctKeys(TTDCoverageKind kind, uint64_t first, uint64_t last, std::vector<uint32_t>& stamp,
+                               uint32_t mark) const;
+
+    /// @brief Each watched frame's key count of [@p first, @p last] into @p out[frame - first] (left as it is for a
+    /// frame not watched), from the block summaries
+    void FrameKeyCounts(TTDCoverageKind kind, uint64_t first, uint64_t last, uint32_t* out) const;
+
+    /// @brief Could the block holding @p frame have a key in [@p lo, @p hi)? From its summary's 4 KB mask: false
+    /// proves no frame of the block has one (the frame's keys need not be decoded); true when it may, or when the
+    /// frame is in the block still being filled or not watched
+    bool BlockMayHaveKeyIn(TTDCoverageKind kind, uint64_t frame, TTDCoverageKey lo, TTDCoverageKey hi) const;
+
+    /// @brief Did @p frame write a key in [@p lo, @p hi)? From the block summary's rows of 256 bytes: 0 no, 1 yes,
+    /// -1 not known from the rows (a row the range cuts, the open block, a frame not watched): decode its keys
+    int FrameWroteIn(uint64_t frame, TTDCoverageKey lo, TTDCoverageKey hi) const;
+
     /// @brief Total heap bytes held, for the session memory report.
     size_t HeapBytes() const;
     /// Part of HeapBytes() allocated but not holding data: unused capacity of
@@ -288,7 +329,18 @@ public:
     /// of a session is not lost; the index itself is left untouched, which is
     /// what lets this run from a const SerializeSession.
     /// @return false on stream failure.
-    bool Serialize(std::ostream& out) const;
+    bool Serialize(std::ostream& out) const { return Serialize(out, 0); }
+    /// The blocks that reach frame @p fromFrame or later (a recording folder's part: what changed since the last
+    /// part, RepeatFrom), in the same format
+    bool Serialize(std::ostream& out, uint64_t fromFrame) const;
+    /// The first frame a later partial Serialize must start from so that nothing written is lost or left stale:
+    /// the start of the blocks still being filled (written now part filled, again when complete), else past the
+    /// last sealed frame. 0 when the index holds nothing
+    uint64_t RepeatFrom() const;
+    /// Joins a part read later (Deserialize of a partial Serialize from @p fromFrame): this index's blocks that
+    /// reach @p fromFrame (or the part's first block) are replaced by the part's. A block cut there is dropped
+    /// whole, its earlier frames become holes (queries replay them): the join never keeps data the part replaced
+    void AppendLater(TTDCoverageIndex&& later, uint64_t fromFrame);
 
     /// @brief Read an index previously written by Serialize().
     /// Replaces any current contents. Returns false on stream failure or a
@@ -361,6 +413,8 @@ private:
     uint64_t _holeToSeal = UINT64_MAX;
 
     bool IsHole(size_t kindIdx, uint64_t frame) const;
+    /// The covered range, the holes and the byte totals from the blocks (Deserialize, AppendLater)
+    void RebuildFromBlocks();
 
     /// Byte length of the first @p frames frames of a raw block
     static size_t RawPrefixBytes(const std::vector<uint8_t>& raw, uint32_t frames);
@@ -397,6 +451,102 @@ private:
 
     void EncodePending(size_t kindIdx, uint64_t frame);
     void CloseOpenBlock(size_t kindIdx);
+
+    /// Build the summary of sealed block @p blockIdx when it has none. False when the block does not decompress
+    bool SummarizeBlock(size_t kindIdx, uint32_t blockIdx) const;
+    /// The blocks a range [first, last] reaches: the first sealed one ending past @p first
+    uint32_t FirstBlockReaching(size_t kindIdx, uint64_t first) const;
+    /// The open block's summary, built as its frames seal (the frame's keys are sorted then): one bit per key over
+    /// the block, the keys first seen in the block packed with that frame (key << 8 | frame in the block), each
+    /// frame's count and where its keys start in the open block. Built at the query instead, it cost 0.5 ms a block:
+    /// seconds for the first timeline of a long session. Allocated at the first seal; not valid after a cut inside
+    /// the block (the summary is then built by the first query that needs it)
+    /// One bit per key, a leaf of 4,096 keys (512 bytes) allocated for each 4 KB of key space the block reaches: a
+    /// flat 1 MB bitmap per kind was most of a short session's coverage memory
+    struct SparseBits
+    {
+        static constexpr uint32_t kNone = UINT32_MAX;
+        std::vector<uint32_t> leafOf;   ///< per 4,096 keys: its leaf, or kNone
+        std::vector<uint64_t> words;    ///< the leaves, 64 words each (the first `used` of them in use)
+        /// The open block's summary only (Track): per key of a leaf, the frame in the block it was first and last
+        /// met in (meaningful where its bit is set)
+        std::vector<uint8_t> firsts, lasts;
+        std::vector<uint32_t> touched;  ///< the leafOf entries set
+        uint32_t used = 0;              ///< leaves in use; the vectors keep their size from one block to the next
+        bool tracks = false;            ///< firsts and lasts are kept
+        /// The leaf of the 4,096 keys from (@p piece << 12), allocated when @p create (else nullptr when there is
+        /// none). Valid until the next allocation
+        uint64_t* Leaf(uint32_t piece, bool create)
+        {
+            if (leafOf.empty())
+            {
+                if (!create)
+                    return nullptr;
+                leafOf.assign(kKeySpace >> 12, kNone);
+            }
+            uint32_t& leaf = leafOf[piece];
+            if (leaf == kNone)
+            {
+                if (!create)
+                    return nullptr;
+                leaf = used++;
+                if (words.size() < size_t{used} << 6)
+                    words.resize(size_t{used} << 6);
+                if (tracks && firsts.size() < size_t{used} << 12)
+                {
+                    firsts.resize(size_t{used} << 12);
+                    lasts.resize(size_t{used} << 12);
+                }
+                std::fill_n(words.data() + (size_t{leaf} << 6), 64, uint64_t{0});
+                touched.push_back(piece);
+            }
+            return words.data() + (size_t{leaf} << 6);
+        }
+        void Reset()
+        {
+            for (const uint32_t piece : touched)
+                leafOf[piece] = kNone;
+            touched.clear();
+            used = 0;
+        }
+        size_t HeapBytes() const
+        {
+            return leafOf.capacity() * sizeof(uint32_t) + words.capacity() * sizeof(uint64_t) +
+                   touched.capacity() * sizeof(uint32_t) + firsts.capacity() + lasts.capacity();
+        }
+    };
+    SparseBits _blockSeen[kKindCount];
+    std::vector<uint32_t> _blockCounts[kKindCount];
+    std::vector<uint32_t> _sealFirst;   ///< key << 8 | first frame, at a seal (in key order)
+    std::vector<uint32_t> _sealLast;    ///< key << 8 | last frame, at a seal
+    bool _blockSummaryValid[kKindCount] = {};
+    std::vector<uint8_t> _sealRaw;   ///< the union's varints at a seal (capture thread; queries use _unionRaw)
+    std::vector<uint8_t> _blockRows;   ///< the open block's frame rows (Written), as Block::frameRows uncompressed
+    static constexpr size_t kRowBits = 8;   ///< 256 bytes a row of Block::frameRows
+    /// Append one frame's rows of sorted @p keys to @p out
+    static void AppendFrameRows(std::vector<uint8_t>& out, const TTDCoverageKey* keys, size_t count);
+    /// The frame rows of the last block FrameWroteIn read: decompressed, each frame's offset
+    mutable std::vector<uint8_t> _rowsCache;
+    mutable std::vector<uint32_t> _rowsOffsets;
+    mutable uint32_t _rowsCacheIndex = UINT32_MAX;
+    /// Forget the open block's summary (its bits cleared key by key)
+    void ResetOpenSummary(size_t kindIdx);
+    /// Give a sealed block the open block's summary
+    void SealSummary(size_t kindIdx, Block& block);
+    /// A block's union, mask and spans from its keys packed with their first (@p firsts) and last (@p lasts) frames,
+    /// both sorted; @p scratch for the varints
+    static void BuildSummary(const Block& block, const std::vector<uint32_t>& firsts, const std::vector<uint32_t>& lasts,
+                             std::vector<uint8_t>& scratch);
+    /// SummarizeBlock's last frames, CountDistinctKeys' decompressed spans
+    mutable std::vector<uint32_t> _unionLast;
+    mutable std::vector<uint8_t> _spansRaw;
+
+    static constexpr size_t kSummaryPieceBits = 12;   ///< 4 KB per bit of Block::pieceMask
+    static constexpr size_t kSummaryPieceWords = (kKeySpace >> kSummaryPieceBits) / 64;
+    /// Dedup scratch of SummarizeBlock (one bit per key, cleared after each block), allocated on first use
+    mutable std::vector<uint64_t> _unionSeen;
+    mutable std::vector<uint32_t> _unionScratch;   ///< key << 8 | first frame
+    mutable std::vector<uint8_t> _unionRaw;
 
     /// Decompress a block (or return the open one) and index its frames.
     /// Returns false when the block does not exist or fails to decompress.

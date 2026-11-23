@@ -34,7 +34,13 @@ bool TTDRecordingWriter::Open(const TimeTravelEngine& engine, size_t first, std:
     _first = first;
     _fileFirsts.resize(_segment);
     _fileFirsts.push_back(first);
-    return _writer->Begin(engine, *_sink, _params, error, {}, first);
+    // The records before the first file's first checkpoint (after a pause) open only that file
+    const TTDSessionSaveParams::JournalStart journalsFrom = _params.journalsFrom;
+    if (_segment != 0)
+        _params.journalsFrom = {};
+    const bool ok = _writer->Begin(engine, *_sink, _params, error, {}, first);
+    _params.journalsFrom = journalsFrom;
+    return ok;
 }
 
 bool TTDRecordingWriter::Close(const TimeTravelEngine& engine, size_t end)
@@ -124,6 +130,8 @@ bool TTDRecordingWriter::Collect(TimeTravelEngine& engine)
     {
         if (s.firstCheckpoint <= _first)
             continue;
+        if (_fileEndStreams)
+            _writer->SetFileEndStreams(_fileEndStreams(_segment));
         if (!Close(engine, s.firstCheckpoint))
             return false;
         std::string error;
@@ -319,6 +327,10 @@ bool LoadRecording(TimeTravelEngine& engine, const std::vector<std::string>& fil
         total.partsLoaded += one.partsLoaded;
         total.partsInFile += one.partsInFile;
         total.notes.insert(total.notes.end(), one.notes.begin(), one.notes.end());
+        for (auto& [stream, bytes] : one.holderStreams)
+            total.holderStreams[stream] = std::move(bytes);
+        for (auto& part : one.coverageParts)
+            total.coverageParts.push_back(std::move(part));
         if (!one.complete)
         {
             total.stoppedAt = files[f] + ", " + one.stoppedAt;

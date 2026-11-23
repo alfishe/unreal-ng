@@ -260,10 +260,12 @@ void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)
     const uint32_t t0 = ttBefore >> 8;                                  // CPU clocks, the stall's start
     const uint32_t t1 = static_cast<uint32_t>((static_cast<uint64_t>(ttBefore) + ticks + 255) >> 8);  // its end
 
-    // The common stall: no frame pulse is latched and the frame event is not in the rasters this stall evaluates. Then nothing
-    // below touches the pulse, and the two catch-ups latch what one to the stall's end latches (a line end between the start and
-    // the end is found by either)
-    if (!(_ts.intPending & TsConfInt::Frame) && !_lineSource) [[likely]]
+    // The common stall: no frame pulse is latched and the frame event is not in the rasters since the last catch-up up to the
+    // stall's end. Then nothing below touches the pulse, and the two catch-ups latch what the next catch-up latches (a line end
+    // between them is found by either; a line source's edges are taken at the same raster as one catch-up takes them): the
+    // stall leaves them to it. A later stall that finds the frame event since that catch-up takes the slow path, whose first
+    // catch-up latches every event up to its start
+    if (!(_ts.intPending & TsConfInt::Frame)) [[likely]]
     {
         const uint32_t from = _ts.intLastRaster;
         const uint32_t to = std::min<uint32_t>(t1 / multiplier, kFrameTacts - 1);
@@ -272,10 +274,7 @@ void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)
         const uint32_t frameEvent = vs * kLineTacts + hs;
         const bool eventInside = hs < kLineTacts && vs < kLines && frameEvent >= from && frameEvent <= to;
         if (!eventInside)
-        {
-            CatchUp(to);
-            return;
-        }
+            return;  // the next catch-up (the instruction's end at the latest) takes these events alike
     }
 
     // Events up to the stall's start are latched; is the pulse running at it?

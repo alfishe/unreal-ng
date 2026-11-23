@@ -68,8 +68,14 @@ Back-pressure: the producer waits when two frame ends are queued (or 1024 operat
   callback).
 - `EveSetOutput` with another buffer or size; the host waits before it resizes its buffers
   (`EveDrawingBarrier`).
-- The machine's frame end (`EveHostCard::OnFrameEnd`): the FT812 frames finished by then are latched on the
-  `Screen` before the machine's frame is over.
+- The machine's frame end (`EveHostCard::OnFrameEnd`, `EveFramesBarrier`): waits only for the FT812 frames finished
+  by then (they are latched on the `Screen` before the machine's frame is over), not for the lines of the frame in
+  flight. `REG_TAG` stays the renderer's as of that point (`tagPending`): the first read waits for the operations
+  queued before the barrier, so it reads what the full barrier would have left.
+- Drawing ahead (`CatchUpAhead`, every 16 lines at the end of a line): the lines due go to the renderer along the
+  scan, so the frame-end wait finds little left. Lines drawn ahead do not move the `REG_TAG` the host sees: the
+  renderer keeps it as of the last operation that is not ahead (`tagSeen`); a catch-up after lines drawn ahead
+  queues a sync point, so a read sees them as the synchronous drawing would.
 - Off: a wait, then the handles, context, metrics, line costs and `REG_TAG` come back to the chip; its kept lines
   are forgotten (the frame buffer holds the renderer's lines).
 
@@ -82,6 +88,7 @@ typedef void (*EveFrameCallback)(void* user, uint64_t frame, int drawn);
 int EveSetAsyncDrawing(EveChip* chip, int on, EveFrameCallback onFrame, void* user); /* 0 = done */
 int EveAsyncDrawing(const EveChip* chip);
 void EveDrawingBarrier(EveChip* chip);
+void EveFramesBarrier(EveChip* chip); /* the finished frames only; REG_TAG as of this point */
 ```
 
 ## 4. Host side
@@ -99,6 +106,9 @@ plane.
 - `EveAsyncDrawing_Test.TheRendererDrawsWhatTheChipWouldHaveDrawn`: two chips, the same bus traffic (bitmap bytes
   and new lists mid-frame, `REG_TAG` reads, a frame without drawing, the renderer off and on again): the same
   frames, `REG_TAG` values, saved state, metrics and line costs.
+- `EveAsyncDrawing_Test.FramesBarrierPresentsTheFramesAndKeepsTheTagOfItsPoint`: frames barriers at machine frames
+  not locked to the chip's frames: the presented frames and `REG_TAG` (read at once or later) match the
+  synchronous chip. It fails when lines drawn ahead move `REG_TAG`.
 - VDAC4 DOOM: the same picture hash as the synchronous drawing and master (§6).
 
 ## 6. Measurements
@@ -116,3 +126,54 @@ every run of every variant (the same as master).
 
 The wait at the machine's frame end (`EveHostCard::OnFrameEnd`) costs about 2.5 %; it is kept: the FT812 frame
 finished in a machine frame is on the `Screen` when that frame ends, as without the renderer thread.
+
+### 6.1 The second round (2026-11-22)
+
+DOOM-VDAC4 in game: 6000 frames of warm-up, 3000 timed, interleaved rounds; picture hash `ff4c23e15ca6` in every
+run. Build host (Apple M-class), ms per frame, JIT and interpreter (`UNREAL_XTENSA_JIT=0`):
+
+| Step | JIT | Interpreter |
+|------|-----|-------------|
+| before | 2.97 | 3.80 |
+| FT812 bus burst: an ESP `ft_wr` of N words is one RAM_G store (`EveWriteRamGWords`, `IVdac4TangLink::LinkFtWrite`) instead of N SPI transactions | 2.89 | 3.49 |
+| TS-Conf DRAM wait: the fast path no longer falls back to the interrupt catch-up when a line source is set | 2.88 | 3.50 |
+| frames barrier + drawing ahead (above) | 2.24 | 3.13 |
+| the conversion of the presented frame into the `Screen` slot in one pass (`LatchExternalFrame(fill)`) | 2.24 | 3.13 |
+
+The last step unloads the renderer thread (64 to 60 % busy), not the frame: the emulation thread is now the
+bottleneck (about 90 % busy). Steam Deck, offscreen: 8.3 to 6.4 ms per frame (-23 %); GUI in game with fire: 48.9
+fps (full speed) before and after, threads 41 / 38 / 28 % busy before, 39 / 33 / 26 % after, 0 frames dropped.
+
+### 6.2 The emulation thread (2026-11-22)
+
+With the drawing off the critical path the emulation thread is the bottleneck (about 90 % busy). Same run, master
+`b84699fa5` vs the changes, four interleaved rounds:
+
+| Step | JIT | Interpreter |
+|------|-----|-------------|
+| master | 2.34 | 3.35 |
+| DRAM arbiter fast path: an access outside the line's fetch blocks takes its cycle without the cycle walk; inline in `DramWait` over the quiet span of the line (`TsConfArbiter::QuickAccess`) | | |
+| a DRAM stall with no frame INT in reach leaves the interrupt catch-up to the next one (`TsConfInterrupts::OnWait`) | 2.12 (-9.5 %) | 3.15 (-6 %) |
+
+Tried and not kept: a fast path for the engine's per-instruction catch-up (-1.5 %, in the noise). Left: the waits
+for the ESP jobs at a command and at the frame end (about 9 %: synchronisation, not work) and the TS-Conf screen
+drawn under the VDAC4 picture (the same work, only earlier).
+
+The same builds on R-Type VDAC4 (`_rtype_vdac4.spg`, 6 x 500 frames with a picture hash after each step, three
+interleaved rounds): 2.46 -> 2.22 ms per frame (-9.7 %), the six pictures equal bit for bit. The ESP waits are
+measured in [research-esp-waits.md](research-esp-waits.md).
+
+### 6.3 R-Type: the renderer is next (2026-11-22)
+
+A sampled R-Type run after §6.2 (8 s, 1429 samples of the emulation thread):
+
+| Thread | Busy | Where |
+|--------|------|-------|
+| emulation | 100 % | Z80 and TS-Conf 80 %, of it `DramWait` 7.5 %, port OUT to the ESP 8 % (half of it the command flush); `AsyncFramesBarrier` 11.5 % |
+| eve-emu renderer | about 67 % | `DrawBitmapFast` with the row fetch 37 %, `BlendSrcAlpha` 8 %, `PresentPicture` 7 % |
+| ESP worker | about 30 % jobs | the rest spins for the next job (`cthread_yield`, not on the critical path) |
+
+R-Type draws far more bitmap pixels than DOOM, so the renderer carries two thirds of a frame and the emulation
+thread already waits for it at 11.5 % of its time (DOOM: 2.3 %). Speeding up the emulation thread further gains less
+there until the bitmap path (`DrawBitmapFast` row fetch, alpha blend) gets faster as well. HMM2 cannot be measured
+(the game's `HMM2.DAT` is not shipped, §8) and DEMO3D is not in the collection.

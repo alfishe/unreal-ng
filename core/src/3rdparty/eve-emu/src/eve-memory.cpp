@@ -217,6 +217,19 @@ uint8_t RomImageByte(const EveChip& chip, uint32_t address)
     return 0;
 }
 
+void StoreRamG(EveChip& chip, uint32_t address, uint8_t value)
+{
+    Region& region = chip.regions[RegionRamG];
+    if (region.base[address] != value)
+    {
+        ++chip.ramGWrites; // counts changes: kept lines and decoded palettes hold over equal writes
+        chip.ramGPageChanges[address >> kPageShift] = chip.ramGWrites;
+        chip.ramGBlockChanges[address >> kChangeBlockShift] = chip.ramGWrites;
+    }
+    region.base[address] = value;
+    region.MarkDirty(address);
+}
+
 void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
 {
     address &= kAddressMask;
@@ -224,15 +237,7 @@ void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
     {
         if (chip.drawing)
             CatchUp(chip);
-        Region& region = chip.regions[RegionRamG];
-        if (region.base[address] != value)
-        {
-            ++chip.ramGWrites; // counts changes: kept lines and decoded palettes hold over equal writes
-            chip.ramGPageChanges[address >> kPageShift] = chip.ramGWrites;
-            chip.ramGBlockChanges[address >> kChangeBlockShift] = chip.ramGWrites;
-        }
-        region.base[address] = value;
-        region.MarkDirty(address);
+        StoreRamG(chip, address, value);
         return;
     }
     if (address >= kRamDlBase && address < kRamDlBase + kRamDlSize)

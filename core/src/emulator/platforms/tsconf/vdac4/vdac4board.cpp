@@ -48,6 +48,17 @@ public:
         _board._tang.LinkWrite(address, value);
         return true;
     }
+    bool LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count) override
+    {
+        if (vdac4::EspXtensaRuntime::InJob())
+        {
+            _board._ft->WriteFt(_board._jobStamp, ftAddress, words, count);
+            return true;
+        }
+        Prepare();
+        _board._tang.LinkFtWrite(ftAddress, words, count);
+        return true;
+    }
 
 private:
     void Prepare()

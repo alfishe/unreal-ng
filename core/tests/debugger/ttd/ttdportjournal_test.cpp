@@ -402,3 +402,123 @@ TEST_F(TTDPortJournalDamage, CursorsMustMatchTheCheckpointsAndStayInOrder)
     Put<uint64_t>(damaged, CursorListAt() + 4 + 16, kBlock + 51);
     ExpectRefused(damaged, "past the end");
 }
+
+namespace
+{
+/// A polling loop: frames of 3,000 accesses to two ports (#FE and #7FFD-like), the ULA's bit 4 flipping now and then
+TTDPortRecord PollingRecordOf(uint64_t i)
+{
+    TTDPortRecord r;
+    r.frame = 500 + i / 3000;
+    r.tInFrame = static_cast<uint32_t>((i % 3000) * 23);
+    r.port = (i % 5 == 0) ? 0x7FFD : 0x00FE;
+    r.pc = 0x8004;
+    r.value = static_cast<uint8_t>(((i / 7) & 1) ? 0x10 : 0x07);
+    return r;
+}
+
+struct Totals
+{
+    std::vector<uint64_t> count = std::vector<uint64_t>(65536, 0);
+    uint64_t toggles = 0;   // bit 4 of #FE, from 0
+    uint8_t fe = 0;
+    bool operator==(const Totals& o) const { return count == o.count && toggles == o.toggles && fe == o.fe; }
+};
+
+void AddByRecords(const TTDPortJournal& j, uint64_t from, uint64_t to, Totals& t)
+{
+    TTDPortRecord r;
+    for (uint64_t k = from; k < to; ++k)
+        if (j.Get(k, r))
+        {
+            ++t.count[r.port];
+            if (r.port == 0x00FE)
+            {
+                t.toggles += ((r.value ^ t.fe) & 0x10) != 0;
+                t.fe = r.value;
+            }
+        }
+}
+
+void AddByTally(const TTDPortJournal& j, uint64_t from, uint64_t to, Totals& t)
+{
+    TTDPortJournal::ReadCache cache;
+    ASSERT_TRUE(j.Tally(from, to, cache, [&](const TTDPortJournal::PortTally* p, size_t n) {
+        for (size_t k = 0; k < n; ++k)
+        {
+            t.count[p[k].port] += p[k].count;
+            if (p[k].port == 0x00FE)
+            {
+                t.toggles += (((p[k].first ^ t.fe) & 0x10) != 0) + p[k].bit4Toggles;
+                t.fe = p[k].last;
+            }
+        }
+        return true;
+    }));
+}
+}  // namespace
+
+/// Tally gives what visiting every record gives, frame by frame and over ranges that cut frames and blocks; a polling
+/// journal's frames come from the block summaries without a decode, also after a save and load (the timeline's port
+/// facts, P1.S10 seek tails). A journal of few accesses a frame to many ports keeps no summary and is decoded
+TEST(TTDPortJournal, TallyMatchesTheRecordsWithoutDecodingAPollingJournal)
+{
+    TTDPortJournal j(Direction::Write);
+    j.StartRecording();
+    const uint64_t total = 3 * kBlock + 1234;
+    for (uint64_t i = 0; i < total; ++i)
+    {
+        const TTDPortRecord r = PollingRecordOf(i);
+        j.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc);
+    }
+    j.Stop();
+    // Frame starts, as checkpoint cursors are
+    std::vector<uint64_t> starts;
+    for (uint64_t i = 0; i < total; i += 3000)
+        starts.push_back(i);
+    starts.push_back(total);
+
+    auto check = [&](const TTDPortJournal& journal, bool expectNoDecode) {
+        const uint64_t decodedBefore = journal.BlocksDecoded();
+        Totals byTally;
+        for (size_t f = 0; f + 1 < starts.size(); ++f)
+            AddByTally(journal, starts[f], starts[f + 1], byTally);
+        if (expectNoDecode)
+            EXPECT_EQ(journal.BlocksDecoded(), decodedBefore) << "frame-aligned ranges of summarised blocks";
+        Totals byRecords;
+        AddByRecords(journal, 0, total, byRecords);
+        EXPECT_TRUE(byTally == byRecords);
+        EXPECT_GT(byRecords.toggles, 100u);
+        // Ranges that cut frames and blocks
+        for (const auto& [from, to] : std::vector<std::pair<uint64_t, uint64_t>>{
+                 {17, 9001}, {kBlock - 5, kBlock + 7}, {2 * kBlock - 3000, 3 * kBlock + 100}, {0, total}})
+        {
+            Totals a, b;
+            AddByTally(journal, from, to, a);
+            AddByRecords(journal, from, to, b);
+            EXPECT_TRUE(a == b) << from << ".." << to;
+        }
+    };
+    check(j, true);
+
+    std::istringstream in(Save(j, {0}));
+    TTDPortJournal loaded(Direction::Write);
+    std::vector<uint64_t> cursors;
+    std::string err;
+    ASSERT_TRUE(loaded.Deserialize(in, 1, cursors, err)) << err;
+    check(loaded, true);
+
+    // Many ports a frame: no summary, the same answers by decoding
+    TTDPortJournal sparse(Direction::Read);
+    Record(sparse, 0, 2 * kBlock + 50);
+    TTDPortJournal::ReadCache cache;
+    std::vector<uint64_t> a(65536, 0), b(65536, 0);
+    ASSERT_TRUE(sparse.Tally(10, 2 * kBlock + 40, cache, [&](const TTDPortJournal::PortTally* p, size_t n) {
+        for (size_t k = 0; k < n; ++k)
+            a[p[k].port] += p[k].count;
+        return true;
+    }));
+    for (uint64_t k = 10; k < 2 * kBlock + 40; ++k)
+        ++b[RecordOf(k).port];
+    EXPECT_EQ(a, b);
+}

@@ -854,6 +854,11 @@ void EspAppHost::FtWrite(uint32_t address, uint32_t words, uint32_t count)
     const uint8_t* bytes = _memory.Bytes(words, count * 4);
     if (bytes == nullptr)
         return;
+    if (_ports.linkFtWrite)
+    {
+        _ports.linkFtWrite(address, bytes, count);
+        return;
+    }
     _ports.linkWrite(kLinkFtAddr, address);
     for (uint32_t i = 0; i < count; i++)
     {

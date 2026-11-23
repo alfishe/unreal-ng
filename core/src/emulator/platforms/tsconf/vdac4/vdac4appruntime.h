@@ -47,6 +47,23 @@ public:
     /// false: the LINK does not answer (TANG_READ then answers [0])
     virtual bool LinkRead(uint32_t address, uint32_t& value) = 0;
     virtual bool LinkWrite(uint32_t address, uint32_t value) = 0;
+    /// FT_ADDR = `ftAddress`, then FT_DATA = each of `count` words (little-endian bytes): ft_write in one call
+    virtual bool LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count)
+    {
+        bool answered = LinkWrite(kLinkFtAddr, ftAddress);
+        for (size_t i = 0; i < count; i++)
+        {
+            const uint8_t* p = words + 4 * i;
+            answered = LinkWrite(kLinkFtData, static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+                                                  (static_cast<uint32_t>(p[2]) << 16) |
+                                                  (static_cast<uint32_t>(p[3]) << 24)) &&
+                       answered;
+        }
+        return answered;
+    }
+
+    static constexpr uint32_t kLinkFtAddr = 0x54;
+    static constexpr uint32_t kLinkFtData = 0x58;
 };
 
 /// Frames to the Z80

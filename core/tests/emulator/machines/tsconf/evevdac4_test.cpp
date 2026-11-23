@@ -742,3 +742,44 @@ TEST(EveVdac4_Test, IntFlagsReadKeepsASwapThatLandsWithIt)
             EXPECT_EQ(chip.Read32(kRegIntFlags) & kIntSwap, 0u);
     }
 }
+
+// EveWriteRamGWords (the ESP's ft_write in one pass) stores what one write transaction per word stores, up to the
+// first word outside RAM_G; the chip's state after it is that of the transactions
+TEST(EveVdac4_Test, WriteRamGWordsMatchesOneTransactionPerWord)
+{
+    const std::vector<uint8_t> rom = MakeRom();
+    Chip a(EVE_MODEL_VDAC4, &rom);
+    Chip b(EVE_MODEL_VDAC4, &rom);
+    ASSERT_NE(a.chip, nullptr);
+    ASSERT_NE(b.chip, nullptr);
+
+    // The last 6 words of the 2 MB RAM_G, then 2 words past it (the ROM there ignores the host)
+    const uint32_t limit = EveRamGLimit(a.chip);
+    const uint32_t address = limit - 6 * 4;
+    std::vector<uint8_t> words(8 * 4);
+    for (size_t i = 0; i < words.size(); ++i)
+        words[i] = static_cast<uint8_t>(0x31 + 7 * i);
+
+    for (uint32_t i = 0; i < 8; ++i)
+        a.Write(address + 4 * i, words.data() + 4 * i, 4);
+
+    ASSERT_EQ(EveWriteRamGWords(b.chip, address, words.data(), 8), 6u);
+    for (uint32_t i = 6; i < 8; ++i)
+        b.Write(address + 4 * i, words.data() + 4 * i, 4);
+
+    for (uint32_t i = 0; i < 8 * 4; ++i)
+        EXPECT_EQ(EvePeek(b.chip, address + i), EvePeek(a.chip, address + i)) << "byte " << i;
+    ASSERT_EQ(EveStateSize(a.chip), EveStateSize(b.chip));
+    std::vector<uint8_t> stateA(EveStateSize(a.chip)), stateB(EveStateSize(b.chip));
+    EveSaveState(a.chip, stateA.data());
+    EveSaveState(b.chip, stateB.data());
+    EXPECT_EQ(stateA, stateB);
+
+    // Not inside a transaction the host has open: the caller sends the words as transactions
+    EveSelect(b.chip, 1);
+    EXPECT_EQ(EveWriteRamGWords(b.chip, 0, words.data(), 1), 0u);
+    EveSelect(b.chip, 0);
+    // Not in the core reset's register sweep, which drops host bytes
+    b.HostCommand(kHostRstPulse);
+    EXPECT_EQ(EveWriteRamGWords(b.chip, 0, words.data(), 1), 0u);
+}

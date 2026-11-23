@@ -69,6 +69,13 @@ public:
     using FileClosedFn = std::function<void(const std::string& path, size_t firstCheckpoint)>;
     void SetOnFileClosed(FileClosedFn fn) { _onClosed = std::move(fn); }
 
+    /// Called when a file closes at the next segment's baseline while recording goes on, with the file's number:
+    /// holder streams for its last part (TTDSessionWriter::SetFileEndStreams; ids declared in the params)
+    using FileEndStreamsFn = std::function<std::vector<TTDHolderStream>(uint32_t file)>;
+    void SetFileEndStreams(FileEndStreamsFn fn) { _fileEndStreams = std::move(fn); }
+    /// Files closed with their index (the open one, if any, is number ClosedFiles())
+    uint32_t ClosedFiles() const { return _segment; }
+
     bool Failed() const { return !_error.empty() || (_writer && _writer->Failed()); }
     std::string Error() const;
     uint32_t SegmentFiles() const { return _segment + (_writer ? 1 : 0); }
@@ -86,6 +93,7 @@ private:
     size_t _first = 0;              ///< the open file's first checkpoint
     std::string _openPath;
     FileClosedFn _onClosed;
+    FileEndStreamsFn _fileEndStreams;
     std::unique_ptr<TTDFileSink> _sink;
     std::unique_ptr<TTDSessionWriter> _writer;
     std::string _error;
