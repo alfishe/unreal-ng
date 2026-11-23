@@ -302,7 +302,7 @@ soak 2026-11-21; `TimeTravelController_TwoTiers_Test.ResumeAtTheEndOfAnEvictedTr
 whose branch cannot fork is refused; it never cuts the history after it instead.
 
 What stays in memory grows with the session, by design: the write journal (under 3 bytes a write record: 985 MB
-at 240k frames of a Pentagon writing 8 K bytes a frame) and the coverage index with its block summaries (about 200 bytes a frame, a quarter of the index, for range counts without decoding frames). Their cost
+at 240k frames of a Pentagon writing 8 K bytes a frame) and the coverage index with its block summaries (about 200 bytes a frame, a quarter of the index, for range counts without decoding frames; runs of 4 and 32 blocks get their keys united as they seal, so a long range counts a run once). Their cost
 per query does not grow: the memory report keeps running sums (no walk over the checkpoints), the journal answers a
 range from per-block running counts, and a pause writes only the part of the journal and of the coverage index the
 folder lacks (a per-part journal and `kCoverageFrom` parts; `storage.md`), not all of it (P1.S10 follow-up,

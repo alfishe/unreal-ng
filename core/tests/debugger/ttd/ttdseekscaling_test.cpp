@@ -618,16 +618,20 @@ TEST(TTDSeekScaling_Test, Measure)
             const char* name;
             bool far;
             bool mid;
+            bool step = false;   ///< frame by frame back from a random frame of the window (stepping, scrubbing)
         };
         const Kind kinds[] = {{"near/frame", false, false}, {"near/mid", false, true}, {"far/frame", true, false},
-                              {"far/mid", true, true}};
+                              {"far/mid", true, true}, {"step/back", false, false, true}};
         for (const Kind& k : kinds)
         {
             std::vector<double> total, restore, replay, present, other;
+            uint64_t previous = 0;
             for (int i = 0; i < samples; ++i)
             {
                 const uint64_t lo = k.far ? first : (end.frame > limit ? end.frame - limit : first);
-                const uint64_t frame = lo + rng() % std::max<uint64_t>(1, end.frame - lo);
+                const uint64_t frame = k.step && i > 0 && previous > lo ? previous - 1
+                                                                        : lo + rng() % std::max<uint64_t>(1, end.frame - lo);
+                previous = frame;
                 const uint32_t t = k.mid ? 1 + static_cast<uint32_t>(rng() % (span - 1)) : 0;
                 const Clock::time_point s0 = Clock::now();
                 ttd::TTDSeekResult result;
