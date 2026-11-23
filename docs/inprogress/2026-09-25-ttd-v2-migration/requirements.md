@@ -277,6 +277,37 @@ Release build), reference workloads of §5.3.
     45.3 us at 8 K; the port journal's tallies cost 2.2 us a frame at 3,000
     port records a frame.
 
+  **Measured** (P1.S10 seek A/B, 2026-11-22). The seek-tails landing
+  was compared with its parent: interleaved rounds with an A/A beside each,
+  load 5-75, `BM_Prof_*_Ttd*` ladders on Pentagon and TSL, and
+  `TTDSeekScaling_Test.Measure`.
+  - recording: TTD off, TTD on, and TTD on with coverage and the write journal
+    all stay inside the A/A on both machines. TTD off costs nothing (Pentagon
+    +2.0 % against A/A +2.1 %, TSL 0.0 %). The port tallies are under the
+    noise floor;
+  - under the same load, the landing holds at 240k frames:
+    - an evicted seek: 6.5 -> 4.2 ms p50;
+    - a window seek: 1.8 -> 1.3 ms p50;
+    - the timeline: 394 -> 97 ms;
+  - this step:
+    - stepping back frame by frame: 0.97 / 1.33 -> 0.65 / 0.93 ms p50 at
+      50k / 240k. A restore that does not know memory copies, from the
+      engine's decoded copy, the pieces whose version it holds, or moves them
+      along their chains;
+    - the timeline with coverage: 71 / 287 -> 46 / 167 ms at 50k / 240k.
+      The coverage index unites runs of 4 and 32 blocks as they seal, so a
+      long range counts a run's keys once, not each block's;
+    - neither costs anything measurable in recording;
+  - tried and reverted, no win:
+    - keeping container records compressed only when that saves an eighth;
+    - running sums for the port journal's heap;
+  - still open:
+    - an evicted seek at 240k is 4.0 / 6.3 ms p50 / p95 with coverage, so
+      p99 is not under 5 ms. The floor is the read back: the records' zstd,
+      their crc and the table rebuild;
+    - PR-6's 1 ms p50 is 1.3-1.4 ms at 240k. The floor is the full decode
+      plus one frame run for the picture.
+
 ### 3.3 Storage efficiency
 
 - **PR-9 (MUST)** v2 is **more efficient than v1** on every reference workload

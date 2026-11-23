@@ -778,3 +778,51 @@ TEST(TTD_CoverageIndex_Test, BlockSummariesCountWhatTheFramesHold)
     // Read back from a file: no summaries until asked
     ExpectSummariesMatch(*ReadBack(*index, 0), 230);
 }
+
+/// A range holding whole runs of blocks counts the runs' unions: the same distinct keys as frame by frame, after a cut
+/// inside a run, a cut at a run's edge and read back from a file (no runs then)
+TEST(TTD_CoverageIndex_Test, RunsOfBlocksCountWhatTheFramesHold)
+{
+    auto index = std::make_unique<TTDCoverageIndex>();
+    auto seal = [&](uint64_t from, uint64_t to, uint32_t salt) {
+        for (uint64_t f = from; f < to; ++f)
+        {
+            for (uint16_t k = 0; k < 16; ++k)   // a loop, and code moving on slowly
+                index->Record(TTDCoverageKind::Executed, MakeCoverageKey(0, static_cast<uint16_t>(0x100 + k)));
+            index->Record(TTDCoverageKind::Executed, MakeCoverageKey(1, static_cast<uint16_t>((f / 50 * 13 + salt) & 0x3FFF)));
+            index->Record(TTDCoverageKind::Executed, MakeCoverageKey(2, static_cast<uint16_t>((f * 37 + salt) & 0x3FFF)));
+            index->SealFrame(f);
+        }
+    };
+    std::vector<uint32_t> stamp(size_t{1} << 23, 0);
+    uint32_t mark = 0;
+    auto expectMatch = [&](const TTDCoverageIndex& in, uint64_t frames, const char* what) {
+        // Ranges holding runs of 4 and 32 blocks, cutting them, aligned and not
+        const std::pair<uint64_t, uint64_t> ranges[] = {{0, frames - 1}, {0, 255}, {0, 2047}, {256, 2303}, {100, 2500},
+                                                        {1, 4095}, {2048, frames - 1}, {64, 1023}, {255, 512}};
+        for (const auto& [first, last] : ranges)
+        {
+            if (first >= frames)
+                continue;
+            uint32_t want = 0;
+            std::vector<uint32_t> counts;
+            BruteForce(in, TTDCoverageKind::Executed, first, last, want, counts);
+            EXPECT_EQ(in.CountDistinctKeys(TTDCoverageKind::Executed, first, last, stamp, ++mark), want)
+                << what << ": frames " << first << ".." << last;
+        }
+    };
+    seal(0, 4200, 0);
+    expectMatch(*index, 4200, "sealed");
+
+    // Cut inside a run of 32 (and one of 4), then a different future
+    index->DropFramesFrom(3000, true);
+    seal(3000, 4400, 5);
+    expectMatch(*index, 4400, "cut inside a run");
+
+    // Cut at a run's edge (block 32)
+    index->DropFramesFrom(2048, false);
+    seal(2048, 4400, 9);
+    expectMatch(*index, 4400, "cut at a run's edge");
+
+    expectMatch(*ReadBack(*index, 0), 4400, "read back");
+}
