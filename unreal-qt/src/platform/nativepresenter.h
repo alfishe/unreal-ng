@@ -137,6 +137,8 @@ public:
     /// refresh comes without one (smooth motion leaves one out). A presenter that replaces the present still waiting
     /// (DXGI Present(1)) has no such queue: 0
     virtual uint64_t Presented() const { return 0; }
+    /// Presents shown a refresh late so far (Stats::late, without the statistics' locks: asked every picture)
+    virtual uint64_t LatePresents() const { return 0; }
     virtual uint64_t LastLatePresent() const { return 0; }
     virtual uint32_t LastLateLag() const { return 0; }
     virtual uint64_t LastOnTimePresent() const { return 0; }

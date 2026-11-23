@@ -121,6 +121,9 @@ struct WindowPresentStats
     uint64_t motionFields = 0;
     uint64_t onDevice = 0;
     uint64_t heldFlicker = 0;
+    /// The interpolation's pictures came a refresh late too often on this machine: blended instead (`smooth` says
+    /// what draws), until the settings are set again
+    bool smoothTooSlow = false;
     uint64_t smoothBehind = 0;   ///< refreshes smooth motion was behind the frame due (the frame shown as it is)
     uint64_t smoothStarved = 0;  ///< frames due with no next frame yet: the look-ahead was used up, the picture repeats
 };

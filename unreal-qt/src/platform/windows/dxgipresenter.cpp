@@ -623,6 +623,7 @@ public:
     {
         return _fb->lead.Margin(refreshPeriodNs);
     }
+    uint64_t LatePresents() const override { return _fb->lead.Late(); }
 
     /// auto: vsync until the vblanks are seen to follow the presents, VRR while they do (CheckVrr, vrrprobe.h); vrr:
     /// Present(0, ALLOW_TEARING) at the time, always; vsync: Present(0) without tearing at the time, always. VRR needs

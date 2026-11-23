@@ -244,6 +244,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.present.smooth = "interpolate";
     fake.settings.present.heldFlicker = 7;
     fake.settings.present.smoothBehind = 3;
+    fake.settings.present.smoothTooSlow = true;
     fake.settings.present.smoothStarved = 11;
     fake.settings.present.clock = "audio";
     fake.settings.present.beatFrames = 500;
@@ -271,6 +272,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");
     EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
     EXPECT_EQ(present.find("smooth")->find("behind")->i, 3);
+    EXPECT_TRUE(present.find("smooth")->find("too_slow")->b);
     EXPECT_EQ(present.find("smooth")->find("starved")->i, 11);
     ASSERT_NE(present.find("vrr"), nullptr);
     ASSERT_NE(present.find("display"), nullptr);

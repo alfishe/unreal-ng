@@ -498,9 +498,14 @@ void VideoSyncWindow::refresh()
         why = tr("The feature lowlatency is on (Machine > Low Latency): frames are not held for their sound, led or "
                  "interpolated, so the picture comes sooner and leads the sound");
     else if (p.sync == "off")
+    {
         why = tr("View > Video Synchronization is off: smooth motion %1, present policy %2, display rate %3")
                   .arg(QString::fromStdString(s.smoothMotion), QString::fromStdString(s.presentPolicy),
                        QString::fromStdString(s.displayRate));
+        // Set by hand and not drawing: the display follows the frames or shows each for whole refreshes
+        if (s.smoothMotion != "off" && p.smooth == "off" && p.clock != "latch")
+            why += tr(". Smooth motion is not drawn: the display does not beat with the machine");
+    }
     else
         why = QString::fromStdString(p.syncReason);  // VRR: nothing came before it, nothing to explain
     set("why", why);
@@ -614,9 +619,12 @@ void VideoSyncWindow::refresh()
         set("smooth", tr("%1 · %2%3")
                           .arg(QString::fromStdString(p.smooth), QString::fromStdString(p.smoothDevice).toUpper(),
                                p.game ? tr(" · game") : QString()),
-            tr("%1 on the %2%3")
+            tr("%1 on the %2%3%4")
                 .arg(QString::fromStdString(p.smooth), QString::fromStdString(p.smoothDevice).toUpper(),
-                     p.game ? tr(", the game's cadence") : QString()));
+                     p.game ? tr(", the game's cadence") : QString(),
+                     p.smoothTooSlow ? tr(": the interpolation's pictures came a refresh late on this machine, "
+                                          "blended instead")
+                                     : QString()));
         if (rateDue && _lastNs == 0)
         {
             for (const char* key : {"frames", "pictures", "interpolated", "blended", "motion_fields", "held"})

@@ -331,7 +331,12 @@ private:
     bool _syncVrr = false;                                ///< the presenter's VRR the display rate step last saw
     bool _syncVrrPending = false;                         ///< ... and its VRR check still running
     /// Does the sync timer watch the presenter: Auto picks its step by it, display_rate match its mode switch
-    bool syncWatched() const { return _smoothAuto || _displayRate == DisplayRate::Match; }
+    /// ... and smooth motion set by hand whether the display beats with the machine (_smoothHelps)
+    bool syncWatched() const
+    {
+        return _smoothAuto || _displayRate == DisplayRate::Match || _smooth.GetMode() != smoothmotion::Mode::Off;
+    }
+    bool _smoothHelps = true;  ///< smooth motion set by hand has a beat to smooth (updateVideoSync)
     std::string _syncReason;                              ///< WindowPresentStats::syncReason
     QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
@@ -403,6 +408,14 @@ private:
     uint64_t _smoothStarved = 0;        ///< frames due with no next frame fed yet (no picture between them)
     uint64_t _smoothStarvedSerial = 0;  ///< ... the last one counted
     bool _smoothWasActive = false;      ///< smoothActive at the last feed: on again starts it over
+    /// The interpolation's pictures came a refresh late too often (noteInterpolated): blended instead
+    static constexpr uint32_t kSmoothGuardWindow = 20;
+    static constexpr uint32_t kSmoothGuardLates = 4;
+    bool _smoothTooSlow = false;
+    uint32_t _smoothGuardDrawn = 0;
+    uint32_t _smoothGuardLates = 0;
+    uint64_t _smoothGuardLate = 0;  ///< the presenter's late presents as last counted
+    void noteInterpolated();
     QMetaObject::Connection _screenRateChanged;  ///< the window's screen's refreshRateChanged (watchScreenRate)
     void watchScreenRate();
     /// The presenter goes (made anew, a fall back): its counters start from 0 again, so what was kept by them does too

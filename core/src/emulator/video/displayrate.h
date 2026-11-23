@@ -122,6 +122,19 @@ inline const char* VideoSyncName(VideoSync sync)
 
 /// The step in effect for a display `vrr` (frames each at its own time) at `displayHz` and a machine at `machineHz`.
 /// Not steady yet (`machineHz` 0: start, pause, turbo): `last`, the step before, or interpolate when there was none
+/// Smooth motion set by hand (blend, interpolate) has something to do: the display beats with the machine. On a
+/// display that follows the frames, or shows each for the same number of refreshes (50 Hz on 50 or 100 Hz), there
+/// is no picture between two frames to show: a blend there is a ghost that comes and goes as the two clocks drift.
+/// Rates not known yet: yes (it starts, and stops when they are)
+inline bool SmoothMotionHelps(bool vrr, double displayHz, double machineHz)
+{
+    if (vrr)
+        return false;
+    if (displayHz <= 0.0 || machineHz <= 0.0)
+        return true;
+    return FitDisplayRate(displayHz, machineHz).error > kDisplayRateMaxError;
+}
+
 inline VideoSync PickVideoSync(bool vrr, double displayHz, double machineHz, VideoSync last = VideoSync::Off)
 {
     if (vrr)

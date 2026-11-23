@@ -1097,6 +1097,11 @@ bool VulkanPresenter::RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const
     return true;
 }
 
+uint64_t VulkanPresenter::LatePresents() const
+{
+    return _impl->lead.Late();
+}
+
 uint64_t VulkanPresenter::Presented() const
 {
     std::lock_guard<std::mutex> lock(_impl->statsMutex);

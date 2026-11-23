@@ -212,8 +212,10 @@ Vulkan costs 3-6 % of a core more. Its "a refresh late" count is not a later pic
   work (`glClientWaitSync`) before it takes the time and swaps, Vulkan's takes it after `vkQueuePresentKHR`, the GPU
   still drawing (woke to submit: GL 5.6 ms, Vulkan 2.2 ms). The same screen time reads ~3 ms later on Vulkan, past
   the "a refresh plus 1 ms" mark more often. A present at once has no time of its own to be late against.
-- gamescope's screen times (present_wait, GLX_OML_sync_control both) are its composition's, ±7 ms off a vblank grid:
-  the "a refresh plus 1 ms" mark counts that spread on both, and both leads sit at their 20 ms bound.
+- gamescope's screen times come 1.5-2 ms after the vblank: the "a refresh plus 1 ms" mark counted the frames whose
+  time fell just after a vblank (4 %) on both, and both leads sat at their 20 ms bound. Fixed in `PresentLead` (the
+  offset is measured): 0 late, the lead at 6-8 ms
+  ([stabilization, 1.6](../2026-11-22-presenter-stabilization/README.md)).
 - The ~9.5 ms error both share at once is the frame's phase: 50 Hz frames on a 59.81 Hz screen land anywhere in a
   refresh.
 

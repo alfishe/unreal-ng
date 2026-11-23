@@ -92,7 +92,8 @@
             pf("smooth", "object",
                "{mode (in effect: off with temporal blending or without timed frames), device (gpu / cpu), game (a "
                "game profile's cadence applies), frames, pictures, renders, blended, interpolated, motion_fields, "
-               "on_device, held_flicker, behind (refreshes it was behind the frame due), starved (frames due "
+               "on_device, held_flicker, too_slow (the interpolation came a refresh late too often: blended "
+               "instead), behind (refreshes it was behind the frame due), starved (frames due "
                "with no next frame yet)}");
             pf("display", "object",
                "[VIDEO] DisplayRate: {state (keep; matched: the display runs hz for the machine's machine_hz, its own "

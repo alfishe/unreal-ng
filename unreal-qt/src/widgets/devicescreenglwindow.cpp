@@ -891,6 +891,9 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     }
     out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
     FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.IsCreated(), out);
+    out.smoothTooSlow = _smoothTooSlow;
+    if (_smoothTooSlow && out.smooth == "interpolate" && !out.game)
+        out.smooth = "blend";  // what draws
     out.smoothBehind = _smoothBehind;
     out.smoothStarved = _smoothStarved;
     const GpuPassTimes::Times smoothGpu = _gpuTimes.Get(GpuPassTimes::Smooth);
@@ -1143,6 +1146,10 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
     _smooth.Reset();
     _smooth.SetMode(mode);
     _smoothShown = {};
+    // Settings set again (another device for the effects, another mode): the interpolation gets its chance again
+    _smoothTooSlow = false;
+    _smoothGuardDrawn = _smoothGuardLates = 0;
+    _smoothGuardLate = _presenter ? _presenter->LatePresents() : 0;
     _uploadedSerial = 0;
     updateDisplayRate();
     updateVideoSync();
@@ -1178,8 +1185,20 @@ void DeviceScreenGLWindow::updateVideoSync()
     {
         _sync = VideoSync::Off;
         _syncReason.clear();
+        // Blend or interpolate set by hand: only on a display that beats with the machine
+        double hz = _displayState == "matched" && _displayHz > 0.0 ? _displayHz : displayHz;
+        if (hz <= 0.0 && screen())
+            hz = screen()->refreshRate();
+        const bool helps = SmoothMotionHelps(vrr, hz, _frameRate.Hz());
+        if (helps != _smoothHelps)
+        {
+            qInfo() << "DeviceScreenGLWindow: smooth motion" << (helps ? "draws" : "not drawn") << "(display" << hz
+                    << "Hz, machine" << _frameRate.Hz() << "Hz" << (vrr ? ", VRR)" : ")");
+            _smoothHelps = helps;
+        }
         return;
     }
+    _smoothHelps = true;
     if (_displayState == "matched" && _displayHz > 0.0)
         displayHz = _displayHz;
     if (displayHz <= 0.0 && screen())
@@ -1332,6 +1351,29 @@ void DeviceScreenGLWindow::watchScreenRate()
             Qt::QueuedConnection);
 }
 
+void DeviceScreenGLWindow::noteInterpolated()
+{
+    // An interpolated picture drawn. Do they reach the screen in time? Told by what the presenter saw, whatever the
+    // device and the picture's size: of the last kSmoothGuardWindow of them, kSmoothGuardLates or more presents a
+    // refresh late is an interpolation this machine cannot draw within a refresh (the Steam Deck: 18.9 ms a picture
+    // on its GPU at 16.7 ms a refresh; 13 pictures a second reached the screen, and the lead those lates widened to
+    // its bound halved the blend's too). Blended from then on, until the settings are set again
+    if (!_presenter)
+        return;
+    const uint64_t late = _presenter->LatePresents();
+    _smoothGuardLates += static_cast<uint32_t>(late - std::min(late, _smoothGuardLate));
+    _smoothGuardLate = late;
+    if (++_smoothGuardDrawn < kSmoothGuardWindow)
+        return;
+    if (_smoothGuardLates >= kSmoothGuardLates)
+    {
+        _smoothTooSlow = true;
+        qWarning() << "DeviceScreenGLWindow: smooth motion's interpolation is too slow here (" << _smoothGuardLates
+                   << "of its last" << _smoothGuardDrawn << "pictures a refresh late) - blended from now on";
+    }
+    _smoothGuardDrawn = _smoothGuardLates = 0;
+}
+
 void DeviceScreenGLWindow::dropPresenter()
 {
     _presenter.reset();
@@ -1346,7 +1388,7 @@ bool DeviceScreenGLWindow::smoothActive() const
     // them (copies under the frame source's mutex, a flicker search each) only held the emulation up
     return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
            !_shownInfo.atOnce && _shownInfo.source != FrameClockSource::Latch &&
-           (!_smoothAuto || _sync == VideoSync::Interpolate);
+           (_smoothAuto ? _sync == VideoSync::Interpolate : _smoothHelps);
 }
 
 void DeviceScreenGLWindow::feedSmooth()
@@ -2025,6 +2067,15 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                 _smoothStarved++;
             }
         }
+        // The interpolation's pictures came a refresh late (SmoothGuard below): the blend of the same two frames,
+        // which costs nothing; a game's cadence picture: the frame
+        const bool interpolates = plan.kind == smoothmotion::SmoothMotion::Kind::Interpolate ||
+                                  plan.kind == smoothmotion::SmoothMotion::Kind::Cadence ||
+                                  plan.kind == smoothmotion::SmoothMotion::Kind::Carry;
+        if (_smoothTooSlow && plan.kind == smoothmotion::SmoothMotion::Kind::Interpolate)
+            plan.kind = smoothmotion::SmoothMotion::Kind::Blend;
+        else if (_smoothTooSlow && interpolates)
+            plan = {smoothmotion::SmoothMotion::Kind::Frame, plan.serial, plan.serial, plan.serial, 0};
         bool kept = false;
         if (plan.kind != smoothmotion::SmoothMotion::Kind::None)
         {
@@ -2058,6 +2109,8 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(framebuffer));
                     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
                 }
+                if (draws && interpolates && !_smoothTooSlow)
+                    noteInterpolated();
                 if (draws)
                     _gpuTimes.Record(GpuPassTimes::SmoothCpu,
                                      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -

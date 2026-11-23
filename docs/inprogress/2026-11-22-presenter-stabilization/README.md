@@ -154,6 +154,28 @@ Everything measured so far is 50 (48.83) Hz on 60 Hz at 352x288.
 - Turbo, pause, single step.
 - Explicit `blend` / `interpolate` check no rates: on 50 Hz a blend ghosts for good.
 
+Done (2026-11-22), each found by measuring smooth motion on the Steam Deck (gamescope, 60 Hz, GL and Vulkan, the
+effects on the GPU and on the CPU):
+
+| Before | Cause | After |
+|--------|-------|-------|
+| `interpolate`: 13 pictures a second on screen, 98 presents a refresh late in 10 s | a picture takes 18.9 ms on the Deck's GPU at 16.7 ms a refresh | the window blends instead when 4 of the last 20 interpolated pictures came a refresh late (`present.smooth.too_slow`, `mode` says what draws), until the settings are set again: 59.5 pictures a second, 0 late, each on its refresh (error 8.3 ms, half a refresh, as asked) |
+| `blend`: 30 pictures a second after an `interpolate` | the lates above left every other refresh out to drain the queue, and widened the lead to its 20 ms bound | 59.4 a second |
+| At the frame's time: 56-62 "late" of 1300 on GL, the lead at 20 ms | gamescope's screen times come 1.5-2 ms after the vblank, a frame at the first refresh after its time read up to 18.7 ms at 16.7 ms a refresh | `PresentLead` measures that constant offset (the 5th percentile of the errors on time, up to 3 ms): 0 late, lead 6 ms |
+| `blend` / `interpolate` set by hand drew on any display | no rates were looked at: on a display that shows each frame for whole refreshes a blend is a ghost that comes and goes | `SmoothMotionHelps`: drawn only where the display beats with the machine (a ZX 48K: on at 60 Hz, off at gamescope's 50 Hz, on again) |
+
+Still not covered (no display or machine here to measure them on, and the layers' rules are frozen without a scene
+set to judge them by):
+
+- Displays of 75, 120, 144, 165, 240 Hz: more pictures a frame. The guard above covers a machine that cannot draw
+  them in time (it blends); on 144 and 240 Hz `auto` stays off within the 5 % bound, the same beat the display rate
+  switch accepts for 48.83 Hz on 50 Hz.
+- Hi-res and hi-colour modes: the guard covers their cost; their picture quality under interpolation is not judged.
+- Scrolls over 8 pixels a frame, fades, border effects, static multicolour, interlace: scenes to write.
+
+The interpolation itself on the Deck stays to do: 18.9 ms a picture is the GPU's own time (the read-backs between
+its steps, frame presenter DONE.md: "`Decide` on the GPU").
+
 ## 2. Platform by mode, from the code (before the steps)
 
 | | Fixed grid | VRR | Display rate switch | Smooth motion | Low latency |

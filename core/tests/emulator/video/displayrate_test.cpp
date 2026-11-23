@@ -180,6 +180,21 @@ TEST(DisplayRate_Test, VideoSyncTakesTheFirstStepTheDisplayAllows)
     EXPECT_STREQ(VideoSyncName(VideoSync::DisplayRate), "display_rate");
 }
 
+TEST(DisplayRate_Test, SmoothMotionByHandNeedsADisplayThatBeatsWithTheMachine)
+{
+    // 50 Hz and a Pentagon's 48.83 Hz on 60 Hz: a picture per refresh between the frames
+    EXPECT_TRUE(SmoothMotionHelps(false, 60.0, 50.0));
+    EXPECT_TRUE(SmoothMotionHelps(false, 59.81, 48.83));
+    // Each frame for the same number of refreshes, or a display that follows them: nothing between two frames
+    EXPECT_FALSE(SmoothMotionHelps(false, 50.0, 50.08));
+    EXPECT_FALSE(SmoothMotionHelps(false, 100.0, 50.0));
+    EXPECT_FALSE(SmoothMotionHelps(false, 50.0, 48.83));
+    EXPECT_FALSE(SmoothMotionHelps(true, 144.0, 50.0));
+    // Not known yet: it starts
+    EXPECT_TRUE(SmoothMotionHelps(false, 0.0, 50.0));
+    EXPECT_TRUE(SmoothMotionHelps(false, 60.0, 0.0));
+}
+
 TEST(DisplayRate_Test, VideoSyncKeepsItsStepWhileTheMachineIsNotSteady)
 {
     // Paused, turbo, just started: the step before stays; none before: interpolate (the display is unknown to fit)

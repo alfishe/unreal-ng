@@ -656,6 +656,11 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
     fb->drawableWaits.Add(static_cast<double>(drawableWaitNs) / 1e6);
 }
 
+uint64_t MetalPresenter::LatePresents() const
+{
+    return _impl->fb->lead.Late();
+}
+
 uint64_t MetalPresenter::Presented() const
 {
     return _impl->fb->presented.load(std::memory_order_relaxed);
