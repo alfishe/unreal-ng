@@ -84,7 +84,10 @@ void VideowallRecordingWidget::createUI()
 
     auto* buttonLayout = new QHBoxLayout();
     _startButton = new QPushButton("🔴 Start Recording");
-    _startButton->setStyleSheet("font-weight: bold; background-color: #d9534f; color: white; padding: 6px 12px;");
+    // A native button (no style sheet): the platform draws its disabled state while a recording runs
+    QFont startFont = _startButton->font();
+    startFont.setBold(true);
+    _startButton->setFont(startFont);
 
     _pauseButton = new QPushButton("⏸ Pause");
     _resumeButton = new QPushButton("▶ Resume");
