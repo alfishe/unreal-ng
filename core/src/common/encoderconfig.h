@@ -41,6 +41,11 @@ struct EncoderConfig
     /// effects; 2x+ preserves them.
     uint32_t scaleFactor = 1;
 
+    /// A fixed output frame (the 1080p / 1440p / 4K profiles): videoWidth x videoHeight is that frame, the picture is
+    /// fitted into it (FrameScaler: aspect kept, nearest, black bars). An encoder that builds the frame itself
+    /// (EncoderBase::TakesSourcePicture) gets the source picture instead
+    bool fixedOutput = false;
+
     /// endregion </Video Configuration>
 
     /// region <Audio Configuration>

@@ -97,6 +97,11 @@ public:
     void Mul(uint32_t d, uint32_t n, uint32_t m) { Emit(0x1B000000u | (m << 16) | (ZR << 10) | (n << 5) | d); }
     void Umull(uint32_t d, uint32_t n, uint32_t m) { Emit(0x9BA07C00u | (m << 16) | (n << 5) | d); }
     void Smull(uint32_t d, uint32_t n, uint32_t m) { Emit(0x9B207C00u | (m << 16) | (n << 5) | d); }
+    void Udiv(uint32_t d, uint32_t n, uint32_t m) { Emit(0x1AC00800u | (m << 16) | (n << 5) | d); }
+    void Sdiv(uint32_t d, uint32_t n, uint32_t m) { Emit(0x1AC00C00u | (m << 16) | (n << 5) | d); }
+    void Msub(uint32_t d, uint32_t n, uint32_t m, uint32_t a) { Emit(0x1B008000u | (m << 16) | (a << 10) | (n << 5) | d); } // a - n * m
+    void Clz(uint32_t d, uint32_t n) { Emit(0x5AC01000u | (n << 5) | d); }
+    void Cls(uint32_t d, uint32_t n) { Emit(0x5AC01400u | (n << 5) | d); }
     void AndImm(uint32_t d, uint32_t n, uint32_t nimm) { Emit(0x12000000u | (nimm << 10) | (n << 5) | d); } // N:immr:imms (N = 0)
 
     // memory
@@ -483,6 +488,14 @@ private:
             case Op::Mull: _a.Mul(A, B, C); return true;
             case Op::Muluh: _a.Umull(T0, B, C); _a.UbfmX(T0, T0, 32, 63); _a.Mov(A, T0); return true;
             case Op::Mulsh: _a.Smull(T0, B, C); _a.UbfmX(T0, T0, 32, 63); _a.Mov(A, T0); return true;
+            // a zero divisor exits before the instruction: the interpreter stops there (DivideByZero). INT_MIN / -1 wraps
+            // to INT_MIN and its remainder is 0 on arm64 as in the interpreter
+            case Op::Quou: Side(_a.Cbz(C)); _a.Udiv(A, B, C); return true;
+            case Op::Quos: Side(_a.Cbz(C)); _a.Sdiv(A, B, C); return true;
+            case Op::Remu: Side(_a.Cbz(C)); _a.Udiv(T0, B, C); _a.Msub(A, T0, C, B); return true;
+            case Op::Rems: Side(_a.Cbz(C)); _a.Sdiv(T0, B, C); _a.Msub(A, T0, C, B); return true;
+            case Op::Nsau: _a.Clz(A, B); return true; // CLZ(0) = 32
+            case Op::Nsa: _a.Cls(A, B); return true;  // CLS(0) = CLS(-1) = 31
             case Op::Slli:
                 if (imm >= 32)
                     _a.Movz(A, 0);
@@ -603,6 +616,14 @@ private:
             case Op::Wfr: _a.StrWImm(B, XST, FR(in.a)); return true;
             case Op::Rfr: _a.LdrWImm(A, XST, FR(in.b)); return true;
             case Op::MovS: _a.LdrWImm(T0, XST, FR(in.b)); _a.StrWImm(T0, XST, FR(in.a)); return true;
+            case Op::MovfS: case Op::MovtS:
+                _a.LdrWImm(T2, XST, offsetof(CpuState, br));
+                _a.LdrWImm(T0, XST, FR(in.a));
+                _a.LdrWImm(T1, XST, FR(in.b));
+                _a.TstImm(T2, 1u << (in.c & 15));
+                _a.Csel(T0, T1, T0, in.op == Op::MovtS ? NE : EQ);
+                _a.StrWImm(T0, XST, FR(in.a));
+                return true;
             case Op::AbsS:
                 _a.LdrWImm(T0, XST, FR(in.b));
                 _a.AndImm(T0, T0, static_cast<uint32_t>(LogicalImm32(0x7FFFFFFFu)));

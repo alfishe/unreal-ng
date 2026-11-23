@@ -775,6 +775,56 @@ private:
                 _a.Imul(T0, Src(in.c, T1));
                 Put(in.a, T0);
                 return true;
+            // a zero divisor exits before the instruction: the interpreter stops there (DivideByZero). IDIV faults on
+            // INT_MIN / -1: a divisor of -1 takes 0 - n (quotient) and 0 (remainder), as the interpreter
+            case Op::Quou: case Op::Remu: case Op::Quos: case Op::Rems:
+            {
+                _a.Mov(T1, Src(in.c, T1));
+                _a.Test(T1, T1);
+                Side(_a.Jcc(CE));
+                _a.Mov(T0, Src(in.b, T0));
+                const bool rem = in.op == Op::Remu || in.op == Op::Rems;
+                size_t minusOne = 0, done = 0;
+                if (in.op == Op::Quou || in.op == Op::Remu)
+                {
+                    _a.Alu(0x31, T2, T2); // xor edx, edx
+                    _a.Op(0, false, {0xF7}, 6, T1); // div ecx
+                }
+                else
+                {
+                    _a.AluImm(7, T1, 0xFFFFFFFFu);
+                    minusOne = _a.Jcc(CE);
+                    _a.B(0x99); // cdq
+                    _a.Op(0, false, {0xF7}, 7, T1); // idiv ecx
+                    done = _a.Jmp();
+                    _a.Bind(minusOne, _a.Pos());
+                    if (rem)
+                        _a.Alu(0x31, T2, T2);
+                    else
+                        _a.Neg(T0);
+                    _a.Bind(done, _a.Pos());
+                }
+                Put(in.a, rem ? T2 : T0);
+                return true;
+            }
+            // BSR leaves ZF set and its destination undefined for 0: -1 then, so 31 - (-1) = 32 and 30 - (-1) = 31
+            case Op::Nsau: case Op::Nsa:
+            {
+                _a.Mov(T0, Src(in.b, T0));
+                if (in.op == Op::Nsa)
+                {
+                    _a.Mov(T2, T0);
+                    _a.Shift(7, T2, 31); // sar edx, 31
+                    _a.Alu(0x31, T0, T2); // x = v < 0 ? ~v : v
+                }
+                _a.Op(0, false, {0x0F, 0xBD}, T0, T0); // bsr eax, eax
+                _a.MovImm(T2, 0xFFFFFFFFu);
+                _a.Cmov(CE, T0, T2);
+                _a.Neg(T0);
+                _a.AluImm(0, T0, in.op == Op::Nsau ? 31u : 30u);
+                Put(in.a, T0);
+                return true;
+            }
             case Op::Muluh: case Op::Mulsh:
             {
                 const uint32_t b = Src(in.b, T0);
@@ -965,6 +1015,13 @@ private:
                 return true;
             }
             case Op::MovS: _a.Load(T0, Fr(in.b)); _a.Store(Fr(in.a), T0); return true;
+            case Op::MovfS: case Op::MovtS:
+                _a.Load(T0, Fr(in.a));
+                _a.Load(T1, Fr(in.b));
+                _a.TestMemImm(St(offsetof(CpuState, br)), 1u << (in.c & 15));
+                _a.Cmov(in.op == Op::MovtS ? CNE : CE, T0, T1);
+                _a.Store(Fr(in.a), T0);
+                return true;
             case Op::AbsS:
                 _a.Load(T0, Fr(in.b));
                 _a.AluImm(4, T0, 0x7FFFFFFFu);

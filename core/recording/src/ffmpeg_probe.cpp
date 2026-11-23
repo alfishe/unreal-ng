@@ -179,7 +179,9 @@ std::string FFmpegProbe::searchPath(const std::string& binaryName)
     const std::string ext = "";
 #else
     const char sep = ';';
-    const std::string ext = ".exe";
+    // The callers name the binary with its extension already (ffmpeg.exe): "ffmpeg.exe.exe" was never found on PATH
+    const bool hasExt = binaryName.size() >= 4 && binaryName.compare(binaryName.size() - 4, 4, ".exe") == 0;
+    const std::string ext = hasExt ? "" : ".exe";
 #endif
 
     while (std::getline(ss, dir, sep))

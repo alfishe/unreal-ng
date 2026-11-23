@@ -107,6 +107,10 @@ public:
     /// @brief Take a lent buffer back without encoding it
     virtual void ReleaseFrameTarget(FrameTarget& target) { (void)target; }
 
+    /// @brief True when a fixed output frame (EncoderConfig::fixedOutput) is built by the encoder: the producer hands
+    /// over the source picture, at whatever size it has, instead of scaling it into the frame
+    virtual bool TakesSourcePicture() const { return false; }
+
     /// @brief Called for each audio buffer
     /// @param samples Interleaved stereo samples (int16_t)
     /// @param sampleCount Total sample count (not per channel)

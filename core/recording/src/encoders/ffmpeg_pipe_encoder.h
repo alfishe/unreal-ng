@@ -8,6 +8,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <cstdio>
 #include <deque>
 
 #include "common/encoder_base.h"
@@ -64,6 +65,8 @@ public:
     FrameTargetResult AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target) override;
     void SubmitFrameTarget(FrameTarget& target, double timestampSec) override;
     void ReleaseFrameTarget(FrameTarget& target) override;
+    /// A fixed output frame (1080p / 4K) is built by ffmpeg from the source picture (see Segments below)
+    bool TakesSourcePicture() const override { return _segmented && _isRecording; }
 
     /// @brief Write audio samples to ffmpeg via pipe
     /// @param samples Interleaved stereo samples (int16_t)
@@ -115,6 +118,60 @@ public:
 private:
     /// Build ffmpeg command-line arguments
     std::vector<std::string> buildFFmpegArgs(const std::string& filename, const EncoderConfig& config);
+
+    /// The output side of the video stream after its filter: codec tags, quality, per-codec options (no -c:v)
+    void appendVideoCodecArgs(std::vector<std::string>& args, const EncoderConfig& config,
+                              const std::string& videoEncoder, const std::string& ext) const;
+    /// The audio encoder, its bitrate and resampling
+    void appendAudioCodecArgs(std::vector<std::string>& args, const EncoderConfig& config, const std::string& ext);
+    /// Packet flushing, container flags and the output file
+    void appendOutputArgs(std::vector<std::string>& args, const std::string& ext, const std::string& filename);
+
+    /// region <Segments>
+    /// A fixed output frame (EncoderConfig::fixedOutput) is built by ffmpeg: the pipe carries the source picture
+    /// (352x288 RGBA = 0.4 MB, against 33 MB of a 4K frame) and ffmpeg converts it at that size, scales it (nearest,
+    /// FrameScaler's mapping) and pads it into the frame. Measured end to end (POC 054, 4K libx264): 2.2-5.5x the frames
+    /// a second on macOS, 1.8-2x on Linux. A raw video input has one size, so the video goes into segments, one ffmpeg
+    /// each, a new one when the picture changes size (TS-Conf, Profi hi-res, overscan); the sound goes into one PCM
+    /// file, and Stop joins the segments (stream copy) with the sound encoded into the output
+    /// One segment's ffmpeg: its pipe (the writer's _videoPipe while it is the current one), scaling tables, stderr
+    struct Segment
+    {
+        std::unique_ptr<Subprocess> process;
+        std::unique_ptr<NamedPipe> pipe;
+        std::string pipePath;
+        std::string xmapPath;
+        std::string ymapPath;
+        std::thread stderrThread;
+        int exitCode = 0;
+    };
+    bool startSegment(uint32_t width, uint32_t height);
+    /// The current segment gets EOF and finishes on a thread of its own: the next segment starts at once and no
+    /// frame waits for the old ffmpeg's flush (x264 lookahead: 1-2 s at 4K, the queue would overflow meanwhile)
+    void retireSegment();
+    /// Stop: the current segment ends, then every retired one is waited for. False when any of them failed
+    bool finishSegment(int timeoutMs);
+    static int closeSegment(Segment& segment, int timeoutMs);
+    std::vector<std::string> buildSegmentArgs(uint32_t width, uint32_t height, const std::string& segmentFile,
+                                              const Segment& segment);
+    bool muxSegments();
+    void signalFFmpeg(bool kill);  ///< terminate (or kill) the running ffmpeg, either mode
+
+    bool _segmented = false;
+    EncoderConfig _config;
+    std::string _container;
+    std::string _videoEncoderName;
+    uint32_t _segmentWidth = 0;
+    uint32_t _segmentHeight = 0;
+    std::vector<std::string> _segmentFiles;  ///< finished and current, in order
+    std::unique_ptr<Segment> _segment;                 ///< the current one (its pipe is in _videoPipe)
+    std::vector<std::unique_ptr<Segment>> _retired;   ///< finishing or finished, until Stop
+    std::vector<std::thread> _retireThreads;          ///< the writer thread starts them, Stop joins them
+    mutable std::mutex _processMutex;  ///< guards _segment, _retired and _segmentFiles against Stop / failWorker / GetOutputFileSize
+    std::mutex _diagnosticsMutex;
+    std::string _pcmPath;
+    std::FILE* _pcmFile = nullptr;
+    /// endregion </Segments>
 
     /// Resolve the video encoder name based on config, platform, and target container
     std::string resolveVideoEncoder(const EncoderConfig& config, const std::string& container);
@@ -178,6 +235,8 @@ private:
 
     struct FrameData {
         std::vector<uint8_t> data;
+        uint32_t width = 0;   ///< the picture's size (segments: a new size starts a new segment)
+        uint32_t height = 0;
     };
     std::deque<FrameData> _videoQueue;
     // Frame buffers the writer is done with, reused by the next frames: a 4K frame is 33 MB, allocating (and page
@@ -197,6 +256,9 @@ private:
     // The video queue holds at most 60 frames, and at most ~512 MiB of them: a 4K frame is 33 MB, 60 of them would be
     // 2 GB of queue (set from the frame size at Start)
     static constexpr size_t kMaxQueueFrames = 60;
+    /// Segments queue source pictures (0.4-1.6 MB): 5 s at 50 fps carry the frames over a segment change, the new
+    /// ffmpeg starting while the old one flushes (about 1 s each at 4K); within kQueueBudgetBytes for any picture
+    static constexpr size_t kMaxSegmentQueueFrames = 250;
     static constexpr size_t kQueueBudgetBytes = static_cast<size_t>(512) * 1024 * 1024;
     size_t MAX_QUEUE_FRAMES = kMaxQueueFrames;
 

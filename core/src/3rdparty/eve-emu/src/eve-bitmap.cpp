@@ -3,6 +3,7 @@
 #include "eve-render.h"
 #include "eve-simd.h"
 
+#include <algorithm>
 #include <initializer_list>
 #include <memory>
 
@@ -509,6 +510,33 @@ void DecodeSpanWith(uint32_t* out, uint32_t count, int64_t sx, int64_t a, int32_
 {
     if (wrapX)
     {
+        // REPEAT, in pieces whose texel columns stay inside one repetition of the row [base, base + width): there the
+        // wrapped column is the column less base, the same as the wrap of each pixel's own column, without a division
+        // per pixel. Columns that could leave int32 (never for the display list's coordinates) take the plain loop
+        constexpr int64_t kSafe = int64_t{1} << 38;
+        const int64_t sxLast = sx + static_cast<int64_t>(count == 0 ? 0 : count - 1) * a;
+        if (sx > -kSafe && sx < kSafe && sxLast > -kSafe && sxLast < kSafe)
+        {
+            for (uint32_t i = 0; i < count;)
+            {
+                const int32_t tx = static_cast<int32_t>(sx >> kFixedShift);
+                const int64_t base = tx - ((tx % width) + width) % width;
+                uint64_t n = count - i;
+                if (a > 0)
+                {
+                    const int64_t limit = (base + width) * (int64_t{1} << kFixedShift); // first sx past the piece
+                    n = std::min<uint64_t>(n, static_cast<uint64_t>((limit - sx + a - 1) / a));
+                }
+                else if (a < 0)
+                {
+                    const int64_t limit = base * (int64_t{1} << kFixedShift); // lowest sx of the piece
+                    n = std::min<uint64_t>(n, static_cast<uint64_t>((sx - limit) / -a + 1));
+                }
+                for (const uint32_t end = i + static_cast<uint32_t>(n); i < end; ++i, sx += a)
+                    out[i] = fetch(static_cast<uint32_t>((sx >> kFixedShift) - base));
+            }
+            return;
+        }
         for (uint32_t i = 0; i < count; ++i, sx += a)
         {
             int32_t tx = static_cast<int32_t>(sx >> kFixedShift);

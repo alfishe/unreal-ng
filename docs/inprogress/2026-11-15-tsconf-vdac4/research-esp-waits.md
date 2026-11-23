@@ -66,3 +66,24 @@ reach the machine: the runs stay deterministic, but no longer equal the current 
 
 A first (no behaviour change), measured on the other VDAC4 games as well; B and C only on the owner's decision,
 as a model change of the job design (§7.5) with its own TTD and snapshot tests.
+
+## 6. Option A, measured (2026-11-22)
+
+What the JIT left to the interpreter (DOOM, 9000 frames, block entries without a region by their first instruction):
+`ENTRY` 25 M and `RETW.N` 24 M (one-instruction blocks: every windowed call and return), `MOVT.S` 7.4 M (44 M
+instructions interpreted after a region exit there), `QUOU` / `REMU` / `QUOS` 2.0 M (13 M), `NSAU` 1.3 M (3.7 M).
+
+Done: the region JIT compiles `MOVT.S` / `MOVF.S`, `QUOU` / `QUOS` / `REMU` / `REMS` (a zero divisor exits before the
+instruction, so the interpreter stops with `DivideByZero`; `INT_MIN / -1` as the interpreter on both hosts, x86_64
+without IDIV for a divisor of -1) and `NSA` / `NSAU` (arm64 `CLS` / `CLZ`, x86_64 `BSR`), on arm64 and x86_64.
+Native share 92.0 -> 94.8 %, loop-end refusals 34 M -> 15 M. `XtensaJit_Test.DivisionsAndBitCountsMatchTheInterpreter`
+covers the edge values; both JIT tests pass on macOS arm64 and on Linux x86_64 (gcc, clang).
+
+| DOOM, three interleaved rounds | ms / frame | ESP jobs ms / frame | waits ms / frame |
+|------|------|------|------|
+| master | 2.024 | 0.775 | 0.215 |
+| the kinds above compiled | 2.014 (-0.5 %) | 0.737 (-5 %) | 0.195 (-9 %) |
+
+Not done: `ENTRY` / `RETW` inside a region (the window base changes, with spill and fill). About 12 ns of `Exec`
+per interpreter round plus the region's entry and exit, 5.8 k rounds a frame: at most about 0.13 ms of ESP work and
+under 2 % of the frame on the build host, for a change of the region model on two backends. Not worth it now.
