@@ -439,6 +439,7 @@ void TimeTravelEngine::EndSession()
     _line->changes.shrink_to_fit();
     _live = {};
     _inMemory = {};
+    _decodedMemory = {};
     _sinceSnapshot = {};
     _sinceSnapshotFlag = {};
     _lastSnapshot = {};
@@ -1991,6 +1992,14 @@ TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWritte
     }
     TTDRestoreStats local;
     const uint64_t linksBefore = _store->GetWork().linksDecoded;
+    // The decoded copies stand while no id was given other content
+    DecodedMemory& decoded = _decodedMemory;
+    if (decoded.pieceSlots.size() != _regions.size() || decoded.generation != _store->ReuseGeneration())
+    {
+        decoded.generation = _store->ReuseGeneration();
+        decoded.pieceSlots.resize(_regions.size());
+        std::fill(decoded.ids.begin(), decoded.ids.end(), kUnknown);   // the slots stay, their content goes
+    }
     std::vector<TTDPieceId> map;
     for (uint32_t r = 0; r < _regions.size(); ++r)
     {
@@ -2021,6 +2030,40 @@ TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWritte
             if (dst != piece && _inMemory[r][p] != kUnknown && !(written && written(r, p)) &&
                 _store->DecodeFrom(target, _inMemory[r][p], dst, damaged))
             {
+                _inMemory[r][p] = target;
+                local.piecesDecoded++;
+                continue;
+            }
+            if (dst != piece && _store->EncodingOf(target) != TTDPieceStore::Encoding::Zero)
+            {
+                // Memory not known: from the decoded copy (as it is, moved along its chain, or decoded again). A
+                // piece gets a slot the first time it is decoded so; a zero piece needs none
+                std::vector<uint32_t>& pieceSlot = decoded.pieceSlots[r];
+                if (pieceSlot.size() != map.size())
+                    pieceSlot.resize(map.size(), DecodedMemory::kNoSlot);
+                if (pieceSlot[p] == DecodedMemory::kNoSlot)
+                {
+                    pieceSlot[p] = static_cast<uint32_t>(decoded.ids.size());
+                    decoded.ids.push_back(kUnknown);
+                    if (decoded.ids.size() > decoded.chunks.size() * DecodedMemory::kChunkPieces)
+                        decoded.chunks.push_back(std::make_unique<uint8_t[]>(DecodedMemory::kChunkPieces * kTTDPieceSize));
+                }
+                const uint32_t slot = pieceSlot[p];
+                TTDPieceId& have = decoded.ids[slot];
+                uint8_t* copy = decoded.chunks[slot / DecodedMemory::kChunkPieces].get() +
+                                size_t(slot % DecodedMemory::kChunkPieces) * kTTDPieceSize;
+                bool copyDamaged = false;
+                if (have != target &&
+                    !(have != kUnknown && _store->DecodeFrom(target, have, copy, copyDamaged)) &&
+                    !_store->Decode(target, copy))
+                {
+                    have = kUnknown;
+                    result.Add(DamageIssue(index, r, p));
+                    _inMemory[r][p] = kUnknown;
+                    continue;
+                }
+                have = target;
+                std::memcpy(dst, copy, kTTDPieceSize);
                 _inMemory[r][p] = target;
                 local.piecesDecoded++;
                 continue;
@@ -2145,6 +2188,10 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
          _sinceSnapshot.capacity() * sizeof(_sinceSnapshot[0]) + _sinceSnapshotFlag.capacity() * sizeof(_sinceSnapshotFlag[0]);
     for (const auto& v : _inMemory)
         b += v.capacity() * sizeof(TTDPieceId);
+    for (const auto& regionSlots : _decodedMemory.pieceSlots)
+        b += regionSlots.capacity() * sizeof(uint32_t);
+    b += _decodedMemory.ids.capacity() * sizeof(TTDPieceId) + _decodedMemory.chunks.capacity() * sizeof(void*) +
+         _decodedMemory.chunks.size() * DecodedMemory::kChunkPieces * kTTDPieceSize;
     for (const auto& v : _deviceScratch)
         b += v.capacity();
     b += _deviceScratch.capacity() * sizeof(_deviceScratch[0]);

@@ -548,6 +548,29 @@ private:
     mutable std::vector<uint32_t> _unionScratch;   ///< key << 8 | first frame
     mutable std::vector<uint8_t> _unionRaw;
 
+    /// Unions of runs of blocks (the timeline's long ranges): a range holding a whole run counts the run's union,
+    /// not each block's. Built as the blocks seal, from their summaries: a run with a block sealed without one
+    /// (a cut inside, a loaded block) has none, and its blocks are counted one by one
+    static constexpr uint32_t kGroupLevels = 2;
+    static constexpr uint32_t kGroupBlocks[kGroupLevels] = {4, 32};
+    struct Group
+    {
+        std::vector<uint8_t> keys;   ///< the run's keys united, delta varints, compressed
+        uint32_t rawSize = 0;
+        uint64_t firstFrame = 0;     ///< of its first block
+        uint64_t lastFrame = 0;      ///< of its last block
+        bool valid = false;
+    };
+    struct GroupLevel
+    {
+        std::vector<Group> groups;      ///< group g: blocks [g * size, (g + 1) * size)
+    };
+    GroupLevel _groups[kKindCount][kGroupLevels];
+    /// The block just sealed as block @p index ends a run: unite it (capture side)
+    void AccumulateGroups(size_t kindIdx, uint32_t index);
+    /// Forget the runs (all of them, or those reaching @p frame and later)
+    void DropGroups(size_t kindIdx, uint64_t frame = 0);
+
     /// Decompress a block (or return the open one) and index its frames.
     /// Returns false when the block does not exist or fails to decompress.
     bool MaterializeBlock(size_t kindIdx, uint32_t blockIdx) const;

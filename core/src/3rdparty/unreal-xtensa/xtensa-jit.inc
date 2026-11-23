@@ -109,7 +109,7 @@ Use UseOf(const Insn& in)
         case Op::Add: case Op::AddN: case Op::Addx2: case Op::Addx4: case Op::Addx8: case Op::Sub: case Op::Subx2:
         case Op::Subx4: case Op::Subx8: case Op::And: case Op::Or: case Op::Xor: case Op::Salt: case Op::Saltu:
         case Op::Min: case Op::Max: case Op::Minu: case Op::Maxu: case Op::Mul16u: case Op::Mul16s: case Op::Mull:
-        case Op::Muluh: case Op::Mulsh: case Op::Src:
+        case Op::Muluh: case Op::Mulsh: case Op::Src: case Op::Quou: case Op::Quos: case Op::Remu: case Op::Rems:
             R(in.b); R(in.c); W(in.a); break;
         case Op::Moveqz: case Op::Movnez: case Op::Movltz: case Op::Movgez:
             R(in.a); R(in.b); R(in.c); W(in.a); break;
@@ -118,7 +118,7 @@ Use UseOf(const Insn& in)
         case Op::Neg: case Op::Abs: case Op::Srl: case Op::Sra:
             R(in.c); W(in.a); break;
         case Op::Addi: case Op::AddiN: case Op::Addmi: case Op::MovN: case Op::Sext: case Op::Slli: case Op::Srai:
-        case Op::Srli: case Op::Extui: case Op::Sll:
+        case Op::Srli: case Op::Extui: case Op::Sll: case Op::Nsa: case Op::Nsau:
         case Op::L8ui: case Op::L16ui: case Op::L16si: case Op::L32i: case Op::L32iN:
             R(in.b); W(in.a); break;
         case Op::Movi: case Op::MoviN: case Op::L32r:
@@ -137,7 +137,7 @@ Use UseOf(const Insn& in)
             W(in.a); break;
         case Op::AddS: case Op::SubS: case Op::MulS: case Op::MaddS: case Op::MaddnS: case Op::MsubS: case Op::MovS:
         case Op::AbsS: case Op::NegS: case Op::UnS: case Op::OeqS: case Op::UeqS: case Op::OltS: case Op::UltS:
-        case Op::OleS: case Op::UleS:
+        case Op::OleS: case Op::UleS: case Op::MovfS: case Op::MovtS:
             break;
         case Op::Beqz: case Op::BeqzN: case Op::Bnez: case Op::BnezN: case Op::Bltz: case Op::Bgez: case Op::Beqi:
         case Op::Bnei: case Op::Blti: case Op::Bgei: case Op::Bltui: case Op::Bgeui: case Op::Bbci: case Op::Bbsi:

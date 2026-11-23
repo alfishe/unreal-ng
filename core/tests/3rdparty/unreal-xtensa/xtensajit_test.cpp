@@ -201,4 +201,76 @@ TEST(XtensaJit_Test, RandomProgramsMatchTheInterpreter)
     EXPECT_GT(jitInsns, executed / 4);
 }
 
+// The kinds whose edge cases random code rarely reaches: zero divisors (the region exits before the instruction and the
+// interpreter stops with DivideByZero), INT_MIN / -1, NSA / NSAU of 0 and -1, MOVT.S / MOVF.S on both boolean values
+TEST(XtensaJit_Test, DivisionsAndBitCountsMatchTheInterpreter)
+{
+    auto rrr = [](uint32_t op2, uint32_t op1, uint32_t r, uint32_t s, uint32_t t) {
+        return (op2 << 20) | (op1 << 16) | (r << 12) | (s << 8) | (t << 4);
+    };
+    struct Expect
+    {
+        uint32_t word;
+        Op op;
+    };
+    const Expect insns[] = {
+        {rrr(0xC, 2, 2, 3, 4), Op::Quou},  {rrr(0xD, 2, 5, 3, 4), Op::Quos},  {rrr(0xE, 2, 6, 3, 4), Op::Remu},
+        {rrr(0xF, 2, 7, 3, 4), Op::Rems},  {rrr(4, 0, 0xE, 3, 8), Op::Nsa},   {rrr(4, 0, 0xF, 3, 9), Op::Nsau},
+        {rrr(4, 0, 0xE, 4, 10), Op::Nsa},  {rrr(4, 0, 0xF, 4, 11), Op::Nsau}, {rrr(0xD, 0xB, 0, 1, 0), Op::MovtS},
+        {rrr(0xC, 0xB, 2, 3, 0), Op::MovfS}, {rrr(0xD, 2, 3, 3, 3), Op::Quos}, {rrr(0xF, 2, 4, 4, 3), Op::Rems},
+    };
+    std::vector<uint8_t> code(kCodeSize, 0);
+    uint32_t at = 0;
+    for (const Expect& e : insns)
+    {
+        uint8_t b[4] = {static_cast<uint8_t>(e.word), static_cast<uint8_t>(e.word >> 8),
+                        static_cast<uint8_t>(e.word >> 16), 0};
+        Insn in;
+        ASSERT_TRUE(xtensa::Decode(kCode + at, b, 4, in));
+        ASSERT_EQ(static_cast<int>(e.op), static_cast<int>(in.op)) << xtensa::Mnemonic(in.op);
+        std::memcpy(&code[at], b, 3);
+        at += 3;
+    }
+    const uint8_t loop[] = {0x06, 0xFF, 0xFF}; // j . (the block ends; the next run starts the program again)
+    std::memcpy(&code[at], loop, 3);
+
+    const uint32_t kValues[] = {0u, 1u, 2u, 7u, 0xFFFFFFFFu, 0xFFFFFFFEu, 0xFFFFFFF9u, 0x80000000u, 0x7FFFFFFFu,
+                                0x80000001u, 0x00010000u, 0x12345678u, 0xCAFEBABEu};
+    const std::vector<uint8_t> data(kDataSize, 0);
+    uint64_t jitInsns = 0;
+    for (uint32_t i = 0; i < sizeof(kValues) / 4; ++i)
+        for (uint32_t j = 0; j < sizeof(kValues) / 4; ++j)
+        {
+            Machine a(code, data, false);
+            Machine b(code, data, true);
+            xtensa::CpuState st = a.cpu.State();
+            st.ar[3] = kValues[i];
+            st.ar[4] = kValues[j];
+            st.fr[0] = 0x11111111u;
+            st.fr[1] = 0x7FC00001u;
+            st.fr[2] = 0x22222222u;
+            st.fr[3] = 0xFF800000u;
+            st.br = (i + j) & 1;
+            st.pc = kCode;
+            a.cpu.SetState(st);
+            b.cpu.SetState(st);
+            for (int run = 0; run < 3; ++run)
+            {
+                const xtensa::RunResult ra = a.cpu.Run(13);
+                const xtensa::RunResult rb = b.cpu.Run(13);
+                ASSERT_EQ(static_cast<int>(ra.reason), static_cast<int>(rb.reason)) << i << " " << j;
+                ASSERT_EQ(ra.pc, rb.pc) << i << " " << j;
+                ASSERT_EQ(ra.executed, rb.executed) << i << " " << j;
+                ASSERT_EQ(0, std::memcmp(&a.cpu.State(), &b.cpu.State(), sizeof(xtensa::CpuState))) << i << " " << j;
+                if (ra.reason != xtensa::StopReason::Budget)
+                {
+                    EXPECT_EQ(xtensa::StopReason::DivideByZero, ra.reason);
+                    break;
+                }
+            }
+            jitInsns += b.cpu.GetJitStats().insns;
+        }
+    EXPECT_GT(jitInsns, 1000u); // the region ran them, not the interpreter
+}
+
 #endif // UNREAL_XTENSA_JIT

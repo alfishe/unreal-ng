@@ -177,3 +177,18 @@ R-Type draws far more bitmap pixels than DOOM, so the renderer carries two third
 thread already waits for it at 11.5 % of its time (DOOM: 2.3 %). Speeding up the emulation thread further gains less
 there until the bitmap path (`DrawBitmapFast` row fetch, alpha blend) gets faster as well. HMM2 cannot be measured
 (the game's `HMM2.DAT` is not shipped, §8) and DEMO3D is not in the collection.
+
+What the renderer draws (R-Type, 6000 frames, counters per span on the fast path): the background is PALETTED8
+magnified 2.67 times (A = 96) with REPEAT on X, 2.44 M spans of about 1024 pixels (2.5 G pixels, 3.4 s); the sprites
+are ARGB4 at A = 160 with BORDER (1.2 G pixels, 1.6 s). The REPEAT loop took two divisions per pixel for the wrap.
+
+| Step (R-Type, three interleaved rounds) | ms / frame | renderer samples / emulation samples |
+|------|------|------|
+| master | 2.22 | 0.65 |
+| REPEAT in pieces inside one repetition of the row: column = x' - base, one division a piece (`DecodeSpanWith`) | 2.16 (-2.7 %) | 0.36 |
+
+Pictures equal bit for bit (R-Type six hashes, DOOM `ff4c23e15ca6`); `EveVdac4_Test.RepeatXMatchesTheRowLaidOutRepeatedly`
+checks the wrap against a wide BORDER layout holding the row many times over. Tried and not kept: a column kept by
+its step (one compare a pixel, a dependency from pixel to pixel: 2.51 ms, slower than the divisions) and BORDER
+decoded without the test per pixel (no change in the frame or the renderer's share). The renderer no longer holds
+the frame back: the emulation thread is the bottleneck again.

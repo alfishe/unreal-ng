@@ -640,8 +640,11 @@ public:
     {
         std::vector<uint32_t> pieces;
         if (const TTDEngineCheckpoint::RegionRefs* r = HasCheckpoint(index) ? RefsOf(index, region) : nullptr)
+        {
+            pieces.resize(r->changeCount);   // one allocation: the timeline asks for every frame's (P1.S10 seek A/B)
             for (uint32_t k = 0; k < r->changeCount; ++k)
-                pieces.push_back(ChangeAt(r->firstChange + k).piece);
+                pieces[k] = ChangeAt(r->firstChange + k).piece;
+        }
         return pieces;
     }
     /// The content changes of the baseline at checkpoint @p index of the active line (TTDSegmentInfo::baselineDiff),
@@ -808,6 +811,21 @@ private:
     std::vector<std::vector<TTDPieceId>> _inMemory;
     static constexpr TTDPieceId kUnknown = 0xFFFFFFFEu;
     std::vector<DecodedState> _decodedStates;   ///< RestoreDevices: per device of the table
+    /// RestoreToMemory: the memory pieces as last decoded, by version. A restore that does not know what memory holds
+    /// (a seek's) copies the pieces whose version it has and moves the others along their chains from the version it
+    /// has: a seek near the last one decodes what differs, not every piece (P1.S10 seek A/B). Only pieces decoded so
+    /// get a slot (zero pieces none), so the copy is the size of the memory the session restored, not of the regions.
+    /// The ids stand while the store's ReuseGeneration does (DecodedState's rule)
+    struct DecodedMemory
+    {
+        static constexpr uint32_t kNoSlot = 0xFFFFFFFFu;
+        static constexpr size_t kChunkPieces = 64;   ///< pieces per allocation (256 KB)
+        uint64_t generation = 0;
+        std::vector<std::vector<uint32_t>> pieceSlots;    ///< per region, per piece: its slot, or kNoSlot
+        std::vector<TTDPieceId> ids;                      ///< per slot: the version its bytes hold, or kUnknown
+        std::vector<std::unique_ptr<uint8_t[]>> chunks;   ///< the slots' bytes, kChunkPieces each
+    };
+    DecodedMemory _decodedMemory;
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;

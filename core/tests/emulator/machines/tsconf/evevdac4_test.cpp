@@ -529,6 +529,177 @@ TEST(EveVdac4_Test, TransformMagnifiesAnL1GlyphOverItsCell)
     }
 }
 
+// REPEAT on X: a narrow PALETTED8 row repeated by the wrap gives the same pixels as a wide BORDER layout holding the
+// row many times over, for magnifications, minifications, mirrored steps and steps longer than the row (one case a line)
+TEST(EveVdac4_Test, RepeatXMatchesTheRowLaidOutRepeatedly)
+{
+    constexpr uint32_t kNarrow = 0x1000, kWide = 0x4000, kPalette = 0x20000, kSpan = 128, kWideWidth = 1020;
+    constexpr uint32_t kWidths[] = {1, 2, 3, 7, 13, 60};
+    constexpr int32_t kSteps[] = {96, 256, -96, 37, 700, -700};
+    struct Case
+    {
+        uint32_t width;
+        int32_t a;
+        int32_t c;
+    };
+    std::vector<Case> cases;
+    for (uint32_t w : kWidths)
+        for (int32_t a : kSteps)
+            cases.push_back({w, a, a < 0 ? -a * static_cast<int32_t>(kSpan) + 77 : 1234});
+    auto render = [&](bool repeat) {
+        Chip chip(EVE_MODEL_VDAC4);
+        for (uint32_t k = 0; k < 256; ++k)
+        {
+            const uint8_t entry[4] = {static_cast<uint8_t>(k * 37 + 11), static_cast<uint8_t>(k * 91 + 3),
+                                      static_cast<uint8_t>(k), 0xFF}; // B, G, R, A
+            chip.Write(kPalette + 4 * k, entry, sizeof(entry));
+        }
+        std::vector<uint32_t> dl = {0x02000000, 0x26000007, 0x2A000000 | kPalette, 0x1F000001};
+        for (size_t i = 0; i < cases.size(); ++i)
+        {
+            const Case& c = cases[i];
+            const uint32_t source = kNarrow + 64 * static_cast<uint32_t>(i);
+            const uint32_t wide = kWide + kWideWidth * static_cast<uint32_t>(i);
+            for (uint32_t x = 0; x < kWideWidth; ++x)
+            {
+                const uint8_t texel = static_cast<uint8_t>((x % c.width) * 17 + i);
+                if (x < c.width)
+                    chip.Write8(source + x, texel);
+                chip.Write8(wide + x, texel);
+            }
+            const uint32_t stride = repeat ? c.width : kWideWidth;
+            dl.push_back(0x01000000 | (repeat ? source : wide));                       // BITMAP_SOURCE
+            dl.push_back(0x07000000 | (16u << 19) | ((stride & 0x3FF) << 9) | 1u);     // BITMAP_LAYOUT PALETTED8
+            dl.push_back(0x08000000 | (repeat ? 1u << 19 : 0u) | (kSpan << 9) | 1u);   // BITMAP_SIZE, REPEAT on X
+            dl.push_back(0x15000000 | (static_cast<uint32_t>(c.a) & 0x1FFFF));        // BITMAP_TRANSFORM_A
+            dl.push_back(0x17000000 | (static_cast<uint32_t>(c.c) & 0xFFFFFF));       // BITMAP_TRANSFORM_C
+            dl.push_back(0x80000000 | (8u << 21) | (static_cast<uint32_t>(i) << 12)); // VERTEX2II 8, i
+        }
+        dl.push_back(0x21000000);
+        dl.push_back(0x00000000);
+        for (uint32_t i = 0; i < dl.size(); ++i)
+            chip.Write32(kRamDl + 4 * i, dl[i]);
+        chip.Write32(kRegHcycle, 200);
+        chip.Write32(kRegHoffset, 20);
+        chip.Write32(kRegHsize, 160);
+        chip.Write32(kRegVcycle, 48);
+        chip.Write32(kRegVoffset, 4);
+        chip.Write32(kRegVsize, 40);
+        chip.Write32(kRegDither, 0);
+        chip.Write32(kRegCspread, 0);
+        chip.Write32(kRegDlswap, 2);
+        chip.Write32(kRegPclk, 2);
+        std::vector<uint32_t> frame(160 * 40);
+        EveSetOutput(chip.chip, frame.data(), 160, 160, 40, 1);
+        EveTiming timing{};
+        EveGetTiming(chip.chip, &timing);
+        EveAdvance(chip.chip, 3 * timing.framePeriodClocks);
+        return frame;
+    };
+    ASSERT_LE(cases.size(), 40u);
+    const std::vector<uint32_t> repeated = render(true);
+    const std::vector<uint32_t> laidOut = render(false);
+    for (size_t i = 0; i < cases.size(); ++i)
+    {
+        uint32_t wrong = 0, lit = 0;
+        for (uint32_t x = 8; x < 8 + kSpan; ++x)
+        {
+            wrong += repeated[i * 160 + x] != laidOut[i * 160 + x] ? 1u : 0u;
+            lit += (laidOut[i * 160 + x] & 0xFFFFFFu) != 0 ? 1u : 0u;
+        }
+        EXPECT_EQ(wrong, 0u) << "width " << cases[i].width << " A " << cases[i].a;
+        EXPECT_GT(lit, kSpan / 2) << "width " << cases[i].width << " A " << cases[i].a; // the wide layout covers the span
+    }
+}
+
+// BORDER on X: a narrow PALETTED8 row gives the same pixels as the row inside a wide layout padded with transparent
+// texels, the step entering and leaving the row on both sides or jumping over it (one case a line)
+TEST(EveVdac4_Test, BorderXMatchesTheRowPaddedWithTransparentTexels)
+{
+    constexpr uint32_t kNarrow = 0x1000, kWide = 0x4000, kPalette = 0x20000, kSpan = 128, kPad = 400;
+    constexpr uint8_t kClear = 255; // the padding: a transparent palette entry
+    constexpr uint32_t kWidths[] = {1, 2, 3, 7, 13, 60};
+    constexpr int32_t kSteps[] = {96, 256, -96, 37, 700, -700};
+    struct Case
+    {
+        uint32_t width;
+        int32_t a;
+        int32_t c;
+    };
+    std::vector<Case> cases;
+    for (uint32_t w : kWidths)
+        for (int32_t a : kSteps)
+            cases.push_back({w, a, -a * static_cast<int32_t>(kSpan) / 2 + 300});
+    auto render = [&](bool narrow) {
+        Chip chip(EVE_MODEL_VDAC4);
+        for (uint32_t k = 0; k < 256; ++k)
+        {
+            const uint8_t entry[4] = {static_cast<uint8_t>(k * 37 + 11), static_cast<uint8_t>(k * 91 + 3),
+                                      static_cast<uint8_t>(k), static_cast<uint8_t>(k == kClear ? 0 : 0xFF)};
+            chip.Write(kPalette + 4 * k, entry, sizeof(entry));
+        }
+        std::vector<uint32_t> dl = {0x02000000, 0x26000007, 0x2A000000 | kPalette, 0x1F000001};
+        for (size_t i = 0; i < cases.size(); ++i)
+        {
+            const Case& c = cases[i];
+            const uint32_t wideWidth = c.width + 2 * kPad;
+            const uint32_t source = kNarrow + 64 * static_cast<uint32_t>(i);
+            const uint32_t wide = kWide + 1024 * static_cast<uint32_t>(i);
+            for (uint32_t x = 0; x < wideWidth; ++x)
+            {
+                const bool row = x >= kPad && x < kPad + c.width;
+                const uint8_t texel = row ? static_cast<uint8_t>(((x - kPad) * 17 + i) % 250) : kClear;
+                if (row)
+                    chip.Write8(source + x - kPad, texel);
+                chip.Write8(wide + x, texel);
+            }
+            const uint32_t stride = narrow ? c.width : wideWidth;
+            const int32_t offset = narrow ? c.c : c.c + static_cast<int32_t>(kPad) * 256;
+            dl.push_back(0x01000000 | (narrow ? source : wide));                       // BITMAP_SOURCE
+            dl.push_back(0x07000000 | (16u << 19) | ((stride & 0x3FF) << 9) | 1u);     // BITMAP_LAYOUT PALETTED8
+            dl.push_back(0x08000000 | (kSpan << 9) | 1u);                              // BITMAP_SIZE, BORDER
+            dl.push_back(0x15000000 | (static_cast<uint32_t>(c.a) & 0x1FFFF));        // BITMAP_TRANSFORM_A
+            dl.push_back(0x17000000 | (static_cast<uint32_t>(offset) & 0xFFFFFF));    // BITMAP_TRANSFORM_C
+            dl.push_back(0x80000000 | (8u << 21) | (static_cast<uint32_t>(i) << 12)); // VERTEX2II 8, i
+        }
+        dl.push_back(0x21000000);
+        dl.push_back(0x00000000);
+        for (uint32_t i = 0; i < dl.size(); ++i)
+            chip.Write32(kRamDl + 4 * i, dl[i]);
+        chip.Write32(kRegHcycle, 200);
+        chip.Write32(kRegHoffset, 20);
+        chip.Write32(kRegHsize, 160);
+        chip.Write32(kRegVcycle, 48);
+        chip.Write32(kRegVoffset, 4);
+        chip.Write32(kRegVsize, 40);
+        chip.Write32(kRegDither, 0);
+        chip.Write32(kRegCspread, 0);
+        chip.Write32(kRegDlswap, 2);
+        chip.Write32(kRegPclk, 2);
+        std::vector<uint32_t> frame(160 * 40);
+        EveSetOutput(chip.chip, frame.data(), 160, 160, 40, 1);
+        EveTiming timing{};
+        EveGetTiming(chip.chip, &timing);
+        EveAdvance(chip.chip, 3 * timing.framePeriodClocks);
+        return frame;
+    };
+    ASSERT_LE(cases.size(), 40u);
+    const std::vector<uint32_t> narrow = render(true);
+    const std::vector<uint32_t> padded = render(false);
+    uint32_t lit = 0;
+    for (size_t i = 0; i < cases.size(); ++i)
+    {
+        uint32_t wrong = 0;
+        for (uint32_t x = 8; x < 8 + kSpan; ++x)
+        {
+            wrong += narrow[i * 160 + x] != padded[i * 160 + x] ? 1u : 0u;
+            lit += (padded[i * 160 + x] & 0xFFFFFFu) != 0 ? 1u : 0u;
+        }
+        EXPECT_EQ(wrong, 0u) << "width " << cases[i].width << " A " << cases[i].a;
+    }
+    EXPECT_GT(lit, 500u); // the rows are drawn, not only their transparent sides
+}
+
 // --- Coprocessor ------------------------------------------------------------------------------
 
 TEST(EveVdac4_Test, CommandsTheBl616LacksFaultAsUnknown)
