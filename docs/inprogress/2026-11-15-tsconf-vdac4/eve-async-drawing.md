@@ -59,6 +59,11 @@ those of the drawing on the producer's thread, whatever the renderer's pace.
 
 Back-pressure: the producer waits when two frame ends are queued (or 1024 operations).
 
+Wake-ups: a sleeping renderer is woken once 8 operations wait, at a frame end, and before the producer waits for it
+(back-pressure, every barrier below), not for every operation (`kWakeOps`). A wake-up is a system call on the
+emulation thread, and a catch-up of 16 lines is often less work than waking for it. The operations and their
+order are the same, only when the renderer draws them moves, so the picture is the same.
+
 ### 2.1 Waits
 
 - A host read of `REG_TAG` (`BusRead`): the renderer drains the queue (exactly the lines the synchronous drawing
@@ -94,12 +99,24 @@ void EveFramesBarrier(EveChip* chip); /* the finished frames only; REG_TAG as of
 ## 4. Host side
 
 `EveHostCard` (`Params::drawThread`): on for the VDAC4 Tang (`[VDAC4] FtDrawThread`, default 1; env
-`UNREAL_VDAC4_FT_DRAW_THREAD`), off for VDAC2. Off while a bus capture is written (it hashes the frame buffer at
+`UNREAL_VDAC4_FT_DRAW_THREAD`) and for the VDAC2 card (`[VDAC2] FtDrawThread`, default 1; env
+`UNREAL_VDAC2_FT_DRAW_THREAD`; since 2026-11-23, §6.4). Off while a bus capture is written (it hashes the frame buffer at
 the frame event) and in a TTD replay (it composes pictures from the frame buffer); `AdvanceTo` follows the switch
 as it follows `Drawing()`. The callback (`OnRendererFrame`, renderer thread) does `OnChipFrame`'s presentation:
 the conversion, `Screen::LatchExternalFrame`, the presented metrics. `ConfigureOutput` waits before it resizes;
 `TTDPrepareComposedPicture` waits before it converts. Status: `threads.ft_draw_thread` in `vdac4 state` on every
 plane.
+
+The renderer reads nothing the emulation thread changes meanwhile (TSan, 2026-11-23):
+
+- The callback's `frame` is the frame's `EveCompletedFrames` count. The latch's machine frame number and its
+  fraction of the machine frame (the audio position the presenter times it by) come from a ring of 8 stamps keyed
+  by that count. `AdvanceTo` writes the stamps of the next two FT812 frames before it advances the chip, so before
+  their frame ends are queued; the CPU does not move while the chip advances. `Screen::LatchExternalFrame` takes the
+  stamp instead of reading `Z80::t` and `frame_counter`.
+- The machine goes away: `PortDecoder_TSConf::BeforeRelease` (the first step of `Core::Release`) calls
+  `EveHostCard::BeforeRelease`, which stops the renderer before the Screen and the CPU it presents into are
+  released; the card draws on the emulation thread from there on.
 
 ## 5. Tests
 
@@ -192,3 +209,27 @@ checks the wrap against a wide BORDER layout holding the row many times over. Tr
 its step (one compare a pixel, a dependency from pixel to pixel: 2.51 ms, slower than the divisions) and BORDER
 decoded without the test per pixel (no change in the frame or the renderer's share). The renderer no longer holds
 the frame back: the emulation thread is the bottleneck again.
+
+### 6.4 VDAC2 on the renderer thread (2026-11-23)
+
+A profile of the emulation thread (M3 Ultra host, the same five games): on VDAC4 the time is spread (TS-Conf DRAM
+model about 30 %, Z80 20 %, interrupts 12 %, the TS-Conf screen 7 %), no single target. On VDAC2 the FT812 drew on
+the emulation thread: about 25 % of it (`DrawBitmapFast`, `BlendSrcAlpha`, `ExecuteLine`, `PresentPicture`).
+
+Turning the renderer on for VDAC2 as it was gave R-Type VDAC2 -11 % and Zuma -8 %, but Heroes II +6 %. Heroes II
+draws little a frame: the emulation thread woke the sleeping renderer for every 16-line catch-up (`notify_one` =
+`__psynch_cvsignal`, 1.7 % of the thread), the renderer drew a few lines and slept again, and the emulation thread's
+own work ran slower beside it. The wake-ups are batched now (§2). A catch-up every 64 lines instead also removed
+the regression, but changed two of R-Type VDAC4's six pictures: where the catch-ups fall is visible through
+`REG_TAG` (a catch-up after lines drawn ahead queues a sync point, §2.1), so the catch-up period stays 16.
+
+| ms / frame, 3 interleaved rounds | drawing on the emulation thread | renderer, a wake-up per operation | renderer, batched wake-ups |
+|------|------|------|------|
+| Heroes II VDAC2 | 2.516 | 2.624 | 2.311 (-8.2 %) |
+| R-Type VDAC2 | 2.865 | 2.506 | 2.421 (-15.5 %) |
+| Zuma Deluxe VDAC2 | 2.633 | 2.428 | 2.319 (-11.9 %) |
+| R-Type VDAC4 (renderer on before) | - | 2.226 | 2.215 (-0.5 %) |
+| DOOM VDAC4 (renderer on before) | - | 1.877 | 1.868 (-0.5 %) |
+
+Pictures equal bit for bit in every run (each game's hashes at every 500 or 1500 frames). The load on the host was
+7-17 (other sessions); the rounds agree within about 1 %.
