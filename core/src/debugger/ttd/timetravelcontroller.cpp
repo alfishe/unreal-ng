@@ -10,6 +10,8 @@
 
 #include "emulator/readoutschanged.h"
 #include "timetravelcontroller.h"
+#include "debugger/ttd/engine/ttdbytes.h"
+#include "debugger/ttd/ttdsessionfacts.h"
 
 #include <filesystem>
 #include <optional>
@@ -144,7 +146,8 @@ TimeTravelController::TimeTravelController(EmulatorContext* context)
     _engine = std::make_unique<TimeTravelEngine>();
     _shadowEngine = _engine.get();
     _replayEngine = _engine.get();
-    _engine->SetSegmentLoader([this](uint32_t line, size_t segment) { return LoadSegmentFromFile(line, segment); });
+    _engine->SetSegmentLoader(
+        [this](uint32_t line, size_t segment, size_t upTo) { return LoadSegmentFromFile(line, segment, upTo); });
     ApplyHistoryPolicy();
 }
 
@@ -4018,11 +4021,22 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         return i < 0 ? nullptr : &_line->timeline[static_cast<size_t>(i)];
     };
 
-    // Deliberately a LOCAL snapshot, not the shared _liveSnapshot member:
-    // RunTStates pumps MessageCenter (NC_EXECUTION_CPU_STEP) and a synchronous
-    // subscriber (debugger views) can reenter GetFrameCache, which saves and
-    // restores through _liveSnapshot.
-    LiveStateSnapshot local;
+    // Deliberately not the shared _liveSnapshot member: RunTStates pumps
+    // MessageCenter (NC_EXECUTION_CPU_STEP) and a synchronous subscriber
+    // (debugger views) can reenter GetFrameCache, which saves and restores
+    // through _liveSnapshot. One snapshot per nesting depth, kept from one
+    // compose to the next: a fresh one handed its RAM and framebuffer copies
+    // back to the system each time (madvise, 5 % of a seek, P1.S10 seek tails)
+    if (_composeScratch.size() <= _composeDepth)
+        _composeScratch.push_back(std::make_unique<ComposeScratch>());
+    ComposeScratch& scratch = *_composeScratch[_composeDepth];
+    ++_composeDepth;
+    struct DepthGuard
+    {
+        size_t& depth;
+        ~DepthGuard() { --depth; }
+    } depthGuard{_composeDepth};
+    LiveStateSnapshot& local = scratch.live;
     SaveLiveState(local);
     ReplayModeScope replay(*this);
 
@@ -4052,6 +4066,14 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
             std::fill(planeB, planeB + planeBCount, uint16_t{0});
     };
 
+    // The recorded port writes only check a replay (a differing OUT is counted): the picture's frame needs none of
+    // them, and checking it decoded a write journal block per seek (15 % of a seek, P1.S10 seek tails). The seek's
+    // own replay and the seek check still compare them; RestoreLiveState puts the hook back
+    auto restoreForPicture = [this](const TTDCheckpoint& cp) {
+        RestoreCheckpointForReplay(cp);
+        _context->ttdPortWrites = nullptr;
+    };
+
     ITTDDisplayParticipant* participant = _context->pTtdDisplayParticipant;
     if (frameTarget)
     {
@@ -4066,7 +4088,7 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         const uint64_t from = ended > leadIn ? ended - leadIn : 0;
         if (const TTDCheckpoint* cp = checkpointAtOrBefore(from))
         {
-            RestoreCheckpointForReplay(*cp);
+            restoreForPicture(*cp);
             paintStaticBase();
             runUntilFrame(ended);
             RunToFrameEnd();
@@ -4081,13 +4103,13 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         const TTDCheckpoint* cur = checkpointAtOrBefore(frame);
         if (prev)
         {
-            RestoreCheckpointForReplay(*prev);
+            restoreForPicture(*prev);
             paintStaticBase();
             runUntilFrame(frame);
         }
         else if (cur)
         {
-            RestoreCheckpointForReplay(*cur);
+            restoreForPicture(*cur);
             paintStaticBase();
         }
 
@@ -4101,7 +4123,8 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
     if (participant)
         participant->TTDPrepareComposedPicture(frameTarget);
 
-    std::vector<uint8_t> composed;
+    std::vector<uint8_t>& composed = scratch.composed;
+    composed.clear();
     uint32_t* fb = nullptr;
     size_t fbSize = 0;
     _context->pScreen->GetFramebufferData(&fb, &fbSize);
@@ -4109,7 +4132,8 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         composed.assign(reinterpret_cast<const uint8_t*>(fb), reinterpret_cast<const uint8_t*>(fb) + fbSize);
 
     // Plane B was rendered by the same replay (ZX DLSS), so it is composed too
-    std::vector<uint16_t> composedPlaneB;
+    std::vector<uint16_t>& composedPlaneB = scratch.planeB;
+    composedPlaneB.clear();
     size_t planeBCount = 0;
     if (const uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount))
         composedPlaneB.assign(planeB, planeB + planeBCount);
@@ -4668,7 +4692,12 @@ void TimeTravelController::EnforceDiskTier(uint64_t frames, uint64_t bytes)
     {
         const TTDSegmentInfo& s = info(e.key);
         if (s.resident && s.readBack && (window.count(e.key) || engine.SegmentHeldByHead(e.key.first, e.key.second)))
+        {
+            // A window segment is whole: one read back in part is read again whole first
+            if (s.residentEnd != SIZE_MAX && !LoadSegmentFromFile(e.key.first, e.key.second, SIZE_MAX))
+                continue;
             engine.SetSegmentReadBack(e.key.first, e.key.second, false);
+        }
     }
     // The frame window: what lies outside it leaves memory once its file is complete (T-C10); the cache keeps its own
     if (frames != 0)
@@ -4694,25 +4723,47 @@ void TimeTravelController::EnforceDiskTier(uint64_t frames, uint64_t bytes)
     }
 }
 
-bool TimeTravelController::LoadSegmentFromFile(uint32_t line, size_t segment)
+bool TimeTravelController::LoadSegmentFromFile(uint32_t line, size_t segment, size_t upTo)
 {
     TimeTravelEngine& engine = *_engine;
     const std::deque<TTDSegmentInfo>* segments = engine.LineSegments(line);
     if (!segments || segment >= segments->size())
         return false;
     const TTDSegmentInfo& s = (*segments)[segment];
-    if (s.resident)
+    if (s.resident && (s.residentEnd == SIZE_MAX || upTo < s.residentEnd))
         return true;
+    if (s.resident)
+    {
+        // Read back up to a part: the whole file is read again in its place
+        std::string why;
+        if (!engine.EvictSegment(line, segment, why))
+        {
+            MLOGWARNING("TimeTravelController: segment %zu of branch %u cannot be read whole: %s", segment, line,
+                        why.c_str());
+            return false;
+        }
+        upTo = SIZE_MAX;
+    }
     const auto it = _segmentFiles.find({line, s.firstCheckpoint});
     std::string why = "its file is not known";
     bool ok = false;
     if (it != _segmentFiles.end())
     {
-        TTDFileSource source(it->second);
-        if (!source.Valid())
-            why = it->second + ": " + source.Error();
+        TTDFileSource file(it->second);
+        if (!file.Valid())
+            why = it->second + ": " + file.Error();
         else
-            ok = engine.ReadBackSegmentFrom(line, segment, source, why);
+        {
+            // The file in one read: the container's index checks every record header of every part, a read each
+            // (hundreds a file, 7 % of a seek into it, P1.S10 seek tails). The buffer is kept for the next one
+            TTDMemorySource source(std::move(_readBackFileBytes));
+            source.bytes.resize(static_cast<size_t>(file.Size()));
+            if (!file.ReadAt(0, source.bytes.data(), source.bytes.size()))
+                why = it->second + ": the file cannot be read";
+            else
+                ok = engine.ReadBackSegmentFrom(line, segment, source, why, upTo);
+            _readBackFileBytes = std::move(source.bytes);
+        }
     }
     if (!ok)
     {
@@ -4763,7 +4814,8 @@ bool TimeTravelController::ReadBackAll(std::string& error)
     for (uint32_t line = 0; line < engine.LineIds(); ++line)
         if (const std::deque<TTDSegmentInfo>* segments = engine.LineSegments(line))
             for (size_t k = 0; k < segments->size(); ++k)
-                if (!(*segments)[k].resident && !LoadSegmentFromFile(line, k))
+                if (((*segments)[k].residentEnd != SIZE_MAX || !(*segments)[k].resident) &&
+                    !LoadSegmentFromFile(line, k, SIZE_MAX))
                 {
                     error = "segment " + std::to_string(k) + " of branch " + std::to_string(line) +
                             " cannot be read back from its file";
@@ -5032,6 +5084,23 @@ bool TimeTravelController::StartLineFiles(TimeTravelEngine& engine)
         const uint64_t size = std::filesystem::file_size(FileHelper::ToFsPath(path), ec);
         _shadowClosedBytes += ec ? 0 : size;
     });
+    // The trunk's files closed at the next baseline carry the coverage index's part since the last one: a pause
+    // writes only what came after (0.4-0.5 s for a pause after 240,000 frames without one, P1.S10 seek tails)
+    _shadowCoverageParts.clear();
+    if (line == kTTDTrunk)
+        _shadowWriter->SetFileEndStreams([this](uint32_t file) {
+            std::vector<TTDHolderStream> streams;
+            std::vector<uint8_t> coverage = CoverageBytes(*_lines.front(), _shadowCoverageFrom);
+            if (coverage.empty())
+                return streams;
+            TTDByteWriter from;
+            from.U64(_shadowCoverageFrom);
+            streams.push_back({holderstream::kCoverageFrom, "coverage-from", std::move(from.bytes)});
+            streams.push_back({holderstream::kCoverage, "coverage", std::move(coverage)});
+            _shadowCoverageParts[file] = _shadowCoverageFrom;
+            _shadowCoverageFrom = _lines.front()->coverageIndex.RepeatFrom();
+            return streams;
+        });
     std::string why;
     if (!(firstFile ? _shadowWriter->BeginAt(engine, 0, why) : _shadowWriter->Begin(engine, why)))
     {
@@ -5589,6 +5658,13 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
         {
             MLOGWARNING("TimeTravelController::TruncateTimelineAfter — the recording's files stop: %s", error.c_str());
             _shadowWriter.reset();   // the folder keeps the files before the cut
+        }
+        // The files it deleted took their coverage parts along: the next part starts where the first of them did
+        for (auto it = _shadowCoverageParts.lower_bound(_shadowWriter ? _shadowWriter->ClosedFiles() : 0);
+             it != _shadowCoverageParts.end();)
+        {
+            _shadowCoverageFrom = std::min(_shadowCoverageFrom, it->second);
+            it = _shadowCoverageParts.erase(it);
         }
         // The engine's cursors into the controller's journals, at their new ends
         _shadowEvents.input = std::min(_shadowEvents.input, _line->inputJournal.Size());

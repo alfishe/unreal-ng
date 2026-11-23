@@ -903,6 +903,10 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         for (const TTDHolderStream& h : _params.holderStreams)
             if (!h.bytes.empty())
                 job.records.emplace_back(h.id, h.bytes);
+    if (ok && lastPart && !atSessionEnd && _local == 0)
+        for (const TTDHolderStream& h : _fileEndStreams)
+            if (!h.bytes.empty())
+                job.records.emplace_back(h.id, h.bytes);
     if (ok && lastPart && atSessionEnd && _local != 0)
         if (const auto it = _params.lineHolderStreams.find(_lineId); it != _params.lineHolderStreams.end())
             for (const TTDHolderStream& h : it->second)
@@ -1765,7 +1769,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
 }
 
 bool TTDSessionFile::ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
-                                       std::string& error)
+                                       std::string& error, uint64_t upToFrame)
 {
     TTDContainerReader reader;
     if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
@@ -1778,8 +1782,12 @@ bool TTDSessionFile::ReadSegmentPieces(const ITTDByteSource& source, TTDPieceSto
         return false;
     };
     std::vector<uint8_t> pieceBytes, cpBytes;
+    bool past = false;   // a part after @p upToFrame's was read: the last one wanted
     for (const TTDPartRef& part : reader.Parts())
     {
+        if (past)
+            break;
+        past = part.firstFrame > upToFrame;
         if (!reader.IsReachable(part.index))
             return fail("part " + std::to_string(part.index) + ": " +
                         (part.damaged ? part.damage : std::string("it depends on a damaged part")));

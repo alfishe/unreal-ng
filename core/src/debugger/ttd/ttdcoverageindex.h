@@ -467,8 +467,13 @@ private:
     {
         static constexpr uint32_t kNone = UINT32_MAX;
         std::vector<uint32_t> leafOf;   ///< per 4,096 keys: its leaf, or kNone
-        std::vector<uint64_t> words;    ///< the leaves, 64 words each
+        std::vector<uint64_t> words;    ///< the leaves, 64 words each (the first `used` of them in use)
+        /// The open block's summary only (Track): per key of a leaf, the frame in the block it was first and last
+        /// met in (meaningful where its bit is set)
+        std::vector<uint8_t> firsts, lasts;
         std::vector<uint32_t> touched;  ///< the leafOf entries set
+        uint32_t used = 0;              ///< leaves in use; the vectors keep their size from one block to the next
+        bool tracks = false;            ///< firsts and lasts are kept
         /// The leaf of the 4,096 keys from (@p piece << 12), allocated when @p create (else nullptr when there is
         /// none). Valid until the next allocation
         uint64_t* Leaf(uint32_t piece, bool create)
@@ -484,8 +489,15 @@ private:
             {
                 if (!create)
                     return nullptr;
-                leaf = static_cast<uint32_t>(words.size() >> 6);
-                words.resize(words.size() + 64, 0);
+                leaf = used++;
+                if (words.size() < size_t{used} << 6)
+                    words.resize(size_t{used} << 6);
+                if (tracks && firsts.size() < size_t{used} << 12)
+                {
+                    firsts.resize(size_t{used} << 12);
+                    lasts.resize(size_t{used} << 12);
+                }
+                std::fill_n(words.data() + (size_t{leaf} << 6), 64, uint64_t{0});
                 touched.push_back(piece);
             }
             return words.data() + (size_t{leaf} << 6);
@@ -495,20 +507,18 @@ private:
             for (const uint32_t piece : touched)
                 leafOf[piece] = kNone;
             touched.clear();
-            words.clear();
+            used = 0;
         }
         size_t HeapBytes() const
         {
             return leafOf.capacity() * sizeof(uint32_t) + words.capacity() * sizeof(uint64_t) +
-                   touched.capacity() * sizeof(uint32_t);
+                   touched.capacity() * sizeof(uint32_t) + firsts.capacity() + lasts.capacity();
         }
     };
     SparseBits _blockSeen[kKindCount];
-    std::vector<uint32_t> _blockUnion[kKindCount];
     std::vector<uint32_t> _blockCounts[kKindCount];
-    std::vector<uint32_t> _blockOffsets[kKindCount];
-    std::vector<uint32_t> _sealLast;   ///< key << 8 | last frame, at a seal
-    std::vector<uint32_t> _sealSort;   ///< the seal's sort scratch
+    std::vector<uint32_t> _sealFirst;   ///< key << 8 | first frame, at a seal (in key order)
+    std::vector<uint32_t> _sealLast;    ///< key << 8 | last frame, at a seal
     bool _blockSummaryValid[kKindCount] = {};
     std::vector<uint8_t> _sealRaw;   ///< the union's varints at a seal (capture thread; queries use _unionRaw)
     std::vector<uint8_t> _blockRows;   ///< the open block's frame rows (Written), as Block::frameRows uncompressed
@@ -522,7 +532,7 @@ private:
     /// Forget the open block's summary (its bits cleared key by key)
     void ResetOpenSummary(size_t kindIdx);
     /// Give a sealed block the open block's summary
-    void SealSummary(size_t kindIdx, Block& block, const std::vector<uint8_t>& raw);
+    void SealSummary(size_t kindIdx, Block& block);
     /// A block's union, mask and spans from its keys packed with their first (@p firsts) and last (@p lasts) frames,
     /// both sorted; @p scratch for the varints
     static void BuildSummary(const Block& block, const std::vector<uint32_t>& firsts, const std::vector<uint32_t>& lasts,

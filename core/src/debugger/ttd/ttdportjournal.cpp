@@ -250,12 +250,91 @@ bool TTDPortJournal::DecodeBlock(uint64_t block, ReadCache& cache) const
         return false;
     }
     cache.block = static_cast<int64_t>(block);
+    ++_blocksDecoded;
     return true;
+}
+
+TTDPortJournal::Summary TTDPortJournal::Summarize(const std::vector<TTDPortRecord>& records)
+{
+    // A run per frame, its ports in the order they first appear (a run holds a handful: a linear search when the port
+    // differs from the record before). Worth it only where it is much smaller than the records: a frame of few
+    // accesses to many ports is left to the decode. The current port's tally is kept in locals (stores through the
+    // tallies' bytes alias everything: the loop reloaded its vectors per record, as slow as the block's compression)
+    constexpr size_t kMaxPortsInRun = 64;
+    Summary s;
+    const size_t limit = records.size() / 8;
+    const TTDPortRecord* rec = records.data();
+    const size_t n = records.size();
+    size_t runFirst = 0;
+    size_t at = SIZE_MAX;   // the tally being counted in the locals
+    uint16_t port = 0;
+    uint8_t last = 0;
+    uint32_t count = 0, toggles = 0;
+    uint64_t frame = UINT64_MAX;
+    auto flush = [&] {
+        if (at == SIZE_MAX)
+            return;
+        PortTally& t = s.tallies[at];
+        t.last = last;
+        t.count = count;
+        t.bit4Toggles = toggles;
+    };
+    for (size_t i = 0; i < n; ++i)
+    {
+        const TTDPortRecord& r = rec[i];
+        if (r.frame == frame && r.port == port && at != SIZE_MAX)
+        {
+            toggles += ((last ^ r.value) & 0x10) != 0;
+            last = r.value;
+            ++count;
+            continue;
+        }
+        flush();
+        if (r.frame != frame)
+        {
+            frame = r.frame;
+            s.runStart.push_back(static_cast<uint32_t>(i));
+            s.runTallies.push_back(static_cast<uint32_t>(s.tallies.size()));
+            runFirst = s.tallies.size();
+        }
+        port = r.port;
+        at = SIZE_MAX;
+        for (size_t k = runFirst; k < s.tallies.size(); ++k)
+            if (s.tallies[k].port == port)
+            {
+                at = k;
+                break;
+            }
+        if (at == SIZE_MAX)
+        {
+            if (s.tallies.size() - runFirst >= kMaxPortsInRun || s.tallies.size() >= limit)
+                return Summary{};
+            at = s.tallies.size();
+            s.tallies.push_back({r.port, r.value, r.value, 0, 0});
+        }
+        const PortTally& t = s.tallies[at];
+        last = t.last;
+        count = t.count;
+        toggles = t.bit4Toggles;
+        toggles += ((last ^ r.value) & 0x10) != 0;
+        last = r.value;
+        ++count;
+    }
+    flush();
+    if (s.runStart.empty())
+        return s;
+    s.runStart.push_back(static_cast<uint32_t>(records.size()));
+    s.runTallies.push_back(static_cast<uint32_t>(s.tallies.size()));
+    s.runStart.shrink_to_fit();
+    s.runTallies.shrink_to_fit();
+    s.tallies.shrink_to_fit();
+    return s;
 }
 
 void TTDPortJournal::SealOpenBlock()
 {
     _blocks.push_back(MakeBlock(_open));
+    _blocks.back().summary = Summarize(_open);
     _sealedRecords += _open.size();
     _open.clear();
     ++_openEdits;
@@ -309,7 +388,8 @@ size_t TTDPortJournal::HeapBytes() const
     size_t bytes = (_open.capacity() + _cache.records.capacity()) * sizeof(TTDPortRecord) +
                    _blocks.capacity() * sizeof(Block);
     for (const Block& b : _blocks)
-        bytes += b.compressed.capacity();
+        bytes += b.compressed.capacity() + b.summary.runStart.capacity() * sizeof(uint32_t) +
+                 b.summary.runTallies.capacity() * sizeof(uint32_t) + b.summary.tallies.capacity() * sizeof(PortTally);
     return bytes;
 }
 
@@ -469,6 +549,7 @@ bool TTDPortJournal::Deserialize(std::istream& in, uint32_t checkpointCount, std
         else
         {
             _sealedRecords += b.records;
+            b.summary = Summarize(decoded);
             _blocks.push_back(std::move(b));
         }
     }

@@ -301,6 +301,77 @@ bool TTDPieceStore::Decode(TTDPieceId id, uint8_t* out) const
     return codec::Crc32C(out, kPiece) == _versions[id].crc32c;
 }
 
+bool TTDPieceStore::DecodeFrom(TTDPieceId id, TTDPieceId have, uint8_t* inout, bool& damaged) const
+{
+    damaged = false;
+    if (have == kNone || have >= _versions.size() || _versions[have].refcount == 0)
+        return false;
+    if (id == have)
+        return true;
+    // Which one descends from the other: walk each back to its chain's start looking for the other
+    auto distance = [this](TTDPieceId from, TTDPieceId to, uint32_t& depth) {
+        uint32_t steps = 0;
+        for (TTDPieceId cur = from; IsDifference(_versions[cur].encoding); cur = _versions[cur].base)
+        {
+            ++steps;
+            if (_versions[cur].base == to)
+            {
+                depth = steps;
+                return true;
+            }
+        }
+        depth = steps;   // from's own chain: Decode applies this many
+        return false;
+    };
+    uint32_t up = 0, down = 0;
+    const bool idAbove = distance(id, have, up);      // id descends from have: up differences of id's line
+    const bool haveAbove = !idAbove && distance(have, id, down);   // have descends from id
+    if (!idAbove && !haveAbove)
+        return false;
+    uint32_t full = 0;
+    if (haveAbove)
+    {
+        distance(id, kNone, full);
+        if (down > full)   // the chain from its start is shorter
+            return false;
+    }
+    // The differences between them, each applied once (XOR: the same step either way)
+    TTDPieceId chain[1024];
+    uint32_t links = 0;
+    for (TTDPieceId cur = idAbove ? id : have; cur != (idAbove ? have : id); cur = _versions[cur].base)
+    {
+        if (links == sizeof(chain) / sizeof(chain[0]))
+            return false;
+        chain[links++] = cur;
+    }
+    uint8_t diff[kPiece];
+    for (uint32_t i = links; i-- > 0;)
+    {
+        const Version& v = _versions[chain[i]];
+        bool ok = true;
+        if (v.encoding == Encoding::Ranges)
+            ok = ApplyRanges(_arena.Data(v.payload), v.payload.size, inout);
+        else
+        {
+            ok = codec::Decompress(_arena.Data(v.payload), v.payload.size, kPiece, diff);
+            if (ok)
+                codec::XorBuffers(inout, diff, inout, kPiece);
+        }
+        if (!ok)
+        {
+            damaged = true;
+            return false;
+        }
+        _work.linksDecoded++;
+    }
+    if (codec::Crc32C(inout, kPiece) != _versions[id].crc32c)
+    {
+        damaged = true;
+        return false;
+    }
+    return true;
+}
+
 size_t TTDPieceStore::VersionTableBytes() const
 {
     return _versions.capacity() * sizeof(Version) + _free.capacity() * sizeof(TTDPieceId);

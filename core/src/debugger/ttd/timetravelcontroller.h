@@ -2354,6 +2354,15 @@ private:
     /// Reused across builds; vector capacities are retained, so the sizable
     /// part (the RAM copy, ≤ ~1 MB) is allocated at most once per browse.
     LiveStateSnapshot _liveSnapshot;
+    /// ComposeDisplay's buffers, one set per nesting depth (a reentrant debugger view composes inside a compose)
+    struct ComposeScratch
+    {
+        LiveStateSnapshot live;
+        std::vector<uint8_t> composed;
+        std::vector<uint16_t> planeB;
+    };
+    std::vector<std::unique_ptr<ComposeScratch>> _composeScratch;
+    size_t _composeDepth = 0;
 
     /// @brief Capture the live machine state into `out` (pure copies; no
     /// timeline or dirty-tracker effects). Without @p withMemory the RAM, the framebuffer and plane B are left
@@ -2490,6 +2499,9 @@ private:
     uint64_t _shadowCoverageFrom = 0;
     /// Where the part written by the last FinishShadowFiles started: a resume that writes that file again loses it
     uint64_t _shadowLastCoveragePartFrom = 0;
+    /// The live trunk writer's closed files that carry a coverage part, by the writer's file number: where each part
+    /// starts (a resume in the past deletes the files from its segment on, and their parts with them)
+    std::map<uint32_t, uint64_t> _shadowCoverageParts;
     TTDSessionSaveParams _shadowParams;          ///< the folder's files: identity, holder streams, branch records
     bool _shadowFilesStopped = false;            ///< writing failed: no new writer until the session's next folder
     uint64_t _shadowFolderSerial = UINT64_MAX;   ///< the engine's segments begun when the folder was made
@@ -2641,6 +2653,7 @@ private:
     uint64_t _tierCheckedFiles = UINT64_MAX;   ///< _segmentFilesSerial at the last full check
     uint64_t _tierCheckedSegment = UINT64_MAX; ///< segments begun at the last full check
     size_t _readBackCapacity = 4;              ///< the read-back cache's segments
+    std::vector<uint8_t> _readBackFileBytes;   ///< LoadSegmentFromFile: the last file read (its capacity reused)
     bool _readBackUnbounded = false;           ///< Save, Check: every segment read back for the call
     uint64_t _readBackLoads = 0;               ///< segments read back from their files
     uint64_t _readBackFailures = 0;            ///< read backs that failed (the restore reported it)
@@ -2651,7 +2664,8 @@ private:
     /// The limits with the disk tier: evict segments with a complete file outside the memory window
     void EnforceDiskTier(uint64_t frames, uint64_t bytes);
     /// The engine's loader: read line @p line's segment @p segment back from its file
-    bool LoadSegmentFromFile(uint32_t line, size_t segment);
+    /// @p upTo: the checkpoint needed (the file read to the part after it), SIZE_MAX: the whole segment
+    bool LoadSegmentFromFile(uint32_t line, size_t segment, size_t upTo = SIZE_MAX);
     /// The read-back cache back to its capacity (least recently used first), keeping @p keep (line, segment)
     void TrimReadBackCache(std::pair<uint32_t, size_t> keep);
     /// A completed segment file of @p line (the writer's callback)

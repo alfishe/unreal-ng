@@ -31,6 +31,18 @@ void AppendVarint(std::vector<uint8_t>& out, uint32_t value)
     out.push_back(static_cast<uint8_t>(value));
 }
 
+/// One varint at @p p (room for five bytes); past it
+inline uint8_t* PutVarint(uint8_t* p, uint32_t value)
+{
+    while (value >= 0x80)
+    {
+        *p++ = static_cast<uint8_t>((value & 0x7F) | 0x80);
+        value >>= 7;
+    }
+    *p++ = static_cast<uint8_t>(value);
+    return p;
+}
+
 uint32_t ReadVarint(const uint8_t* data, size_t& pos)
 {
     uint32_t result = 0;
@@ -408,12 +420,16 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
     }
     if (_blockSummaryValid[kindIdx])
     {
-        // The keys are sorted: one leaf lookup per 4 KB the frame reached
+        // The keys are sorted: one leaf lookup per 4 KB the frame reached. Each key's first and last frame in the
+        // block are noted beside its bit, so the seal reads the union in key order without a sort or a walk back
+        // over the frames (the summaries had doubled a frame's coverage capture, P1.S10 seek tails)
         SparseBits& blockSeen = _blockSeen[kindIdx];
-        std::vector<uint32_t>& blockUnion = _blockUnion[kindIdx];
-        const uint32_t inBlock = static_cast<uint32_t>(_blockCounts[kindIdx].size());
+        blockSeen.tracks = true;
+        const uint8_t inBlock = static_cast<uint8_t>(_blockCounts[kindIdx].size());
         uint32_t piece = UINT32_MAX;
         uint64_t* leaf = nullptr;
+        uint8_t* firsts = nullptr;
+        uint8_t* lasts = nullptr;
         for (const TTDCoverageKey key : pending)
         {
             const TTDCoverageKey masked = key & (kKeySpace - 1);
@@ -421,13 +437,19 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
             {
                 piece = masked >> 12;
                 leaf = blockSeen.Leaf(piece, true);
+                const size_t at = static_cast<size_t>(leaf - blockSeen.words.data()) << 6;
+                firsts = blockSeen.firsts.data() + at;
+                lasts = blockSeen.lasts.data() + at;
             }
-            uint64_t& word = leaf[(masked >> 6) & 63];
-            const uint64_t bit = uint64_t{1} << (masked & 63);
-            if (word & bit)
-                continue;
-            word |= bit;
-            blockUnion.push_back(masked << 8 | inBlock);
+            const uint32_t inLeaf = masked & 4095;
+            uint64_t& word = leaf[inLeaf >> 6];
+            const uint64_t bit = uint64_t{1} << (inLeaf & 63);
+            if (!(word & bit))
+            {
+                word |= bit;
+                firsts[inLeaf] = inBlock;
+            }
+            lasts[inLeaf] = inBlock;
         }
         _blockCounts[kindIdx].push_back(static_cast<uint32_t>(pending.size()));
         if (kindIdx == static_cast<size_t>(TTDCoverageKind::Written))
@@ -448,17 +470,18 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
     if (_openBlockFrames[kindIdx] == 0)
         _openBlockBaseFrame[kindIdx] = frame;
 
-    // Frame layout inside the block: key count, then sorted delta varints.
-    AppendVarint(pool, static_cast<uint32_t>(pending.size()));
-    if (_blockSummaryValid[kindIdx])
-        _blockOffsets[kindIdx].push_back(static_cast<uint32_t>(pool.size()));
-
+    // Frame layout inside the block: key count, then sorted delta varints (written through a pointer: a push per
+    // byte was a fifth of the capture)
+    const size_t poolAt = pool.size();
+    pool.resize(poolAt + 5 * (pending.size() + 1));
+    uint8_t* out = PutVarint(pool.data() + poolAt, static_cast<uint32_t>(pending.size()));
     TTDCoverageKey prev = 0;
     for (TTDCoverageKey key : pending)
     {
-        AppendVarint(pool, key - prev);
+        out = PutVarint(out, key - prev);
         prev = key;
     }
+    pool.resize(static_cast<size_t>(out - pool.data()));
 
     pending.clear();  // Keeps the reserved capacity for the next frame.
 
@@ -481,7 +504,7 @@ void TTDCoverageIndex::CloseOpenBlock(size_t kindIdx)
     block.baseFrame = _openBlockBaseFrame[kindIdx];
     block.frameCount = _openBlockFrames[kindIdx];
     block.compressed = codec::Compress(raw.data(), raw.size());
-    SealSummary(kindIdx, block, raw);
+    SealSummary(kindIdx, block);
 
     _rawBytes[kindIdx] += block.rawSize;
     _compressedBytes[kindIdx] += block.compressed.size();
@@ -495,9 +518,7 @@ void TTDCoverageIndex::CloseOpenBlock(size_t kindIdx)
 void TTDCoverageIndex::ResetOpenSummary(size_t kindIdx)
 {
     _blockSeen[kindIdx].Reset();
-    _blockUnion[kindIdx].clear();
     _blockCounts[kindIdx].clear();
-    _blockOffsets[kindIdx].clear();
     if (kindIdx == static_cast<size_t>(TTDCoverageKind::Written))
         _blockRows.clear();
     _blockSummaryValid[kindIdx] = false;
@@ -505,30 +526,26 @@ void TTDCoverageIndex::ResetOpenSummary(size_t kindIdx)
 
 void TTDCoverageIndex::AppendFrameRows(std::vector<uint8_t>& out, const TTDCoverageKey* keys, size_t count)
 {
-    // The count leads the frame: the rows are written after a placeholder of the widest count, then moved up
+    // The count leads the frame: the rows are written after room for the widest count, then moved up
     const size_t at = out.size();
+    out.resize(at + 5 + 5 * count);
+    uint8_t* p = out.data() + at + 5;
     uint32_t rows = 0;
-    out.resize(at + 5);
     uint32_t prev = 0;
     for (size_t i = 0, prevRow = SIZE_MAX; i < count; ++i)
         if (const size_t row = (keys[i] & (kKeySpace - 1)) >> kRowBits; row != prevRow)
         {
-            AppendVarint(out, static_cast<uint32_t>(row) - prev);
+            p = PutVarint(p, static_cast<uint32_t>(row) - prev);
             prev = static_cast<uint32_t>(row);
             prevRow = row;
             ++rows;
         }
+    const size_t end = static_cast<size_t>(p - out.data());
     uint8_t head[5];
-    size_t headSize = 0;
-    for (uint32_t v = rows; ; v >>= 7)
-    {
-        head[headSize++] = static_cast<uint8_t>((v & 0x7F) | (v > 0x7F ? 0x80 : 0));
-        if (v <= 0x7F)
-            break;
-    }
+    const size_t headSize = static_cast<size_t>(PutVarint(head, rows) - head);
     std::memcpy(out.data() + at, head, headSize);
-    std::memmove(out.data() + at + headSize, out.data() + at + 5, out.size() - at - 5);
-    out.resize(out.size() - (5 - headSize));
+    std::memmove(out.data() + at + headSize, out.data() + at + 5, end - at - 5);
+    out.resize(end - (5 - headSize));
 }
 
 int TTDCoverageIndex::FrameWroteIn(uint64_t frame, TTDCoverageKey lo, TTDCoverageKey hi) const
@@ -619,53 +636,35 @@ void RadixSort31(std::vector<uint32_t>& values, std::vector<uint32_t>& scratch)
 }
 }  // namespace
 
-void TTDCoverageIndex::SealSummary(size_t kindIdx, Block& block, const std::vector<uint8_t>& raw)
+void TTDCoverageIndex::SealSummary(size_t kindIdx, Block& block)
 {
-    std::vector<uint32_t>& firsts = _blockUnion[kindIdx];
     const std::vector<uint32_t>& counts = _blockCounts[kindIdx];
-    const std::vector<uint32_t>& offsets = _blockOffsets[kindIdx];
-    if (!_blockSummaryValid[kindIdx] || counts.size() != block.frameCount || offsets.size() != block.frameCount)
+    if (!_blockSummaryValid[kindIdx] || counts.size() != block.frameCount)
     {
         ResetOpenSummary(kindIdx);   // a cut inside the block: the first query builds it
         return;
     }
-    // Each key's last frame: the frames walked back, a key's bit cleared where it is met first
+    // The union in key order: the leaves by their 4 KB, each one's bits ascending, with the frames noted beside them
     SparseBits& blockSeen = _blockSeen[kindIdx];
+    std::sort(blockSeen.touched.begin(), blockSeen.touched.end());
+    _sealFirst.clear();
     _sealLast.clear();
-    for (uint32_t f = block.frameCount; f-- > 0;)
+    for (const uint32_t piece : blockSeen.touched)
     {
-        size_t pos = offsets[f];
-        TTDCoverageKey key = 0;
-        uint32_t piece = UINT32_MAX;
-        uint64_t* leaf = nullptr;
-        for (uint32_t i = 0; i < counts[f]; ++i)
-        {
-            key += ReadVarint(raw.data(), pos);
-            const TTDCoverageKey masked = key & (kKeySpace - 1);
-            if ((masked >> 12) != piece)
+        const size_t leaf = blockSeen.leafOf[piece];
+        const uint64_t* words = blockSeen.words.data() + (leaf << 6);
+        const uint8_t* firsts = blockSeen.firsts.data() + (leaf << 12);
+        const uint8_t* lasts = blockSeen.lasts.data() + (leaf << 12);
+        for (uint32_t w = 0; w < 64; ++w)
+            for (uint64_t bits = words[w]; bits != 0; bits &= bits - 1)
             {
-                piece = masked >> 12;
-                leaf = blockSeen.Leaf(piece, false);
+                const uint32_t inLeaf = (w << 6) + static_cast<uint32_t>(std::countr_zero(bits));
+                const uint32_t key = (piece << 12) | inLeaf;
+                _sealFirst.push_back(key << 8 | firsts[inLeaf]);
+                _sealLast.push_back(key << 8 | lasts[inLeaf]);
             }
-            if (!leaf)
-                continue;
-            uint64_t& word = leaf[(masked >> 6) & 63];
-            const uint64_t bit = uint64_t{1} << (masked & 63);
-            if (word & bit)
-            {
-                word &= ~bit;
-                _sealLast.push_back(masked << 8 | f);
-            }
-        }
     }
-    RadixSort31(firsts, _sealSort);
-    RadixSort31(_sealLast, _sealSort);
-    if (_sealLast.size() != firsts.size())
-    {
-        ResetOpenSummary(kindIdx);
-        return;
-    }
-    BuildSummary(block, firsts, _sealLast, _sealRaw);
+    BuildSummary(block, _sealFirst, _sealLast, _sealRaw);
     block.frameKeyCounts = counts;
     if (kindIdx == static_cast<size_t>(TTDCoverageKind::Written))
     {
@@ -820,8 +819,8 @@ void TTDCoverageIndex::Clear()
     _unionScratch = {};
     _unionRaw = {};
     _sealRaw = {};
+    _sealFirst = {};
     _sealLast = {};
-    _sealSort = {};
     _unionLast = {};
     _spansRaw = {};
     _blockRows = {};
@@ -838,7 +837,6 @@ void TTDCoverageIndex::Clear()
         _openBlock[k].clear();
         ResetOpenSummary(k);
         _blockSeen[k] = {};
-        _blockUnion[k] = {};
         _openBlockFrames[k] = 0;
         _openBlockBaseFrame[k] = 0;
         _compressedBytes[k] = 0;
@@ -1172,7 +1170,7 @@ size_t TTDCoverageIndex::HeapBytes() const
         total += _seenWords[k].capacity() * sizeof(uint64_t);
         total += _openBlock[k].capacity();
         total += _blockSeen[k].HeapBytes() +
-                 (_blockUnion[k].capacity() + _blockCounts[k].capacity() + _blockOffsets[k].capacity()) * sizeof(uint32_t);
+                 _blockCounts[k].capacity() * sizeof(uint32_t);
         for (const Block& b : _blocks[k])
             total += b.compressed.capacity() + sizeof(Block) + b.unionKeys.capacity() +
                      b.frameKeyCounts.capacity() * sizeof(uint32_t) + b.pieceMask.capacity() * sizeof(uint64_t) +
@@ -1181,7 +1179,7 @@ size_t TTDCoverageIndex::HeapBytes() const
     total += _decodeScratch.capacity() * sizeof(TTDCoverageKey);
     total += _unionSeen.capacity() * sizeof(uint64_t) + _unionScratch.capacity() * sizeof(TTDCoverageKey) +
              _unionRaw.capacity() + _sealRaw.capacity() + _blockRows.capacity() + _spansRaw.capacity() +
-             (_unionLast.capacity() + _sealLast.capacity() + _sealSort.capacity()) * sizeof(uint32_t) + _rowsCache.capacity() +
+             (_unionLast.capacity() + _sealFirst.capacity() + _sealLast.capacity()) * sizeof(uint32_t) + _rowsCache.capacity() +
              _rowsOffsets.capacity() * sizeof(uint32_t);
     total += _blockCache.capacity();
     return total;
