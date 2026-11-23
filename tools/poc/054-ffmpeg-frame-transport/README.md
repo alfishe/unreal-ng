@@ -54,7 +54,11 @@ c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/transport.cpp ../core
 c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/fsdump.cpp ../core/recording/src/common/framescaler.cpp -o fsdump
 python3 ../tools/poc/054-ffmpeg-frame-transport/remap.py SRC.rgba         # remap tables against FrameScaler, 4:4:4 bytes
 ../tools/poc/054-ffmpeg-frame-transport/winrec.sh ./poc054 SRC.bgra 662x542 3   # window recorder: FIFO / stdin / unix
+../tools/poc/054-ffmpeg-frame-transport/intel.sh ./poc054 SRC.bgra /dev/dri/renderD128 3   # Linux, Intel VA-API / QSV
 ```
+
+Windows (x64 Native Tools prompt): build `transport_win.cpp` as its header says into `scratch\tw.exe`, put a
+352x288 BGRA `src.bgra` beside it, set `FFMPEG` to ffmpeg.exe and run `win.cmd 3` from there.
 
 ## Answer
 
@@ -106,7 +110,7 @@ When the bytes cannot shrink (the window recorder sends the window's picture), t
   reads 64 KB per `read` (strace: 10k reads of 65536 for 20 frames); a 1 MB pipe changes nothing, nor does glibc's
   mmap threshold (33 MB packets above 32 MB). ffmpeg has no shared-memory input; an in-process libavcodec would be
   the only copy-free way and a new build dependency on every platform.
-- Windows: not measured (no ffmpeg on the Windows host).
+- Windows and the GPU encoders: below.
 
 ## Next steps
 
@@ -142,3 +146,52 @@ over 3-4 interleaved rounds:
   below real time anyway. Not worth a second transport (and a Windows path).
 - Live recording of a drawn window was not measured: the offscreen platform does not redraw the window (19 of 210
   frames changed), and visible windows are not opened on this Mac without the owner.
+
+## 4K into the GPU encoders: Windows NVENC, Linux Intel (2026-11-23)
+
+Can a 4K frame reach ffmpeg and its GPU encoder at 50 fps? `transport_win.cpp` + `win.cmd` on Windows (a named pipe
+as `FFmpegPipeEncoder`'s `NamedPipe` with 64 KB or 1 MB buffers, a pipe as stdin as QProcess hands it with 1 MB or
+16 MB, TCP loopback), `intel.sh` on Linux (FIFO, FIFO 1 MB, stdin, unix socket). Moving pictures (testsrc2 352x288
+scaled by FrameScaler; NV12 a fixed pattern), 3 interleaved rounds, frames per second min-max.
+
+Windows, Threadripper PRO 3975WX + RTX 4090, idle (NVENC `-preset p1 -tune ll -rc constqp -qp 18`):
+
+| Frame, output | npipe 64 KB | npipe 1 MB | stdin 1 MB | stdin 16 MB | TCP |
+|:--|--:|--:|--:|--:|--:|
+| 4K BGRA, ingest | 80-85 | 65-86 | 61-84 | 80-84 | 27-59 |
+| 4K BGRA, h264_nvenc (BGRA into NVENC) | 60-62 | 61-63 | 59-62 | 62-63 | 37-39 |
+| 4K BGRA, h264_nvenc, `-pix_fmt yuv420p` (CPU) | 61-64 | 60-63 | 60-63 | 60-63 | 29-41 |
+| 4K BGRA, hevc_nvenc | 60-64 | 60-64 | 60-62 | 60-64 | 24-39 |
+| 4K BGRA, h264_nvenc 4:4:4 | 56-59 | 58-60 | 57-60 | 57-60 | 19-38 |
+| 4K NV12, ingest | 286-318 | 286-289 | 255-294 | 255-280 | 129-181 |
+| 4K NV12, h264_nvenc | 180-185 | 185-191 | 180-190 | 178-187 | 94-112 |
+| 4K NV12, hevc_nvenc | 186-193 | 192-193 | 187-193 | 187-190 | 108-128 |
+| 2640x2160 BGRA (4K CRT window), h264_nvenc | 11-82 | 27-84 | 67-84 | 72-83 | 31-58 |
+
+Linux, i7-11850H Tiger Lake (Iris Xe), load 13-18 (`-vf format=nv12,hwupload -c:v h264_vaapi -qp 18`;
+`h264_qsv -pix_fmt nv12 -global_quality 18`):
+
+| Frame, output | FIFO | FIFO 1 MB | stdin | unix |
+|:--|--:|--:|--:|--:|
+| 4K BGRA, ingest | 39-60 | 42-60 | 41-59 | 44-110 |
+| 4K BGRA, h264_vaapi | 27-44 | 24-43 | 25-43 | 25-64 |
+| 4K BGRA, hevc_vaapi | 26-30 | 26-28 | 22-28 | 21-29 |
+| 4K BGRA, h264_qsv | 30-42 | 23-43 | 21-42 | 29-59 |
+| 4K NV12, ingest | 129-246 | 152-275 | 124-224 | 212-360 |
+| 4K NV12, h264_vaapi | 86-94 | 85-90 | 85-92 | 77-94 |
+| 4K NV12, hevc_vaapi | 51-56 | 49-55 | 52-55 | 52-56 |
+| 4K NV12, h264_qsv | 82-84 | 82-83 | 82-82 | 81-82 |
+| 2640x2160 BGRA, h264_vaapi | 52-68 | 66-74 | 52-70 | 42-88 |
+
+- **The pixel format decides, not the transport.** 4K BGRA (33 MB) makes 50 fps on Windows with ~20 % to spare
+  (NVENC 56-64 fps through every pipe; ffmpeg's handling of 33 MB per frame is the limit, NVENC alone takes NV12
+  at 180-190) and not at all on the Intel laptop (21-44 fps: ffmpeg's single-threaded BGRA -> NV12 of 8.3 M pixels
+  plus the upload). 4K NV12 (12.4 MB) gives NVENC 3.5x real time and Intel H.264 1.7x; Intel HEVC at 4K is the
+  encoder's own limit (~55 fps) in any format.
+- Pipe buffers (64 KB .. 16 MB) change nothing on Windows; TCP loopback is the slowest there (half the pipes). On
+  Linux a unix socket helps the BGRA ingest only, never enough for 4K BGRA into VA-API.
+- So a producer that must hand ffmpeg a 4K frame should send NV12 (`FrameScaler::ScaleIntoNv12` /
+  `PackedToNv12` exist) and keep the named pipe / FIFO / stdin. Today neither recorder ships a 4K BGRA frame: the
+  fixed profiles send the source picture (ffmpeg builds the frame), the window recorder the window's picture (at
+  most 2640x2160 with the CRT at 4K: 67-84 fps into NVENC through stdin, 52-70 into VA-API).
+- Intel on Windows (QSV) not measured: neither Windows host has an Intel GPU enabled (an RTX 4090 alone on both).
