@@ -458,9 +458,14 @@ bool Emulator::Init()
         }
     }
 
-    // The labels of the known ROMs the machine runs (symbol bundles)
+    // The labels of the known ROMs the machine runs (symbol bundles), and of the firmware of the sound cards it was
+    // built with: those cards were made before the debug manager, so nothing told their targets
     if (result)
+    {
         ApplySymbolBundles();
+        if (_context->pDebugManager && !SymbolBundleFolder().empty())
+            _context->pDebugManager->ApplyCardSymbolBundles();
+    }
 
     // Create the time travel controller (per parent TDD §10.2). Always constructed; the
     // per-frame capture cost is gated by the cached _feature_ttd_enabled
