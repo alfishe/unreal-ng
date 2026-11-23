@@ -53,6 +53,7 @@ c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/transport.cpp ../core
 ../tools/poc/054-ffmpeg-frame-transport/e2e.sh ./poc054 SRC.rgba 3       # 4K libx264 end to end, SRC = 352x288 RGBA frames
 c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/fsdump.cpp ../core/recording/src/common/framescaler.cpp -o fsdump
 python3 ../tools/poc/054-ffmpeg-frame-transport/remap.py SRC.rgba         # remap tables against FrameScaler, 4:4:4 bytes
+../tools/poc/054-ffmpeg-frame-transport/winrec.sh ./poc054 SRC.bgra 662x542 3   # window recorder: FIFO / stdin / unix
 ```
 
 ## Answer
@@ -116,4 +117,28 @@ When the bytes cannot shrink (the window recorder sends the window's picture), t
 2. ~~VA-API through ffmpeg: the picture uploaded small, `scale_vaapi`~~ dropped 2026-11-23: no nearest mode, the
    pixels blur and the colour drifts (PSNR 15 dB). VA-API takes the CPU graph's 4:2:0 picture and pads on the GPU
    (recording-4k-profile README).
-3. Window recorder on macOS: a unix socket instead of stdin if its window-size frames stay the limit.
+3. ~~Window recorder on macOS: a unix socket instead of stdin~~ not needed (measured 2026-11-23, below).
+
+## Window recorder: stdin against a unix socket (macOS, 2026-11-23)
+
+The window recorder hands ffmpeg the window's picture through its standard input (QProcess: an anonymous pipe, not
+a FIFO). The largest it sends is the CRT drawn at a profile's height: 1320x1080 BGRA (5.7 MB) for 1080p, 2640x2160
+(22.8 MB) for 4K. `winrec.sh`: 19 real window grabs scaled to those sizes, M1 Ultra at load 9-33, frames per second
+over 3-4 interleaved rounds:
+
+| Output | 1320x1080 stdin | 1320x1080 unix | 2640x2160 FIFO | 2640x2160 stdin | 2640x2160 unix |
+|:--|--:|--:|--:|--:|--:|
+| ingest (`-c copy`) | 242-526 | 384-927 | 22-50 | 58-131 | 115-283 |
+| `h264_videotoolbox` | 67-365 | 149-384 | | 45-95 | 53-98 |
+| `libx264` 4:4:4 ultrafast | 171-358 | 278-575 | | 41-102 | 63-171 |
+
+- On macOS an anonymous pipe moves 2.6x what a FIFO does (1.3-3.0 GB/s against 0.5-1.1 GB/s, same rounds): the
+  FIFO numbers above are not the window recorder's.
+- At the 1080p CRT size the pipe has 5-10x headroom over 50 fps. At the 4K CRT size it has about 2x idle, near 1x
+  under load, where the encoders are the limit as well: VideoToolbox through ffmpeg takes ~95 fps with either
+  transport, and x264 4:4:4 on real CRT frames does ~42 fps at 1080p (recipe `window-recording.md`), about a quarter
+  of that at 4K. The default engine on the Mac (`native`, AVAssetWriter) does not use ffmpeg at all.
+- A socket would gain only for a 4K CRT recording with `engine: ffmpeg` on a loaded Mac, where the encoder stays far
+  below real time anyway. Not worth a second transport (and a Windows path).
+- Live recording of a drawn window was not measured: the offscreen platform does not redraw the window (19 of 210
+  frames changed), and visible windows are not opened on this Mac without the owner.

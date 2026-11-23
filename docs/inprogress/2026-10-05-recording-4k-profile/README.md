@@ -104,7 +104,9 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   2.4 / 3.1 ms; filling a reused image 2.0 ms against 4.1 fresh (MSVC). Live on Linux (xvfb, stepped 4K libx264,
   5 interleaved rounds of 200 frames): the same decoded frames (framemd5) in both builds, no slower; the stepped
   call runs at the real-time pace either way. Transport to ffmpeg measured apart: POC 054 (the macOS FIFO is the
-  4K limit, a unix socket moves 10x more).
+  4K limit, a unix socket moves 10x more). The window recorder writes to ffmpeg's stdin, an anonymous pipe 2.6x
+  faster than the FIFO on macOS: at the 4K CRT size (2640x2160) 58-131 fps against 115-283 through a socket, with
+  the encoders the limit before either; no socket (2026-11-23, POC 054 "Window recorder").
 - ~~ffmpeg (software and `-c:v` hardware through the pipe) with a fixed profile: the 33 MB 4K frame through the FIFO
   and ffmpeg's RGB conversion of 8.3 M pixels~~ done 2026-11-22 (POC 054). The pipe carries the source picture
   (352x288 RGBA, 0.4 MB) and ffmpeg builds the frame at the target size given explicitly: the colour conversion at
