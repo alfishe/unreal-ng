@@ -534,6 +534,14 @@ void BoardPane::refresh(EmulatorContext* context, bool live)
     FillTable(live, now);
     if (!live)
         _lastStop = std::move(now);
+    emit refreshed(context, live);
+}
+
+void BoardPane::addExtra(QWidget* widget)
+{
+    QVBoxLayout* contentLayout = static_cast<QVBoxLayout*>(_content->layout());
+    widget->setParent(_content);
+    contentLayout->insertWidget(contentLayout->count() - 1, widget);  // above the closing stretch
 }
 
 void BoardPane::SetStatus(const QString& text)

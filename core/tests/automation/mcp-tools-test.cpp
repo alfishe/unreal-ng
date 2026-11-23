@@ -2310,6 +2310,39 @@ TEST_F(McpTools_Test, InspectState_BoardAspect_ShowsEveryControlInTheText)
     EXPECT_NE(result.text.find("Board neogs_sd insert /sd: done"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_GsZxDmaAspect_ForwardsLastAndSinceAndPrintsTheLines)
+{
+    // The NeoGS ZX-DMA trace (gs-debugger N6): last and since are the route's query, the text is the server's lines
+    Json::Value trace;
+    trace["available"] = true;
+    trace["capturing"] = true;
+    trace["rows"] = Json::Value(Json::arrayValue);
+    trace["text"] = "ZX-DMA trace (NeoGS, capturing): 1 byte(s) kept, 1 shown\n  #42 f9 T1234 c5678 read  #012000 p04 "
+                    "#03 wait 2 PC #8009\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/zxdma?last=8&since=41"] = {200, trace};
+
+    Json::Value args;
+    args["aspects"].append("audio_gs_zxdma");
+    args["gs_zxdma_last"] = 8;
+    args["gs_zxdma_since"] = 41;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/gs/zxdma?last=8&since=41"));
+    EXPECT_NE(result.text.find("[audio_gs_zxdma] ZX-DMA trace (NeoGS, capturing)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("#012000 p04 #03 wait 2 PC #8009"), std::string::npos) << result.text;
+
+    // No NeoGS: the server's 404 message
+    Json::Value missing;
+    missing["error"] = "Not Found";
+    missing["message"] = "No NeoGS fitted (slots plug zxbus.next neogs)";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/zxdma"] = {404, missing};
+    Json::Value plain;
+    plain["aspects"].append("audio_gs_zxdma");
+    result = RunTool(*_registry, "inspect_state", plain, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[audio_gs_zxdma] No NeoGS fitted"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline)
 {
     // The GS slot's statistics (gs-debugger N7): the section is the route's last part, the baseline and fresh its

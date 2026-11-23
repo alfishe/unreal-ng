@@ -66,6 +66,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
+#include <emulator/sound/chips/gs/gszxdmatrace.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
@@ -5703,6 +5704,16 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "A send by id (0: the last): its bytes, replies and state", py::arg("id") = 0)
+            // The NeoGS ZX-DMA trace (gszxdmatrace.h, gs-debugger N6)
+            .def("gs_zxdma", [](Emulator& self, size_t last, uint64_t since) -> py::object {
+                GSZxDmaTraceQuery query;
+                query.last = last;
+                query.since = since;
+                return StateNodeToPy(DeviceState::GsZxDmaTrace(self.GetContext(), query));
+            }, "The NeoGS ZX-DMA trace: {available, card, capturing, total_bytes_kept, last_seq, rows: [{seq, frame, "
+               "host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}], text}; last: the "
+               "newest N bytes (0: all), since: the rows after this seq. Recorded while the GS port trace captures",
+               py::arg("last") = 256, py::arg("since") = 0)
             // The GS slot's statistics (gsslotstats.h, gs-debugger N7)
             .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since, const std::string& cpu) -> py::object {
                 GSStatsQuery query;
@@ -5914,7 +5925,7 @@ namespace PythonBindings
                     ev["value"] = e.value;
                     ev["pc"] = e.pc;
                     if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
-                    if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
+                    if (e.side == GSTraceSide::ZxDma) { ev["card_address"] = e.cardAddress(); ev["host_t"] = e.hostT(); ev["wait"] = e.waitT(); ev["dropped"] = e.isDropped(); }
                     if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                     if (e.side == GSTraceSide::Idle) ev["iterations"] = e.iterations;
                     result.append(ev);

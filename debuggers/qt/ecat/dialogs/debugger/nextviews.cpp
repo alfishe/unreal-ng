@@ -3,6 +3,7 @@
 #include "nextviews.h"
 
 #include <QAbstractButton>
+#include <QBrush>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -11,6 +12,7 @@
 #include <QScrollBar>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -19,6 +21,7 @@
 #include <cstdio>
 #include <functional>
 
+#include "addressmenu.h"
 #include "debugstyle.h"
 
 namespace
@@ -174,6 +177,19 @@ void NextReportView::add_action(const QString &title, const std::function<QStrin
     });
 }
 
+ZxDmaTraceView * NextReportView::add_zxdma_trace()
+{
+    if (m_trace != nullptr) return m_trace;
+    m_trace = new ZxDmaTraceView(e, this);
+    auto * layout = static_cast<QVBoxLayout *>(this->layout());
+    //Under the board; expanded, it takes the room the board's splitter leaves
+    layout->addWidget(m_trace, 0);
+    connect(m_trace, &ZxDmaTraceView::expanded_changed, this, [this, layout](bool on) {
+        layout->setStretchFactor(m_trace, on ? 2 : 0);
+    });
+    return m_trace;
+}
+
 void NextReportView::mark_stop()
 {
     m_stop = m_now;
@@ -185,6 +201,7 @@ void NextReportView::refresh()
     if (d == nullptr) {
         m_status->setText(m_absent);
         m_status->show();
+        if (m_trace != nullptr) m_trace->refresh(false);
         return;
     }
     DeviceNode report;
@@ -200,6 +217,7 @@ void NextReportView::refresh()
             m_status->show();
             m_fields->clear();
             for (const Table &t : m_tables) t.widget->setRowCount(0);
+            if (m_trace != nullptr) m_trace->refresh(false);
             return;
         }
     }
@@ -238,6 +256,7 @@ void NextReportView::refresh()
     m_fields->expandAll();
     m_fields->setUpdatesEnabled(true);
     for (size_t t = 0; t < m_tables.size(); t++) fill(m_tables[t], rows[t]);
+    if (m_trace != nullptr) m_trace->refresh(true);
 }
 
 bool NextReportView::changed(const std::string &path, const std::string &value)
@@ -822,6 +841,7 @@ std::vector<NextTab> CreateCardTabs(Emulator * e, QWidget *parent)
                                                "stall clk", "last"},
                                               parent);
     dma->set_shape(std::bind(neogs_dma, e, _1, _2), "neogs", QObject::tr("No NeoGS card"));
+    dma->add_zxdma_trace();
     NextReportView * media = new NextReportView(e, "gs", {}, std::string(), {}, parent);
     media->set_shape(std::bind(neogs_media, e, _1, _2), "neogs", QObject::tr("No NeoGS card"));
     media->add_action(QObject::tr("Insert image..."), [e, media]() {
@@ -906,4 +926,233 @@ std::vector<NextTab> CreateNextTabs(Emulator * e, QWidget *parent)
         {QObject::tr("DMA"), new NextReportView(e, "next-dma", {}, std::string(), {}, parent)},
         {QObject::tr("CTC / IM2"), new NextReportView(e, "next", {"interrupts", "ctc"}, "ctc", {}, parent)},
     }, "next");
+}
+
+//------------------------------------------------------------------- the ZX-DMA trace
+
+namespace
+{
+QString grouped_number(uint64_t v)
+{
+    QString digits = QString::number((qulonglong)v);
+    for (int i = digits.size() - 3; i > 0; i -= 3) digits.insert(i, ',');
+    return digits;
+}
+}
+
+ZxDmaTraceView::ZxDmaTraceView(Emulator * e, QWidget *parent):
+    QWidget(parent),
+    e(e)
+{
+    setObjectName("zxdma");
+    QVBoxLayout * layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(2);
+    QHBoxLayout * top = new QHBoxLayout();
+    top->setContentsMargins(0, 0, 0, 0);
+    m_toggle = new QToolButton(this);
+    m_toggle->setObjectName("zxdma:toggle");
+    m_toggle->setCheckable(true);
+    m_toggle->setText(tr("Trace ▸"));
+    m_toggle->setToolTip(tr("The ZX-DMA trace: every byte the Spectrum moved through the ZX-DMA window"));
+    top->addWidget(m_toggle);
+    m_summary = new QLabel(this);
+    m_summary->setObjectName("zxdma:summary");
+    top->addWidget(m_summary, 1);
+    layout->addLayout(top);
+
+    m_body = new QWidget(this);
+    QVBoxLayout * body = new QVBoxLayout(m_body);
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(2);
+    QHBoxLayout * row = new QHBoxLayout();
+    row->setContentsMargins(0, 0, 0, 0);
+    m_header = new QLabel(m_body);
+    m_header->setObjectName("zxdma:header");
+    m_header->setWordWrap(true);
+    m_header->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    row->addWidget(m_header, 1);
+    for (const char * action : {"start", "stop", "clear"}) {
+        const QString title = QString(action) == "start" ? tr("Start") : QString(action) == "stop" ? tr("Stop") : tr("Clear");
+        QPushButton * b = new QPushButton(title, m_body);
+        b->setObjectName(QString("zxdma:") + action);
+        const std::string a = action;
+        connect(b, &QPushButton::clicked, this, [this, a]() { capture(a); });
+        row->addWidget(b);
+        m_buttons.push_back(b);
+    }
+    body->addLayout(row);
+    m_answer = new QLabel(m_body);
+    m_answer->setObjectName("zxdma:answer");
+    m_answer->hide();
+    body->addWidget(m_answer);
+    m_table = new QTableWidget(m_body);
+    m_table->setObjectName("zxdma:table");
+    m_table->setFont(dbg::font());
+    m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_table->verticalHeader()->hide();
+    m_table->verticalHeader()->setDefaultSectionSize(dbg::row_height(m_table->fontMetrics()));
+    m_table->setColumnCount(ColCount);
+    m_table->setHorizontalHeaderLabels(QStringList() << tr("Frame") << tr("Host T") << tr("Card cycle") << tr("Dir")
+                                                     << tr("Card address") << tr("Value") << tr("Wait") << tr("Host PC"));
+    m_table->horizontalHeader()->setStretchLastSection(true);
+    m_table->horizontalHeaderItem(ColAddress)->setToolTip(tr("Double-click: the card RAM's page in the pages tab"));
+    m_table->horizontalHeaderItem(ColPc)->setToolTip(tr("Double-click: the main CPU's listing there"));
+    if (QAbstractButton * corner = m_table->findChild<QAbstractButton *>()) corner->setProperty("dbg_mono", true);
+    connect(m_table, &QTableWidget::cellDoubleClicked, this, &ZxDmaTraceView::activated);
+    body->addWidget(m_table, 1);
+    layout->addWidget(m_body, 1);
+    m_body->hide();
+    hide();  //until the board is there: a NeoGS
+
+    connect(m_toggle, &QToolButton::toggled, this, [this](bool on) { set_expanded(on); });
+}
+
+bool ZxDmaTraceView::expanded() const
+{
+    return m_toggle->isChecked();
+}
+
+void ZxDmaTraceView::set_expanded(bool on)
+{
+    if (m_toggle->isChecked() != on) {
+        m_toggle->setChecked(on);  //comes back here through toggled
+        return;
+    }
+    m_toggle->setText(on ? tr("Trace ▾") : tr("Trace ▸"));
+    m_body->setVisible(on);
+    if (on) read();
+    emit expanded_changed(on);
+}
+
+QPushButton * ZxDmaTraceView::button(const char * action) const
+{
+    for (QPushButton * b : m_buttons)
+        if (b->objectName() == QString("zxdma:") + action) return b;
+    return nullptr;
+}
+
+void ZxDmaTraceView::refresh(bool present)
+{
+    setVisible(present);
+    if (present && expanded()) read();
+}
+
+void ZxDmaTraceView::capture(const std::string &action)
+{
+    if (AddressRouter::read_only_at(this)) {
+        m_answer->setText(tr("The machine is not connected: nothing changed"));
+        m_answer->show();
+        return;
+    }
+    const Emulator::BoardAnswer a = e->zxdma_trace_capture(action);
+    m_answer->setText(QString::fromStdString(a.ok ? a.message : "refused: " + a.message));
+    m_answer->show();
+    if (a.ok && action == "clear") {
+        m_table->setRowCount(0);
+        m_rows.clear();
+        m_last_seq = 0;
+        m_read = false;
+    }
+    if (expanded()) read();
+}
+
+void ZxDmaTraceView::read()
+{
+    if (!e->loaded) return;
+    const Emulator::ZxDmaTrace t = e->read_zxdma_trace(kMaxRows, m_read ? m_last_seq : 0);
+    if (!t.ok || !t.available) {
+        m_summary->setText(QString::fromStdString(t.message));
+        m_header->setText(QString::fromStdString(t.message));
+        return;
+    }
+    //A new session (the trace cleared, the card reset): the rows from the start
+    if (t.restarted || !m_read) {
+        m_table->setRowCount(0);
+        m_rows.clear();
+    }
+    m_read = true;
+    m_last_seq = t.last_seq;
+
+    QString header = t.capturing ? tr("capturing") : tr("not capturing");
+    header += " · " + tr("%1 bytes kept").arg(grouped_number(t.total_bytes_kept));
+    header += " · " + tr("read %1 B · written %2 B · dropped %3 B · wait %4 T")
+                          .arg(grouped_number(t.bytes_read), grouped_number(t.bytes_written), grouped_number(t.bytes_dropped),
+                               grouped_number(t.wait_t_states));
+    if (t.evicted > 0)
+        header += "\n" + tr("the ring is full (%1 oldest bytes evicted): Clear, "
+                            "or read sooner").arg(grouped_number(t.evicted));
+    if (!t.capturing)
+        header += "\n" + tr("Start records the bytes (%1)").arg(QString::fromStdString(t.how_to_start));
+    m_header->setText(header);
+    m_summary->setText(t.capturing ? tr("capturing, %1 bytes").arg(grouped_number(t.total_bytes_kept))
+                                   : tr("not capturing"));
+
+    if (t.rows.empty()) return;
+    QScrollBar * bar = m_table->verticalScrollBar();
+    const bool tail = bar->value() >= bar->maximum() - 1;
+    m_table->setUpdatesEnabled(false);
+    const size_t before = m_rows.size();
+    m_rows.insert(m_rows.end(), t.rows.begin(), t.rows.end());
+    if (m_rows.size() > (size_t)kMaxRows) {
+        //The newest kMaxRows: the table built again (cheaper than removing rows off its top one by one)
+        m_rows.erase(m_rows.begin(), m_rows.begin() + (std::ptrdiff_t)(m_rows.size() - kMaxRows));
+        m_table->setRowCount(0);
+        m_table->setRowCount((int)m_rows.size());
+        for (size_t i = 0; i < m_rows.size(); i++) show_row((int)i, m_rows[i]);
+    } else {
+        m_table->setRowCount((int)m_rows.size());
+        for (size_t i = before; i < m_rows.size(); i++) show_row((int)i, m_rows[i]);
+    }
+    m_table->resizeColumnsToContents();
+    m_table->horizontalHeader()->setStretchLastSection(true);
+    m_table->setUpdatesEnabled(true);
+    if (tail) m_table->scrollToBottom();
+}
+
+void ZxDmaTraceView::show_row(int at, const Emulator::ZxDmaRow &r)
+{
+    const dbg::Colors c = dbg::colors(palette());
+    char address[40], value[8], pc[8];
+    std::snprintf(address, sizeof(address), "#%06X, page %u", r.card_address, r.page);
+    std::snprintf(value, sizeof(value), "#%02X", r.value & 0xFF);
+    std::snprintf(pc, sizeof(pc), "#%04X", r.host_pc & 0xFFFF);
+    const QString cells[ColCount] = {QString::number((qlonglong)r.frame),
+                                     QString::number((qlonglong)r.host_t),
+                                     QString::number((qlonglong)r.card_time),
+                                     QString(r.write ? "write" : "read") + (r.dropped ? tr(" dropped") : QString()),
+                                     QString(address),
+                                     QString(value),
+                                     QString::number(r.wait),
+                                     QString(pc)};
+    for (int k = 0; k < ColCount; k++) {
+        QTableWidgetItem * item = new QTableWidgetItem(cells[k]);
+        if (r.dropped) item->setForeground(QBrush(c.breakpoint));
+        if (k != ColDir && k != ColAddress) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        m_table->setItem(at, k, item);
+    }
+    if (r.dropped) m_table->item(at, ColDir)->setToolTip(tr("The module dropped this byte"));
+}
+
+Memory * ZxDmaTraceView::card_ram() const
+{
+    if (!e->loaded || e->dm == nullptr) return nullptr;
+    for (unsigned int i = 0; i < e->dm->device_count; i++)
+        if (Memory * m = dynamic_cast<Memory *>(e->dm->get_device(i)->device.get()))
+            if (m->name == "neogs.ram") return m;
+    return nullptr;
+}
+
+void ZxDmaTraceView::activated(int row, int column)
+{
+    if (row < 0 || row >= (int)m_rows.size()) return;
+    AddressRouter * router = AddressRouter::of(this);
+    if (router == nullptr) return;
+    if (column == ColPc) {
+        const std::vector<CPU *> cpus = e->dm != nullptr ? e->dm->get_cpus() : std::vector<CPU *>();
+        if (!cpus.empty()) emit router->show_code(cpus.front(), m_rows[(size_t)row].host_pc & 0xFFFF);
+    } else if (column == ColAddress) {
+        if (Memory * ram = card_ram()) emit router->show_memory_offset(ram, m_rows[(size_t)row].card_address);
+    }
 }

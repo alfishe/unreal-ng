@@ -75,6 +75,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
+#include <emulator/sound/chips/gs/gszxdmatrace.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../temporalstatus.h"
@@ -6066,6 +6067,16 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, GSConversationRead(ctx, id.value_or(0)).body);
         });
+        // The NeoGS ZX-DMA trace (gszxdmatrace.h, gs-debugger N6): the newest `last` bytes (default 256, 0: all)
+        // after the seq `since`; {available = false, description} without a NeoGS
+        lua.set_function("gs_zxdma", [this](sol::this_state s, sol::optional<uint64_t> last,
+                                            sol::optional<uint64_t> since) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSZxDmaTraceQuery query;
+            query.last = static_cast<size_t>(last.value_or(query.last));
+            query.since = since.value_or(0);
+            return StateNodeToLua(s, DeviceState::GsZxDmaTrace(ctx, query));
+        });
         // The GS slot's statistics (gsslotstats.h, gs-debugger N7): the block or one section, counters since a
         // baseline; a running machine answers from the next frame end (at most 500 ms; {error} after that)
         lua.set_function("gs_stats", [this](sol::this_state s, sol::optional<std::string> section,
@@ -6252,7 +6263,7 @@ public:
                 ev["value"] = e.value;
                 ev["pc"] = e.pc;
                 if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
-                if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
+                if (e.side == GSTraceSide::ZxDma) { ev["card_address"] = e.cardAddress(); ev["host_t"] = e.hostT(); ev["wait"] = e.waitT(); ev["dropped"] = e.isDropped(); }
                 if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                 if (e.side == GSTraceSide::Idle) ev["iterations"] = e.iterations;
                 result[idx++] = ev;

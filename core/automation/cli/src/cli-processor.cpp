@@ -813,6 +813,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "      |switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]>" << NEWLINE;
     oss << "                                  (switch_personality replaces the card in the GS slot: a machine restart)" << NEWLINE;
     oss << "                                - GS card control (same actions as WebAPI /control/audio/gs)" << NEWLINE;
+    oss << "  gs zxdma [last] [--since <seq>] - NeoGS ZX-DMA trace: the bytes the host moved (while gsporttrace captures)" << NEWLINE;
     oss << NEWLINE;
     oss << "Emulator Settings:" << NEWLINE;
     oss << "  setting, setting list        - List all emulator settings and their values" << NEWLINE;

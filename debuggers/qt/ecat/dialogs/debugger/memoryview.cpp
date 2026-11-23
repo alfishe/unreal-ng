@@ -924,6 +924,14 @@ void MemoryTabs::show_page(CPU * cpu, unsigned int address)
     m_paged->show_page(m, windows[i].offset + (address - windows[i].start));
 }
 
+bool MemoryTabs::show_memory_offset(Memory * memory, unsigned int offset)
+{
+    if (m_paged == nullptr || memory == nullptr || memory->page_size() == 0 || offset >= memory->get_size()) return false;
+    setCurrentWidget(m_paged);
+    m_paged->show_page(memory, offset);
+    return true;
+}
+
 void MemoryTabs::refresh()
 {
     for (MemoryPanel * m : m_panels) m->refresh();

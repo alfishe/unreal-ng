@@ -22,6 +22,7 @@
 #include <emulator/sound/chips/gs/gshostdriver.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
+#include <emulator/sound/chips/gs/gszxdmatrace.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
 
@@ -661,6 +662,29 @@ void EmulatorAPI::getStateAudioGSFirmware(const HttpRequestPtr& req,
     callback(resp);
 }
 
+void EmulatorAPI::getStateAudioGSZxDma(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound(callback, "Emulator not found with ID: " + id);
+    GSZxDmaTraceQuery query;
+    std::string error;
+    if (!GSZxDmaTraceQueryFromStrings(req->getParameter("last"), req->getParameter("since"), query, error))
+    {
+        Json::Value body;
+        body["error"] = "Bad Request";
+        body["message"] = error;
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    // One report for every plane (DeviceState::GsZxDmaTrace); its `text` the lines of CLI 'gs zxdma'
+    ReplyDeviceState(DeviceState::GsZxDmaTrace(emulator->GetContext(), query), callback);
+}
+
 void EmulatorAPI::getStateAudioGSFirmwareProfiles(const HttpRequestPtr& req,
                                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                                   const std::string& id) const
@@ -1297,7 +1321,12 @@ void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::funct
             if (e.side == GSTraceSide::DacFetch)
                 ev["channel"] = e.channel;
             if (e.side == GSTraceSide::ZxDma)
-                ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
+            {
+                ev["card_address"] = e.cardAddress();
+                ev["host_t"] = e.hostT();
+                ev["wait"] = e.waitT();
+                ev["dropped"] = e.isDropped();
+            }
             if (e.side == GSTraceSide::Interrupt)
                 ev["nmi"] = e.isNmi();
             if (e.side == GSTraceSide::Idle)

@@ -876,6 +876,28 @@ becomes an overlay mode instead:
 - It is recorded only while tracing is on, like the port trace.
 - Use: "what exactly moved, and where did the host wait".
 
+As built (2026-11-22, gs-debugger N6): the event stays 24 bytes. `port` / `channel` hold the card address (15:0,
+20:16), `pc` the host PC, `timestamp` the card time, `frameNumber` the host frame; `iterations` (unused by this side)
+packs the host side: bits 23:0 the host Z80's `t` in its frame at the access end (after the wait), bits 31:24 the wait
+T-states of this access, capped at 255 (`GSTraceEvent::PackZxDmaHost`, `hostT()`, `waitT()`). A byte the module drops
+(§5.6.5) is an event of its own with `GSTraceFlags::kDropped`: its own direction, address and value (a read's: the cell
+it would have fetched), wait 0. The cost while the trace is off is the existing `isCapturing` test; the wait is
+`waitForPending`'s return value.
+
+The report `DeviceState::GsZxDmaTrace(context, {last, since})` (`gs/gszxdmatrace.h`) gives `{available, card, device,
+capturing, armed, total_bytes_kept, evicted, last_seq, restarted, counters{bytes_read, bytes_written, bytes_dropped,
+wait_t_states}, rows[{seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}],
+text, how_to_start}`: the newest `last` ZX-DMA events (default 256, 0: all) after the history's sequence number
+`since` (`DeviceHistory::Snapshot(last, firstSeq)`), `card_time` in card CPU cycles. Planes: REST
+`GET state/audio/gs/zxdma?last=&since=`, CLI `gs zxdma [last] [--since <seq>]`, Lua / Python `gs_zxdma(last, since)`,
+MCP `inspect_state` aspect `audio_gs_zxdma` (`gs_zxdma_last`, `gs_zxdma_since`), catalog `gs-zxdma` (NeoGS only).
+Tests: `gszxdmatrace_test.cpp`, `neogszxdma_test.cpp` (`TheTraceCarriesEachAccessWait`, `TheTraceShowsTheDroppedByte`).
+
+The bytes are recorded twice while the trace captures: into the port trace's ring (with every other side) and
+into a ring of their own on the card (65,536 bytes): in the shared ring the DAC fetches, about 150,000 a second,
+evict them within half a second. The report reads the card's ring; the port trace's verbs (start, stop, pause,
+resume, clear) drive both.
+
 ### 6.5 Pause and step with ZX-DMA
 
 - A host step or a host breakpoint inside the window happens after the

@@ -2,7 +2,9 @@
 
 #include <QString>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "debugger/targets/debugcpuid.h"
@@ -13,6 +15,7 @@ class EmulatorContext;
 class GsLwPane;
 class QWidget;
 class ReportPane;
+class ZxDmaTraceView;
 
 /// @file cardpanes.h
 /// @brief The General Sound card's panes of the debugger (gs-debugger TODO P5.1, gui-card-debugger.md A5.2): Log, Protocol,
@@ -20,7 +23,8 @@ class ReportPane;
 /// the `gs` report's protocol, `gs-firmware`, `gs`, `gs-stats`): the debugger shows what an agent reads, nothing of its own.
 /// On a NeoGS (P5.5, gui-card-debugger.md B3.1-B3.3) the NeoGS board replaces the Hardware pane and two panes join: DMA and
 /// SD · MP3 · Flash, each a BoardPane over the boards the planes read (`neogs`, `neogs_dma`, `neogs_sd`, `neogs_mp3`,
-/// `neogs_flash`) with the counters of the statistics block (`gs_stats`).
+/// `neogs_flash`) with the counters of the statistics block (`gs_stats`). Under the DMA board its ZX-DMA trace (Trace ▸,
+/// B3.2): a ZxDmaTraceView over the `gs-zxdma` report.
 /// On the lightweight player (no CPU, gui-card-debugger.md A10, requirements W1-W5) two read-only panes join: GS interpreter
 /// and GS player, each a GsLwPane over the `gs` report's `interpreter` and `player`.
 /// The ZX-MultiSound's General Sound (CPU `ms`) has the same panes over its reports (`ms-gs-commands`, the `multisound`
@@ -56,6 +60,7 @@ struct Pane
     BoardPane* board = nullptr;  ///< a board pane, or (inspector)
     Card card = Card::Any;
     GsLwPane* inspector = nullptr;  ///< a lightweight player's pane
+    ZxDmaTraceView* trace = nullptr;  ///< the board pane's ZX-DMA trace (the NeoGS DMA pane's)
     QWidget* widget() const;
 };
 
@@ -82,6 +87,10 @@ bool MultiSoundFitted(EmulatorContext* context);
 /// The card the panes show with CPU tab `front` in front: the MultiSound's with `ms` in front, or with no card in the GS
 /// slot; the GS slot's card otherwise
 Target Front(EmulatorContext* context, DebugCpuId front = DebugCpuId::Main);
+/// Where the GS-slot NeoGS's CPU sees card RAM address `cardAddress` (21 bits, wrapped to the card's RAM as the ZX-DMA
+/// module does) now: the CPU address in the first of its four windows that maps that RAM page (a flash window maps
+/// none). Nothing when no window maps it, or without a NeoGS
+std::optional<uint16_t> CardCpuAddress(EmulatorContext* context, uint32_t cardAddress);
 /// Whether pane `card` is shown on the machine with CPU tab `front` in front (the MultiSound's GS: the classic card's)
 bool Shown(Card card, EmulatorContext* context, DebugCpuId front = DebugCpuId::Main);
 }  // namespace CardPanes

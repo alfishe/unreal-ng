@@ -9,12 +9,14 @@
 #include "debugger/boardpane.h"
 #include "debugger/gslwpane.h"
 #include "debugger/reportpane.h"
+#include "debugger/zxdmatraceview.h"
 #include "debugger/targets/debugcpuid.h"
 #include "emulator/execution/runcontrol.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicecatalog.h"
 #include "emulator/state/devicestate.h"
@@ -157,10 +159,14 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
                     {"bytes", QObject::tr("Bytes")}, {"aborts", QObject::tr("Aborts")}, {"errors", QObject::tr("Errors")},
                     {"stall_clocks", QObject::tr("Stall clk")}, {"last.address", QObject::tr("Last at")},
                     {"last.bytes", QObject::tr("Last bytes")}}});
+    // The ZX-DMA trace under the board (Trace ▸): it refreshes with the board, under the same lease
+    ZxDmaTraceView* trace = new ZxDmaTraceView(dma);
+    dma->addExtra(trace);
+    QObject::connect(dma, &BoardPane::refreshed, trace, &ZxDmaTraceView::refresh);
     panes.push_back({QObject::tr("NeoGS DMA"),
                      QObject::tr("The NeoGS DMA modules (ZX, SD, MP3): selected, running, address, transactions; the ZX-DMA mode, "
-                                 "latch, waits and bytes"),
-                     nullptr, dma, Card::NeoGS, nullptr});
+                                 "latch, waits and bytes; Trace ▸: the bytes the Spectrum moved through the window"),
+                     nullptr, dma, Card::NeoGS, nullptr, trace});
 
     // B3.3: three cards, side by side when wide; each with its counters from the statistics block
     BoardPane* media = new BoardPane({{"neogs_sd", "sd", {}}, {"neogs_mp3", "mp3", {}}, {"neogs_flash", "flash", {}}},
@@ -251,6 +257,24 @@ Target Front(EmulatorContext* context, DebugCpuId front)
     if (ms && (front == DebugCpuId::MultiSoundGS || !slot))
         return Target::MultiSound;
     return slot ? Target::Slot : Target::None;
+}
+
+std::optional<uint16_t> CardCpuAddress(EmulatorContext* context, uint32_t cardAddress)
+{
+    const auto* card = dynamic_cast<const SoundChip_NeoGS*>(SlotCard(context));
+    if (!card)
+        return std::nullopt;
+    const NeoGSMemory& memory = card->memory();
+    if (memory.ramSize() == 0)
+        return std::nullopt;
+    const uint32_t cell = static_cast<uint32_t>(cardAddress % memory.ramSize());
+    for (int w = 0; w < 4; w++)
+    {
+        const auto base = static_cast<uint16_t>(w * 0x4000);
+        if (!memory.isFlash(w) && memory.physical(base) == (cell & ~0x3FFFu))
+            return static_cast<uint16_t>(base + (cell & 0x3FFF));
+    }
+    return std::nullopt;
 }
 
 bool Shown(Card card, EmulatorContext* context, DebugCpuId front)

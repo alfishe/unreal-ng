@@ -2878,7 +2878,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
                                "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
-                               "audio_gs_firmware_profiles"})
+                               "audio_gs_firmware_profiles", "audio_gs_zxdma"})
     {
         allowed.append(aspect);
     }
@@ -2937,6 +2937,12 @@ void RegisterInspectState(ToolRegistry& registry)
         "range or in an instruction's operand; 'audio_gs_firmware.<object>' one instance or variable; "
         "'gs_firmware_profile' reads through another profile by id; 'audio_gs_firmware_profiles' = the profiles known "
         "(built-in and the files of <symbols>/gs/profiles); "
+        "'audio_gs_zxdma' = the NeoGS ZX-DMA trace (GET /state/audio/gs/zxdma): the bytes the Spectrum read from / "
+        "wrote to card RAM through the ZX-DMA window, a line each: seq, host frame and T-state, card cycle, "
+        "direction, card address and page, value, /WAIT T-states, host PC, DROPPED; recorded while the GS port trace "
+        "captures (invoke_api POST /api/v1/emulator/{id}/control/audio/gs/porttrace {action: start}); "
+        "'gs_zxdma_last' the newest N (default 256, 0: all), 'gs_zxdma_since' the rows after a seq (last_seq of the "
+        "previous read); "
         "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
         "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
@@ -3074,6 +3080,10 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["gs_cpu"]["description"] =
         "'audio_gs_stats' / 'audio_gs_firmware': the card by its debugger CPU: gs (default, the GS slot's) or ms (the "
         "ZX-MultiSound's GS; its hardware and protocol are in 'audio_multisound')";
+    schema["properties"]["gs_zxdma_last"]["type"] = "integer";
+    schema["properties"]["gs_zxdma_last"]["description"] = "'audio_gs_zxdma': the newest N bytes (default 256, 0: all)";
+    schema["properties"]["gs_zxdma_since"]["type"] = "integer";
+    schema["properties"]["gs_zxdma_since"]["description"] = "'audio_gs_zxdma': the rows after this seq";
     schema["properties"]["gs_stats_fresh"]["type"] = "boolean";
     schema["properties"]["gs_stats_fresh"]["description"] = "'audio_gs_stats': a block from a frame end after this call";
     schema["properties"]["nr_sd_kinds"]["type"] = "string";
@@ -3235,11 +3245,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices" && aspect != "boards" &&
                     aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0 &&
                     aspect != "audio_gs_firmware" && aspect.rfind("audio_gs_firmware.", 0) != 0 &&
-                    aspect != "audio_gs_firmware_profiles")
+                    aspect != "audio_gs_firmware_profiles" && aspect != "audio_gs_zxdma")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles, audio_gs_zxdma"));
                     return;
                 }
             }
@@ -3348,6 +3358,10 @@ void RegisterInspectState(ToolRegistry& registry)
                 add("profile", text("gs_firmware_profile"));
                 add("cpu", text("gs_cpu"));
                 nrReports["audio_gs_firmware"] = q;
+                q.clear();
+                add("last", text("gs_zxdma_last"));
+                add("since", text("gs_zxdma_since"));
+                nrReports["audio_gs_zxdma"] = q;
                 q.clear();
                 add("kinds", text("nr_nmi_kinds"));
                 add("since", text("nr_nmi_since"));
@@ -3968,6 +3982,18 @@ void RegisterInspectState(ToolRegistry& registry)
                             const std::string path = "/state/audio/gs/stats" +
                                                      (aspect.size() > 14 ? "/" + aspect.substr(15) : std::string()) +
                                                      nrReports.at("audio_gs_stats");
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "audio_gs_zxdma")
+                        {
+                            // The NeoGS ZX-DMA trace via the WebAPI (gszxdmatrace.h); 404 without a NeoGS
+                            const std::string path = "/state/audio/gs/zxdma" + nrReports.at("audio_gs_zxdma");
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -5267,7 +5293,7 @@ void RegisterInspectState(ToolRegistry& registry)
                             }
                             else if (aspect == "audio_gs_stats" || aspect.rfind("audio_gs_stats.", 0) == 0 ||
                                      aspect == "audio_gs_firmware" || aspect.rfind("audio_gs_firmware.", 0) == 0 ||
-                                     aspect == "audio_gs_firmware_profiles")
+                                     aspect == "audio_gs_firmware_profiles" || aspect == "audio_gs_zxdma")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();

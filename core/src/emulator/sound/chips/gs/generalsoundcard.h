@@ -581,6 +581,13 @@ public:
     virtual bool isPortTraceArmed() const = 0;
     virtual std::vector<GSTraceEvent> getPortTraceEvents() const = 0;
     virtual std::vector<GSTraceEvent> getPortTraceLast(size_t count) const = 0;
+    /// The kept events of one side numbered after `since` (a poller's cursor: the ZX-DMA trace's `since`), the newest
+    /// `last` (0: all) with their numbers; @p matched every kept event of that side, @p lastSeq the newest event's
+    /// number, @p evicted the events the ring holding that side evicted (GSPortTraceRecorder::select). The NeoGS keeps
+    /// its ZX-DMA bytes in a ring of their own: the DAC fetches would evict them within a second
+    virtual std::vector<std::pair<uint64_t, GSTraceEvent>> getPortTraceSide(GSTraceSide side, uint64_t since, size_t last,
+                                                                            size_t& matched, uint64_t& lastSeq,
+                                                                            uint64_t& evicted) const = 0;
     virtual size_t getPortTraceEventCount() const = 0;
     virtual uint64_t getPortTraceTotalProduced() const = 0;
     virtual uint64_t getPortTraceTotalEvicted() const = 0;

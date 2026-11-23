@@ -191,15 +191,29 @@ public:
 
     void attachPortTrace(GSHistory* history) override { _portTrace.attach(history, _context); }
 
-    void startPortTrace() override { _portTrace.start(); }
-    void stopPortTrace() override { _portTrace.stop(); }
-    void pausePortTrace() override { _portTrace.pause(); }
-    void resumePortTrace() override { _portTrace.resume(); }
-    void clearPortTrace() override { _portTrace.clear(); }
+    // The ZX-DMA ring (_zxDmaTrace) follows the port trace's session verbs
+    void startPortTrace() override { _portTrace.start(); _zxDmaTrace.start(); }
+    void stopPortTrace() override { _portTrace.stop(); _zxDmaTrace.stop(); }
+    void pausePortTrace() override { _portTrace.pause(); _zxDmaTrace.pause(); }
+    void resumePortTrace() override { _portTrace.resume(); _zxDmaTrace.resume(); }
+    void clearPortTrace() override { _portTrace.clear(); _zxDmaTrace.clear(); }
+    /// Tests (core and Qt): a ZX-DMA trace record as the module would make it, the report's decoding without a module
+    void zxTraceForTest(bool write, uint32_t address, uint8_t value, uint32_t waitT, bool dropped)
+    {
+        zxTrace(write, address, value, waitT, dropped);
+    }
     bool isPortTraceCapturing() const override { return _portTrace.isCapturing(); }
     bool isPortTraceArmed() const override { return _portTrace.isArmed(); }
     std::vector<GSTraceEvent> getPortTraceEvents() const override { return _portTrace.getAll(); }
     std::vector<GSTraceEvent> getPortTraceLast(size_t count) const override { return _portTrace.getLast(count); }
+    std::vector<std::pair<uint64_t, GSTraceEvent>> getPortTraceSide(GSTraceSide side, uint64_t since, size_t last,
+                                                                    size_t& matched, uint64_t& lastSeq,
+                                                                    uint64_t& evicted) const override
+    {
+        const GSPortTraceRecorder& trace = side == GSTraceSide::ZxDma ? _zxDmaTrace : _portTrace;
+        evicted = trace.totalEvicted();
+        return trace.select(side, since, last, matched, lastSeq);
+    }
     size_t getPortTraceEventCount() const override { return _portTrace.eventCount(); }
     uint64_t getPortTraceTotalProduced() const override { return _portTrace.totalProduced(); }
     uint64_t getPortTraceTotalEvicted() const override { return _portTrace.totalEvicted(); }
@@ -483,7 +497,7 @@ private:
     uint32_t zxFrame() const override { return currentFrameNumber(); }
     void zxReschedule() override { reschedule(); }
     void zxLateStart(int64_t units) override;
-    void zxTrace(bool write, uint32_t address, uint8_t value) override;
+    void zxTrace(bool write, uint32_t address, uint8_t value, uint32_t waitT, bool dropped) override;
     void zxRamWritten(uint32_t offset, uint8_t value) override;
 
     // Lazy sync with the host
@@ -663,5 +677,9 @@ private:
     int64_t _instructionCountOffset = 0;
     bool _instructionCountKnown = true;
     GSPortTraceRecorder _portTrace;
+    // The ZX-DMA bytes again, in a ring of their own (the ZX-DMA trace, gszxdmatrace.h): in the port trace's ring the
+    // DAC fetches (about 150,000 a second) evict them within half a second. Recorded while it captures; the port
+    // trace's verbs drive both
+    GSPortTraceRecorder _zxDmaTrace;
     IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus
 };

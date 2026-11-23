@@ -5,11 +5,15 @@
 // panes; with a ZX-MultiSound the panes over its General Sound (CPU `ms`).
 
 #include <QProgressBar>
+#include <QTableView>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +26,9 @@
 #include "debugger/history/historycontrol.h"
 #include "debugger/reportpane.h"
 #include "debugger/targets/gscardtarget.h"
+#include "debugger/zxdmatraceview.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -29,6 +36,7 @@
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
 
@@ -272,6 +280,208 @@ TEST_F(CardPanes_Test, TheDmaPaneShowsTheModules)
     EXPECT_EQ(dma->valueText("neogs_dma", "zx.mode"), QString::fromStdString(zx.find("mode")->s));
     EXPECT_EQ(dma->valueText("neogs_dma", "zx.read_latch"),
               QStringLiteral("#%1").arg(zx.find("read_latch")->i, 2, 16, QLatin1Char('0')).toUpper());
+}
+
+namespace
+{
+constexpr uint32_t kTraceCardBase = 0x013FF8;  // the block crosses the page boundary #014000
+constexpr uint16_t kTraceHostCode = 0x8000;
+constexpr uint16_t kTraceHostIdle = 0x8100;
+constexpr uint16_t kTraceHostBuffer = 0x9000;
+
+uint8_t TraceCardByte(int i)
+{
+    return static_cast<uint8_t>(i * 7 + 3);
+}
+
+/// The NeoGS's ZX module started in Divert mode at kTraceCardBase (gszxdmatrace_test.cpp's setup): the Spectrum's
+/// reads at #0000-#3FFF come from card RAM
+void StartZxDma(Emulator& emulator, EmulatorContext* context, SoundChip_NeoGS* card)
+{
+    const std::vector<uint8_t> program = {
+        0xF3,                                             // DI
+        0x3E, 0x01, 0xD3, 0x1B,                           // DMA_MOD = 1 (ZX)
+        0x3E, uint8_t(kTraceCardBase >> 16), 0xD3, 0x1C,  // HAD
+        0x3E, uint8_t(kTraceCardBase >> 8), 0xD3, 0x1D,   // MAD
+        0x3E, uint8_t(kTraceCardBase), 0xD3, 0x1E,        // LAD
+        0x3E, 0x80, 0xD3, 0x1F,                           // CST = #80: start
+        0x18, 0xFE};                                      // JR $
+    card->flash().load(program.data(), program.size());
+    card->reset();
+    for (int i = 0; i < 256; i++)
+        card->memory().ram()[kTraceCardBase + i] = TraceCardByte(i);
+    Z80* z80 = context->pCore->GetZ80();
+    const uint8_t idle[] = {0xF3, 0x18, 0xFE};  // DI : JR $
+    for (uint16_t i = 0; i < sizeof(idle); i++)
+        z80->DirectWrite(static_cast<uint16_t>(kTraceHostIdle + i), idle[i]);
+    z80->pc = kTraceHostIdle;
+    z80->iff1 = z80->iff2 = 0;
+    emulator.RunNFrames(2);
+}
+
+/// LDIR of `count` bytes from `from` (the window) to the host buffer, then JR $; run until the host parks there
+void TraceLdir(Emulator& emulator, EmulatorContext* context, uint16_t from, uint16_t count)
+{
+    Z80* z80 = context->pCore->GetZ80();
+    const uint8_t code[] = {0x21, uint8_t(from), uint8_t(from >> 8), 0x11, uint8_t(kTraceHostBuffer),
+                            uint8_t(kTraceHostBuffer >> 8), 0x01, uint8_t(count), uint8_t(count >> 8), 0xED, 0xB0,
+                            0x18, 0xFE};
+    for (uint16_t i = 0; i < sizeof(code); i++)
+        z80->DirectWrite(static_cast<uint16_t>(kTraceHostCode + i), code[i]);
+    z80->pc = kTraceHostCode;
+    for (int guard = 0; guard < 10 && z80->pc != kTraceHostCode + 11; guard++)
+        emulator.RunNFrames(1);
+    ASSERT_EQ(z80->pc, kTraceHostCode + 11);
+    emulator.RunNFrames(1);
+}
+}  // namespace
+
+/// The DMA pane's ZX-DMA trace (B3.2, Trace ▸): collapsed it reads nothing; expanded, a row a traced byte with the card
+/// address, the value and the LDIR's PC; the next refresh appends only the new bytes; a dropped byte tinted
+TEST_F(CardPanes_Test, TheDmaPaneTracesTheZxDmaBytes)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(_context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    BoardPane* dma = panes[5].board;
+    ZxDmaTraceView* trace = panes[5].trace;
+    ASSERT_NE(dma, nullptr);
+    ASSERT_NE(trace, nullptr);
+    for (const CardPanes::Pane& pane : panes)
+        if (&pane != &panes[5])
+            EXPECT_EQ(pane.trace, nullptr) << pane.title.toStdString();
+
+    StartZxDma(*_emulator, _context, card);
+    ASSERT_EQ(card->zxDma().mode(), NeoGSZxDma::Mode::Divert);
+    dma->refresh(_context, false);
+    EXPECT_TRUE(trace->toggle()->isVisibleTo(dma)) << "Trace ▸ under the board";
+    EXPECT_FALSE(trace->table()->isVisibleTo(dma)) << "collapsed";
+
+    // Collapsed: no read; expanded: the how-to line while the trace does not capture
+    trace->toggle()->click();
+    EXPECT_TRUE(trace->expanded());
+    EXPECT_TRUE(trace->table()->isVisibleTo(dma));
+    EXPECT_EQ(trace->toggle()->text(), QString::fromUtf8("Trace ▾"));
+    dma->refresh(_context, false);
+    EXPECT_EQ(trace->rowCount(), 0);
+    EXPECT_TRUE(trace->header().startsWith("Not capturing")) << trace->header().toStdString();
+    EXPECT_TRUE(trace->header().contains("porttrace")) << "the report's how-to: " << trace->header().toStdString();
+    EXPECT_TRUE(trace->startButton()->isEnabled());
+    EXPECT_FALSE(trace->stopButton()->isEnabled());
+
+    // Start through tracecontrol, as the planes do; N bytes read through the window: N rows
+    trace->capture(_emulator.get(), "start");
+    EXPECT_TRUE(card->isPortTraceCapturing());
+    EXPECT_TRUE(trace->note().startsWith("Started")) << trace->note().toStdString();
+    constexpr uint16_t n = 12;
+    ASSERT_NO_FATAL_FAILURE(TraceLdir(*_emulator, _context, 0x0000, n));
+    dma->refresh(_context, false);
+    ASSERT_EQ(trace->rowCount(), n) << trace->header().toStdString();
+    EXPECT_TRUE(trace->header().startsWith("Capturing")) << trace->header().toStdString();
+    EXPECT_FALSE(trace->startButton()->isEnabled());
+    EXPECT_TRUE(trace->stopButton()->isEnabled());
+    for (int k = 0; k < n; k++)
+    {
+        const uint32_t address = kTraceCardBase + static_cast<uint32_t>(k);
+        EXPECT_EQ(trace->cell(k, ZxDmaTraceView::CardAddress),
+                  QStringLiteral("#%1 · page #%2")
+                      .arg(QString::number(address, 16).toUpper().rightJustified(6, QLatin1Char('0')),
+                           QString::number(address >> 14, 16).toUpper().rightJustified(2, QLatin1Char('0'))))
+            << "row " << k;
+        EXPECT_EQ(trace->cell(k, ZxDmaTraceView::Direction), "read");
+        EXPECT_EQ(trace->cell(k, ZxDmaTraceView::HostPc), "#8009") << "the LDIR";
+        if (k > 0)  // each read returns the byte the previous one fetched
+            EXPECT_EQ(trace->cell(k, ZxDmaTraceView::Value),
+                      QStringLiteral("#%1").arg(TraceCardByte(k - 1), 2, 16, QLatin1Char('0')).toUpper())
+                << "row " << k;
+    }
+
+    // A second refresh after more bytes appends only the new ones; one with none adds nothing
+    ASSERT_NO_FATAL_FAILURE(TraceLdir(*_emulator, _context, 0x0000 + n, 5));
+    dma->refresh(_context, false);
+    ASSERT_EQ(trace->rowCount(), n + 5);
+    EXPECT_EQ(trace->cell(n, ZxDmaTraceView::CardAddress).left(7),
+              QStringLiteral("#%1").arg(kTraceCardBase + n, 6, 16, QLatin1Char('0')).toUpper());
+    dma->refresh(_context, false);
+    EXPECT_EQ(trace->rowCount(), n + 5) << "a paused machine: the table stays";
+
+    // A dropped byte is marked
+    auto* neogs = dynamic_cast<SoundChip_NeoGS*>(_context->pSoundManager->getGeneralSound());
+    ASSERT_NE(neogs, nullptr);
+    neogs->zxTraceForTest(true, 0x012345, 0x5A, 0, true);
+    dma->refresh(_context, false);
+    ASSERT_EQ(trace->rowCount(), n + 6);
+    EXPECT_EQ(trace->cell(n + 5, ZxDmaTraceView::Direction), "write (dropped)");
+    EXPECT_TRUE(trace->table()->model()->index(n + 5, 0).data(Qt::BackgroundRole).isValid()) << "tinted";
+    EXPECT_FALSE(trace->table()->model()->index(0, 0).data(Qt::BackgroundRole).isValid());
+
+    // Clear empties the ring and the table
+    trace->capture(_emulator.get(), "clear");
+    EXPECT_EQ(trace->rowCount(), 0);
+    dma->refresh(_context, false);
+    EXPECT_EQ(trace->rowCount(), 0);
+    trace->capture(_emulator.get(), "stop");
+    EXPECT_FALSE(card->isPortTraceCapturing());
+}
+
+/// The card address of a row in the card CPU's view: the window mapping that RAM page now, none for a page no window maps
+TEST_F(CardPanes_Test, ACardAddressMapsToTheCardCpusWindow)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(_context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    const NeoGSMemory& memory = card->memory();
+    bool mapped = false;
+    for (int w = 0; w < 4 && !mapped; w++)
+    {
+        if (memory.isFlash(w))
+            continue;
+        const uint32_t cell = memory.physical(static_cast<uint16_t>(w * 0x4000)) + 0x123;
+        const std::optional<uint16_t> at = CardPanes::CardCpuAddress(_context, cell);
+        ASSERT_TRUE(at.has_value()) << "window " << w;
+        EXPECT_EQ(memory.physical(*at), cell);
+        mapped = true;
+    }
+    EXPECT_TRUE(mapped) << "a RAM window after reset";
+    // A page no window maps
+    std::vector<uint32_t> windows;
+    for (int w = 0; w < 4; w++)
+        if (!memory.isFlash(w))
+            windows.push_back(memory.physical(static_cast<uint16_t>(w * 0x4000)));
+    for (uint32_t page = 0; page < memory.ramSize(); page += 0x4000)
+        if (std::find(windows.begin(), windows.end(), page) == windows.end())
+        {
+            EXPECT_FALSE(CardPanes::CardCpuAddress(_context, page + 1).has_value());
+            break;
+        }
+
+    EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
+    _emulator.reset();
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    if (!CardPanes::NeoGSFitted(_context))
+        EXPECT_FALSE(CardPanes::CardCpuAddress(_context, 0x1234).has_value()) << "the classic card has no ZX-DMA";
+}
+
+/// Without a NeoGS the DMA pane shows no board, so no Trace ▸; the report says why
+TEST_F(CardPanes_Test, NoZxDmaTraceWithoutANeoGS)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    if (CardPanes::NeoGSFitted(_context))
+        GTEST_SKIP() << "the config fits a NeoGS in the classic slot";
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    BoardPane* dma = panes[5].board;
+    ZxDmaTraceView* trace = panes[5].trace;
+    ASSERT_NE(trace, nullptr);
+    dma->refresh(_context, false);
+    EXPECT_FALSE(dma->status().isEmpty());
+    EXPECT_FALSE(trace->toggle()->isVisibleTo(dma)) << "no board, no trace";
+    EXPECT_FALSE(CardPanes::Shown(panes[5].card, _context)) << "the DMA tab itself is hidden";
+    trace->toggle()->click();
+    trace->refresh(_context, false);
+    EXPECT_EQ(trace->rowCount(), 0);
+    EXPECT_TRUE(trace->header().contains("NeoGS")) << trace->header().toStdString();
+    EXPECT_FALSE(trace->startButton()->isEnabled());
 }
 
 /// The SD · MP3 · Flash pane (B3.3): three cards with their counters, side by side when wide, stacked when narrow; the

@@ -619,6 +619,7 @@ GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and ch
 GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
 GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, page, DAC channels, card CPU, "neogs" block (404 without a card; ?ram=1 adds the #4000-#7FFF window)
+GET  /api/v1/emulator/{id}/state/audio/gs/zxdma?last=N&since=S  NeoGS ZX-DMA trace: a row a byte the host moved (seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped), last_seq, text; recorded while the GS port trace captures (404 without a NeoGS)
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes

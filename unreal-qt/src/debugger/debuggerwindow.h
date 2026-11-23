@@ -323,6 +323,9 @@ private:
     void refreshNextPanes(bool live);
     /// A board pane's action (NeoGS SD insert / eject, flash save) under the context's lease, then its refresh
     void runBoardAction(class BoardPane* pane, const QString& board, const QString& action, const QString& arg);
+    /// The NeoGS DMA pane's ZX-DMA trace: its capture buttons under the lease, a row's host PC to the main CPU's
+    /// disassembly, its card address to the card CPU's memory view (when a window maps the page)
+    void connectZxDmaTrace(class ZxDmaTraceView* trace);
     /// The Next tabs on a Next only, the card tabs with a GS card; the PC history records while in front, the live
     /// refresh while a report tab is
     void updateSidePane();

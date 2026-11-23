@@ -33,12 +33,24 @@ the `gs_stats` board's counters:
 | Tab | Boards | What |
 |-----|--------|------|
 | GS hardware | `neogs` | Config (GSCFG0), Paging (windows, MPAG), Clock with its switch count, DAC mode (the channels in the table), Output (DAC levels, listening mode), Interrupts, SPI (SCTRL), Status (SSTAT), LED, Mailbox, Firmware; the mailbox, interrupt and SPI counters |
-| NeoGS DMA | `neogs_dma` | the ZX / SD / MP3 modules as rows (selected, running, address, page, starts, done, bytes, errors, aborts, stall clocks, last), the ZX-DMA block, the DMA rates and errors |
+| NeoGS DMA | `neogs_dma` | the ZX / SD / MP3 modules as rows (selected, running, address, page, starts, done, bytes, errors, aborts, stall clocks, last), the ZX-DMA block, the DMA rates and errors; under them the ZX-DMA trace (Trace ▸) |
 | SD · MP3 · Flash | `neogs_sd`, `neogs_mp3`, `neogs_flash` | the SD card of slot `sd.ngs` (medium, protocol), the decoder and its SCI registers, the flash chip; each with its counters |
 
 The last two come only with a NeoGS. Insert image..., Insert folder..., Eject and Save flash are the boards' actions
 (`Emulator::board_action`; over the WebAPI `POST /debug/boards/{board}/actions/{action} {arg}`). A machine whose
 boards cannot be read falls back on the `gs` report's `neogs` part. On a GS, GS hardware is the report as it is.
+
+**The ZX-DMA trace** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md) B3.2;
+gs-debugger N6): the DMA tab's **Trace ▸** expands, in place, a table of the bytes the Spectrum moved through the
+ZX-DMA window, a row a byte: Frame, Host T, Card cycle, Dir (`read` / `write`, `dropped` in red), Card address
+(`#013FF9, page 4`), Value, Wait (T), Host PC. Over it a header line (capturing or not, the bytes kept, the module's
+read / written / dropped / wait totals, the note when the ring evicted events; not capturing, how to start) with
+**Start**, **Stop** and **Clear**: the GS port trace's capture, which records them (the DAC fetches share its ring).
+Each refresh of the tab (at a stop, once a second while running) appends the rows after the last one seen (`since`),
+keeps the newest 4,000 and follows the tail unless scrolled up. Double-click a Host PC: the main CPU's listing there;
+a card address: its page of `neogs.ram` in the pages tab. The core's report `gs-zxdma` (`Emulator::read_zxdma_trace`,
+`zxdma_trace_capture` in the shim; over the WebAPI `GET state/audio/gs/zxdma?last=&since=` and `POST
+control/audio/gs/porttrace {action}`). Not there without a NeoGS.
 
 **The lightweight player** (`--card gs-lw`; [gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
 A10, requirements W2-W3) has no CPU: no card CPU tab, no card run controls. Its two tabs, read-only, come only with it

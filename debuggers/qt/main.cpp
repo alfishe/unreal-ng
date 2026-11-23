@@ -806,6 +806,199 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     ttd->inform = nullptr;
 }
 
+// The host reads 17 bytes through the ZX-DMA window (gszxdmatrace_test's way, through the shim: in process and over
+// the WebAPI alike): the card's Z80 runs a few instructions put in a RAM window of its own (DI, select the ZX module
+// at kCardBase, start it, JR $), the host an LDIR from #0000 (DI first: the ROM is diverted while the module runs);
+// then the card stops and deselects the module. Every byte and register changed is put back. @p before runs just
+// before the LDIR, @p after as soon as it ends (the host parked by a run to cursor: the DAC fetches sharing the port
+// trace's ring evict ZX-DMA bytes within a few frames). False: not done (said)
+bool zxdma_make_bytes(ecatshim::Emulator * m, ecatshim::CPU * cpu, ecatshim::CPU * gs, unsigned int &card_base,
+                      const std::function<void()> &before, const std::function<void()> &after)
+{
+    card_base = 0x013FF8;  // the block crosses the page boundary #014000
+    if (gs == nullptr) return false;
+    unsigned int at = 0;
+    for (const ecatshim::AddressWindow &w : gs->get_windows())
+        if (at == 0 && w.kind == "RAM" && w.writable && w.start >= 0x4000 && w.size >= 0x100) at = w.start + w.size - 0x40;
+    if (at == 0) {
+        printf("  (ZX-DMA: the card has no RAM window above #4000)\n");
+        return false;
+    }
+    auto run_frames = [m](uint64_t frames) {
+        const uint64_t from = machine_frames(m);
+        m->debug_run(false);
+        wait_for([m, from, frames]() { return machine_frames(m) >= from + frames; }, 5000);
+        m->debug_pause();
+        return wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    };
+    const uint8_t start[] = {0xF3,                                         // DI
+                             0x3E, 0x01, 0xD3, 0x1B,                       // DMA_MOD = 1 (ZX)
+                             0x3E, uint8_t(card_base >> 16), 0xD3, 0x1C,   // HAD
+                             0x3E, uint8_t(card_base >> 8), 0xD3, 0x1D,    // MAD
+                             0x3E, uint8_t(card_base), 0xD3, 0x1E,         // LAD
+                             0x3E, 0x80, 0xD3, 0x1F,                       // CST = #80: start
+                             0x18, 0xFE};                                  // JR $
+    const uint8_t stop[] = {0xF3, 0xAF, 0xD3, 0x1F, 0xD3, 0x1B, 0x18, 0xFE};  // DI : XOR A : CST = 0 : DMA_MOD = 0 : JR $
+    const uint8_t idle[] = {0xF3, 0x18, 0xFE};                                // DI : JR $
+    const uint8_t copy[] = {0xF3, 0x21, 0x00, 0x00, 0x11, 0x00, 0x90, 0x01, 17, 0x00, 0xED, 0xB0, 0x18, 0xFE};
+    // What is put back: the card's bytes and registers, the host's
+    std::vector<std::pair<unsigned int, unsigned int>> card_bytes, host_bytes;
+    for (unsigned int i = 0; i < sizeof(start); i++) card_bytes.emplace_back(at + i, gs->peek_mem(at + i));
+    for (unsigned int i = 0; i < 0x20; i++) host_bytes.emplace_back(0x8000 + i, cpu->peek_mem(0x8000 + i));
+    for (unsigned int i = 0; i < 17; i++) host_bytes.emplace_back(0x9000 + i, cpu->peek_mem(0x9000 + i));
+    const std::vector<std::string> names = {"PC", "AF", "BC", "DE", "HL", "IFF1", "IFF2"};
+    std::map<std::string, unsigned int> card_regs, host_regs;
+    for (const std::string &n : names) {
+        card_regs[n] = reg(gs, n);
+        host_regs[n] = reg(cpu, n);
+    }
+    auto load = [](ecatshim::CPU * c, unsigned int to, const uint8_t * bytes, size_t n) {
+        for (size_t i = 0; i < n; i++) c->poke_mem(to + (unsigned int)i, bytes[i]);
+        c->set_context_value("PC", to);
+    };
+    load(gs, at, start, sizeof(start));
+    load(cpu, 0x8010, idle, sizeof(idle));
+    bool ok = run_frames(3);
+    auto mode = [m]() {
+        const ecatshim::Emulator::Board b = m->read_board("neogs_dma");
+        const ecatshim::Emulator::BoardControl * c = b.control("zx.mode");
+        return c ? c->value : std::string("?");
+    };
+    const std::string started = mode();
+    load(cpu, 0x8000, copy, sizeof(copy));
+    before();
+    m->debug_run_to(cpu, 0x8000 + sizeof(copy) - 2);
+    ok = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000) && ok;
+    const bool copied = reg(cpu, "PC") == 0x8000 + sizeof(copy) - 2;
+    after();
+    load(gs, at, stop, sizeof(stop));
+    load(cpu, 0x8010, idle, sizeof(idle));
+    ok = run_frames(2) && ok;
+    // Debug mode back on, as the rest of the check runs (both CPUs still in their JR $), then everything put back
+    m->debug_run(true);
+    m->debug_pause();
+    ok = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000) && ok;
+    for (const auto &b : card_bytes) gs->poke_mem(b.first, b.second);
+    for (const auto &b : host_bytes) cpu->poke_mem(b.first, b.second);
+    for (const std::string &n : names) {
+        if (card_regs[n] != ~0u) gs->set_context_value(n, card_regs[n]);
+        if (host_regs[n] != ~0u) cpu->set_context_value(n, host_regs[n]);
+    }
+    // Over the WebAPI the registers read come from a snapshot taken again after a change: give it a moment
+    wait_for([&]() {
+        for (const std::string &n : names)
+            if (reg(gs, n) != card_regs[n] || reg(cpu, n) != host_regs[n]) return false;
+        return true;
+    }, 2000);
+    bool restored = true;
+    for (const std::string &n : names) {
+        const unsigned int card_now = reg(gs, n), host_now = reg(cpu, n);
+        if (card_now != card_regs[n]) printf("  (card %s #%X, was #%X)\n", n.c_str(), card_now, card_regs[n]);
+        if (host_now != host_regs[n]) printf("  (host %s #%X, was #%X)\n", n.c_str(), host_now, host_regs[n]);
+        restored = restored && card_now == card_regs[n] && host_now == host_regs[n];
+    }
+    printf("  (ZX-DMA: card program at #%04X, module %s after the start, host LDIR %s; registers %s; card PC #%04X)\n", at,
+           started.c_str(), copied ? "done" : "not done", restored ? "put back" : "NOT all put back", card_regs["PC"]);
+    return ok && copied && restored;
+}
+
+// The NeoGS DMA tab's ZX-DMA trace (gui-card-debugger B3.2): its toggle only with a NeoGS; expanded, the header and
+// the empty table; Start, bytes moved, the rows (read, consecutive card addresses, the LDIR's PC), a second read adds
+// nothing (since), the double-click hooks (Host PC to the main listing, the card address to the pages tab); Stop,
+// Clear
+void zxdma_trace_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * cpu, ecatshim::CPU * gs,
+                       NextReportView * dma, bool neogs, const std::function<void(bool, const char *)> &check)
+{
+    ZxDmaTraceView * trace = dma->zxdma_trace();
+    check(trace != nullptr && trace->toggle() != nullptr && trace->table() != nullptr &&
+              trace->table()->columnCount() == ZxDmaTraceView::ColCount,
+          "zx-dma trace: the DMA tab has the Trace toggle and table");
+    if (trace == nullptr) return;
+    if (!neogs) {
+        dma->refresh();
+        check(trace->isHidden(), "zx-dma trace: no toggle without a NeoGS");
+        return;
+    }
+    dma->refresh();
+    check(!trace->isHidden() && !trace->expanded() && trace->table()->isHidden() == false &&
+              !trace->table()->isVisibleTo(trace),
+          "zx-dma trace: the toggle shown, collapsed");
+    trace->capture("stop");
+    trace->capture("clear");
+    trace->set_expanded(true);
+    const QString idle = trace->header()->text();
+    check(trace->expanded() && trace->table()->isVisibleTo(trace) && trace->toggle()->text().contains(QString::fromUtf8("▾")) &&
+              idle.startsWith("not capturing") && idle.contains("Start records the bytes") && idle.contains("porttrace") &&
+              trace->table()->rowCount() == 0,
+          "zx-dma trace: expanded, not capturing, the how-to line, no rows");
+    check(trace->button("start") && trace->button("stop") && trace->button("clear"), "zx-dma trace: Start, Stop, Clear");
+    QString capturing;
+    int rows = 0;
+    uint64_t seq = 0;
+    QTableWidget * t = trace->table();
+    unsigned int base = 0;
+    const bool made = zxdma_make_bytes(
+        m, cpu, gs, base,
+        [&]() {
+            trace->button("clear")->click();
+            trace->button("start")->click();
+            capturing = trace->header()->text();
+        },
+        [&]() {
+            dma->refresh();
+            rows = t->rowCount();
+            seq = trace->last_seq();
+            trace->button("stop")->click();
+        });
+    check(capturing.startsWith("capturing") && capturing.contains("0 bytes kept"), "zx-dma trace: Start: capturing, empty");
+    printf("  (header: %s)\n", capturing.section('\n', 0, 0).toUtf8().constData());
+    check(made, "zx-dma trace: the host moved bytes through the window");
+    printf("  (%d rows; %s)\n", rows, QString(trace->header()->text()).replace('\n', " / ").toUtf8().constData());
+    bool consecutive = rows == 17;
+    for (int r = 0; consecutive && r < rows; r++) {
+        char address[16];
+        std::snprintf(address, sizeof(address), "#%06X", base + (unsigned int)r);
+        consecutive = t->item(r, ZxDmaTraceView::ColDir)->text() == "read" &&
+                      t->item(r, ZxDmaTraceView::ColAddress)->text().startsWith(address) &&
+                      t->item(r, ZxDmaTraceView::ColPc)->text() == "#800A";
+    }
+    check(consecutive, "zx-dma trace: 17 read rows, consecutive card addresses, the LDIR's PC");
+    if (rows > 9)
+        check(t->item(9, ZxDmaTraceView::ColAddress)->text().endsWith("page 5") &&
+                  t->item(7, ZxDmaTraceView::ColAddress)->text().endsWith("page 4"),
+              "zx-dma trace: the page of the card address");
+    for (int r = 0; r < rows && r < 3; r++) {
+        QString line;
+        for (int k = 0; k < ZxDmaTraceView::ColCount; k++) line += (k ? " | " : "") + t->item(r, k)->text();
+        printf("  (row %d: %s)\n", r, line.toUtf8().constData());
+    }
+    dma->refresh();
+    check(t->rowCount() == rows && trace->last_seq() >= seq, "zx-dma trace: a second read appends nothing (since)");
+    check(trace->header()->text().startsWith("not capturing") && trace->header()->text().contains(QString("%1 bytes kept").arg(rows)),
+          "zx-dma trace: Stop: the header counts the bytes kept");
+
+    if (rows > 0) {
+        // The hooks: Host PC to the main CPU's listing, the card address to the card RAM's page (after the stop
+        // events of the runs above, which bring PC into sight)
+        wait_for([]() { return false; }, 700);
+        emit t->cellDoubleClicked(0, ZxDmaTraceView::ColPc);
+        QApplication::processEvents();
+        QTabWidget * cpu_tabs = tabs_with(window, QString::fromStdString(cpu->name + " :"));
+        DisasmView * code = cpu_tabs ? cpu_tabs->widget(0)->findChild<DisasmView *>() : nullptr;
+        check(code != nullptr && code->cursor_address() == 0x800A, "zx-dma trace: double-click Host PC: the main listing there");
+        if (QTabWidget * mt = tabs_with(window, "pages")) mt->setCurrentIndex(0);
+        emit t->cellDoubleClicked(9, ZxDmaTraceView::ColAddress);
+        QApplication::processEvents();
+        QTabWidget * memory_tabs = tabs_with(window, "pages");
+        check(memory_tabs != nullptr && qobject_cast<PagedMemory *>(memory_tabs->currentWidget()) != nullptr,
+              "zx-dma trace: double-click Card address: the pages tab");
+    }
+    check(t->rowCount() == rows, "zx-dma trace: Stop keeps the rows");
+    trace->button("clear")->click();
+    check(t->rowCount() == 0 && trace->header()->text().contains("0 bytes kept"), "zx-dma trace: Clear empties it");
+    trace->set_expanded(false);
+}
+
 int self_check(ecatshim::Emulator * m, QWidget * window)
 {
     int failed = 0;
@@ -1181,6 +1374,7 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
             const ecatshim::Emulator::BoardAnswer refused = m->board_action("neogs_sd", "no_such_action", std::string());
             check(!refused.ok && !refused.message.empty(), "card tabs: a board action reaches the core and its refusal comes back");
         }
+        if (card && neogs_views.size() == 2) zxdma_trace_check(m, window, cpu, gs, neogs_views[0], neogs, check);
     }
 
     // Event breakpoints (gs-debugger P5.3): the card's side on the card CPU, the host's side on the main CPU, added

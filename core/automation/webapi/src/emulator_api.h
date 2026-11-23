@@ -409,6 +409,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStatsSection, "/api/v1/emulator/{id}/state/audio/gs/stats/{section}",
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmware, "/api/v1/emulator/{id}/state/audio/gs/firmware", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSZxDma, "/api/v1/emulator/{id}/state/audio/gs/zxdma", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmwareProfiles, "/api/v1/emulator/{id}/state/audio/gs/firmware/profiles",
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovox, "/api/v1/emulator/{id}/state/audio/covox", drogon::Get);
@@ -1603,6 +1604,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioGSFirmware(const drogon::HttpRequestPtr& req,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                  const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/zxdma?last=N&since=S
+    ///        The NeoGS ZX-DMA trace (gszxdmatrace.h, gs-debugger N6): the bytes the host moved through the window,
+    ///        one row each (host time, card time, direction, card address, value, wait, host PC), from the GS port
+    ///        trace while it captures. 404 without a NeoGS
+    void getStateAudioGSZxDma(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
     /// @brief GET /api/v1/emulator/{id}/state/audio/gs/firmware/profiles — the firmware profiles known (built-in and
     ///        the files of <symbols>/gs/profiles)
     void getStateAudioGSFirmwareProfiles(const drogon::HttpRequestPtr& req,

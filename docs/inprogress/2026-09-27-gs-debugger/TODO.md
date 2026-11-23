@@ -359,7 +359,16 @@ what an agent reads):
   in process and over `--connect`.
   Fixed on the way: `neogs_dma` named the selected module one off (DMA_MOD 1 ZX, 2 SD, 3 MP3); MCP
   `gs_reset_counters` takes `gs_cpu`.
-  Left: MPAGEX (no field anywhere), the ZX-DMA trace (Trace ▸), "Open media panel" (N8); the LW panes do not mark
+  ZX-DMA trace (N6, 2026-11-23): every byte the Spectrum moves through the window with the host frame and T, the
+  card cycle, the address, the value, the /WAIT T-states and dropped bytes, in a ring of its own on the NeoGS (the
+  port trace's DAC fetches evicted them within half a second); report `gs-zxdma` on every plane (REST
+  `state/audio/gs/zxdma?last=&since=`, CLI `gs zxdma`, Lua / Python `gs_zxdma`, MCP `audio_gs_zxdma`); "Trace ▸" on
+  the NeoGS DMA pane / tab in both debuggers (Start / Stop / Clear, rows appended by `since`, double-click to the
+  host PC's disassembly / the card memory). Tests `GSZxDmaTrace_Test.*`, `NeoGSZxDma.TheTrace*`,
+  `CardPanes_Test.TheDmaPaneTracesTheZxDmaBytes`, eCat `--self-check` (17 real bytes, in process and `--connect`).
+  Left: MPAGEX (no field anywhere), "Open media panel" (N8); the trace restarted from outside (CLI / REST) past the
+  panes' cursor before their next refresh loses that session's first rows; the ZX-DMA banner (S4) and the wait in
+  the instruction progress (S3) are not checked; the LW panes do not mark
   the values changed since the last stop; the card strip follows a CPU-tab switch only at the next stop; LW checked
   live only idle (an upload and a module in the Qt test); gs + ms together not run; the LW FX upload counter is not
   in the TTD state.

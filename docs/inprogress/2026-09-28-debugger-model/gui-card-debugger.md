@@ -441,6 +441,18 @@ the hardware.
 The **ZX-DMA trace** (Trace ▸) is a table: host time · card time ·
 direction · card address · value · wait · host PC. It is the card port trace
 filtered to ZX-DMA events.
+The data is the core's report `gs-zxdma` (`DeviceState::GsZxDmaTrace`, REST `GET state/audio/gs/zxdma?last=&since=`;
+columns `frame`/`host_t`, `card_time`, `direction`, `card_address`/`page`, `value`, `wait`, `host_pc`, `dropped`; a
+poller passes `last_seq` back as `since`), recorded while the port trace captures.
+
+As built in the embedded debugger (2026-11-22, P5.6, `unreal-qt/src/debugger/zxdmatraceview.h`): `Trace ▸` under the
+DMA board expands a table Frame · Host T · Card cycle · Dir · Card address (`#013FF8 · page #04`) · Value · Wait · Host
+PC, dropped bytes tinted (`write (dropped)`). A header line: capturing / paused / not capturing (with the report's
+how-to), bytes kept, rows shown, the evicted-events note; Start / Stop / Clear drive `tracecontrol` `gsporttrace` under
+the context lease. While the tab is in front the live refresh (5 Hz) appends the rows after `since`, at most 4,000,
+following the tail unless scrolled up; collapsed it reads nothing. Double-click: the host PC in the main CPU's
+disassembly; on the card address, the GS CPU's memory view when one of its windows maps that RAM page now (else a note
+says so: the view shows CPU windows only).
 
 ### B3.3 An SD · MP3 · Flash tab
 

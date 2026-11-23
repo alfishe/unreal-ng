@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <deque>
 #include <functional>
 #include <map>
 #include <string>
@@ -18,9 +19,12 @@
 #include "emulator/emulator.h"
 
 class QLabel;
+class QPushButton;
 class QSplitter;
 class QTableWidget;
+class QToolButton;
 class QTreeWidget;
+class ZxDmaTraceView;
 
 class NextReportView : public QWidget
 {
@@ -64,6 +68,9 @@ public:
     void set_absent(const QString &text) { m_absent = text; }
     //A button under the view; its answer goes to the line next to the buttons, then the view is read again
     void add_action(const QString &title, const std::function<QString()> &run);
+    //The NeoGS DMA tab's ZX-DMA trace (B3.2) under the board, read with the view, shown while the board is
+    ZxDmaTraceView * add_zxdma_trace();
+    ZxDmaTraceView * zxdma_trace() const { return m_trace; }
 
     //For the self-check
     QTreeWidget * fields() const { return m_fields; }
@@ -97,11 +104,63 @@ private:
     std::string m_needs;
     QString m_absent;
     QWidget * m_actions = nullptr;  //the buttons' row, made by the first action
+    ZxDmaTraceView * m_trace = nullptr;
     QLabel * m_answer = nullptr;
     QLabel * m_status;
     QTreeWidget * m_fields;
     std::map<std::string, std::string> m_now;   //every value shown, by path
     std::map<std::string, std::string> m_stop;  //the values at the last stop
+};
+
+//The NeoGS ZX-DMA trace (gui-card-debugger B3.2; Emulator::read_zxdma_trace): a "Trace ▸" toggle that expands, in
+//place, a header line (capturing, bytes kept, the module's totals, the evicted note) with Start / Stop / Clear (the GS
+//port trace's capture) over a table, a row a byte: Frame, Host T, Card cycle, Dir, Card address (and its page),
+//Value, Wait, Host PC; dropped bytes marked. Each refresh appends the rows after the last one seen (`since`), keeps
+//the newest kMaxRows, follows the tail unless scrolled up. Double-click: Host PC shows the main CPU's listing there,
+//Card address the card RAM's page in the pages tab (the window's AddressRouter)
+class ZxDmaTraceView : public QWidget
+{
+    Q_OBJECT
+public:
+    static constexpr int kMaxRows = 4000;
+    ZxDmaTraceView(Emulator * e, QWidget *parent);
+    //Reads the new rows when expanded; @p present: the board is there (else the toggle goes too)
+    void refresh(bool present);
+    bool expanded() const;
+    void set_expanded(bool on);
+    //Start, stop or clear the capture, the answer on the header line, the rows read again
+    void capture(const std::string &action);
+
+    //For the self-check
+    QToolButton * toggle() const { return m_toggle; }
+    QLabel * header() const { return m_header; }
+    QTableWidget * table() const { return m_table; }
+    QPushButton * button(const char * action) const;
+    uint64_t last_seq() const { return m_last_seq; }
+    //The table's column of the Host PC and of the card address
+    enum { ColFrame = 0, ColHostT, ColCard, ColDir, ColAddress, ColValue, ColWait, ColPc, ColCount };
+
+signals:
+    void expanded_changed(bool on);
+
+private:
+    void read();
+    //Row @p at of the table from the kept row @p r
+    void show_row(int at, const Emulator::ZxDmaRow &r);
+    void activated(int row, int column);
+    Memory * card_ram() const;
+
+    Emulator * e;
+    QToolButton * m_toggle;
+    QLabel * m_summary;
+    QWidget * m_body;
+    QLabel * m_header;
+    QLabel * m_answer;
+    QTableWidget * m_table;
+    std::vector<QPushButton *> m_buttons;
+    uint64_t m_last_seq = 0;
+    bool m_read = false;          //a first read done since expanded or cleared
+    std::deque<Emulator::ZxDmaRow> m_rows;  //the table's rows, oldest first
 };
 
 struct NextTab {

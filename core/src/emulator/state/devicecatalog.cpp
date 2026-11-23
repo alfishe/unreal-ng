@@ -11,6 +11,7 @@
 #include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsslotstats.h"
+#include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
 
@@ -172,6 +173,20 @@ StateNode MsGsStats(EmulatorContext* context)
     return GsStatsOf(context, "ms");
 }
 
+/// The NeoGS ZX-DMA trace (gszxdmatrace.h), its default rows; unavailable without a NeoGS
+StateNode GsZxDma(EmulatorContext* context)
+{
+    return GsZxDmaTrace(context);
+}
+
+std::string GsZxDmaSummary(const StateNode& report)
+{
+    const StateNode* capturing = report.find("capturing");
+    const StateNode* kept = report.find("total_bytes_kept");
+    return std::string(capturing && capturing->b ? "capturing" : "not capturing") + ", " +
+           std::to_string(kept ? kept->i : 0) + " bytes kept";
+}
+
 StateNode BuildCdAudio(EmulatorContext* context)
 {
     return CdAudioControl::State(context);
@@ -303,6 +318,7 @@ const std::vector<ReportEntry>& CatalogEntries()
         {"gs-commands", "GS command log", "history/gs.commands", "history gs.commands", "history", "device_history", &GsCommands, nullptr, &GsCommandsSummary, &GsCommandsCommands},
         {"gs-firmware", "GS firmware objects", "state/audio/gs/firmware", "gs firmware", "gs_firmware", "audio_gs_firmware", &GsFirmware, nullptr, nullptr},
         {"gs-stats", "GS statistics", "state/audio/gs/stats", "gs stats", "gs_stats", "audio_gs_stats", &GsStats, nullptr, nullptr},
+        {"gs-zxdma", "NeoGS ZX-DMA trace", "state/audio/gs/zxdma", "gs zxdma", "gs_zxdma", "audio_gs_zxdma", &GsZxDma, nullptr, &GsZxDmaSummary},
         {"covox", "Covox / SounDrive", "state/audio/covox", "state audio covox", "audio_covox_state", "audio_covox", &Covox, nullptr, nullptr},
         {"moonsound", "MoonSound", "state/audio/moonsound", "state audio moonsound", "audio_moonsound_state", "audio_moonsound", &MoonSound, nullptr, nullptr},
         {"multisound", "ZX-MultiSound", "state/audio/multisound", "multisound", "multisound_state", "audio_multisound", &MultiSound, nullptr, nullptr},

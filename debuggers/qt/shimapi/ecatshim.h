@@ -374,6 +374,56 @@ public:
         return {false, "This machine has no device boards"};
     }
 
+    // The NeoGS ZX-DMA trace (not in ecat; gui-card-debugger B3.2, gs-debugger N6): the bytes the host moved through
+    // the ZX-DMA window, a row a byte, oldest first: the core's DeviceState::GsZxDmaTrace (over the WebAPI GET
+    // state/audio/gs/zxdma?last=&since=). Recorded while the GS port trace captures (zxdma_trace_capture). A poller
+    // passes the last row's seq (or last_seq) as `since`; restarted: that seq was past the newest (a new session), the
+    // rows are from the start. ok false: not read (message why); available false: no NeoGS (message the core's words)
+    struct ZxDmaRow {
+        uint64_t seq = 0;
+        int64_t frame = 0;
+        int64_t host_t = 0;         // the host's T-state of the frame at the access end (after the wait)
+        int64_t card_time = 0;      // the card CPU's cycles
+        bool write = false;         // the host wrote card RAM (false: read it)
+        unsigned int card_address = 0;
+        unsigned int page = 0;      // card_address >> 14
+        unsigned int value = 0;
+        unsigned int wait = 0;      // the /WAIT T-states
+        unsigned int host_pc = 0;
+        bool dropped = false;
+    };
+    struct ZxDmaTrace {
+        bool ok = false;
+        bool available = false;
+        std::string message;
+        std::string card, device;
+        bool capturing = false;
+        bool armed = false;
+        uint64_t total_bytes_kept = 0;
+        uint64_t evicted = 0;
+        uint64_t last_seq = 0;
+        bool restarted = false;
+        uint64_t bytes_read = 0, bytes_written = 0, bytes_dropped = 0, wait_t_states = 0;
+        std::vector<ZxDmaRow> rows;
+        std::string text;
+        std::string how_to_start;   // while not capturing: how to start it
+    };
+    virtual ZxDmaTrace read_zxdma_trace(size_t last, uint64_t since)
+    {
+        (void)last;
+        (void)since;
+        ZxDmaTrace t;
+        t.message = "This machine has no ZX-DMA trace";
+        return t;
+    }
+    // The GS port trace's capture, which records the ZX-DMA bytes: "start", "stop" or "clear" (in process the card's
+    // start / stop / clearPortTrace; over the WebAPI POST control/audio/gs/porttrace {action})
+    virtual BoardAnswer zxdma_trace_capture(const std::string &action)
+    {
+        (void)action;
+        return {false, "This machine has no ZX-DMA trace"};
+    }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {

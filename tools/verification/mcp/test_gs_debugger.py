@@ -439,6 +439,34 @@ def test_the_slot_statistics(s):
     expect('mailbox' in r.text and 'host_commands' in r.text, 'the Stats board', r.text)
 
 
+def test_the_zxdma_trace(s):
+    """The NeoGS ZX-DMA trace (gs-debugger N6): the aspect's text says whether the port trace captures and how to start
+    it; started, it captures (the bytes need a card program that runs the module: core gszxdmatrace_test.cpp); the
+    catalog lists the report with its planes"""
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/control/audio/gs/porttrace',
+                          'body': {'action': 'stop'}})
+    r = s.call('inspect_state', {'aspects': ['audio_gs_zxdma']})
+    expect('[audio_gs_zxdma] ZX-DMA trace' in r.text and 'not capturing' in r.text and 'porttrace' in r.text,
+           'not capturing, and how to start', r.text)
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/control/audio/gs/porttrace',
+                          'body': {'action': 'start'}})
+    r = s.call('inspect_state', {'aspects': ['audio_gs_zxdma'], 'gs_zxdma_last': 8, 'gs_zxdma_since': 0})
+    expect('capturing' in r.text and 'not capturing' not in r.text, 'the port trace captures', r.text)
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/zxdma?last=4'})
+    body = (r.structured or {}).get('body', {})
+    expect(body.get('available') is True and isinstance(body.get('rows'), list) and 'last_seq' in body
+           and 'wait_t_states' in body.get('counters', {}), 'the REST report', r.text)
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/zxdma?last=x'}, ok=False)
+    expect('400' in r.text or 'non-negative' in r.text, 'a bad last is refused', r.text)
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/control/audio/gs/porttrace',
+                          'body': {'action': 'stop'}})
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/devices'})
+    entry = [e for e in (r.structured or {}).get('body', {}).get('reports', []) if e.get('id') == 'gs-zxdma']
+    expect(entry and entry[0].get('cli') == 'gs zxdma' and entry[0].get('mcp') == 'audio_gs_zxdma',
+           'the catalog lists the report with its planes', r.text)
+
+
 def test_the_neogs_boards(s):
     """Device boards (gs-debugger N4, N8): the NeoGS card publishes its hardware as boards, read with their values in
     the text; a host folder inserted through the SD board is the medium of the slot sd.ngs in the media list. Last in

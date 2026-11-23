@@ -179,6 +179,9 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     connect(router, &AddressRouter::show_page, this, [this](CPU * cpu, unsigned int address) {
         m_memory_tabs->show_page(cpu, address);
     });
+    connect(router, &AddressRouter::show_memory_offset, this, [this](Memory * memory, unsigned int offset) {
+        m_memory_tabs->show_memory_offset(memory, offset);
+    });
     connect(router, &AddressRouter::toggle_breakpoint, this, [this](CPU * cpu, unsigned int address) {
         for (CpuPane &p : m_panes)
             if (p.cpu == cpu) p.code->toggle_breakpoint(address);

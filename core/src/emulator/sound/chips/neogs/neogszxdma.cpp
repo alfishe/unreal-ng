@@ -151,7 +151,7 @@ bool NeoGSZxDma::syncForAccess(int64_t& accessEnd)
     return _host.zxHostNowUnits(accessEnd);
 }
 
-void NeoGSZxDma::waitForPending(int64_t& accessEnd, Pending incoming)
+uint32_t NeoGSZxDma::waitForPending(int64_t& accessEnd, Pending incoming)
 {
     // The host calls the memory interface after the 3 T of the access;
     // /WAIT is sampled in T2, 2 T before its end
@@ -164,21 +164,26 @@ void NeoGSZxDma::waitForPending(int64_t& accessEnd, Pending incoming)
         // A read while a write waits for its grant, or the other way round:
         // the request is dropped "to prevent dead ends" (dma_zx.v:214, 238,
         // 310, 326) - no wait, the byte is lost
+        const bool write = _pending == Pending::Write;
+        const uint8_t value = write ? _pendingData : _mem.ram()[_pendingAddress % _mem.ramSize()];
         _pending = Pending::None;
         _pendingDone = kNever;
         _bytesDropped++;
-        return;
+        _host.zxTrace(write, _pendingAddress, value, 0, true);
+        return 0;
     }
 
+    uint32_t wait = 0;
     if (done > sample)
     {
-        const uint32_t wait = static_cast<uint32_t>(std::ceil(static_cast<double>(done - sample) / unitsPerT));
+        wait = static_cast<uint32_t>(std::ceil(static_cast<double>(done - sample) / unitsPerT));
         _host.zxAddHostWait(wait);
         _waitTStates += wait;
         accessEnd += std::llround(wait * unitsPerT);
         _host.zxCatchUp(); // the card runs through the wait: the byte completes
     }
     run(accessEnd);
+    return wait;
 }
 
 void NeoGSZxDma::stallCard(int64_t requestAt, int64_t& doneAt)
@@ -195,7 +200,7 @@ uint8_t NeoGSZxDma::onRead(uint16_t /*addr*/, uint8_t normal, bool /*isExecution
     int64_t end = 0;
     if (!syncForAccess(end))
         return normal;
-    waitForPending(end, Pending::Read);
+    const uint32_t wait = waitForPending(end, Pending::Read);
     if (_mode != Mode::Divert || !romPaged)
         return normal; // RAM paged: no DMA cycle, but the wait above applied (zxbus.v:248)
 
@@ -207,7 +212,7 @@ uint8_t NeoGSZxDma::onRead(uint16_t /*addr*/, uint8_t normal, bool /*isExecution
     _pendingDone = start + clocks(READ_DONE_CLOCKS);
     stallCard(start, _pendingDone);
     _bytesRead++;
-    _host.zxTrace(false, _pendingAddress, result);
+    _host.zxTrace(false, _pendingAddress, result, wait, false);
     _host.zxReschedule();
     return result;
 }
@@ -217,7 +222,7 @@ void NeoGSZxDma::onWrite(uint16_t /*addr*/, uint8_t value, bool /*romPaged*/)
     int64_t end = 0;
     if (!syncForAccess(end))
         return;
-    waitForPending(end, Pending::Write);
+    const uint32_t wait = waitForPending(end, Pending::Write);
     if (_mode != Mode::Divert)
         return;
 
@@ -228,7 +233,7 @@ void NeoGSZxDma::onWrite(uint16_t /*addr*/, uint8_t value, bool /*romPaged*/)
     _pendingDone = end + clocks(WRITE_GRANT_CLOCKS);
     stallCard(end, _pendingDone);
     _bytesWritten++;
-    _host.zxTrace(true, _pendingAddress, value);
+    _host.zxTrace(true, _pendingAddress, value, wait, false);
     _host.zxReschedule();
 }
 

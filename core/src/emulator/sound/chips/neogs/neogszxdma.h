@@ -53,7 +53,10 @@ public:
         virtual uint32_t zxFrame() const = 0;                // host frame counter
         virtual void zxReschedule() = 0;                     // our next event changed
         virtual void zxLateStart(int64_t units) = 0;         // a start was seen late (log once)
-        virtual void zxTrace(bool write, uint32_t address, uint8_t value) = 0; // port trace (when capturing)
+        /// The port trace (when capturing): one byte the host moved, the /WAIT T-states this access got; `dropped`:
+        /// the pending byte the access dropped (its own direction, address and value; a read's: the cell it would
+        /// have fetched)
+        virtual void zxTrace(bool write, uint32_t address, uint8_t value, uint32_t waitT, bool dropped) = 0;
         /// The card's ZX-bus carries the host's memory cycles (false through the Sprinter's ISA ZX-bus adapter, which
         /// passes I/O only): without them the module never sees a host access and the overlay is not installed
         virtual bool zxHostMemoryBus() const { return true; }
@@ -137,7 +140,8 @@ private:
     /// Catch the card up and settle a byte due by then; false: not diverting
     bool syncForAccess(int64_t& accessEnd);
     /// /WAIT for the pending byte; `accessEnd` moves by the wait
-    void waitForPending(int64_t& accessEnd, Pending incoming);
+    /// The /WAIT this access gets (T-states, 0: none)
+    uint32_t waitForPending(int64_t& accessEnd, Pending incoming);
     int64_t clocks(int n) const { return static_cast<int64_t>(n) * _host.zxUnitsPerCycle(); }
     void complete();
     void stallCard(int64_t requestAt, int64_t& doneAt);

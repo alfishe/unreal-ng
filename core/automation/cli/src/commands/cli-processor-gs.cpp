@@ -16,6 +16,7 @@
 
 #include "emulator/sound/chips/gs/gshostdriver.h"
 #include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
+#include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/chips/gs/gsslotstats.h"
 #include "cli-processor.h"
 #include <emulator/state/devicestate.h>
@@ -174,6 +175,9 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
                 ss << " (NMI)";
             if (e.side == GSTraceSide::Idle)
                 ss << " x" << std::dec << e.iterations;
+            if (e.side == GSTraceSide::ZxDma)
+                ss << " card=0x" << std::setw(6) << e.cardAddress() << std::dec << " T=" << e.hostT() << " wait=" << e.waitT()
+                   << (e.isDropped() ? " DROPPED" : "");
             ss << std::dec << NEWLINE;
         }
     }
@@ -224,6 +228,7 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs stats reset                    - a statistics baseline: its id for --since
 ///   gs firmware [object] [--profile <id>] [--cpu gs|ms] - the firmware objects through the profile (gsfirmwareobjects.h, M1-M3)
 ///   gs firmware profiles              - the firmware profiles known (built-in and files)
+///   gs zxdma [last] [--since <seq>]   - the NeoGS ZX-DMA trace (gszxdmatrace.h, N6): the bytes the host moved
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
 ///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - the card in the GS slot replaced (slots gs: a restart)
@@ -258,7 +263,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         "read_status|read_data|send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>]|"
         "conversation [id]|stats [section] [--since <id>] [--fresh] [--cpu gs|ms]|stats reset [--cpu gs|ms]|"
         "firmware [object] [--profile <id>] [--cpu gs|ms]|"
-        "firmware profiles|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
+        "firmware profiles|zxdma [last] [--since <seq>]|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
         "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
     if (args.empty())
@@ -414,6 +419,35 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
             ss << reply.text;
             if (reply.text.empty() || reply.text.back() != '\n')
                 ss << NEWLINE;
+        }
+    }
+    else if (sub == "zxdma")
+    {
+        // The NeoGS ZX-DMA trace (gszxdmatrace.h): the newest N bytes, or the ones after a seq
+        std::string last, since;
+        bool bad = false;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            if (args[i] == "--since" && i + 1 < args.size())
+                since = args[++i];
+            else if (last.empty() && args[i].rfind("--", 0) != 0)
+                last = args[i];
+            else
+                bad = true;
+        }
+        GSZxDmaTraceQuery query;
+        std::string error;
+        if (bad || !GSZxDmaTraceQueryFromStrings(last, since, query, error))
+            ss << "Usage: gs zxdma [last (default 256, 0: all)] [--since <seq>]" << (error.empty() ? "" : " - " + error)
+               << NEWLINE;
+        else
+        {
+            const StateNode report = DeviceState::GsZxDmaTrace(context, query);
+            const StateNode* available = report.find("available");
+            if (!available || !available->b)
+                ss << "Error: " << report.find("description")->s << NEWLINE;
+            else
+                ss << report.find("text")->s;
         }
     }
     else if (sub == "firmware")

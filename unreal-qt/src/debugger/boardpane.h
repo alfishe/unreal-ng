@@ -58,6 +58,9 @@ public:
 
     BoardPane(std::vector<Part> parts, Blocks blocks, QWidget* parent = nullptr);
     void setTable(Table table);
+    /// A widget of the owner's under the boards (the DMA pane's ZX-DMA trace): shown while the boards are; it refreshes
+    /// on refreshed()
+    void addExtra(QWidget* widget);
 
     /// Build the boards on `context` and show them; `live`: the machine runs (no change marks)
     void refresh(EmulatorContext* context, bool live);
@@ -88,6 +91,8 @@ public:
 signals:
     /// The user asked for a board action (a button; Insert: the chosen path): the owner calls runAction under its lease
     void actionRequested(const QString& board, const QString& action, const QString& arg);
+    /// A refresh drew the boards on `context` (still under the caller's lease): the extra widgets refresh with it
+    void refreshed(EmulatorContext* context, bool live);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

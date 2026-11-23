@@ -51,6 +51,7 @@
 #include "emulator/notifications.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicecatalog.h"
 #include "emulator/state/devicestate.h"
@@ -1329,6 +1330,92 @@ private:
         if (context == nullptr) return {false, "No machine"};
         const DebugBoardReply reply = DebugBoards::Action(context, board, action, arg);
         return {reply.status == 200, reply.text};
+    }
+
+    // The ZX-DMA trace in process: DeviceState::GsZxDmaTrace where the machine stands still (the report peeks)
+    ZxDmaTrace read_zxdma_trace(size_t last, uint64_t since) override
+    {
+        StateNode n;
+        ::Emulator * emu = m_emu.get();
+        GSZxDmaTraceQuery query;
+        query.last = last;
+        query.since = since;
+        at_coherent_moment(emu, [&n, emu, &query]() { n = DeviceState::GsZxDmaTrace(emu->GetContext(), query); });
+        ZxDmaTrace out;
+        auto field = [](const StateNode &o, const char * key) -> const StateNode * { return o.find(key); };
+        auto str = [&field](const StateNode &o, const char * key) {
+            const StateNode * v = field(o, key);
+            return v != nullptr && v->kind == StateNode::Kind::String ? v->s : std::string();
+        };
+        auto truth = [&field](const StateNode &o, const char * key) {
+            const StateNode * v = field(o, key);
+            return v != nullptr && v->kind == StateNode::Kind::Bool && v->b;
+        };
+        auto num = [&field](const StateNode &o, const char * key) -> int64_t {
+            const StateNode * v = field(o, key);
+            return v != nullptr && v->kind == StateNode::Kind::Int ? v->i : 0;
+        };
+        if (field(n, "available") == nullptr) {
+            out.message = "No machine";
+            return out;
+        }
+        out.ok = true;
+        out.available = truth(n, "available");
+        if (!out.available) {
+            out.message = str(n, "description");
+            return out;
+        }
+        out.card = str(n, "card");
+        out.device = str(n, "device");
+        out.capturing = truth(n, "capturing");
+        out.armed = truth(n, "armed");
+        out.total_bytes_kept = (uint64_t)num(n, "total_bytes_kept");
+        out.evicted = (uint64_t)num(n, "evicted");
+        out.last_seq = (uint64_t)num(n, "last_seq");
+        out.restarted = truth(n, "restarted");
+        if (const StateNode * c = field(n, "counters")) {
+            out.bytes_read = (uint64_t)num(*c, "bytes_read");
+            out.bytes_written = (uint64_t)num(*c, "bytes_written");
+            out.bytes_dropped = (uint64_t)num(*c, "bytes_dropped");
+            out.wait_t_states = (uint64_t)num(*c, "wait_t_states");
+        }
+        if (const StateNode * rows = field(n, "rows"))
+            for (const StateNode &r : rows->items) {
+                ZxDmaRow row;
+                row.seq = (uint64_t)num(r, "seq");
+                row.frame = num(r, "frame");
+                row.host_t = num(r, "host_t");
+                row.card_time = num(r, "card_time");
+                row.write = str(r, "direction") == "write";
+                row.card_address = (unsigned int)num(r, "card_address");
+                row.page = (unsigned int)num(r, "page");
+                row.value = (unsigned int)num(r, "value");
+                row.wait = (unsigned int)num(r, "wait");
+                row.host_pc = (unsigned int)num(r, "host_pc");
+                row.dropped = truth(r, "dropped");
+                out.rows.push_back(row);
+            }
+        out.text = str(n, "text");
+        out.how_to_start = str(n, "how_to_start");
+        return out;
+    }
+    // The port trace's capture in process: the card's own start / stop / clear, where the machine stands still
+    BoardAnswer zxdma_trace_capture(const std::string &action) override
+    {
+        if (action != "start" && action != "stop" && action != "clear")
+            return {false, "Unknown action '" + action + "' (expected start, stop or clear)"};
+        ::Emulator * emu = m_emu.get();
+        BoardAnswer a{false, "General Sound card not fitted"};
+        at_coherent_moment(emu, [&a, emu, &action]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = ctx != nullptr && ctx->pSoundManager != nullptr ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs == nullptr) return;
+            if (action == "start") gs->startPortTrace();
+            else if (action == "stop") gs->stopPortTrace();
+            else gs->clearPortTrace();
+            a = {true, action == "start" ? "port trace started" : action == "stop" ? "port trace stopped" : "port trace cleared"};
+        });
+        return a;
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads

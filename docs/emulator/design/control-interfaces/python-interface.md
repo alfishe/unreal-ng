@@ -133,6 +133,12 @@ class Emulator:
         MPAG page, DAC channels, card CPU, and on NeoGS a 'neogs' dict (windows, SD, MP3, DMA,
         ZX-DMA). available=False with a description when no card is fitted"""
 
+    def gs_zxdma(self, last: int = 256, since: int = 0) -> dict:
+        """NeoGS ZX-DMA trace: the bytes the host moved through the window while the GS port
+        trace captures; rows[{seq, frame, host_t, card_time, direction, card_address, page, value,
+        wait, host_pc, dropped}], last_seq (pass as since), counters, text. available=False without
+        a NeoGS"""
+
     def audio_covox_state(self) -> dict:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""

@@ -209,6 +209,13 @@ public:
     bool isPortTraceArmed() const override { return _portTrace.isArmed(); }
     std::vector<GSTraceEvent> getPortTraceEvents() const override { return _portTrace.getAll(); }
     std::vector<GSTraceEvent> getPortTraceLast(size_t count) const override { return _portTrace.getLast(count); }
+    std::vector<std::pair<uint64_t, GSTraceEvent>> getPortTraceSide(GSTraceSide side, uint64_t since, size_t last,
+                                                                    size_t& matched, uint64_t& lastSeq,
+                                                                    uint64_t& evicted) const override
+    {
+        evicted = _portTrace.totalEvicted();
+        return _portTrace.select(side, since, last, matched, lastSeq);
+    }
     size_t getPortTraceEventCount() const override { return _portTrace.eventCount(); }
     uint64_t getPortTraceTotalProduced() const override { return _portTrace.totalProduced(); }
     uint64_t getPortTraceTotalEvicted() const override { return _portTrace.totalEvicted(); }

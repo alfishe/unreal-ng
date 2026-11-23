@@ -1168,20 +1168,24 @@ void SoundChip_NeoGS::zxRamWritten(uint32_t offset, uint8_t value)
                                       static_cast<uint16_t>(offset % NeoGSMemory::PAGE_SIZE), value);
 }
 
-void SoundChip_NeoGS::zxTrace(bool write, uint32_t address, uint8_t value)
+void SoundChip_NeoGS::zxTrace(bool write, uint32_t address, uint8_t value, uint32_t waitT, bool dropped)
 {
-    if (!_portTrace.isCapturing())
+    if (!_portTrace.isCapturing() && !_zxDmaTrace.isCapturing())
         return;
     GSTraceEvent event;
     event.timestamp = _runner.now();
     event.frameNumber = currentFrameNumber();
     event.port = static_cast<uint16_t>(address);
     event.channel = static_cast<uint8_t>((address >> 16) & 0x1F);
-    event.pc = (_context && _context->pCore && _context->pCore->GetZ80()) ? _context->pCore->GetZ80()->m1_pc : 0;
+    const Z80* cpu = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    event.pc = cpu ? cpu->m1_pc : 0;
+    // The host side (gsporttrace.h): its T-state in the frame at the access end, after the wait, and the wait
+    event.iterations = GSTraceEvent::PackZxDmaHost(cpu ? cpu->t : 0, waitT);
     event.value = value;
     event.side = GSTraceSide::ZxDma;
-    event.flags = write ? GSTraceFlags::kDirectionOut : 0;
+    event.flags = static_cast<uint8_t>((write ? GSTraceFlags::kDirectionOut : 0) | (dropped ? GSTraceFlags::kDropped : 0));
     _portTrace.record(event);
+    _zxDmaTrace.record(event);
 }
 
 void SoundChip_NeoGS::flush()

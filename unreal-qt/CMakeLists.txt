@@ -858,6 +858,9 @@ if (TESTS)
         # The NeoGS boards (gs-debugger TODO P5.5): the core's device boards drawn by one renderer
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/boardpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/boardpane.h"
+        # The NeoGS DMA pane's ZX-DMA trace (Trace ▸, gui-card-debugger.md B3.2)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/zxdmatraceview.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/zxdmatraceview.h"
         # The lightweight player's inspector panes: interpreter, player (gs-debugger TODO P5.5, A10)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.h"

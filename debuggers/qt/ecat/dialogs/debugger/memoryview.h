@@ -206,6 +206,8 @@ public:
     MemoryView * view_of(CPU * cpu, bool shown = false);
     //The page that holds a processor's address, in the pages tab, at that byte
     void show_page(CPU * cpu, unsigned int address);
+    //The page of a paged memory that holds @p offset, in the pages tab, at that byte; false: no such page there
+    bool show_memory_offset(Memory * memory, unsigned int offset);
     void set_read_only(bool on);
 
 signals:

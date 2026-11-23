@@ -793,6 +793,75 @@ public:
         return {true, board + " " + action + ": " + r.value("status").toString().toStdString()};
     }
 
+    // The ZX-DMA trace: GET state/audio/gs/zxdma?last=&since=
+    ZxDmaTrace read_zxdma_trace(size_t last, uint64_t since) override
+    {
+        ZxDmaTrace out;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        int status = 0;
+        const QJsonObject body = m_http.json("GET", m_base + QString("/state/audio/gs/zxdma?last=%1&since=%2")
+                                                                  .arg((qulonglong)last).arg((qulonglong)since),
+                                             QJsonObject(), &status);
+        if (status != 200) {
+            out.message = status == 0 ? std::string("No answer from the emulator") : body.value("message").toString().toStdString();
+            return out;
+        }
+        auto str = [](const QJsonObject &o, const char * key) { return o.value(key).toString().toStdString(); };
+        auto num = [](const QJsonObject &o, const char * key) { return (int64_t)o.value(key).toDouble(); };
+        out.ok = true;
+        out.available = body.value("available").toBool();
+        if (!out.available) {
+            out.message = str(body, "description");
+            return out;
+        }
+        out.card = str(body, "card");
+        out.device = str(body, "device");
+        out.capturing = body.value("capturing").toBool();
+        out.armed = body.value("armed").toBool();
+        out.total_bytes_kept = (uint64_t)num(body, "total_bytes_kept");
+        out.evicted = (uint64_t)num(body, "evicted");
+        out.last_seq = (uint64_t)num(body, "last_seq");
+        out.restarted = body.value("restarted").toBool();
+        const QJsonObject c = body.value("counters").toObject();
+        out.bytes_read = (uint64_t)num(c, "bytes_read");
+        out.bytes_written = (uint64_t)num(c, "bytes_written");
+        out.bytes_dropped = (uint64_t)num(c, "bytes_dropped");
+        out.wait_t_states = (uint64_t)num(c, "wait_t_states");
+        for (const QJsonValue &v : body.value("rows").toArray()) {
+            const QJsonObject r = v.toObject();
+            ZxDmaRow row;
+            row.seq = (uint64_t)num(r, "seq");
+            row.frame = num(r, "frame");
+            row.host_t = num(r, "host_t");
+            row.card_time = num(r, "card_time");
+            row.write = r.value("direction").toString() == "write";
+            row.card_address = (unsigned int)num(r, "card_address");
+            row.page = (unsigned int)num(r, "page");
+            row.value = (unsigned int)num(r, "value");
+            row.wait = (unsigned int)num(r, "wait");
+            row.host_pc = (unsigned int)num(r, "host_pc");
+            row.dropped = r.value("dropped").toBool();
+            out.rows.push_back(row);
+        }
+        out.text = str(body, "text");
+        out.how_to_start = str(body, "how_to_start");
+        return out;
+    }
+    // The port trace's capture: POST control/audio/gs/porttrace {action}
+    BoardAnswer zxdma_trace_capture(const std::string &action) override
+    {
+        if (!m_online.load()) return {false, "The emulator is not connected"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs/porttrace",
+                                          QJsonObject{{"action", QString::fromStdString(action)}}, &status);
+        if (status == 0) return {false, "No answer from the emulator"};
+        if (status != 200) return {false, r.value("message").toString().toStdString()};
+        return {true, "port trace " + action + ": " + r.value("status").toString().toStdString()};
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }

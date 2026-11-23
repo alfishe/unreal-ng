@@ -51,6 +51,7 @@
 #include "debugger/porteventsdialog.h"
 #include "debugger/portwatchdialog.h"
 #include "debugger/rtcdialog.h"
+#include "debugger/zxdmatraceview.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
@@ -107,6 +108,8 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         if (BoardPane* board = pane.board)
             connect(board, &BoardPane::actionRequested, this,
                     [this, board](const QString& id, const QString& action, const QString& arg) { runBoardAction(board, id, action, arg); });
+        if (ZxDmaTraceView* trace = pane.trace)
+            connectZxDmaTrace(trace);
         _cardPanes.push_back(pane);
     }
     historyLayout->addWidget(_sideTabs);
@@ -1960,6 +1963,8 @@ void DebuggerWindow::updateSidePane()
                 pane.pane->clearMarks();  // another card: nothing to compare with
             if (pane.board)
                 pane.board->clearMarks();
+            if (pane.trace)
+                pane.trace->reset();  // another card: its own trace
             _sideTabs->setTabVisible(_sideTabs->indexOf(pane.widget()), cardShown[i]);
         }
     }
@@ -2015,6 +2020,50 @@ void DebuggerWindow::runBoardAction(BoardPane* pane, const QString& board, const
         pane->runAction(_emulator->GetContext(), board, action, arg);  // lifetime-ok: the lease holds it for this request
     }
     refreshNextPanes(!_emulator->IsPaused());
+}
+
+void DebuggerWindow::connectZxDmaTrace(ZxDmaTraceView* trace)
+{
+    // Expanded: filled at once, not at the next tick (a paused machine has none)
+    connect(trace, &ZxDmaTraceView::expandedChanged, this, [this](bool) { refreshNextPanes(_emulator && !_emulator->IsPaused()); });
+    // Start / Stop / Clear: the GS port trace through tracecontrol, as every plane drives it
+    connect(trace, &ZxDmaTraceView::captureRequested, this, [this, trace](const QString& op) {
+        if (!_emulator)
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            trace->capture(_emulator.get(), op);
+        }
+        refreshNextPanes(!_emulator->IsPaused());
+    });
+    // A row's host PC: the main CPU's disassembly at the instruction that made the access
+    connect(trace, &ZxDmaTraceView::hostPcPicked, this, [this](uint16_t pc) {
+        selectCpu(DebugCpuId::Main);
+        ui->disassemblerWidget->goToAddress(pc);
+    });
+    // A row's card address: the card CPU's memory view, when one of its windows maps that RAM page now
+    connect(trace, &ZxDmaTraceView::cardAddressPicked, this, [this, trace](uint32_t address) {
+        if (!_emulator)
+            return;
+        std::optional<uint16_t> at;
+        {
+            const Emulator::ContextLease lease = _emulator->LeaseContext();
+            at = CardPanes::CardCpuAddress(lease.get(), address);
+        }
+        if (!at)
+        {
+            trace->setNote(tr("Card RAM #%1 (page #%2) is not in a window of the card CPU now: the memory view shows "
+                              "the card CPU's windows")
+                               .arg(QString::number(address, 16).toUpper().rightJustified(6, QLatin1Char('0')),
+                                    QString::number(address >> 14, 16).toUpper().rightJustified(2, QLatin1Char('0'))));
+            return;
+        }
+        trace->setNote(QString());
+        if (selectCpu(DebugCpuId::GS))
+            showMemoryAt(*at);
+    });
 }
 
 void DebuggerWindow::showPortWatch()
