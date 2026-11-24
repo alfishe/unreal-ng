@@ -1344,6 +1344,53 @@ public:
         return zxdma_trace_capture(action);
     }
 
+    // The profiler and analysis reports over the WebAPI: GET state/audio/gs/<report>?<query>, the body as it came; a
+    // 404 with a message (no such card, the lightweight player has no card CPU) as {available: false, description}
+    GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        QStringList parts;
+        for (const auto &[key, value] : query)
+            if (!value.empty())
+                parts << QString::fromStdString(key) + "=" + QString::fromUtf8(QUrl::toPercentEncoding(QString::fromStdString(value)));
+        QString path = m_base + "/state/audio/gs/" + QString::fromStdString(report);
+        if (!parts.isEmpty()) path += "?" + parts.join('&');
+        QByteArray out;
+        const int status = m_http.request("GET", path, QByteArray(), out);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const QJsonObject body = QJsonDocument::fromJson(out).object();
+        if (status == 404 && body.contains("message")) {
+            const QJsonObject na{{"available", false}, {"description", body.value("message").toString()}};
+            return {true, QJsonDocument(na).toJson(QJsonDocument::Compact).toStdString(), std::string()};
+        }
+        if (status != 200) return {false, std::string(), body.value("message").toString(QString("HTTP %1").arg(status)).toStdString()};
+        return {true, out.toStdString(), std::string()};
+    }
+    GsJson gs_profiler(const std::string &card, const std::string &action) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs",
+                                          QJsonObject{{"action", QString::fromStdString("profile_" + action)},
+                                                      {"cpu", QString::fromStdString(card)}}, &status);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
+        if (status != 200) return {false, json, r.value("message").toString().toStdString()};
+        return {true, json, r.value("text").toString().toStdString()};
+    }
+    GsJson gs_analysis(const std::string &card, const std::string &action, int decay) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        QJsonObject body{{"action", QString::fromStdString(action)}, {"cpu", QString::fromStdString(card)}};
+        if (decay >= 0) body.insert("decay", decay);
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs/analysis", body, &status);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
+        if (status != 200) return {false, json, r.value("message").toString().toStdString()};
+        return {true, json, r.value("text").toString().toStdString()};
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }

@@ -618,6 +618,43 @@ public:
         return {false, "This machine has no GS port trace"};
     }
 
+    // The card CPU's profiler and analysis (not in ecat; gui-card-debugger A5.2a Profiler, Events, Coverage, Heat map;
+    // requirements X2, X8-X11, X20): one report as the core renders it, as JSON text, for every plane the same shape
+    // (gsprofilereport.h, gsanalysisreport.h). `report`: profile, events, analysis (the status), coverage, heatmap;
+    // `query` its parameters as the REST query names them (cpu "gs" / "ms", routines, activity, first, count, rows,
+    // space, page, ranges, channels, recent, frames, cells, format). In process DeviceState::GsProfile / GsEvents /
+    // GsAnalysisStatus / GsCoverage / GsHeatmap on the caller's thread (they never park the machine); over the WebAPI
+    // GET state/audio/gs/<report>?<query>. A card without a CPU (the lightweight player) answers ok with `available`
+    // false and the core's `description` (the WebAPI's 404 turned into that)
+    struct GsJson {
+        bool ok = false;               // answered; false: `message` why (no connection, a bad parameter)
+        std::string json;              // the report, or the control's answer
+        std::string message;           // the control's text, or why not
+    };
+    virtual GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query)
+    {
+        (void)report;
+        (void)query;
+        return {false, std::string(), "This machine has no GS card analysis"};
+    }
+    // The profiler of `card` ("gs" / "ms"): start (a new session, cleared then on), stop (the data kept), clear.
+    // GSProfileControl; over the WebAPI POST control/audio/gs {action: profile_<action>, cpu}
+    virtual GsJson gs_profiler(const std::string &card, const std::string &action)
+    {
+        (void)card;
+        (void)action;
+        return {false, std::string(), "This machine has no GS profiler"};
+    }
+    // The analysis (coverage, heat map, never-written reads) of `card`: status, on, off, reset, release; `decay` the
+    // heat lost per frame (0-255; -1 keeps it). GSAnalysisControl; over the WebAPI POST control/audio/gs/analysis
+    virtual GsJson gs_analysis(const std::string &card, const std::string &action, int decay)
+    {
+        (void)card;
+        (void)action;
+        (void)decay;
+        return {false, std::string(), "This machine has no GS card analysis"};
+    }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {

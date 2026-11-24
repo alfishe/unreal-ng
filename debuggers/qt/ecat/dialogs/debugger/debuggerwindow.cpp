@@ -6,6 +6,7 @@
 #include "debuggerwindow.h"
 #include "gsanalysis.h"
 #include "gsmonitor.h"
+#include "gsprofiling.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -169,9 +170,14 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     m_gs_unknown = new GsUnknownView(e, m_side_tabs);
     m_gs_objects = new GsObjectsView(e, m_side_tabs);
     m_gs_writers = new GsWritersView(e, m_side_tabs);
-    m_gs_analysis = {m_gs_dispatch, m_gs_unknown, m_gs_objects, m_gs_writers};
+    m_gs_profiler = new GsProfilerView(e, m_side_tabs);
+    m_gs_events = new GsEventsView(e, m_side_tabs);
+    m_gs_coverage = new GsCoverageView(e, m_side_tabs);
+    m_gs_heatmap = new GsHeatmapView(e, m_side_tabs);
+    m_gs_analysis = {m_gs_dispatch, m_gs_unknown, m_gs_objects, m_gs_writers, m_gs_profiler, m_gs_events, m_gs_coverage, m_gs_heatmap};
     {
-        const QString titles[] = {tr("GS dispatch"), tr("GS unknown"), tr("GS objects"), tr("GS writers")};
+        const QString titles[] = {tr("GS dispatch"), tr("GS unknown"), tr("GS objects"), tr("GS writers"),
+                                  tr("GS profiler"), tr("GS events"), tr("GS coverage"), tr("GS heat map")};
         for (size_t i = 0; i < m_gs_analysis.size(); i++)
             m_side_tabs->setTabVisible(m_side_tabs->addTab(m_gs_analysis[i], titles[i]), false);
     }

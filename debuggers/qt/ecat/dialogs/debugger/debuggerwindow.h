@@ -37,6 +37,10 @@ class GsDispatchView;
 class GsUnknownView;
 class GsObjectsView;
 class GsWritersView;
+class GsProfilerView;
+class GsEventsView;
+class GsCoverageView;
+class GsHeatmapView;
 
 //One window for the whole machine. Each processor has a tab with its listing,
 //registers and flags; below are the memory dumps (each processor's address
@@ -113,6 +117,10 @@ public:
     GsUnknownView * gs_unknown() const { return m_gs_unknown; }
     GsObjectsView * gs_objects() const { return m_gs_objects; }
     GsWritersView * gs_writers() const { return m_gs_writers; }
+    GsProfilerView * gs_profiler() const { return m_gs_profiler; }
+    GsEventsView * gs_events() const { return m_gs_events; }
+    GsCoverageView * gs_coverage() const { return m_gs_coverage; }
+    GsHeatmapView * gs_heatmap() const { return m_gs_heatmap; }
 
 signals:
     //The views were read again: after a stop, and while the machine runs
@@ -163,6 +171,10 @@ private:
     GsUnknownView * m_gs_unknown = nullptr;
     GsObjectsView * m_gs_objects = nullptr;
     GsWritersView * m_gs_writers = nullptr;
+    GsProfilerView * m_gs_profiler = nullptr;
+    GsEventsView * m_gs_events = nullptr;
+    GsCoverageView * m_gs_coverage = nullptr;
+    GsHeatmapView * m_gs_heatmap = nullptr;
     std::vector<GsCardTab *> m_gs_analysis;
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
