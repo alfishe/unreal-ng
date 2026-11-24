@@ -174,6 +174,13 @@ public:
     /// Run `data` (a journal begun at the state the host has now) to its end, then record on from there (the
     /// journal is `data`). False: it does not fit this state (`error` says where); the host is wherever it got
     bool JournalReplay(const uint8_t* data, size_t size, std::string& error);
+    /// A part of it: the bytes [from, to) of `data`, a whole journal. `from` > 0 goes on from a replay that stopped
+    /// there (the host, its memory and JournalReadMap as they were then); `to` < size stops at a boundary between
+    /// host calls (a capture's journal length) and stays in replay, `to` = size records on as JournalReplay does
+    bool JournalReplay(const uint8_t* data, size_t size, size_t from, size_t to, std::string& error);
+    /// The last word read at each LINK address so far: what a replay stopped at a boundary goes on with
+    const std::map<uint32_t, uint32_t>& JournalReadMap() const { return _journal.lastRead; }
+    void SetJournalReadMap(const std::map<uint32_t, uint32_t>& reads) { _journal.lastRead = reads; }
 
     /// endregion
 

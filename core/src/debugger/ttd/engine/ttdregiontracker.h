@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "ttdregion.h"
@@ -126,6 +127,14 @@ public:
     {
         (void)state;
         (void)size;
+        return false;
+    }
+    /// After TTDLoadStateWithoutRegions: a source that computes part of its state again on load (the VDAC4 ESP
+    /// re-runs from a keyframe) and did not reach the recorded state says why; the restore reports
+    /// replay_diverged (not_bit_exact). Asked once per load
+    virtual bool TTDLoadDiverged(std::string& detail)
+    {
+        (void)detail;
         return false;
     }
 };

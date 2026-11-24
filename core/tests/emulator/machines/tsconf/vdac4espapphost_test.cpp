@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -255,6 +256,44 @@ TEST(Vdac4EspAppHostState_Test, JournalReplayReachesTheRecordedState)
     // Recording goes on from the replayed journal: the same bytes as the recording host's
     EXPECT_EQ(b.host->Journal(), EspAppHost::JournalMode::Record);
     EXPECT_EQ(b.host->JournalBytes(), journal);
+}
+
+/// A replay stopped at a capture boundary and taken up again on another host (the state, the memory and the
+/// read map of that point) ends where the whole replay ends: what TTD's replay points do
+TEST(Vdac4EspAppHostState_Test, JournalReplayInPartsReachesTheSameState)
+{
+    ScriptedHost a;
+    ASSERT_TRUE(a.Start());
+    const HostImage key = Take(*a.host);
+    a.host->JournalBegin();
+    Drive(*a.host, 12);
+    const size_t boundary = a.host->JournalBytes().size();  // a capture closes the read run here
+    Drive(*a.host, 13);
+    const std::vector<uint8_t> journal = a.host->JournalBytes();
+    const HostImage end = Take(*a.host);
+    ASSERT_GT(boundary, 0u);
+    ASSERT_LT(boundary, journal.size());
+
+    ScriptedHost b;
+    Put(*b.host, key);
+    std::string error;
+    ASSERT_TRUE(b.host->JournalReplay(journal.data(), journal.size(), 0, boundary, error)) << error;
+    EXPECT_EQ(b.host->Journal(), EspAppHost::JournalMode::Replay) << "stopped at the boundary";
+    const HostImage point = Take(*b.host);
+    const std::map<uint32_t, uint32_t> reads = b.host->JournalReadMap();
+
+    ScriptedHost c;
+    Put(*c.host, point);
+    c.host->SetJournalReadMap(reads);
+    ASSERT_TRUE(c.host->JournalReplay(journal.data(), journal.size(), boundary, journal.size(), error)) << error;
+    EXPECT_EQ(c.reads, 0u);
+    ExpectSame(Take(*c.host), end);
+    EXPECT_EQ(c.host->JournalBytes(), journal) << "records on with the whole journal";
+
+    // A boundary inside a host call's inputs is not one
+    ScriptedHost d;
+    Put(*d.host, key);
+    EXPECT_FALSE(d.host->JournalReplay(journal.data(), journal.size(), 0, boundary + 1, error));
 }
 
 TEST(Vdac4EspAppHostState_Test, JournalReplayFromAnotherStateDiverges)

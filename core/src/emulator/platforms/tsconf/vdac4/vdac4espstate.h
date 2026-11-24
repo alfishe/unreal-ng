@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -80,9 +81,14 @@ public:
     {
         if (!Need(size))
             return;
-        for (size_t i = 0; i < size; ++i)
-            out[i] = _data[_position + i];
+        if (size != 0)
+            std::memcpy(out, _data + _position, size);
         _position += size;
+    }
+    void Skip(size_t size)
+    {
+        if (Need(size))
+            _position += size;
     }
     /// Length-prefixed bytes, at most `limit` (a larger length fails the read)
     bool Blob(std::vector<uint8_t>& out, size_t limit)

@@ -741,7 +741,7 @@
     schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["kind"]["type"] = "string";
     for (const char* v : {"device_missing_state", "device_not_present", "layout_unsupported", "size_mismatch",
                           "device_set_differs", "firmware_differs", "configuration_differs", "data_damaged",
-                          "after_restore_failed", "media_version_differs"})
+                          "after_restore_failed", "media_version_differs", "replay_diverged"})
         schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["kind"]["enum"].append(v);
     schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["severity"]["type"] = "string";
     schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["device"]["type"] = "string";

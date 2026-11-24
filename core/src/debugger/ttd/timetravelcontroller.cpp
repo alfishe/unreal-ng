@@ -1946,6 +1946,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
         _engine->ForgetMemory();
         (void)TakeWrittenSinceRestore();   // the marks so far are covered by forgetting: start counting here
     }
+    _replayIssues.clear();   // this restore's own, below
     CheckEngineCheckpoint(size_t(engineIndex), false);
     SetMediaToCheckpoint(size_t(engineIndex));
     const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore);
@@ -1955,6 +1956,14 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
         _engine->RestoreDevices(size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
     if (_engineMemoryKnown)
         (void)TakeWrittenSinceRestore();   // marks the restore itself made (a device loading its state) hold the checkpoint
+    // A device computed again on load that missed its recorded state (the VDAC4 ESP's replay) makes the position
+    // not bit-exact: the seek's check says so (the replay path's check takes them again)
+    for (const TTDRestoreIssue& issue : devices.issues)
+        if (issue.kind == TTDRestoreIssueKind::ReplayDiverged)
+        {
+            _replayIssues.push_back(issue);
+            _lastEngineCheck.Add(issue);
+        }
     if (!memory.Ok() || devices.status != TTDRestoreStatus::Exact)
         MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
@@ -5268,6 +5277,8 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
 {
     _lastEngineCheck = _replayEngine->CheckConfiguration(
         index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
+    for (const TTDRestoreIssue& issue : _replayIssues)
+        _lastEngineCheck.Add(issue);
     if (!forReplay)
         return;
     // The media the restore could not set to their recorded versions (SetMediaToCheckpoint)
@@ -5316,6 +5327,7 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
     _replayEngine = engine;
     _inputStartFrame = UINT64_MAX;
     _lastEngineCheck = {};
+    _replayIssues.clear();
     _replayRomSignature = ComputeRomSignature();
     if (engine == _engine.get())
         return;   // the session's own engine is this machine's

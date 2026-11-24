@@ -311,7 +311,8 @@ public:
     /// engine (Phase 3, Step 4; FR-14): ConfigurationDiffers for each setting
     /// the session was recorded with that this machine lacks (a replay:
     /// NotBitExact; the model or RAM size: Degraded), MediaVersionDiffers for
-    /// a medium that changed since the checkpoint and cannot go back. Exact
+    /// a medium that changed since the checkpoint and cannot go back, ReplayDiverged for a device computed again
+    /// on load that missed its recorded state (NotBitExact). Exact
     /// when everything matches. The restore and the replay run either way
     const TTDRestoreResult& LastEngineCheck() const { return _lastEngineCheck; }
 
@@ -2726,6 +2727,7 @@ private:
     uint64_t _cardEditFrame = UINT64_MAX;    ///< the frame whose card edits the card targets hold (replay)
     uint64_t _replayRomSignature = 0;       ///< this machine's ROM set (SetReplaySource)
     TTDRestoreResult _lastEngineCheck;      ///< LastEngineCheck
+    std::vector<TTDRestoreIssue> _replayIssues;  ///< the last restore's ReplayDiverged issues (LastEngineCheck)
     /// Settings and media of the replay engine's checkpoint @p index against
     /// this machine (into _lastEngineCheck)
     void CheckEngineCheckpoint(size_t index, bool forReplay);
