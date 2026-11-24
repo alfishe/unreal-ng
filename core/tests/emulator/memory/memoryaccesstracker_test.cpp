@@ -580,11 +580,19 @@ TEST_F(MemoryAccessTracker_Test, ReadsWhileAnotherThreadSwitchesTrackingOff)
     ASSERT_NE(fm, nullptr);
     std::atomic<bool> done{false};
     std::atomic<int> toggles{0};
+    // The toggler makes one switch per request, so the reads meet the on and the off state in turn: a free-running
+    // toggler leaves the phase at a read to the scheduler, and a loaded machine can show one state for every read
+    std::atomic<int> requested{1};
     TestThread toggler(
         [&] {
             bool on = true;
             while (!done.load())
             {
+                if (toggles.load() >= requested.load())
+                {
+                    std::this_thread::yield();
+                    continue;
+                }
                 fm->setFeature(Features::kMemoryTracking, on);
                 _tracker->UpdateFeatureCache();
                 on = !on;
@@ -602,6 +610,7 @@ TEST_F(MemoryAccessTracker_Test, ReadsWhileAnotherThreadSwitchesTrackingOff)
     for (; rounds < 400 && (rounds < 24 || allocatedReads == 0 || allocatedReads == rounds); rounds++)
     {
         const int before = toggles.load();
+        requested.store(before + 1);  // the switch runs beside the reads below
         {
             const MemoryAccessTracker::CountersView z80 = _tracker->Z80CountersView();
             if (z80.reads)

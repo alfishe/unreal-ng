@@ -9,6 +9,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/soundmanager.h"
 
 /// region <Collecting>
@@ -238,6 +240,35 @@ std::optional<GSStatsWriter::Counters> GSStatsPublisher::Baseline(uint32_t id) c
 
 /// region <Reading>
 
+GeneralSoundCard* GSCardForCpu(EmulatorContext* context, const std::string& cpu, GSStatsPublisher** stats, bool* known)
+{
+    if (known)
+        *known = cpu.empty() || cpu == "gs" || cpu == "ms";
+    if (stats)
+        *stats = nullptr;
+    if (!context)
+        return nullptr;
+    if (cpu.empty() || cpu == "gs")
+    {
+        SoundManager* sm = context->pSoundManager;
+        GeneralSoundCard* card = sm ? sm->getGeneralSound() : nullptr;
+        if (card && stats)
+            *stats = &sm->gsStats();
+        return card;
+    }
+    if (cpu != "ms" || !context->pSlotManager)
+        return nullptr;
+    // The General Sound a slot card carries (the debugger's `ms` CPU: DebugManager's MultiSoundGS target)
+    for (const std::unique_ptr<ICard>& card : context->pSlotManager->Cards())
+        if (GeneralSoundCard* gs = card->DebugGeneralSound())
+        {
+            if (stats)
+                *stats = card->DebugGeneralSoundStats();
+            return gs;
+        }
+    return nullptr;
+}
+
 namespace
 {
 GSStatsReply Error(int status, const std::string& message)
@@ -294,17 +325,26 @@ constexpr ErrorSource kErrorSources[] = {
 
 /// Wait for, or collect, the block this read needs; nullptr with reply.pending when it is not there yet
 std::shared_ptr<const GSStatsBlock> Acquire(EmulatorContext* context, GSStatsQuery& query, GSStatsReply& reply,
-                                            const GeneralSoundCard*& cardOut)
+                                            const GeneralSoundCard*& cardOut, GSStatsPublisher*& publisherOut)
 {
     SoundManager* sm = context ? context->pSoundManager : nullptr;
-    const GeneralSoundCard* card = sm ? sm->getGeneralSound() : nullptr;
+    GSStatsPublisher* found = nullptr;
+    bool known = true;
+    const GeneralSoundCard* card = GSCardForCpu(context, query.cpu, &found, &known);
     cardOut = card;
-    if (!card)
+    publisherOut = found;
+    if (!known)
     {
-        reply = Error(404, "General Sound card not fitted");
+        reply = Error(404, "No card CPU '" + query.cpu + "' (gs: the GS slot's card, ms: the ZX-MultiSound's)");
         return nullptr;
     }
-    GSStatsPublisher& publisher = sm->gsStats();
+    if (!card || !found || !sm)
+    {
+        reply = Error(404, query.cpu == "ms" ? "No ZX-MultiSound with a General Sound fitted"
+                                             : "General Sound card not fitted");
+        return nullptr;
+    }
+    GSStatsPublisher& publisher = *found;
     publisher.Want();
 
     const ttd::ITimeTravelHooks* ttd = context->pTimeTravelHooks;
@@ -344,10 +384,11 @@ GSStatsReply GSStatsRead(EmulatorContext* context, GSStatsQuery query)
 {
     GSStatsReply reply;
     const GeneralSoundCard* card = nullptr;
-    const std::shared_ptr<const GSStatsBlock> block = Acquire(context, query, reply, card);
+    GSStatsPublisher* found = nullptr;
+    const std::shared_ptr<const GSStatsBlock> block = Acquire(context, query, reply, card, found);
     if (!block)
         return reply;
-    const GSStatsPublisher& publisher = context->pSoundManager->gsStats();
+    const GSStatsPublisher& publisher = *found;
 
     std::optional<GSStatsWriter::Counters> baseline;
     if (query.since != 0)
@@ -440,10 +481,11 @@ GSStatsReply GSStatsResetCounters(EmulatorContext* context, GSStatsQuery query)
 {
     GSStatsReply reply;
     const GeneralSoundCard* card = nullptr;
-    const std::shared_ptr<const GSStatsBlock> block = Acquire(context, query, reply, card);
+    GSStatsPublisher* found = nullptr;
+    const std::shared_ptr<const GSStatsBlock> block = Acquire(context, query, reply, card, found);
     if (!block)
         return reply;
-    const uint32_t id = context->pSoundManager->gsStats().AddBaseline(block->counters);
+    const uint32_t id = found->AddBaseline(block->counters);
     reply.body = StateNode::Object();
     reply.body["baseline"] = id;
     reply.body["frame"] = block->frame;

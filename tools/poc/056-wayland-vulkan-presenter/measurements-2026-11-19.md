@@ -1,4 +1,4 @@
-# POC 054 measurements, 2026-11-19 (round 1)
+# POC 056 measurements, 2026-11-19 (round 1)
 
 Host .238: GNOME Shell 50.1 (Mutter) Wayland, panel 1920x1200 @ 59.950 Hz (fixed refresh), Intel UHD (TGL GT1),
 Mesa ANV 26.0.8, Vulkan 1.4.335. Window 1280x720 xdg toplevel, swapchain 3 images, BGRA8, clear-based picture.

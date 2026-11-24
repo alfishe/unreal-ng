@@ -17,6 +17,10 @@ public:
     /// (the VS10xx data port) never see this.
     virtual void select(bool selected) = 0;
 
+    /// The chip select as a restored master state drives it (a time-travel or snapshot restore): no bus
+    /// activity happened. A device whose own restore brings its select state (the VDAC4 ESP) only takes the level
+    virtual void restoreSelect(bool selected) { select(selected); }
+
     /// One byte clocked out (MOSI) while one is clocked in (the return, MISO).
     /// An idle or absent device returns #FF (the line is pulled up).
     virtual uint8_t exchange(uint8_t mosi) = 0;

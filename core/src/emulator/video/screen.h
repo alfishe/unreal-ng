@@ -1169,6 +1169,7 @@ protected:
     /// The geometry of the machine's own frame as it is now / of the external picture (emulation thread)
     PictureGeometry DescribeNativeFrame() const;
     PictureGeometry DescribeExternalFrame() const;
+    PictureGeometry DescribeExternalFrame(uint64_t frameNumber) const;
     /// The present queue's slots for frames of `size` bytes (caller holds _presentMutex)
     void ResizePresentSlotsLocked(std::unique_lock<std::mutex>& lock, size_t size);
     /// Copy one frame into the next present slot (caller holds _presentMutex)
@@ -1355,6 +1356,17 @@ public:
     FramebufferDescriptor& GetNativeFramebufferDescriptor() { return _framebuffer; }
     /// Latch the external picture into the present queue (emulation thread)
     void LatchExternalFrame();
+    /// The same, with the slot written by `fill` (the external picture's size) instead of copied from the external
+    /// picture: an owner that makes its picture and the slot in one pass. False: nothing latched, `fill` not called
+    /// `stamp`: the machine frame and the fraction of it where the owner's frame ended, for a latch off the
+    /// emulation thread (it reads neither the CPU nor the frame counter); null: both as of now (emulation thread)
+    struct ExternalFrameStamp
+    {
+        uint64_t frameNumber = 0;
+        float fraction = 1.0f;
+    };
+    using ExternalFill = void (*)(void* context, uint8_t* slot, size_t bytes);
+    bool LatchExternalFrame(ExternalFill fill, void* context, const ExternalFrameStamp* stamp = nullptr);
     /// endregion
 
     /// Display viewport for cropping framebuffer to display

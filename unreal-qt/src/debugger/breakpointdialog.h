@@ -27,6 +27,9 @@
 #include <QThread>
 #include "emulator/emulator.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/targets/debugcpuid.h"
+
+#include <vector>
 
 class Emulator;
 struct Message;
@@ -87,6 +90,14 @@ private:
     /// The selected breakpoint's row (a hit row selects its breakpoint), nullptr when none
     QTreeWidgetItem* selectedBreakpointItem() const;
     static uint16_t breakpointIdOf(const QTreeWidgetItem* item);
+    /// Whose breakpoint a row is (the CPU column's data)
+    static DebugCpuId cpuOf(const QTreeWidgetItem* item);
+    /// A breakpoint's key in the list: its CPU and its id (two CPUs' managers give the same ids)
+    static uint32_t keyOf(DebugCpuId cpu, uint16_t id) { return static_cast<uint32_t>(cpu) << 16 | id; }
+    static uint32_t keyOf(const QTreeWidgetItem* item) { return keyOf(cpuOf(item), breakpointIdOf(item)); }
+    /// The CPUs whose breakpoints are listed: the main CPU, then each card CPU fitted
+    std::vector<DebugCpuId> listedCpus() const;
+    BreakpointManager* managerOf(DebugCpuId cpu) const;
     /// Enables or disables the selected breakpoint
     void setSelectedActive(bool active);
     /// Sets the Status column of a breakpoint row from its state
@@ -103,7 +114,7 @@ private:
         uint64_t lastTotal = UINT64_MAX;
         bool sized = false;                  ///< the columns fitted to the first hits
     };
-    void refreshHitView(uint16_t id, HitView& view, bool force);
+    void refreshHitView(uint32_t key, HitView& view, bool force);
     
     std::shared_ptr<Emulator> _emulator;
     uint64_t m_breakpointObserverId = 0;  // Store the observer ID for cleanup
@@ -111,11 +122,12 @@ private:
     QVBoxLayout* _mainLayout = nullptr;
     QTreeWidget* _breakpointTable = nullptr;
     QTimer* _hitTimer = nullptr;            ///< runs while a record is expanded
-    QSet<uint16_t> _expandedIds;            ///< kept across a rebuild of the list
-    QHash<uint16_t, HitView> _hitViews;
+    QSet<uint32_t> _expandedIds;            ///< kept across a rebuild of the list (keyOf)
+    QHash<uint32_t, HitView> _hitViews;     ///< by keyOf
     
     // Filter UI elements
     QComboBox* _groupFilter = nullptr;
+    QComboBox* _cpuFilter = nullptr;        ///< a card fitted: all CPUs or one (item data: the DebugCpuId, -1 all)
     QLineEdit* _searchField = nullptr;
     QPushButton* _clearSearchButton = nullptr;
     

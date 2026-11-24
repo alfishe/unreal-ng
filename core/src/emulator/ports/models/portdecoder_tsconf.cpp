@@ -26,6 +26,7 @@
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/tsconf/ttdtsconfstate.h"
 #include "debugger/ttd/tsconf/ttdvdac2.h"
+#include "debugger/ttd/tsconf/ttdvdac4.h"
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
@@ -1159,6 +1160,13 @@ void PortDecoder_TSConf::UpdateBanks()
         _memory->UpdateZ80Banks();
 }
 
+void PortDecoder_TSConf::BeforeRelease()
+{
+    _flash.SaveIfUnsaved();
+    if (_vdac2)
+        _vdac2->BeforeRelease();
+}
+
 void PortDecoder_TSConf::OnFrameEnd()
 {
     _flash.OnFrameEnd();
@@ -1498,12 +1506,18 @@ std::vector<ttd::TTDDeviceType> PortDecoder_TSConf::GetTTDModelStateTypes() cons
                                           ttd::TTDDeviceType::Ds12887, ttd::TTDDeviceType::EvoPs2,
                                           ttd::TTDDeviceType::EvoMouse, ttd::TTDDeviceType::EvoAvrVolatile,
                                           ttd::TTDDeviceType::EvoFlash};
-    // The VDAC2 card's FT812: its memory first, then the card and chip state (restore order = id order).
-    // The VDAC4 board is not TTD state yet (its Tang and ESP devices come in design §11 phase 6)
-    if (_vdac2 && _vdac2->IsReady() && !_vdac4Tang)
+    // The VDAC2 card's FT812 (also the VDAC4 Tang's): its memory first, then the card and chip state (restore
+    // order = id order). The VDAC4 board adds the Tang, the ESP and its app host (ttdvdac4.h)
+    if (_vdac2 && _vdac2->IsReady())
     {
         ids.push_back(ttd::TTDDeviceType::Vdac2Memory);
         ids.push_back(ttd::TTDDeviceType::Vdac2);
+    }
+    if (_vdac4Tang && _vdac4Board)
+    {
+        ids.push_back(ttd::TTDDeviceType::Vdac4Tang);
+        ids.push_back(ttd::TTDDeviceType::Vdac4Esp);
+        ids.push_back(ttd::TTDDeviceType::Vdac4EspCpu);
     }
     return ids;
 }
@@ -1519,10 +1533,17 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(self->_evoAvr.Ps2Mouse()));
     serializers.push_back(std::make_unique<ttd::TTDEvoAvrVolatile>(self->_evoAvr));
     serializers.push_back(std::make_unique<ttd::TTDEvoFlash>(self->_flash));
-    if (self->_vdac2 && self->_vdac2->IsReady() && !self->_vdac4Tang)
+    if (self->_vdac2 && self->_vdac2->IsReady())
     {
         serializers.push_back(std::make_unique<ttd::TTDVdac2Memory>(*self->_vdac2));
         serializers.push_back(std::make_unique<ttd::TTDVdac2>(*self->_vdac2));
+    }
+    if (self->_vdac4Tang && self->_vdac4Board)
+    {
+        serializers.push_back(std::make_unique<ttd::TTDVdac4Tang>(*self->_vdac4Tang));
+        serializers.push_back(
+            std::make_unique<ttd::TTDVdac4Esp>(*self->_vdac4Board, self->_vdac4BaseUs, self->_vdac4Frames));
+        serializers.push_back(std::make_unique<ttd::TTDVdac4EspCpu>(*self->_vdac4Board));
     }
     return serializers;
 }

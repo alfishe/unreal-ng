@@ -84,6 +84,12 @@ struct TTDPerfCounters
     uint64_t lastRestoreScreenNs = 0;        ///< screen state resync
     uint64_t lastReplayNs = 0;               ///< intra-frame re-execution of the last seek (0 = frame-aligned)
     uint64_t lastPresentNs = 0;              ///< picture of the last seek's position (ComposeDisplay + publish)
+    /// The last seek's own checkpoint restore (the picture's restores follow it and overwrite lastRestore*)
+    uint64_t lastSeekRestoreNs = 0;
+    uint64_t lastSeekMemoryNs = 0;           ///< of it: memory (with a read back from the disk tier)
+    uint64_t lastSeekPiecesDecoded = 0;      ///< pieces it wrote into memory
+    uint64_t lastSeekLinksDecoded = 0;       ///< differences it applied
+    uint64_t readBackNs = 0;                 ///< segments read back from their files, summed over the session
     TTDCaptureWork lastCaptureWork;          ///< counted work of the last capture (deterministic)
     uint64_t lastRestoreTotalNs() const
     {
@@ -699,6 +705,7 @@ struct TTDSeriesResult
     uint64_t piecesDecoded = 0;  ///< 4 KB pieces decoded (a piece unchanged since the frame before is not decoded again)
     bool truncated = false;      ///< the row or byte limit stopped the walk
     uint64_t nextFrame = 0;      ///< truncated: the first frame not answered (go on from there)
+    bool cancelled = false;      ///< run as a job and cancelled: truncated at nextFrame
 };
 
 /// @brief The picture and the screens of one past frame (screen-at, PLAN #122 V2).
@@ -776,6 +783,7 @@ struct TTDProbeFramesResult
     std::vector<TTDProbeFrames> probes;   ///< In the order asked
     bool truncated = false;           ///< Every probe's list is full and the window goes on: ask again from nextFromFrame
     uint64_t nextFromFrame = 0;
+    bool cancelled = false;           ///< Run as a job and cancelled: the window ends at toFrame, the rest from nextFromFrame
 };
 
 /// @brief What ReverseContinue looks for and how far.

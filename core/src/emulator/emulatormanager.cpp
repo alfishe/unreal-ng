@@ -6,6 +6,7 @@
 #include "emulator/actions/contextstate.h"
 #include "emulator/actions/steppingactions.h"
 #include "emulator/actions/targetstate.h"
+#include "emulator/jobs/jobregistry.h"
 #include "emulator/execution/runpacer.h"
 #include "emulator/machinenames.h"
 #include "emulator/machinevariants.h"
@@ -765,6 +766,10 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
     std::shared_ptr<Emulator> retiring = GetEmulator(emulatorId);
     if (retiring)
         retiring->BeginRetirement();
+    // Its jobs (emulator/jobs/jobregistry.h): the queued ones end cancelled, the running ones are asked to stop; each
+    // holds a context lease while it runs, which the lease wait below waits for
+    if (jobs::Registry::Alive())
+        jobs::Registry::Instance().CancelInstance(emulatorId);
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         messageCenter.Post(NC_EMULATOR_INSTANCE_DESTROYED, new SimpleTextPayload(emulatorId), true);
@@ -1273,6 +1278,9 @@ void EmulatorManager::ShutdownAllEmulators()
     // (see RemoveEmulatorInstance())
     for (const auto& emulator : retiring)
         emulator->BeginRetirement();
+    if (jobs::Registry::Alive())
+        for (const std::string& id : ids)
+            jobs::Registry::Instance().CancelInstance(id);
 
     if (ids.empty())
     {

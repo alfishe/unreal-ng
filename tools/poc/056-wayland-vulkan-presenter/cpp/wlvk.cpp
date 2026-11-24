@@ -1,4 +1,4 @@
-// POC 054: a Vulkan swapchain on a Wayland surface, frames timed like the emulator's (one every 20 ms with a target
+// POC 056: a Vulkan swapchain on a Wayland surface, frames timed like the emulator's (one every 20 ms with a target
 // on CLOCK_MONOTONIC), screen times from wp_presentation and VK_KHR_present_wait, two ways to show a frame at its time.
 //
 //   wlvk --variant a|b --mode fifo|mailbox|immediate [--lead-ms N] [--adaptive] [--frames N] [--period-ms 20]
@@ -562,7 +562,7 @@ int main(int argc, char** argv)
     xdg_surface_add_listener(g_wl.xsurface, &kXdgSurface, nullptr);
     g_wl.toplevel = xdg_surface_get_toplevel(g_wl.xsurface);
     xdg_toplevel_add_listener(g_wl.toplevel, &kTop, nullptr);
-    xdg_toplevel_set_title(g_wl.toplevel, "POC 054");
+    xdg_toplevel_set_title(g_wl.toplevel, "POC 056");
     xdg_toplevel_set_app_id(g_wl.toplevel, "poc054");
     if (opt.variant == 'b')
     {

@@ -218,3 +218,30 @@ TEST(SoundChip_NeoGS_Ttd, ARestoreLeavesNoFalseActivityPulse)
     EXPECT_FALSE(b.chip->hadHostTransferActivityLastFrame()) << "the frame after the restore moved nothing";
     EXPECT_FALSE(b.chip->hadDmaActivityLastFrame());
 }
+
+// The MPAGEX shadow travels in the blob (fixed byte 66, zero in a layout 4 blob made before it): a restore shows the
+// write the recording's card saw, an older blob reads as power-on's 0
+TEST(SoundChip_NeoGS_Ttd, TheMpagExShadowTravelsInTheBlob)
+{
+    NeoGSConfig config;
+    config.mp3Support = NGSMP3SupportKind::None;
+    Card a(config);
+    a.frame();
+    a.chip->memory().setConfig(0x01 | NeoGSMemory::CFG_EXPAG);
+    a.chip->memory().writeMpagEx(0x2A);
+    ASSERT_EQ(a.chip->memory().lastMpagEx(), 0x2A);
+    std::vector<uint8_t> blob = a.save();
+    EXPECT_EQ(blob[66], 0x2A);
+
+    Card b(config);
+    b.frame();
+    b.chip->TTDLoadState(blob.data());
+    EXPECT_EQ(b.chip->memory().lastMpagEx(), 0x2A);
+    EXPECT_EQ(b.save(), blob) << "the loaded blob saves back unchanged";
+
+    blob[66] = 0;  // a blob from before the shadow
+    b.chip->memory().writeMpagEx(0x11);
+    b.chip->TTDLoadState(blob.data());
+    EXPECT_EQ(b.chip->memory().lastMpagEx(), 0);
+    EXPECT_EQ(b.chip->memory().page(3), a.chip->memory().page(3)) << "the pages come from their own bytes";
+}

@@ -13,8 +13,11 @@
 
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/slots/cards/multisound/multisoundlogic.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
 #include "emulator/sound/midi/midicontrol.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/state/devicecatalog.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/state/statenodejson.h"
 #include "multisoundstagedmachine.h"
@@ -164,4 +167,64 @@ TEST(MultiSoundDeviceState_Test, MidiControlRefusalsAndTheReplayApply)
     EXPECT_EQ(refused.httpStatus, 404);
     EXPECT_NE(refused.message.find("no MIDI synthesizer"), std::string::npos) << refused.message;
     EXPECT_FALSE(ttd::ApplyInputEvent(event, ttd::InputDevicesOf(none.Context()))) << "no card: not applied";
+}
+
+/// The card's General Sound (the debugger's `ms` CPU, gs-debugger P5.5): the `gs` part has the GS slot report's fields
+/// (strip, CPU clock and frame cycle, protocol), and the card panes of the GS slot exist for it in the catalog with the
+/// commands that read them (`--cpu ms`); a machine without the card has none of them
+TEST(MultiSoundDeviceState_Test, TheCardsGsHasTheGsReportAndTheCardPanes)
+{
+    StagedMachine m("pentagon128k", "zxbus.1 = multisound");
+    ASSERT_TRUE(m.Ok());
+    const StateNode report = DeviceState::MultiSound(m.Context());
+    ASSERT_TRUE(Field(report, "available").b) << Field(report, "description").s;
+    const StateNode& gs = Field(report, "gs");
+    for (const char* key : {"device", "implementation", "status", "channels", "cpu", "strip"})
+        EXPECT_NE(gs.find(key), nullptr) << key;
+    EXPECT_EQ(Field(gs, "implementation").s, "lle");
+    EXPECT_TRUE(Field(Field(gs, "cpu"), "coprocessor").b);
+    EXPECT_EQ(Field(Field(gs, "cpu"), "clock_hz").i, 16000000) << "the MultiSound's GS runs at 16 MHz";
+    EXPECT_NE(Field(gs, "cpu").find("frame_cycle"), nullptr);
+    EXPECT_NE(gs.find("protocol"), nullptr) << "the card's own command log decodes its conversation";
+    EXPECT_EQ(Field(gs, "strip").s.rfind("GS Z80 16 MHz", 0), 0u) << Field(gs, "strip").s;
+
+    const StateNode catalog = DeviceState::Catalog(m.Context(), true);
+    auto entry = [&catalog](const std::string& id) -> const StateNode* {
+        for (const StateNode& r : catalog.find("reports")->items)
+            if (r.find("id")->s == id)
+                return &r;
+        return nullptr;
+    };
+    const StateNode* commands = entry("ms-gs-commands");
+    ASSERT_NE(commands, nullptr);
+    EXPECT_TRUE(Field(*commands, "available").b) << Field(*commands, "description").s;
+    EXPECT_EQ(Field(*commands, "route").s.rfind("history/zxbus.1.gs.commands", 0), 0u) << Field(*commands, "route").s;
+    const StateNode* stats = entry("ms-gs-stats");
+    ASSERT_NE(stats, nullptr);
+    EXPECT_TRUE(Field(*stats, "available").b) << Field(*stats, "description").s;
+    EXPECT_EQ(Field(*stats, "cli").s, "gs stats --cpu ms");
+    const StateNode* firmware = entry("ms-gs-firmware");
+    ASSERT_NE(firmware, nullptr);
+    EXPECT_EQ(Field(*firmware, "route").s, "state/audio/gs/firmware?cpu=ms");
+
+    // The reads by CPU: the MultiSound's card answers, an unknown CPU is refused
+    GSStatsQuery query;
+    query.cpu = "ms";
+    const GSStatsReply read = GSStatsRead(m.Context(), query);
+    EXPECT_EQ(read.status, 200) << read.text;
+    EXPECT_EQ(Field(read.body, "implementation").s, "lle");
+    query.cpu = "xx";
+    EXPECT_EQ(GSStatsRead(m.Context(), query).status, 404);
+    GSFirmwareObjectsQuery objects;
+    objects.cpu = "xx";
+    EXPECT_EQ(GSFirmwareObjectsRead(m.Context(), objects).status, 404);
+
+    StagedMachine plain("pentagon128k", "");
+    ASSERT_TRUE(plain.Ok());
+    const StateNode none = DeviceState::Catalog(plain.Context(), true);
+    for (const StateNode& r : none.find("reports")->items)
+        if (r.find("id")->s.rfind("ms-gs-", 0) == 0)
+            EXPECT_FALSE(Field(r, "available").b) << r.find("id")->s;
+    query.cpu = "ms";
+    EXPECT_EQ(GSStatsRead(plain.Context(), query).status, 404);
 }

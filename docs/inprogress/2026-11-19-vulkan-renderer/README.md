@@ -4,7 +4,7 @@ Status: in progress (2026-11-19). Owner decision: a Vulkan renderer of its own n
 Vulkan shows"); GL stays the fallback. Every shader effect runs on both and the two are compared pixel by pixel.
 
 Background: [frame presenter](../2026-10-26-frame-presenter/README.md) section 6.2 (the deferred Vulkan presenter) and
-[POC 054](../../../tools/poc/054-wayland-vulkan-presenter/README.md) (Wayland screen times, timed presents, Mesa's commit
+[POC 056](../../../tools/poc/056-wayland-vulkan-presenter/README.md) (Wayland screen times, timed presents, Mesa's commit
 timer).
 
 ## 1. What the screen renders today (GL)

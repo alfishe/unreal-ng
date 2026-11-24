@@ -953,6 +953,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         raise();
         activateWindow();
     });
+    // The NeoGS SD card pane's "Open media panel" (gs-debugger N8): the media panel shown on the card's slot
+    connect(debuggerWindow, &DebuggerWindow::mediaPanelRequested, this, [this](const QString& slot) {
+        if (!mediaPanelWindow)
+            return;
+        handleMediaPanelToggled(true);
+        mediaPanelWindow->focusSlot(slot.toStdString());
+        mediaPanelWindow->raise();
+        mediaPanelWindow->activateWindow();
+    });
     // The surfaces' context (control surfaces architecture.md §6): the debugger's panes and the TTD panel set it
     _hostControllers->SetContextWidgets(debuggerWindow->contextPanes(), _ttdWidget);
     connect(_ttdWidget, &TtdWidget::visibilityChanged, _hostControllers, &HostControllers::OnTtdPanelVisible);

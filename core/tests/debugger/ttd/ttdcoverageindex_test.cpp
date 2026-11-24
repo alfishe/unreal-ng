@@ -12,7 +12,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <cstring>
 #include <set>
 #include <sstream>
@@ -584,4 +586,243 @@ TEST(TTD_CoverageIndex_Test, EverySetSizeSealsExactlyAndLeavesTheNextFrameClean)
         ASSERT_TRUE(index.GetFrameKeys(TTDCoverageKind::Read, 11, got));
         EXPECT_EQ(got, std::vector<TTDCoverageKey>{MakeCoverageKey(1, 0x0123)}) << "nothing of frame 10 left over";
     }
+}
+
+// A recording folder writes the index as parts, one per pause, each from where the last one's open blocks started
+// (RepeatFrom): the parts joined in order (AppendLater) are the index written whole. A cut between two pauses (a
+// resume from the past) is replaced by the later part: nothing of the dropped future survives the join
+namespace
+{
+std::unique_ptr<TTDCoverageIndex> ReadBack(const TTDCoverageIndex& index, uint64_t fromFrame)
+{
+    std::stringstream buf;
+    EXPECT_TRUE(index.Serialize(buf, fromFrame));
+    auto out = std::make_unique<TTDCoverageIndex>();
+    EXPECT_TRUE(out->Deserialize(buf));
+    return out;
+}
+
+void ExpectSameFrames(const TTDCoverageIndex& a, const TTDCoverageIndex& b, uint64_t frames)
+{
+    for (const TTDCoverageKind kind : {TTDCoverageKind::Executed, TTDCoverageKind::Written})
+    {
+        uint64_t af = 0, al = 0, bf = 0, bl = 0;
+        ASSERT_EQ(a.CoveredRange(kind, af, al), b.CoveredRange(kind, bf, bl));
+        EXPECT_EQ(af, bf);
+        EXPECT_EQ(al, bl);
+        for (uint64_t f = 0; f < frames; ++f)
+        {
+            std::vector<TTDCoverageKey> ka, kb;
+            const bool ha = a.GetFrameKeys(kind, f, ka);
+            const bool hb = b.GetFrameKeys(kind, f, kb);
+            ASSERT_EQ(ha, hb) << "frame " << f;
+            EXPECT_EQ(ka, kb) << "frame " << f;
+        }
+    }
+}
+
+void SealFrames(TTDCoverageIndex& index, uint64_t from, uint64_t to, uint32_t salt)
+{
+    for (uint64_t f = from; f < to; ++f)
+    {
+        index.Record(TTDCoverageKind::Executed, MakeCoverageKey(0, static_cast<uint16_t>((f * 7 + salt) & 0x3FFF)));
+        index.Record(TTDCoverageKind::Written, MakeCoverageKey(1, static_cast<uint16_t>((f * 13 + salt) & 0x3FFF)));
+        index.SealFrame(f);
+    }
+}
+}  // namespace
+
+TEST(TTD_CoverageIndex_Test, PartsJoinedInOrderAreTheWholeIndex)
+{
+    auto live = std::make_unique<TTDCoverageIndex>();
+    SealFrames(*live, 0, 100, 1);   // a pause inside a block (64 frames each)
+    std::unique_ptr<TTDCoverageIndex> joined = ReadBack(*live, 0);
+    uint64_t from = live->RepeatFrom();
+    EXPECT_EQ(from, 64u) << "the open block is written again with the next part";
+    SealFrames(*live, 100, 300, 1);
+    std::unique_ptr<TTDCoverageIndex> part = ReadBack(*live, from);
+    joined->AppendLater(std::move(*part), from);
+    ExpectSameFrames(*joined, *ReadBack(*live, 0), 320);
+}
+
+TEST(TTD_CoverageIndex_Test, APartAfterACutReplacesTheDroppedFuture)
+{
+    auto live = std::make_unique<TTDCoverageIndex>();
+    SealFrames(*live, 0, 200, 1);
+    std::unique_ptr<TTDCoverageIndex> joined = ReadBack(*live, 0);
+    uint64_t from = live->RepeatFrom();
+    // Back to frame 150 (inside a block), a new future with other keys from there; the controller lowers the part
+    live->DropFramesFrom(150, true);
+    from = std::min<uint64_t>(from, 150);
+    SealFrames(*live, 150, 260, 99);   // frame 150 seals as a hole (a mid-frame resume)
+    std::unique_ptr<TTDCoverageIndex> part = ReadBack(*live, from);
+    joined->AppendLater(std::move(*part), from);
+    // Every frame the join holds is the live index's; frames it lacks are holes it says it lacks (never stale)
+    for (uint64_t f = 0; f < 270; ++f)
+    {
+        std::vector<TTDCoverageKey> got, want;
+        const bool has = joined->GetFrameKeys(TTDCoverageKind::Written, f, got);
+        const bool liveHas = live->GetFrameKeys(TTDCoverageKind::Written, f, want);
+        if (has)
+        {
+            ASSERT_TRUE(liveHas) << "frame " << f;
+            EXPECT_EQ(got, want) << "frame " << f;
+        }
+    }
+    std::vector<TTDCoverageKey> keys;
+    EXPECT_TRUE(joined->GetFrameKeys(TTDCoverageKind::Written, 200, keys)) << "the new future is held";
+    EXPECT_TRUE(joined->GetFrameKeys(TTDCoverageKind::Written, 100, keys)) << "the past before the cut too";
+}
+
+TEST(TTD_CoverageIndex_Test, APartHoldsOnlyTheBlocksSinceTheLastOne)
+{
+    auto live = std::make_unique<TTDCoverageIndex>();
+    SealFrames(*live, 0, 6400, 1);
+    std::stringstream whole, part;
+    ASSERT_TRUE(live->Serialize(whole, 0));
+    const uint64_t from = live->RepeatFrom();
+    SealFrames(*live, 6400, 6464, 1);
+    ASSERT_TRUE(live->Serialize(part, from));
+    EXPECT_LT(part.str().size() * 20, whole.str().size()) << "a part of 64 frames after 6,400";
+}
+
+namespace
+{
+/// Distinct keys and per-frame counts of [first, last] the slow way: every frame decoded
+void BruteForce(const TTDCoverageIndex& index, TTDCoverageKind kind, uint64_t first, uint64_t last,
+                uint32_t& distinct, std::vector<uint32_t>& counts)
+{
+    std::set<TTDCoverageKey> keys;
+    counts.assign(last - first + 1, 0);
+    std::vector<TTDCoverageKey> frame;
+    for (uint64_t f = first; f <= last; ++f)
+        if (index.GetFrameKeys(kind, f, frame))
+        {
+            counts[f - first] = static_cast<uint32_t>(frame.size());
+            keys.insert(frame.begin(), frame.end());
+        }
+    distinct = static_cast<uint32_t>(keys.size());
+}
+
+void ExpectSummariesMatch(const TTDCoverageIndex& index, uint64_t frames)
+{
+    std::vector<uint32_t> stamp(size_t{1} << 23, 0);   // the 23-bit key space
+    uint32_t mark = 0;
+    // Ranges inside one block, across block edges (a block's start or end held), whole blocks, the open block, past
+    // the end
+    const std::pair<uint64_t, uint64_t> ranges[] = {{0, frames - 1}, {0, 63}, {10, 20}, {60, 140}, {64, 191}, {0, 30}, {33, 63}, {70, 127},
+                                                    {100, frames - 1}, {frames - 5, frames + 50}, {0, 0}};
+    for (const TTDCoverageKind kind : {TTDCoverageKind::Executed, TTDCoverageKind::Written})
+        for (int pass = 0; pass < 2; ++pass)   // the second pass finds the summaries built
+            for (const auto& [first, last] : ranges)
+            {
+                uint32_t want = 0;
+                std::vector<uint32_t> wantCounts;
+                BruteForce(index, kind, first, last, want, wantCounts);
+                EXPECT_EQ(index.CountDistinctKeys(kind, first, last, stamp, ++mark), want)
+                    << "frames " << first << ".." << last << " pass " << pass;
+                std::vector<uint32_t> counts(last - first + 1, 0);
+                index.FrameKeyCounts(kind, first, last, counts.data());
+                EXPECT_EQ(counts, wantCounts) << "frames " << first << ".." << last << " pass " << pass;
+            }
+    // The block mask: never "no key in the range" for a frame holding one; "none" proven for a page never written
+    std::vector<TTDCoverageKey> keys;
+    const std::pair<TTDCoverageKey, TTDCoverageKey> spans[] = {
+        {MakeCoverageKey(5, 0), MakeCoverageKey(5, 0x1000)}, {MakeCoverageKey(1, 0x100), MakeCoverageKey(1, 0x2000)},
+        {MakeCoverageKey(9, 0), MakeCoverageKey(9, 0x3FFF)}, {MakeCoverageKey(5, 0x1B00), MakeCoverageKey(5, 0x1C00)},
+        {MakeCoverageKey(5, 0x1B07), MakeCoverageKey(5, 0x1B09)}};
+    size_t proven = 0;
+    size_t rowAnswers = 0;
+    for (uint64_t f = 0; f < frames; ++f)
+        if (index.GetFrameKeys(TTDCoverageKind::Written, f, keys))
+            for (const auto& [lo, hi] : spans)
+            {
+                const bool has = std::lower_bound(keys.begin(), keys.end(), lo) != std::lower_bound(keys.begin(), keys.end(), hi);
+                const bool may = index.BlockMayHaveKeyIn(TTDCoverageKind::Written, f, lo, hi);
+                if (has)
+                    EXPECT_TRUE(may) << "frame " << f;
+                proven += !may;
+                // The frame's rows: an answer they give is the keys' answer
+                const int rows = index.FrameWroteIn(f, lo, hi);
+                if (rows >= 0)
+                    EXPECT_EQ(rows == 1, has) << "frame " << f << " keys " << lo << ".." << hi;
+                rowAnswers += rows >= 0;
+            }
+    EXPECT_GT(proven, 128u) << "page 9 is never written: the sealed blocks prove it";
+    EXPECT_GT(rowAnswers, frames) << "the sealed blocks' rows answer whole rows without the keys";
+}
+}  // namespace
+
+TEST(TTD_CoverageIndex_Test, BlockSummariesCountWhatTheFramesHold)
+{
+    auto index = std::make_unique<TTDCoverageIndex>();
+    // Keys repeating across frames (a loop) and new ones per frame, so a union is smaller than the sum
+    for (uint64_t f = 0; f < 300; ++f)
+    {
+        for (uint16_t k = 0; k < 40; ++k)
+            index->Record(TTDCoverageKind::Executed, MakeCoverageKey(0, static_cast<uint16_t>(0x100 + k)));
+        index->Record(TTDCoverageKind::Executed, MakeCoverageKey(2, static_cast<uint16_t>((f * 37) & 0x3FFF)));
+        if (f % 3 == 0)
+            index->Record(TTDCoverageKind::Written, MakeCoverageKey(5, static_cast<uint16_t>(f & 0x3FFF)));
+        if (f % 5 == 0)   // a byte inside a row, for ranges that cut it
+            index->Record(TTDCoverageKind::Written, MakeCoverageKey(5, static_cast<uint16_t>(0x1B08 + f % 2)));
+        index->SealFrame(f);
+    }
+    ExpectSummariesMatch(*index, 300);
+
+    // A cut inside a summarised block: the block is cut and summarised again; a hole after it
+    index->DropFramesFrom(150, true);
+    SealFrames(*index, 150, 230, 7);
+    ExpectSummariesMatch(*index, 230);
+
+    // Read back from a file: no summaries until asked
+    ExpectSummariesMatch(*ReadBack(*index, 0), 230);
+}
+
+/// A range holding whole runs of blocks counts the runs' unions: the same distinct keys as frame by frame, after a cut
+/// inside a run, a cut at a run's edge and read back from a file (no runs then)
+TEST(TTD_CoverageIndex_Test, RunsOfBlocksCountWhatTheFramesHold)
+{
+    auto index = std::make_unique<TTDCoverageIndex>();
+    auto seal = [&](uint64_t from, uint64_t to, uint32_t salt) {
+        for (uint64_t f = from; f < to; ++f)
+        {
+            for (uint16_t k = 0; k < 16; ++k)   // a loop, and code moving on slowly
+                index->Record(TTDCoverageKind::Executed, MakeCoverageKey(0, static_cast<uint16_t>(0x100 + k)));
+            index->Record(TTDCoverageKind::Executed, MakeCoverageKey(1, static_cast<uint16_t>((f / 50 * 13 + salt) & 0x3FFF)));
+            index->Record(TTDCoverageKind::Executed, MakeCoverageKey(2, static_cast<uint16_t>((f * 37 + salt) & 0x3FFF)));
+            index->SealFrame(f);
+        }
+    };
+    std::vector<uint32_t> stamp(size_t{1} << 23, 0);
+    uint32_t mark = 0;
+    auto expectMatch = [&](const TTDCoverageIndex& in, uint64_t frames, const char* what) {
+        // Ranges holding runs of 4 and 32 blocks, cutting them, aligned and not
+        const std::pair<uint64_t, uint64_t> ranges[] = {{0, frames - 1}, {0, 255}, {0, 2047}, {256, 2303}, {100, 2500},
+                                                        {1, 4095}, {2048, frames - 1}, {64, 1023}, {255, 512}};
+        for (const auto& [first, last] : ranges)
+        {
+            if (first >= frames)
+                continue;
+            uint32_t want = 0;
+            std::vector<uint32_t> counts;
+            BruteForce(in, TTDCoverageKind::Executed, first, last, want, counts);
+            EXPECT_EQ(in.CountDistinctKeys(TTDCoverageKind::Executed, first, last, stamp, ++mark), want)
+                << what << ": frames " << first << ".." << last;
+        }
+    };
+    seal(0, 4200, 0);
+    expectMatch(*index, 4200, "sealed");
+
+    // Cut inside a run of 32 (and one of 4), then a different future
+    index->DropFramesFrom(3000, true);
+    seal(3000, 4400, 5);
+    expectMatch(*index, 4400, "cut inside a run");
+
+    // Cut at a run's edge (block 32)
+    index->DropFramesFrom(2048, false);
+    seal(2048, 4400, 9);
+    expectMatch(*index, 4400, "cut at a run's edge");
+
+    expectMatch(*ReadBack(*index, 0), 4400, "read back");
 }

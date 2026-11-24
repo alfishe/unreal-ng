@@ -158,7 +158,7 @@ bool ReadBranchRecord(TTDByteReader& r, TTDGuid& guid, TTDBranchMeta& meta, TTDP
 }
 }  // namespace
 
-std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool declareAll) const
+std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool declareAll, uint64_t coverageFrom) const
 {
     TTDSessionFacts facts;
     facts.modelId = _loadedFromFile ? _sessionModelId
@@ -179,7 +179,14 @@ std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool dec
     std::vector<TTDHolderStream> streams;
     streams.push_back({holderstream::kFacts, "controller-facts", EncodeSessionFacts(facts)});
     // The trunk's coverage (each branch's goes with its own records)
-    std::vector<uint8_t> coverageBytes = CoverageBytes(*_lines.front());
+    std::vector<uint8_t> coverageBytes = CoverageBytes(*_lines.front(), declareAll ? coverageFrom : 0);
+    if (declareAll)
+    {
+        // A recording folder's part: where it starts, read before the coverage record (the loader joins the parts)
+        TTDByteWriter from;
+        from.U64(coverageFrom);
+        streams.push_back({holderstream::kCoverageFrom, "coverage-from", std::move(from.bytes)});
+    }
     if (!coverageBytes.empty() || declareAll)
         streams.push_back({holderstream::kCoverage, "coverage", std::move(coverageBytes)});
     streams.push_back({holderstream::kBookmarks, "bookmarks", EncodeBookmarks(_bookmarks)});
@@ -326,12 +333,55 @@ void TimeTravelController::AddLineageToSave(TTDSessionSaveParams& params)
     for (TTDHolderStream& h : params.holderStreams)
         if (h.id == holderstream::kBookmarks)
             streams.push_back({h.id, h.name, EncodeBookmarks(lineage)});
-        else if (h.id != holderstream::kCoverage || _tip == kTTDTrunk)
-            streams.push_back(std::move(h));
+        else if ((h.id != holderstream::kCoverage && h.id != holderstream::kCoverageFrom) || _tip == kTTDTrunk)
+            streams.push_back(std::move(h));   // the part's start goes with the part
     params.holderStreams = std::move(streams);
 }
 
-std::vector<uint8_t> TimeTravelController::CoverageBytes(const ControllerLine& line) const
+std::vector<uint8_t> TimeTravelController::JoinCoverageParts(std::vector<std::pair<uint64_t, std::vector<uint8_t>>>& parts,
+                                                             size_t* unreadParts)
+{
+    if (parts.empty())
+        return {};
+    // A saved file holds the index whole; a recording folder a part per pause, each from where the last one's open
+    // blocks started: joined in file order, a later part replacing what it repeats
+    if (parts.size() == 1 && parts.front().first == 0)
+        return std::move(parts.front().second);
+    auto joined = std::make_unique<TTDCoverageIndex>();
+    auto part = std::make_unique<TTDCoverageIndex>();
+    bool any = false;
+    for (auto& [from, bytes] : parts)
+    {
+        std::istringstream in(std::string(bytes.begin(), bytes.end()));
+        const bool read = part->Deserialize(in);
+        bytes.clear();
+        bytes.shrink_to_fit();
+        if (!read)
+        {
+            // A damaged part: what it replaced is dropped too (holes, queries replay them), never kept stale
+            part->Clear();
+            if (unreadParts)
+                ++*unreadParts;
+        }
+        if (!any && read)
+        {
+            std::swap(joined, part);
+            any = true;
+            continue;
+        }
+        if (any)
+            joined->AppendLater(std::move(*part), from);
+    }
+    if (!any)
+        return {};
+    std::ostringstream out;
+    if (!joined->Serialize(out))
+        return {};
+    const std::string text = out.str();
+    return std::vector<uint8_t>(text.begin(), text.end());
+}
+
+std::vector<uint8_t> TimeTravelController::CoverageBytes(const ControllerLine& line, uint64_t fromFrame) const
 {
     std::vector<uint8_t> bytes;
     if (line.coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0 ||
@@ -339,7 +389,7 @@ std::vector<uint8_t> TimeTravelController::CoverageBytes(const ControllerLine& l
         line.coverageIndex.SealedFrameCount(TTDCoverageKind::Read) > 0)
     {
         std::ostringstream coverage;
-        if (line.coverageIndex.Serialize(coverage))
+        if (line.coverageIndex.Serialize(coverage, fromFrame))
         {
             const std::string text = coverage.str();
             bytes.assign(text.begin(), text.end());
@@ -476,8 +526,10 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
         return nullptr;
     }
 
-    if (const auto it = report.holderStreams.find(holderstream::kCoverage); it != report.holderStreams.end())
-        coverage = it->second;
+    size_t unreadCoverage = 0;
+    coverage = JoinCoverageParts(report.coverageParts, &unreadCoverage);
+    if (unreadCoverage)
+        MLOGWARNING("TimeTravelController — %zu coverage part(s) could not be read: left out", unreadCoverage);
     // Branches: built into the tree by CommitLoadedSession
     _loadedBranches = {};
     _loadedBranches.records = std::move(report.lineMeta);
@@ -518,7 +570,8 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
     _engine = std::move(loaded);
     _shadowEngine = _engine.get();
     _replayEngine = _engine.get();
-    _engine->SetSegmentLoader([this](uint32_t line, size_t segment) { return LoadSegmentFromFile(line, segment); });
+    _engine->SetSegmentLoader(
+        [this](uint32_t line, size_t segment, size_t upTo) { return LoadSegmentFromFile(line, segment, upTo); });
     ApplyHistoryPolicy();
     RegisterScreenshotStream(*_engine);
 

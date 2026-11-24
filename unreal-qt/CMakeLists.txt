@@ -888,6 +888,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointdialog.h"
         # The debugger's stop line: the breakpoint the machine stopped at, in words
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
+        # The card's breakpoints: event kinds, the card CPU's manager, the list's CPU column (gs-debugger TODO P5.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointcardevents_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.h"
         # The Embedded debugger's time controls and branch drop-down (TTD branches debuggers.md §4)
@@ -898,6 +900,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggercputabs_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.h"
+        # The card run controls: Run to's card entries, Step other, Ctrl+1 / Ctrl+2 (gs-debugger TODO P5.4)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggercardrun_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercardrun.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercardrun.h"
         # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"
@@ -920,6 +926,28 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/nextpanes.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.h"
+        # The debugger's General Sound panes: log, protocol, firmware, hardware, stats (gs-debugger TODO P5.1)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/cardpanes_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/cardpanes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/cardpanes.h"
+        # The NeoGS boards (gs-debugger TODO P5.5): the core's device boards drawn by one renderer
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/boardpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/boardpane.h"
+        # The NeoGS DMA pane's ZX-DMA trace (Trace ▸, gui-card-debugger.md B3.2)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/zxdmatraceview.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/zxdmatraceview.h"
+        # The lightweight player's inspector panes: interpreter, player (gs-debugger TODO P5.5, A10)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.h"
+        # The NeoGS SD card pane's "Open media panel" (gs-debugger N8): the media panel focused on the card's slot
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/flattendialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/flattendialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/mediapanelmodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/mediapanelmodel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/flattenchoice.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/flattenchoice.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)

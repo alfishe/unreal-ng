@@ -268,6 +268,15 @@ public:
     void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes);
     /// Two tiers: the read-back cache's capacity in segments (default 4, at least 1)
     void SetReadBackCapacity(size_t segments);
+    /// Two tiers: a restore reads the stretch of an evicted segment it needs through the file's seek index (the
+    /// default); false reads the file from its start up to the checkpoint, as a file without the index is read
+    /// (tests compare the two, measurements have both sides)
+    void SetSegmentWindowReads(bool on) { _segmentWindowReads = on; }
+    /// Two tiers: the segment files written from now on get their piece tables and seek index (the default); false
+    /// writes them as before (tests of a file without them, a measurement's other side)
+    void SetSegmentSeekIndex(bool on) { _segmentSeekIndex = on; }
+    /// Read backs that took one stretch through a seek index (of GetSessionInfo().readBackLoads)
+    uint64_t ReadBackWindowLoads() const { return _readBackWindowLoads; }
     /// Tests (T-C10): completed segment files are held back from the eviction while @p hold is set; clearing it
     /// offers them
     void HoldSegmentFilesForTesting(bool hold);
@@ -311,7 +320,8 @@ public:
     /// engine (Phase 3, Step 4; FR-14): ConfigurationDiffers for each setting
     /// the session was recorded with that this machine lacks (a replay:
     /// NotBitExact; the model or RAM size: Degraded), MediaVersionDiffers for
-    /// a medium that changed since the checkpoint and cannot go back. Exact
+    /// a medium that changed since the checkpoint and cannot go back, ReplayDiverged for a device computed again
+    /// on load that missed its recorded state (NotBitExact). Exact
     /// when everything matches. The restore and the replay run either way
     const TTDRestoreResult& LastEngineCheck() const { return _lastEngineCheck; }
 
@@ -1279,6 +1289,9 @@ public:
 
     /// @brief Read-only access to the coverage index (control thread).
     inline const TTDCoverageIndex& GetCoverageIndex() const { return _line->coverageIndex; }
+    /// The coverage records of a loaded file in order (TTDSessionLoadReport::coverageParts) as one index
+    static std::vector<uint8_t> JoinCoverageParts(std::vector<std::pair<uint64_t, std::vector<uint8_t>>>& parts,
+                                                  size_t* unreadParts = nullptr);
 
     /// @brief Is per-frame coverage collection enabled for new sessions?
     inline bool IsCoverageIndexEnabled() const { return _enableCoverageIndex; }
@@ -2252,7 +2265,8 @@ private:
         return lines;
     }
     /// A line's coverage index as a holder stream's bytes (empty: nothing sealed)
-    std::vector<uint8_t> CoverageBytes(const ControllerLine& line) const;
+    /// The line's coverage index serialized, whole or (a recording folder's part) from @p fromFrame on
+    std::vector<uint8_t> CoverageBytes(const ControllerLine& line, uint64_t fromFrame = 0) const;
     /// Every line by branch id (the trunk first) and the one read and written now
     std::vector<std::unique_ptr<ControllerLine>> _lines = MakeTrunkLine();
     ControllerLine* _line = _lines.front().get();
@@ -2350,6 +2364,15 @@ private:
     /// Reused across builds; vector capacities are retained, so the sizable
     /// part (the RAM copy, ≤ ~1 MB) is allocated at most once per browse.
     LiveStateSnapshot _liveSnapshot;
+    /// ComposeDisplay's buffers, one set per nesting depth (a reentrant debugger view composes inside a compose)
+    struct ComposeScratch
+    {
+        LiveStateSnapshot live;
+        std::vector<uint8_t> composed;
+        std::vector<uint16_t> planeB;
+    };
+    std::vector<std::unique_ptr<ComposeScratch>> _composeScratch;
+    size_t _composeDepth = 0;
 
     /// @brief Capture the live machine state into `out` (pure copies; no
     /// timeline or dirty-tracker effects). Without @p withMemory the RAM, the framebuffer and plane B are left
@@ -2471,6 +2494,24 @@ private:
     /// Branches in the folder (storage.md §4): a file holds one line; only the active one records
     uint32_t _shadowWriterLine = 0;              ///< the engine line _shadowWriter writes
     std::set<uint32_t> _shadowLinesWithFiles;    ///< lines with a file in the folder
+    /// Where the last file finished at its line's end (a pause) left the journals: the line's next file opens with
+    /// the records after it, recorded before its first checkpoint (StartLineFiles)
+    struct ShadowJournalEnds
+    {
+        uint32_t line = UINT32_MAX;
+        size_t checkpoints = 0;   ///< the line's checkpoint count at the finish
+        TTDSessionSaveParams::JournalStart ends;
+    };
+    ShadowJournalEnds _shadowJournalEnds;
+    /// The frame the folder's next coverage part starts at: each pause writes the trunk's index from here, not whole
+    /// (90 MB at 240,000 frames, written at every pause before 2026-11-21). Lowered by a cut of the index, 0 when a
+    /// file that held a part may be gone
+    uint64_t _shadowCoverageFrom = 0;
+    /// Where the part written by the last FinishShadowFiles started: a resume that writes that file again loses it
+    uint64_t _shadowLastCoveragePartFrom = 0;
+    /// The live trunk writer's closed files that carry a coverage part, by the writer's file number: where each part
+    /// starts (a resume in the past deletes the files from its segment on, and their parts with them)
+    std::map<uint32_t, uint64_t> _shadowCoverageParts;
     TTDSessionSaveParams _shadowParams;          ///< the folder's files: identity, holder streams, branch records
     bool _shadowFilesStopped = false;            ///< writing failed: no new writer until the session's next folder
     uint64_t _shadowFolderSerial = UINT64_MAX;   ///< the engine's segments begun when the folder was made
@@ -2499,7 +2540,8 @@ private:
     /// The controller's holder streams of a session file (facts, coverage,
     /// bookmarks) as they are now. @p declareAll: coverage too when empty (a
     /// recording's files declare the same streams in every segment)
-    std::vector<TTDHolderStream> SessionHolderStreams(bool declareAll) const;
+    /// @p declareAll: a recording folder's (every id declared, the coverage as a part from @p coverageFrom)
+    std::vector<TTDHolderStream> SessionHolderStreams(bool declareAll, uint64_t coverageFrom = 0) const;
 
 public:
     /// Frame-boundary stream 0 of the shadow engine: width u16, height u16,
@@ -2562,6 +2604,8 @@ private:
     bool _writtenHeld = false;                        ///< PeekWrittenSinceRestore: the next take merges
     std::vector<uint16_t> _writtenPages;              ///< TakeWrittenSinceRestore: the dirty tracker's pages
     std::vector<uint32_t> _writtenScratch;
+    /// The next shadow capture opens a session (its first, or the machine's RAM size changed): a rescan
+    bool ShadowSessionDue(bool baseline) const;
     /// Hand this capture to the shadow engine
     bool FeedShadow(const TTDCheckpoint& out, bool baseline);
     /// Per registry entry: its index in the shadow engine's device table, -1 when it has none (no state). The
@@ -2621,8 +2665,12 @@ private:
     uint64_t _tierCheckedFiles = UINT64_MAX;   ///< _segmentFilesSerial at the last full check
     uint64_t _tierCheckedSegment = UINT64_MAX; ///< segments begun at the last full check
     size_t _readBackCapacity = 4;              ///< the read-back cache's segments
+    std::vector<uint8_t> _readBackFileBytes;   ///< LoadSegmentFromFile: the last file read (its capacity reused)
     bool _readBackUnbounded = false;           ///< Save, Check: every segment read back for the call
     uint64_t _readBackLoads = 0;               ///< segments read back from their files
+    uint64_t _readBackWindowLoads = 0;         ///< of them: one stretch read through the file's seek index
+    bool _segmentWindowReads = true;           ///< SetSegmentWindowReads
+    bool _segmentSeekIndex = true;             ///< SetSegmentSeekIndex
     uint64_t _readBackFailures = 0;            ///< read backs that failed (the restore reported it)
     bool _holdSegmentFiles = false;            ///< test hook: completed files are noted, not offered for eviction
     std::vector<std::pair<std::pair<uint32_t, size_t>, std::string>> _heldSegmentFiles;
@@ -2631,7 +2679,8 @@ private:
     /// The limits with the disk tier: evict segments with a complete file outside the memory window
     void EnforceDiskTier(uint64_t frames, uint64_t bytes);
     /// The engine's loader: read line @p line's segment @p segment back from its file
-    bool LoadSegmentFromFile(uint32_t line, size_t segment);
+    /// @p upTo: the checkpoint needed (the file read to the part after it), SIZE_MAX: the whole segment
+    bool LoadSegmentFromFile(uint32_t line, size_t segment, size_t upTo = SIZE_MAX);
     /// The read-back cache back to its capacity (least recently used first), keeping @p keep (line, segment)
     void TrimReadBackCache(std::pair<uint32_t, size_t> keep);
     /// A completed segment file of @p line (the writer's callback)
@@ -2690,6 +2739,7 @@ private:
     uint64_t _cardEditFrame = UINT64_MAX;    ///< the frame whose card edits the card targets hold (replay)
     uint64_t _replayRomSignature = 0;       ///< this machine's ROM set (SetReplaySource)
     TTDRestoreResult _lastEngineCheck;      ///< LastEngineCheck
+    std::vector<TTDRestoreIssue> _replayIssues;  ///< the last restore's ReplayDiverged issues (LastEngineCheck)
     /// Settings and media of the replay engine's checkpoint @p index against
     /// this machine (into _lastEngineCheck)
     void CheckEngineCheckpoint(size_t index, bool forReplay);

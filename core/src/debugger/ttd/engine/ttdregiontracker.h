@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "ttdregion.h"
@@ -100,6 +101,13 @@ public:
     /// Called before each capture: a device that tracks writes its own way
     /// (MoonSound's wave memory keeps a dirty bitmap) moves them into its trackers
     virtual void TTDBeforeCapture() {}
+    /// Called once at the start of each capture, before the device states are taken. @p rescan: the engine
+    /// offers this capture every piece of every region (a session's first capture, the first after a restore),
+    /// so a device that records its memory only now and then (the VDAC4 ESP's keyframes) takes it now
+    virtual void TTDCaptureBegins(bool rescan) { (void)rescan; }
+    /// Called before a restore asks which pieces were written since the last one: a device whose memory moves
+    /// on without marks (the VDAC4 ESP between keyframes, or re-run by its own restore) marks it here
+    virtual void TTDBeforeRestore() {}
     /// A device whose state blob also carries the memory it offers as regions
     /// (General Sound: registers + RAM) gives the engine its state without
     /// that memory: fills @p state and returns true. False: the state carries
@@ -110,12 +118,23 @@ public:
         (void)state;
         return false;
     }
+    /// The longest blob TTDStateWithoutRegions may give: 0, as long as the registry's probe (a fixed layout);
+    /// more, a blob that grows up to it (the VDAC4 ESP's keyframe state and input journal)
+    virtual size_t TTDStateWithoutRegionsLimit() const { return 0; }
     /// Load a state saved by TTDStateWithoutRegions; the regions are restored
     /// by the engine. False: the state is not one this device wrote
     virtual bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
     {
         (void)state;
         (void)size;
+        return false;
+    }
+    /// After TTDLoadStateWithoutRegions: a source that computes part of its state again on load (the VDAC4 ESP
+    /// re-runs from a keyframe) and did not reach the recorded state says why; the restore reports
+    /// replay_diverged (not_bit_exact). Asked once per load
+    virtual bool TTDLoadDiverged(std::string& detail)
+    {
+        (void)detail;
         return false;
     }
 };

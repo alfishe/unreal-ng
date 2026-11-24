@@ -581,6 +581,35 @@ TEST(LuaCardCpu_Test, TheCardCpuIsTheLastArgument)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+/// card_run_to (RunControl::CardRunTo) from a script: the reply as a table with ok; refusals are ok = false with the
+/// reason (an unknown run, a machine that is not paused), the main CPU is a script error. The runs themselves:
+/// GSCardRunTo_Test
+TEST(LuaCardCpu_Test, CardRunToAnswersAsATable)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    ASSERT_TRUE(FitGeneralSoundCard(emulator->GetContext()->pSoundManager, GSTypeKind::Z80));
+
+    BoundLua lua;
+    lua.start();
+    lua.Bind(emulator);
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(lua.executeCode(R"(
+        local r = card_run_to("sideways")
+        assert(r.ok == false and r.error:find("Unknown run") ~= nil, r.error)
+        r = card_run_to("cycle", 100, "gs")
+        assert(r.ok == false and r.error ~= nil)
+        print(r.error)
+    )", message, output)) << message;
+    EXPECT_NE(output.find("not paused"), std::string::npos) << output;
+    EXPECT_FALSE(lua.executeCode("card_run_to('int', 0, 'main')", message, output));
+    EXPECT_NE(message.find("a card's"), std::string::npos) << message;
+    lua.stop();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 /// Q3 (gs-debugger design §8A.7): a logic hook on the card writes the card while TTD records - the byte its read
 /// sees, a poke and a register - and the track keeps them; a seek back and forward replays them without the hook, and
 /// a fork from a checkpoint records its own

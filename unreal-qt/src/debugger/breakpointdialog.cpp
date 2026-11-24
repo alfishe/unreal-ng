@@ -28,6 +28,9 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "breakpointeditor.h"
 #include "breakpointgroupdialog.h"
+#include "breakpointstopline.h"
+#include "debugger/debuggercpu.h"
+#include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
 
 namespace
@@ -36,6 +39,7 @@ namespace
 enum Column
 {
     ColId = 0,
+    ColCpu,
     ColType,
     ColAddress,
     ColAccess,
@@ -149,8 +153,8 @@ BreakpointDialog::BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* 
 
 BreakpointDialog::~BreakpointDialog()
 {
-    // Unsubscribe from breakpoint change notifications
-    QMutexLocker locker(&m_mutex);
+    // Unsubscribe from breakpoint change notifications. Not under m_mutex: RemoveObserverById waits for a callback in
+    // flight, and that callback takes m_mutex (a notification arriving while the dialog closes deadlocked both)
     if (m_breakpointObserverId != 0)
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -197,7 +201,7 @@ void BreakpointDialog::setupUI()
 
     // Set the headers for the columns
     QStringList headers;
-    headers << "ID" << "Type" << "Address" << "Access" << "Status" << "Hits" << "Group" << "Condition" << "Notes";
+    headers << "ID" << "CPU" << "Type" << "Address" << "Access" << "Status" << "Hits" << "Group" << "Condition" << "Notes";
     _breakpointTable->setHeaderLabels(headers);
 
     // Make table sortable
@@ -211,15 +215,9 @@ void BreakpointDialog::setupUI()
     // Set column resize modes
     QHeaderView* header = _breakpointTable->header();
     header->setStretchLastSection(false);
-    header->setSectionResizeMode(0, QHeaderView::ResizeToContents);  // ID
-    header->setSectionResizeMode(1, QHeaderView::ResizeToContents);  // Type
-    header->setSectionResizeMode(2, QHeaderView::ResizeToContents);  // Address
-    header->setSectionResizeMode(3, QHeaderView::ResizeToContents);  // Access
-    header->setSectionResizeMode(4, QHeaderView::ResizeToContents);  // Status
-    header->setSectionResizeMode(5, QHeaderView::ResizeToContents);  // Hits
-    header->setSectionResizeMode(6, QHeaderView::ResizeToContents);  // Group
-    header->setSectionResizeMode(7, QHeaderView::ResizeToContents);  // Condition
-    header->setSectionResizeMode(8, QHeaderView::Stretch);           // Notes
+    for (int column = 0; column < ColNotes; ++column)
+        header->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColNotes, QHeaderView::Stretch);
 
     // Connect signals
     connect(_breakpointTable, &QTreeWidget::itemSelectionChanged, this,
@@ -327,6 +325,20 @@ void BreakpointDialog::setupGroupFilter()
     connect(_groupFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BreakpointDialog::applyFilters);
     groupLayout->addWidget(_groupFilter);
 
+    // A card fitted: the breakpoints of all CPUs or of one
+    _cpuFilter = new QComboBox();
+    _cpuFilter->setObjectName("breakpointCpuFilter");
+    _cpuFilter->addItem("All CPUs", -1);
+    for (const DebugCpuId cpu : listedCpus())
+        _cpuFilter->addItem(QString::fromLatin1(DebugCpuName(cpu)), static_cast<int>(cpu));
+    connect(_cpuFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BreakpointDialog::applyFilters);
+    QLabel* cpuLabel = new QLabel("CPU:");
+    const bool cards = _cpuFilter->count() > 2;
+    cpuLabel->setVisible(cards);
+    _cpuFilter->setVisible(cards);
+    groupLayout->addWidget(cpuLabel);
+    groupLayout->addWidget(_cpuFilter);
+
     QPushButton* manageGroupsButton = new QPushButton("Manage Groups...");
     connect(manageGroupsButton, &QPushButton::clicked, this, &BreakpointDialog::manageGroups);
     groupLayout->addWidget(manageGroupsButton);
@@ -374,192 +386,215 @@ void BreakpointDialog::setupShortcuts()
 
 void BreakpointDialog::populateBreakpointTable()
 {
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
     // The selection and the open records stay across the rebuild (an edit gives a breakpoint a new id: it closes)
     const QTreeWidgetItem* selected = selectedBreakpointItem();
-    const uint16_t selectedId = selected ? breakpointIdOf(selected) : BRK_INVALID;
+    const uint32_t selectedKey = selected ? keyOf(selected) : UINT32_MAX;
     _hitViews.clear();
     _breakpointTable->setSortingEnabled(false);
     _breakpointTable->clear();
-    if (!bpManager)
+    // The CPU column only with a card fitted: the main CPU alone looks as it always did
+    const std::vector<DebugCpuId> cpus = listedCpus();
+    _breakpointTable->setColumnHidden(ColCpu, cpus.size() < 2);
+    if (!managerOf(DebugCpuId::Main))
     {
         _expandedIds.clear();
         _hitTimer->stop();
         return;
     }
 
-    const BreakpointListByID breakpoints = bpManager->GetAllBreakpoints();
-    QSet<uint16_t> expandable;
+    QSet<uint32_t> expandable;
     QTreeWidgetItem* reselect = nullptr;
 
-    for (const auto& pair : breakpoints)
+    for (const DebugCpuId cpu : cpus)
     {
-        uint16_t id = pair.first;
-        const BreakpointDescriptor* bp = pair.second.get();
-        // The user's breakpoints: the step traps, the BASIC typer's control points and the debugger adapters' belong
-        // to their owners (as GET /breakpoints lists them)
-        if (bp == nullptr || !BreakpointManager::IsUserBreakpoint(*bp))
+        BreakpointManager* bpManager = managerOf(cpu);
+        if (!bpManager)
             continue;
+        const BreakpointListByID breakpoints = bpManager->GetAllBreakpoints();
+        for (const auto& pair : breakpoints)
+        {
+            uint16_t id = pair.first;
+            const BreakpointDescriptor* bp = pair.second.get();
+            // The user's breakpoints: the step traps, the BASIC typer's control points and the debugger adapters' belong
+            // to their owners (as GET /breakpoints lists them)
+            if (bp == nullptr || !BreakpointManager::IsUserBreakpoint(*bp))
+                continue;
 
-        QTreeWidgetItem* item = new QTreeWidgetItem();
-        item->setData(ColId, Qt::DisplayRole, static_cast<int>(id));  // sorts as a number
-        item->setData(ColId, Qt::UserRole, id);
+            QTreeWidgetItem* item = new QTreeWidgetItem();
+            item->setData(ColId, Qt::DisplayRole, static_cast<int>(id));  // sorts as a number
+            item->setData(ColId, Qt::UserRole, id);
+            item->setText(ColCpu, QString::fromLatin1(DebugCpuName(cpu)));
+            item->setData(ColCpu, Qt::UserRole, static_cast<int>(cpu));
 
-        // Type column
-        QString typeStr;
-        switch (bp->type)
-        {
-            case BRK_MEMORY:
-                typeStr = "Memory";
-                break;
-            case BRK_IO:
-                typeStr = "Port";
-                break;
-            case BRK_KEYBOARD:
-                typeStr = "Keyboard";
-                break;
-            case BRK_NEXTREG:
-                typeStr = "NextREG";
-                break;
-            case BRK_BEAM:
-                typeStr = "Beam";
-                break;
-            case BRK_COPPER:
-                typeStr = "Copper";
-                break;
-            case BRK_MAGIC:
-                typeStr = "Magic";
-                break;
-            default:
-                typeStr = "Unknown";
-                break;
-        }
-        item->setText(ColType, typeStr);
+            // Type column
+            QString typeStr;
+            switch (bp->type)
+            {
+                case BRK_MEMORY:
+                    typeStr = "Memory";
+                    break;
+                case BRK_IO:
+                    typeStr = "Port";
+                    break;
+                case BRK_KEYBOARD:
+                    typeStr = "Keyboard";
+                    break;
+                case BRK_NEXTREG:
+                    typeStr = "NextREG";
+                    break;
+                case BRK_BEAM:
+                    typeStr = "Beam";
+                    break;
+                case BRK_COPPER:
+                    typeStr = "Copper";
+                    break;
+                case BRK_MAGIC:
+                    typeStr = "Magic";
+                    break;
+                case BRK_EVENT:
+                    typeStr = "Event";
+                    break;
+                case BRK_CHIPREG:
+                    typeStr = "Chip register";
+                    break;
+                default:
+                    typeStr = "Unknown";
+                    break;
+            }
+            item->setText(ColType, typeStr);
 
-        // Address column
-        QString addrStr;
-        switch (bp->type)
-        {
-            case BRK_NEXTREG:  // a register or a range, the value it must have
-                addrStr = QString("NR $%1").arg(bp->z80address, 2, 16, QChar('0')).toUpper();
-                if (bp->isRange)
-                    addrStr += QString("-$%1").arg(bp->z80addressEnd, 2, 16, QChar('0')).toUpper();
-                if (bp->nrMask != 0)
-                    addrStr += bp->nrMask == 0xFF
-                                   ? QString(" =$%1").arg(bp->nrValue, 2, 16, QChar('0')).toUpper()
-                                   : QString(" =$%1&$%2")
-                                         .arg(bp->nrValue, 2, 16, QChar('0'))
-                                         .arg(bp->nrMask, 2, 16, QChar('0'))
-                                         .toUpper();
-                break;
-            case BRK_BEAM:
-                addrStr = QString("line %1 hc %2").arg(bp->z80address).arg(bp->beamHc);
-                break;
-            case BRK_COPPER:
-                addrStr = QString("copper %1").arg(bp->z80address);
-                if (bp->isRange)
-                    addrStr += QString("-%1").arg(bp->z80addressEnd);
-                break;
-            case BRK_MAGIC:
-                addrStr = bp->z80address == BRK_MAGIC_ED_FF ? QString("ED FF") : QString("DD 01");
-                break;
-            default:
-                addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
-                if (bp->isRange)
-                    addrStr += QString("-$%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper();
-                break;
-        }
-        if (bp->matchType == BRK_MATCH_BANK_ADDR)  // physical: that page in any slot (or one slot)
-            addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp)) + (bp->slotOnly ? " (slot)" : "");
-        if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
-            addrStr += QString(" &$%1").arg(bp->portMask, 4, 16, QChar('0')).toUpper();
-        item->setText(ColAddress, addrStr);
+            // Address column
+            QString addrStr;
+            switch (bp->type)
+            {
+                case BRK_NEXTREG:  // a register or a range, the value it must have
+                    addrStr = QString("NR $%1").arg(bp->z80address, 2, 16, QChar('0')).toUpper();
+                    if (bp->isRange)
+                        addrStr += QString("-$%1").arg(bp->z80addressEnd, 2, 16, QChar('0')).toUpper();
+                    if (bp->nrMask != 0)
+                        addrStr += bp->nrMask == 0xFF
+                                       ? QString(" =$%1").arg(bp->nrValue, 2, 16, QChar('0')).toUpper()
+                                       : QString(" =$%1&$%2")
+                                             .arg(bp->nrValue, 2, 16, QChar('0'))
+                                             .arg(bp->nrMask, 2, 16, QChar('0'))
+                                             .toUpper();
+                    break;
+                case BRK_BEAM:
+                    addrStr = QString("line %1 hc %2").arg(bp->z80address).arg(bp->beamHc);
+                    break;
+                case BRK_COPPER:
+                    addrStr = QString("copper %1").arg(bp->z80address);
+                    if (bp->isRange)
+                        addrStr += QString("-%1").arg(bp->z80addressEnd);
+                    break;
+                case BRK_MAGIC:
+                    addrStr = bp->z80address == BRK_MAGIC_ED_FF ? QString("ED FF") : QString("DD 01");
+                    break;
+                case BRK_EVENT:  // the kind in plain words, with its value filter
+                    addrStr = bp->z80address < static_cast<uint16_t>(GSCardEvent::Count)
+                                  ? EventBreakpointWords(static_cast<GSCardEvent>(bp->z80address), bp->nrValue, bp->nrMask)
+                                  : QString("event %1").arg(bp->z80address);
+                    if (bp->z80address < static_cast<uint16_t>(GSCardEvent::Count))
+                        item->setToolTip(ColAddress, QString::fromLatin1(GSCardEventName(static_cast<GSCardEvent>(bp->z80address))));
+                    break;
+                default:
+                    addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
+                    if (bp->isRange)
+                        addrStr += QString("-$%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper();
+                    break;
+            }
+            if (bp->matchType == BRK_MATCH_BANK_ADDR)  // physical: that page in any slot (or one slot)
+                addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp)) + (bp->slotOnly ? " (slot)" : "");
+            if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
+                addrStr += QString(" &$%1").arg(bp->portMask, 4, 16, QChar('0')).toUpper();
+            item->setText(ColAddress, addrStr);
 
-        // Access column
-        QString accessStr;
-        if (bp->type == BRK_MEMORY)
-        {
-            if (bp->memoryType & BRK_MEM_READ)
-                accessStr += "R";
-            if (bp->memoryType & BRK_MEM_WRITE)
-                accessStr += "W";
-            if (bp->memoryType & BRK_MEM_EXECUTE)
-                accessStr += "X";
-        }
-        else if (bp->type == BRK_IO)
-        {
-            if (bp->ioType & BRK_IO_IN)
-                accessStr += "I";
-            if (bp->ioType & BRK_IO_OUT)
-                accessStr += "O";
-        }
-        else if (bp->type == BRK_NEXTREG)
-        {
-            if (bp->ioType & BRK_IO_IN)
-                accessStr += "R";
-            if (bp->ioType & BRK_IO_OUT)
-                accessStr += "W";
-            if (bp->nrDoors != BRK_NR_DOOR_ALL)
-                accessStr += " " + QString::fromStdString(BreakpointManager::NextRegDoorsName(bp->nrDoors));
-        }
-        else if (bp->type == BRK_KEYBOARD)
-        {
-            if (bp->keyType & BRK_KEY_PRESS)
-                accessStr += "P";
-            if (bp->keyType & BRK_KEY_RELEASE)
-                accessStr += "R";
-        }
-        item->setText(ColAccess, accessStr);
+            // Access column
+            QString accessStr;
+            if (bp->type == BRK_MEMORY)
+            {
+                if (bp->memoryType & BRK_MEM_READ)
+                    accessStr += "R";
+                if (bp->memoryType & BRK_MEM_WRITE)
+                    accessStr += "W";
+                if (bp->memoryType & BRK_MEM_EXECUTE)
+                    accessStr += "X";
+            }
+            else if (bp->type == BRK_IO)
+            {
+                if (bp->ioType & BRK_IO_IN)
+                    accessStr += "I";
+                if (bp->ioType & BRK_IO_OUT)
+                    accessStr += "O";
+            }
+            else if (bp->type == BRK_NEXTREG)
+            {
+                if (bp->ioType & BRK_IO_IN)
+                    accessStr += "R";
+                if (bp->ioType & BRK_IO_OUT)
+                    accessStr += "W";
+                if (bp->nrDoors != BRK_NR_DOOR_ALL)
+                    accessStr += " " + QString::fromStdString(BreakpointManager::NextRegDoorsName(bp->nrDoors));
+            }
+            else if (bp->type == BRK_KEYBOARD)
+            {
+                if (bp->keyType & BRK_KEY_PRESS)
+                    accessStr += "P";
+                if (bp->keyType & BRK_KEY_RELEASE)
+                    accessStr += "R";
+            }
+            item->setText(ColAccess, accessStr);
 
-        // Status column (a condition that failed while running stops matching until it is set again; a count-only
-        // breakpoint counts and never stops)
-        const bool countOnly = bp->tapSink == BRK_COUNT_TAP;
-        setStatus(item, bp->active, countOnly, bp->conditionFailed, QString::fromStdString(bp->conditionError));
+            // Status column (a condition that failed while running stops matching until it is set again; a count-only
+            // breakpoint counts and never stops)
+            const bool countOnly = bp->tapSink == BRK_COUNT_TAP;
+            setStatus(item, bp->active, countOnly, bp->conditionFailed, QString::fromStdString(bp->conditionError));
 
-        // Hits column: the hits so far (sorts as a number), the policy that picks the ones that stop
-        if (bp->hitMode == BRK_HIT_ALWAYS || countOnly)
-            item->setData(ColHits, Qt::DisplayRole, static_cast<qulonglong>(bp->hitCount));
-        else
-            item->setText(ColHits, QString("%1 (stops on %2)")
-                                       .arg(bp->hitCount)
-                                       .arg(QString::fromStdString(BreakpointManager::HitSpecName(*bp))));
-        QString hitsTip;
-        if (bp->condition)
-            hitsTip = QString("%1 of %2 matches held the condition").arg(bp->hitCount).arg(bp->matchCount);
-        // A breakpoint that only counts and records its hits: the row expands to show them
-        if (countOnly && bp->hitLogCapacity > 0)
-        {
-            item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+            // Hits column: the hits so far (sorts as a number), the policy that picks the ones that stop
+            if (bp->hitMode == BRK_HIT_ALWAYS || countOnly)
+                item->setData(ColHits, Qt::DisplayRole, static_cast<qulonglong>(bp->hitCount));
+            else
+                item->setText(ColHits, QString("%1 (stops on %2)")
+                                           .arg(bp->hitCount)
+                                           .arg(QString::fromStdString(BreakpointManager::HitSpecName(*bp))));
+            QString hitsTip;
+            if (bp->condition)
+                hitsTip = QString("%1 of %2 matches held the condition").arg(bp->hitCount).arg(bp->matchCount);
+            // A breakpoint that only counts and records its hits: the row expands to show them
+            if (countOnly && bp->hitLogCapacity > 0)
+            {
+                item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+                if (!hitsTip.isEmpty())
+                    hitsTip += "\n";
+                hitsTip += QString("Records %1 %2 hits: expand the row to see them")
+                               .arg(bp->hitLogKeep == BreakpointHitLogKeep::Last ? "the newest" : "the first")
+                               .arg(bp->hitLogCapacity);
+                expandable.insert(keyOf(cpu, id));
+            }
             if (!hitsTip.isEmpty())
-                hitsTip += "\n";
-            hitsTip += QString("Records %1 %2 hits: expand the row to see them")
-                           .arg(bp->hitLogKeep == BreakpointHitLogKeep::Last ? "the newest" : "the first")
-                           .arg(bp->hitLogCapacity);
-            expandable.insert(id);
+                item->setToolTip(ColHits, hitsTip);
+
+            // Group column
+            item->setText(ColGroup, QString::fromStdString(bp->group));
+
+            // Condition column: as written (the editor shows how it binds)
+            if (bp->condition)
+            {
+                item->setText(ColCondition, QString::fromStdString(bp->condition->Source()));
+                item->setToolTip(ColCondition, "Stops when: " + QString::fromStdString(bp->condition->Canonical()));
+            }
+
+            // Note column
+            item->setText(ColNotes, QString::fromStdString(bp->note));
+
+            for (int column = 0; column < ColCount; ++column)
+                if (column != ColCondition)
+                    item->setTextAlignment(column, Qt::AlignCenter);
+
+            _breakpointTable->addTopLevelItem(item);
+            if (keyOf(cpu, id) == selectedKey)
+                reselect = item;
         }
-        if (!hitsTip.isEmpty())
-            item->setToolTip(ColHits, hitsTip);
-
-        // Group column
-        item->setText(ColGroup, QString::fromStdString(bp->group));
-
-        // Condition column: as written (the editor shows how it binds)
-        if (bp->condition)
-        {
-            item->setText(ColCondition, QString::fromStdString(bp->condition->Source()));
-            item->setToolTip(ColCondition, "Stops when: " + QString::fromStdString(bp->condition->Canonical()));
-        }
-
-        // Note column
-        item->setText(ColNotes, QString::fromStdString(bp->note));
-
-        for (int column = 0; column < ColCount; ++column)
-            if (column != ColCondition)
-                item->setTextAlignment(column, Qt::AlignCenter);
-
-        _breakpointTable->addTopLevelItem(item);
-        if (id == selectedId)
-            reselect = item;
     }
 
     _breakpointTable->setSortingEnabled(true);
@@ -568,11 +603,11 @@ void BreakpointDialog::populateBreakpointTable()
 
     // Reopen the records that were open
     _expandedIds.intersect(expandable);
-    const QSet<uint16_t> reopen = _expandedIds;
+    const QSet<uint32_t> reopen = _expandedIds;
     for (int i = 0; i < _breakpointTable->topLevelItemCount(); ++i)
     {
         QTreeWidgetItem* item = _breakpointTable->topLevelItem(i);
-        if (reopen.contains(breakpointIdOf(item)))
+        if (reopen.contains(keyOf(item)))
             item->setExpanded(true);
     }
     if (_expandedIds.isEmpty())
@@ -609,11 +644,27 @@ uint16_t BreakpointDialog::breakpointIdOf(const QTreeWidgetItem* item)
     return item ? static_cast<uint16_t>(item->data(ColId, Qt::UserRole).toUInt()) : BRK_INVALID;
 }
 
+DebugCpuId BreakpointDialog::cpuOf(const QTreeWidgetItem* item)
+{
+    return item ? static_cast<DebugCpuId>(item->data(ColCpu, Qt::UserRole).toInt()) : DebugCpuId::Main;
+}
+
+std::vector<DebugCpuId> BreakpointDialog::listedCpus() const
+{
+    return debuggercpu::Fitted(_emulator ? _emulator->GetContext() : nullptr);  // lifetime-ok: the dialog holds the shared_ptr
+}
+
+BreakpointManager* BreakpointDialog::managerOf(DebugCpuId cpu) const
+{
+    DebugManager* debug = _emulator ? _emulator->GetDebugManager() : nullptr;
+    return debug ? debug->GetBreakpointsManager(cpu) : nullptr;
+}
+
 void BreakpointDialog::onItemExpanded(QTreeWidgetItem* item)
 {
     if (!item || item->parent())
         return;
-    const uint16_t id = breakpointIdOf(item);
+    const uint32_t id = keyOf(item);
     if (_hitViews.contains(id))
         return;
 
@@ -663,7 +714,7 @@ void BreakpointDialog::onItemCollapsed(QTreeWidgetItem* item)
 {
     if (!item || item->parent())
         return;
-    const uint16_t id = breakpointIdOf(item);
+    const uint32_t id = keyOf(item);
     _hitViews.remove(id);
     _expandedIds.remove(id);
     // The row goes (its widget with it): a closed record is not read
@@ -679,9 +730,10 @@ void BreakpointDialog::refreshHitLogs(bool force)
         refreshHitView(it.key(), it.value(), force);
 }
 
-void BreakpointDialog::refreshHitView(uint16_t id, HitView& view, bool force)
+void BreakpointDialog::refreshHitView(uint32_t key, HitView& view, bool force)
 {
-    BreakpointManager* bpManager = _emulator ? _emulator->GetBreakpointManager() : nullptr;
+    const uint16_t id = static_cast<uint16_t>(key & 0xFFFF);
+    BreakpointManager* bpManager = managerOf(static_cast<DebugCpuId>(key >> 16));
     if (!bpManager || !view.table)
         return;
     // The counts first (no records copied): a record only changes when they move
@@ -778,13 +830,17 @@ void BreakpointDialog::populateGroupComboBox()
     _groupFilter->clear();
     _groupFilter->addItem("All Groups");
 
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-    if (bpManager)
+    // Every listed CPU's groups
+    for (const DebugCpuId cpu : listedCpus())
     {
-        std::vector<std::string> groups = bpManager->GetBreakpointGroups();
-        for (const auto& group : groups)
+        BreakpointManager* bpManager = managerOf(cpu);
+        if (!bpManager)
+            continue;
+        for (const auto& group : bpManager->GetBreakpointGroups())
         {
-            _groupFilter->addItem(QString::fromStdString(group));
+            const QString name = QString::fromStdString(group);
+            if (_groupFilter->findText(name) < 0)
+                _groupFilter->addItem(name);
         }
     }
 
@@ -854,8 +910,8 @@ void BreakpointDialog::editBreakpoint()
     }
     const uint16_t id = breakpointIdOf(selected);
 
-    // Open the breakpoint editor with the selected breakpoint
-    BreakpointEditor editor(_emulator, BreakpointEditor::Edit, id, this);
+    // Open the breakpoint editor with the selected breakpoint (of its own CPU)
+    BreakpointEditor editor(_emulator, BreakpointEditor::Edit, id, this, cpuOf(selected));
 
     if (editor.exec() == QDialog::Accepted)
     {
@@ -876,15 +932,17 @@ void BreakpointDialog::deleteBreakpoint()
     if (!selected)
         return;
     const uint16_t id = breakpointIdOf(selected);
+    const DebugCpuId cpu = cpuOf(selected);
+    const QString whose = IsCardCpu(cpu) ? QString(" of the %1 CPU").arg(DebugCpuName(cpu)) : QString();
 
     QMessageBox::StandardButton reply;
     reply = QMessageBox::question(this, "Confirm Delete",
-                                  "Are you sure you want to delete breakpoint #" + QString::number(id) + "?",
+                                  "Are you sure you want to delete breakpoint #" + QString::number(id) + whose + "?",
                                   QMessageBox::Yes | QMessageBox::No);
 
     if (reply == QMessageBox::Yes)
     {
-        BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+        BreakpointManager* bpManager = managerOf(cpu);
         if (bpManager)
         {
             bpManager->RemoveBreakpointByID(id);
@@ -902,7 +960,7 @@ void BreakpointDialog::setSelectedActive(bool active)
     if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
         return;
     QTreeWidgetItem* selected = selectedBreakpointItem();
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = managerOf(cpuOf(selected));
     if (!selected || !bpManager)
         return;
     const uint16_t id = breakpointIdOf(selected);
@@ -924,7 +982,7 @@ void BreakpointDialog::setSelectedActive(bool active)
 void BreakpointDialog::toggleBreakpoint()
 {
     const QTreeWidgetItem* selected = selectedBreakpointItem();
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = managerOf(cpuOf(selected));
     if (!selected || !bpManager)
         return;
     const BreakpointSnapshot bp = bpManager->GetBreakpointById(breakpointIdOf(selected));
@@ -1007,9 +1065,10 @@ void BreakpointDialog::applyFilters()
 {
     QString searchText = _searchField->text().trimmed();
     QString groupFilter = _groupFilter->currentText();
+    const int cpuFilter = _cpuFilter ? _cpuFilter->currentData().toInt() : -1;
 
     // Enable/disable clear button based on whether there's search text or group filter
-    _clearSearchButton->setEnabled(!searchText.isEmpty() || groupFilter != "All Groups");
+    _clearSearchButton->setEnabled(!searchText.isEmpty() || groupFilter != "All Groups" || cpuFilter >= 0);
 
     // Hide rows that don't match the search text and group filter
     for (int row = 0; row < _breakpointTable->topLevelItemCount(); ++row)
@@ -1034,7 +1093,7 @@ void BreakpointDialog::applyFilters()
             }
 
             // Define columns to search in
-            const int columnsToSearch[] = {ColId, ColAddress, ColAccess, ColGroup, ColCondition, ColNotes};
+            const int columnsToSearch[] = {ColId, ColCpu, ColType, ColAddress, ColAccess, ColGroup, ColCondition, ColNotes};
 
             for (int colIndex : columnsToSearch)
             {
@@ -1063,8 +1122,10 @@ void BreakpointDialog::applyFilters()
         if (groupFilter != "All Groups")
             matchesGroup = item->text(ColGroup) == groupFilter;
 
-        // Hide row if it doesn't match both filters
-        item->setHidden(!(matchesSearch && matchesGroup));
+        const bool matchesCpu = cpuFilter < 0 || static_cast<int>(cpuOf(item)) == cpuFilter;
+
+        // Hide row if it doesn't match the filters
+        item->setHidden(!(matchesSearch && matchesGroup && matchesCpu));
     }
 
     // Update status bar with filtered count
@@ -1075,6 +1136,8 @@ void BreakpointDialog::clearFilters()
 {
     _searchField->clear();
     _groupFilter->setCurrentText("All Groups");
+    if (_cpuFilter)
+        _cpuFilter->setCurrentIndex(0);
 
     // Show all rows
     for (int row = 0; row < _breakpointTable->topLevelItemCount(); ++row)

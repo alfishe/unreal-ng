@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""POC 054: how far ahead of a refresh must a present be to make it? Per frame: the first refresh at or after the
+"""POC 056: how far ahead of a refresh must a present be to make it? Per frame: the first refresh at or after the
 call on the grid of screen times (headroom = refresh - call), and whether the frame was shown on that refresh."""
 import csv
 import sys

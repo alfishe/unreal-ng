@@ -357,11 +357,59 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 return;
             }
 
-            if (action == "formats" || action == "sets")
+            if (action == "formats")
             {
-                ResolveAndForward(args, "GET", action == "sets" ? withCpu("/symbols/sets") : "/symbols/formats", nullptr, caller,
-                                  action == "formats" ? "Symbol formats" : "Symbol sets",
-                                  done);
+                // The formats in the text too (an agent may see only content[]): one line each, id first
+                ResolveAndForward(args, "GET", "/symbols/formats", nullptr, caller, "Symbol formats", [done](ToolResult result) {
+                    if (result.isError)
+                    {
+                        done(std::move(result));
+                        return;
+                    }
+                    const Json::Value& formats = result.structured["formats"];
+                    std::ostringstream out;
+                    out << result.text << ": " << (formats.isArray() ? formats.size() : 0);
+                    if (formats.isArray())
+                    {
+                        for (const Json::Value& format : formats)
+                        {
+                            out << "\n" << format["id"].asString() << " · " << format["title"].asString();
+                            std::string extensions;
+                            for (const Json::Value& extension : format["extensions"])
+                                extensions += (extensions.empty() ? "" : " ") + extension.asString();
+                            if (!extensions.empty())
+                                out << " · " << extensions;
+                            if (format["pages"].asBool())
+                                out << " · pages";
+                        }
+                    }
+                    result.text = out.str();
+                    done(std::move(result));
+                });
+                return;
+            }
+
+            if (action == "sets")
+            {
+                // The sets in the text too (an agent may see only content[]): one line each, id first
+                ResolveAndForward(args, "GET", withCpu("/symbols/sets"), nullptr, caller, "Symbol sets", [done](ToolResult result) {
+                    if (result.isError)
+                    {
+                        done(std::move(result));
+                        return;
+                    }
+                    const Json::Value& sets = result.structured["sets"];
+                    std::ostringstream out;
+                    out << result.text << " of cpu " << result.structured.get("cpu", "main").asString() << ": "
+                        << (sets.isArray() ? sets.size() : 0) << ", " << result.structured["labels"].asUInt() << " labels";
+                    if (sets.isArray())
+                        for (const Json::Value& set : sets)
+                            out << "\n" << set["id"].asString() << " · " << set["title"].asString() << " · "
+                                << set["symbols"].asUInt() << " symbols · priority " << set["priority"].asInt()
+                                << (set["enabled"].asBool() ? "" : " · disabled");
+                    result.text = out.str();
+                    done(std::move(result));
+                });
                 return;
             }
 

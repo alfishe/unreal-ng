@@ -22,11 +22,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <set>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/boards/debugboards.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/history/exechistory.h"
@@ -50,6 +52,7 @@
 #include "emulator/notifications.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicecatalog.h"
 #include "emulator/state/devicestate.h"
@@ -624,6 +627,63 @@ public:
         }
         return condition;
     }
+    std::vector<std::string> event_kinds() override { return m_event_kinds; }
+    std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override
+    {
+        std::vector<ecatshim::EventBreakpoint> r;
+        BreakpointManager * bm = breakpoints();
+        if (bm == nullptr) return r;
+        for (const auto &b : bm->GetAllBreakpoints()) {
+            const BreakpointDescriptor &d = *b.second;
+            if (d.type != BRK_EVENT || !BreakpointManager::IsUserBreakpoint(d)) continue;
+            ecatshim::EventBreakpoint x;
+            x.id = b.first;
+            x.kind = GSCardEventName(static_cast<GSCardEvent>(d.z80address));
+            x.value = d.nrValue & d.nrMask;
+            x.mask = d.nrMask;
+            x.enabled = d.active;
+            r.push_back(x);
+        }
+        return r;
+    }
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override
+    {
+        BreakpointManager * bm = breakpoints();
+        GSCardEvent k = GSCardEvent::Count;
+        if (bm == nullptr) {
+            error = "this processor has no breakpoints now";
+            return false;
+        }
+        if (!ParseGSCardEvent(kind.c_str(), k)) {
+            error = "unknown event kind: " + kind;
+            return false;
+        }
+        if (value > 0xFF || mask > 0xFF) {
+            error = "the value and the mask are bytes (0..255)";
+            return false;
+        }
+        // The core's checks say which CPU a kind belongs to
+        BreakpointSpec spec;
+        spec.type = BRK_EVENT;
+        spec.access = 0;
+        spec.address = static_cast<uint16_t>(k);
+        spec.nrValue = (uint8_t)value;
+        spec.nrMask = (uint8_t)mask;
+        return bm->AddBreakpoint(spec, error) != BRK_INVALID;
+    }
+    bool remove_event_breakpoint(unsigned int id) override
+    {
+        BreakpointManager * bm = breakpoints();
+        return bm != nullptr && is_event(bm, id) && bm->RemoveBreakpointByID((uint16_t)id);
+    }
+    bool enable_event_breakpoint(unsigned int id, bool on) override
+    {
+        BreakpointManager * bm = breakpoints();
+        if (bm == nullptr || !is_event(bm, id)) return false;
+        return on ? bm->ActivateBreakpoint((uint16_t)id) : bm->DeactivateBreakpoint((uint16_t)id);
+    }
+    void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
+
     void add_run_to(unsigned int address)
     {
         BreakpointManager * bm = breakpoints();
@@ -650,7 +710,13 @@ public:
 
 protected:
     ::Emulator * m_emu;
+    std::vector<std::string> m_event_kinds;
 
+    static bool is_event(BreakpointManager * bm, unsigned int id)
+    {
+        const BreakpointSnapshot d = id <= 0xFFFF ? bm->GetBreakpointById((uint16_t)id) : nullptr;
+        return d && d->type == BRK_EVENT;
+    }
     static bool is_user_execution(const BreakpointDescriptor &d)
     {
         return d.type == BRK_MEMORY && (d.memoryType & BRK_MEM_EXECUTE) && !d.hidden && !d.isRange &&
@@ -831,6 +897,20 @@ public:
     }
     std::vector<CpuRegister> get_register_values() override { return z80_registers(regs()); }
     std::vector<std::pair<std::string, std::string>> get_flags() override { return z80_flags(regs().f); }
+    // The card's clock (GeneralSoundCard::cardCycles): its cycle in the ZX frame and since it started, read as the
+    // registers are
+    bool card_cycle(CardCycle &out) override
+    {
+        GSCardTarget * t = target();
+        const GeneralSoundCard * card = t ? t->Card() : nullptr;
+        if (card == nullptr || card->cardCpuClockHz() == 0) return false;
+        out.frame_cycle = card->cardCycles(card->cardFrameTime());
+        out.total = card->cardCycles(card->cardTime());
+        EmulatorContext * ctx = m_emu->GetContext();
+        out.frame = ctx ? ctx->emulatorState.frame_counter : 0;
+        out.clock_hz = card->cardCpuClockHz();
+        return true;
+    }
     void set_context_value(const std::string &n, unsigned int v) override { set_card_register(n, v); }
     bool set_flag(const std::string &n, bool value) override
     {
@@ -935,6 +1015,8 @@ public:
         m_main->mm = m_mapper.get();
         const ZxPaging paging = ZxModelPaging(Config::GetModelFullName(ctx->config.mem_model));
         m_main->set_pages(ram.get(), rom.get(), paging);
+        m_main->set_event_kinds(ZxMainEventKinds(Config::GetModelFullName(ctx->config.mem_model), !m_cards.empty()));
+        for (const auto &c : m_cards) c->set_event_kinds(ZxCardEventKinds(c->region_prefix() == "neogs"));
         ram->set_paging(paging);
         m_dm.add(ram);
         m_dm.add(rom);
@@ -1080,6 +1162,33 @@ public:
         if (card_step(c, "out", 1)) return;
         m_emu->StepOut();
     }
+    // A card's run to a moment (RunControl::CardRunTo): the machine runs until it gets there, a breakpoint or 5 s
+    CardRunAnswer debug_card_run_to(ecatshim::CPU * c, const std::string &until, uint64_t value) override
+    {
+        CardRunAnswer a;
+        auto * card = dynamic_cast<CardZ80 *>(c);
+        if (card == nullptr) {
+            a.message = "A card run takes a card's CPU (gs, ms)";
+            return a;
+        }
+        clear_run_to();
+        const execution::RunReply r = execution::RunControl(m_emu).CardRunTo(kGui, card->id(), until, value);
+        a.ok = r.Ok();
+        a.message = r.message;
+        const StateNode &b = r.body;
+        auto number = [&b](const char * key) -> int64_t {
+            const StateNode * n = b.find(key);
+            return (n != nullptr && n->kind == StateNode::Kind::Int) ? n->i : -1;
+        };
+        if (const StateNode * hit = b.find("hit")) a.hit = hit->kind == StateNode::Kind::Bool && hit->b;
+        if (const StateNode * stop = b.find("stop"))
+            if (const StateNode * reason = stop->find("reason")) a.stop_reason = reason->s;
+        a.card_cycle = number("card_cycle");
+        a.main_t = number("main_t");
+        a.frame = number("frame");
+        if (!a.ok) fprintf(stderr, "ecat-debugger: card run refused: %s\n", r.message.c_str());
+        return a;
+    }
     // The tab's CPU shown (DebugManager::SelectCpu): a card's follows the main CPU's steps of the paused machine
     void debug_select(ecatshim::CPU * c) override
     {
@@ -1181,6 +1290,165 @@ private:
         const execution::RunReply r = execution::RunControl(m_emu).CardStep(kGui, card->id(), kind, std::max(1u, count));
         if (!r.Ok()) fprintf(stderr, "ecat-debugger: card step refused: %s\n", r.message.c_str());
         return true;
+    }
+
+    // A device board in process: DebugBoards::Read where the machine stands still, its layout as the shim's board
+    Board read_board(const std::string &id) override
+    {
+        DebugBoardReply reply;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&reply, emu, &id]() { reply = DebugBoards::Read(emu->GetContext(), id); });
+        Board out;
+        out.id = id;
+        out.ok = reply.status == 200;
+        if (!out.ok) {
+            out.message = reply.text;
+            return out;
+        }
+        const StateNode &body = reply.body;
+        auto str = [](const StateNode &n, const char * key) {
+            const StateNode * v = n.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::String ? v->s : std::string();
+        };
+        out.title = str(body, "title");
+        if (const StateNode * available = body.find("available")) out.available = available->kind == StateNode::Kind::Bool && available->b;
+        if (const StateNode * columns = body.find("columns"))
+            for (const StateNode &column : columns->items)
+                if (const StateNode * groups = column.find("groups"))
+                    for (const StateNode &g : groups->items) {
+                        BoardGroup group{str(g, "title"), str(g, "raw"), {}};
+                        if (const StateNode * controls = g.find("controls"))
+                            for (const StateNode &c : controls->items) {
+                                BoardControl control;
+                                control.id = str(c, "id");
+                                control.label = str(c, "label");
+                                control.type = str(c, "type");
+                                control.note = str(c, "note");
+                                if (const StateNode * v = c.find("value")) control.value = scalar_text(*v);
+                                if (const StateNode * names = c.find("names"))
+                                    for (const StateNode &name : names->items) control.names.push_back(name.s);
+                                if (const StateNode * max = c.find("max"); max != nullptr && max->kind == StateNode::Kind::Int) control.max = max->i;
+                                group.controls.push_back(std::move(control));
+                            }
+                        out.groups.push_back(std::move(group));
+                    }
+        if (const StateNode * actions = body.find("actions"))
+            for (const StateNode &a : actions->items) out.actions.emplace_back(str(a, "id"), str(a, "title"));
+        return out;
+    }
+    // A board's action in process: DebugBoards::Action (the NeoGS media requests: checked here, applied on the
+    // machine's thread)
+    BoardAnswer board_action(const std::string &board, const std::string &action, const std::string &arg) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * context = lease.get();
+        if (context == nullptr) return {false, "No machine"};
+        const DebugBoardReply reply = DebugBoards::Action(context, board, action, arg);
+        return {reply.status == 200, reply.text};
+    }
+
+    // The ZX-DMA banner in process: DeviceState::ZxDmaBanner where the machine stands still (the module peeked)
+    ZxDmaBanner zxdma_banner() override
+    {
+        ZxDmaBanner out;
+        if (m_cards.empty()) return out;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&out, emu]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = ctx != nullptr && ctx->pSoundManager != nullptr ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            NeoGSStateInfo ngs;
+            if (gs == nullptr || !gs->neogsState(ngs)) return;
+            const int rom = ctx->pMemory != nullptr ? (ctx->pMemory->IsBank0ROM() ? 1 : 0) : -1;
+            out.text = DeviceState::ZxDmaBanner(ngs, rom);
+            out.card_bytes = !out.text.empty() && ngs.zxOverlayInstalled && std::strcmp(ngs.zxMode, "divert") == 0 && rom != 0;
+        });
+        return out;
+    }
+
+    // The ZX-DMA trace in process: DeviceState::GsZxDmaTrace where the machine stands still (the report peeks)
+    ZxDmaTrace read_zxdma_trace(size_t last, uint64_t since) override
+    {
+        StateNode n;
+        ::Emulator * emu = m_emu.get();
+        GSZxDmaTraceQuery query;
+        query.last = last;
+        query.since = since;
+        at_coherent_moment(emu, [&n, emu, &query]() { n = DeviceState::GsZxDmaTrace(emu->GetContext(), query); });
+        ZxDmaTrace out;
+        auto field = [](const StateNode &o, const char * key) -> const StateNode * { return o.find(key); };
+        auto str = [&field](const StateNode &o, const char * key) {
+            const StateNode * v = field(o, key);
+            return v != nullptr && v->kind == StateNode::Kind::String ? v->s : std::string();
+        };
+        auto truth = [&field](const StateNode &o, const char * key) {
+            const StateNode * v = field(o, key);
+            return v != nullptr && v->kind == StateNode::Kind::Bool && v->b;
+        };
+        auto num = [&field](const StateNode &o, const char * key) -> int64_t {
+            const StateNode * v = field(o, key);
+            return v != nullptr && v->kind == StateNode::Kind::Int ? v->i : 0;
+        };
+        if (field(n, "available") == nullptr) {
+            out.message = "No machine";
+            return out;
+        }
+        out.ok = true;
+        out.available = truth(n, "available");
+        if (!out.available) {
+            out.message = str(n, "description");
+            return out;
+        }
+        out.card = str(n, "card");
+        out.device = str(n, "device");
+        out.capturing = truth(n, "capturing");
+        out.armed = truth(n, "armed");
+        out.total_bytes_kept = (uint64_t)num(n, "total_bytes_kept");
+        out.evicted = (uint64_t)num(n, "evicted");
+        out.last_seq = (uint64_t)num(n, "last_seq");
+        out.restarted = truth(n, "restarted");
+        if (const StateNode * c = field(n, "counters")) {
+            out.bytes_read = (uint64_t)num(*c, "bytes_read");
+            out.bytes_written = (uint64_t)num(*c, "bytes_written");
+            out.bytes_dropped = (uint64_t)num(*c, "bytes_dropped");
+            out.wait_t_states = (uint64_t)num(*c, "wait_t_states");
+        }
+        if (const StateNode * rows = field(n, "rows"))
+            for (const StateNode &r : rows->items) {
+                ZxDmaRow row;
+                row.seq = (uint64_t)num(r, "seq");
+                row.frame = num(r, "frame");
+                row.host_t = num(r, "host_t");
+                row.card_time = num(r, "card_time");
+                row.write = str(r, "direction") == "write";
+                row.card_address = (unsigned int)num(r, "card_address");
+                row.page = (unsigned int)num(r, "page");
+                row.value = (unsigned int)num(r, "value");
+                row.wait = (unsigned int)num(r, "wait");
+                row.host_pc = (unsigned int)num(r, "host_pc");
+                row.dropped = truth(r, "dropped");
+                out.rows.push_back(row);
+            }
+        out.text = str(n, "text");
+        out.how_to_start = str(n, "how_to_start");
+        return out;
+    }
+    // The port trace's capture in process: the card's own start / stop / clear, where the machine stands still
+    BoardAnswer zxdma_trace_capture(const std::string &action) override
+    {
+        if (action != "start" && action != "stop" && action != "clear")
+            return {false, "Unknown action '" + action + "' (expected start, stop or clear)"};
+        ::Emulator * emu = m_emu.get();
+        BoardAnswer a{false, "General Sound card not fitted"};
+        at_coherent_moment(emu, [&a, emu, &action]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = ctx != nullptr && ctx->pSoundManager != nullptr ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs == nullptr) return;
+            if (action == "start") gs->startPortTrace();
+            else if (action == "stop") gs->stopPortTrace();
+            else gs->clearPortTrace();
+            a = {true, action == "start" ? "port trace started" : action == "stop" ? "port trace stopped" : "port trace cleared"};
+        });
+        return a;
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads

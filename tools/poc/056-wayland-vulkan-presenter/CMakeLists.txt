@@ -1,5 +1,5 @@
-# POC 054: a Vulkan swapchain on a Wayland surface, timed presents and screen times (Linux only).
-# Standalone: cmake -S tools/poc/054-wayland-vulkan-presenter -B <build> -G Ninja
+# POC 056: a Vulkan swapchain on a Wayland surface, timed presents and screen times (Linux only).
+# Standalone: cmake -S tools/poc/056-wayland-vulkan-presenter -B <build> -G Ninja
 cmake_minimum_required(VERSION 3.20)
 project(poc054 C CXX)
 

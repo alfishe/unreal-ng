@@ -82,6 +82,34 @@ TEST(NeoGSMemory, MpagNormalAndExtendedPaging)
     EXPECT_EQ(f.mem->page(3), 0x80) << "MPAGEX does nothing outside EXPAG";
 }
 
+// The debugger's MPAGEX shadow (gs-debugger P5.5): the last write that took effect, cleared by power-on, restored raw
+TEST(NeoGSMemory, MpagExShadowKeepsTheLastEffectiveWrite)
+{
+    MemFixture f;
+    EXPECT_EQ(f.mem->lastMpagEx(), 0);
+    EXPECT_FALSE(f.mem->extendedPaging());
+    f.mem->writeMpagEx(0x12);
+    EXPECT_EQ(f.mem->lastMpagEx(), 0) << "ignored outside EXPAG: no write the board saw";
+
+    f.mem->setConfig(0x01 | NeoGSMemory::CFG_EXPAG);
+    EXPECT_TRUE(f.mem->extendedPaging());
+    f.mem->writeMpagEx(0x05);
+    EXPECT_EQ(f.mem->lastMpagEx(), 0x05);
+    EXPECT_EQ(f.mem->page(3), 0x0A);
+    f.mem->writeMpag(0x03);
+    EXPECT_EQ(f.mem->lastMpagEx(), 0x05) << "MPAG leaves the MPAGEX shadow alone";
+    EXPECT_EQ(f.mem->lastMpag(), 0x03);
+
+    const uint8_t pages[4] = {1, 2, 3, 4};
+    f.mem->setPagesRaw(pages, 0x07, 0x09, 0x01 | NeoGSMemory::CFG_EXPAG);
+    EXPECT_EQ(f.mem->lastMpag(), 0x07);
+    EXPECT_EQ(f.mem->lastMpagEx(), 0x09);
+    EXPECT_EQ(f.mem->page(3), 4) << "raw pages, not derived from the shadows";
+
+    f.mem->powerOn();
+    EXPECT_EQ(f.mem->lastMpagEx(), 0);
+}
+
 TEST(NeoGSMemory, RomModeShowsFlashInWindowsZeroTwoThree)
 {
     MemFixture f;

@@ -20,6 +20,7 @@
 #include "mcp-media.h"
 #include "mcp-bus.h"
 #include "mcp-history.h"
+#include "mcp-jobs.h"
 #include "mcp-slots.h"
 #include "mcp-actions.h"
 #include "mcp-gui.h"
@@ -45,6 +46,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace mcp
@@ -329,6 +331,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "operations: only entries after this seq (the last_seq of a previous answer)";
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["description"] = "operations: only the newest N entries (default 20; 0: every entry kept)";
+    schema["properties"]["gs_cpu"]["type"] = "string";
+    schema["properties"]["gs_cpu"]["description"] =
+        "gs_reset_counters: the card whose counters ('gs' or empty: the slot's General Sound, 'ms': the ZX-MultiSound's)";
     schema["properties"]["personality"]["type"] = "string";
     schema["properties"]["personality"]["description"] =
         "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
@@ -893,6 +898,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         }
                         body["mode"] = args["mode"].asString();
                     }
+                    else if (action == "gs_reset_counters" && args.isMember("gs_cpu") && args["gs_cpu"].isString())
+                        body["cpu"] = args["gs_cpu"].asString();  // "ms": the ZX-MultiSound's GS
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
                         if (action == "gs_switch_personality" && response.isMember("status"))
                         {
@@ -1443,7 +1450,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
-                               "run_until_pc", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
+                               "run_until_pc", "card_run_to", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
                                "bp_list", "bp_reset_hits", "bp_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
                                "callbacks", "callback_resume", "callback_remove", "callback_policy",
                                "set_register", "port_out", "select_cpu", "wait", "take_control", "release_control"})
@@ -1540,7 +1547,8 @@ void RegisterControlExecution(ToolRegistry& registry)
         "step / step_n / step_over / step_out resumes the machine until the card ends it and pauses it again; the "
         "main CPU moves on to where the card catches up (a host port access or the frame end); a breakpoint of any "
         "CPU ends it first, none within 2 s (over / out 5 s) answers timeout. run_until_pc with a card CPU runs that "
-        "CPU to pc (run to the cursor; breakpoints always end it, max_tstates not used, 5 s)";
+        "CPU to pc (run to the cursor; breakpoints always end it, max_tstates not used, 5 s). card_run_to: the card "
+        "CPU whose run (default gs; see until)";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
         "For run_until / watch_add: a game event of the profile (events:) fires. For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
@@ -1675,7 +1683,19 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["port"]["type"] = "string";
     schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
     schema["properties"]["value"]["type"] = "string";
-    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255); for set_register: 0..#FFFF";
+    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255); for set_register: 0..#FFFF; "
+                                                   "for card_run_to: the card cycle of the frame (until cycle) or the main CPU's T-state of the frame (until main_t)";
+    schema["properties"]["until"]["type"] = "string";
+    schema["properties"]["until"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* until : {"cycle", "int", "command", "main_t"})
+        schema["properties"]["until"]["enum"].append(until);
+    schema["properties"]["until"]["description"] =
+        "For card_run_to (the machine paused; cpu gs by default, or ms): cycle - the card CPU parks at the first "
+        "instruction boundary at or after card cycle value of the ZX frame (a cycle already passed: the next "
+        "frame's); int - at the handler's first instruction of the card's next accepted interrupt; command - the "
+        "machine pauses after the main CPU's next OUT to the card's command port (the card has not taken it; the "
+        "answer names the byte); main_t - the main CPU runs to T-state value of the frame (the next frame's when "
+        "past). A breakpoint of any CPU ends it first, none in 5 s answers timeout";
     schema["properties"]["since"]["type"] = "integer";
     schema["properties"]["since"]["description"] =
         "For wait: the debugger seq last seen (inspect_state snapshot shows it); omitted = the current one";
@@ -2376,6 +2396,59 @@ void RegisterControlExecution(ToolRegistry& registry)
                     return;
                 }
 
+                // A card CPU's run to a moment (POST /card_run_to): the server's message, then where both CPUs stand
+                if (action == "card_run_to")
+                {
+                    if (!args.isMember("until"))
+                    {
+                        done(ToolResult::Error("card_run_to requires 'until': cycle, int, command or main_t"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["cpu"] = args.isMember("cpu") ? args["cpu"] : Json::Value("gs");
+                    body["until"] = args["until"];
+                    if (args.isMember("value"))
+                        body["value"] = args["value"];
+                    caller.Call("POST", Endpoint(id, "/card_run_to"), &body, [done](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            std::string hint;
+                            if (status == 409 && !IsSessionRefusal(response))
+                                hint = " Hint: the machine may need to be paused first — use action:'pause'.";
+                            done(ToolResult::Error("card_run_to failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response) + hint));
+                            return;
+                        }
+                        const Json::Value& stop = response["stop"];
+                        std::ostringstream text;
+                        text << response.get("message", "").asString() << ".";
+                        if (stop.get("reason", "").asString() == "breakpoint")
+                        {
+                            char where[128];
+                            std::snprintf(where, sizeof(where), " Stopped at breakpoint #%u of cpu %s (%s) at $%04X.",
+                                          stop.get("breakpoint_id", 0).asUInt(), stop.get("cpu", "").asString().c_str(),
+                                          stop.get("access", "").asString().c_str(), stop.get("address", 0).asUInt());
+                            text << where;
+                        }
+                        else if (stop.get("reason", "").asString() != "step")
+                            text << " Reason " << stop.get("reason", "").asString() << ".";
+                        char where[160];
+                        std::snprintf(where, sizeof(where), " Card CPU %s at $%04X", response.get("cpu", "").asString().c_str(),
+                                      response.get("pc", 0).asUInt());
+                        text << where;
+                        if (response.isMember("card_cycle"))
+                            text << " (card cycle " << response["card_cycle"].asInt64() << ")";
+                        std::snprintf(where, sizeof(where), "; main CPU at $%04X", response.get("main_pc", 0).asUInt());
+                        text << where;
+                        if (response.isMember("main_t"))
+                            text << " (T " << response["main_t"].asInt64() << ", frame " << response.get("frame", 0).asInt64()
+                                 << ")";
+                        text << ".";
+                        done(ToolResult::Ok(text.str(), std::move(response)));
+                    });
+                    return;
+                }
+
                 // Execution-advancing actions: perform the call, then append registers. A card CPU (cpu gs / ms)
                 // steps through the same routes with ?cpu=, and its registers follow
                 const bool cardCpu = args.isMember("cpu") && args["cpu"].asString() != "main";
@@ -2807,7 +2880,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
                                "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
-                               "audio_gs_firmware_profiles"})
+                               "audio_gs_firmware_profiles", "audio_gs_zxdma"})
     {
         allowed.append(aspect);
     }
@@ -2827,7 +2900,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
-        "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; "
+        "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; on the "
+        "lightweight player 'interpreter' (state idle/params/command/upload/reply/covox, command, upload received/total) and "
+        "'player' (position, row, tick, speed, BPM, four channels, module and samples); "
         "reports unavailable when the card is not fitted), 'audio_covox' = Covox / SoundDrive (fitment, the ports this model "
         "decodes, ports shared with Beta-128, the four DAC latches), 'audio_moonsound' = MoonSound OPL4 overview (NEW/NEW2, "
         "address latches, #F8/#F9 mix, wave memory, keyed FM channels and PCM slots), 'audio_opl4_fm' = its 18 FM channels "
@@ -2864,10 +2939,18 @@ void RegisterInspectState(ToolRegistry& registry)
         "range or in an instruction's operand; 'audio_gs_firmware.<object>' one instance or variable; "
         "'gs_firmware_profile' reads through another profile by id; 'audio_gs_firmware_profiles' = the profiles known "
         "(built-in and the files of <symbols>/gs/profiles); "
+        "'audio_gs_zxdma' = the NeoGS ZX-DMA trace (GET /state/audio/gs/zxdma): the bytes the Spectrum read from / "
+        "wrote to card RAM through the ZX-DMA window, a line each: seq, host frame and T-state, card cycle, "
+        "direction, card address and page, value, /WAIT T-states, host PC, DROPPED; recorded while the GS port trace "
+        "captures (invoke_api POST /api/v1/emulator/{id}/control/audio/gs/porttrace {action: start}); "
+        "'gs_zxdma_last' the newest N (default 256, 0: all), 'gs_zxdma_since' the rows after a seq (last_seq of the "
+        "previous read); "
         "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
         "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
-        "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report, DACs, MIDI summary), "
+        "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report under 'gs' with the "
+        "audio_gs fields (its firmware objects and statistics: audio_gs_firmware / audio_gs_stats with gs_cpu=ms), DACs, "
+        "MIDI summary), "
         "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
         "notes sounding; polyphony, counters, bank; a panic is invoke_api POST /api/v1/emulator/{id}/control/audio/midi "
         "{action: panic}), "
@@ -2995,6 +3078,14 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["gs_stats_since"]["description"] = "'audio_gs_stats': a baseline id from emulator_manage gs_reset_counters";
     schema["properties"]["gs_firmware_profile"]["type"] = "string";
     schema["properties"]["gs_firmware_profile"]["description"] = "'audio_gs_firmware': a profile id (default: the card's)";
+    schema["properties"]["gs_cpu"]["type"] = "string";
+    schema["properties"]["gs_cpu"]["description"] =
+        "'audio_gs_stats' / 'audio_gs_firmware': the card by its debugger CPU: gs (default, the GS slot's) or ms (the "
+        "ZX-MultiSound's GS; its hardware and protocol are in 'audio_multisound')";
+    schema["properties"]["gs_zxdma_last"]["type"] = "integer";
+    schema["properties"]["gs_zxdma_last"]["description"] = "'audio_gs_zxdma': the newest N bytes (default 256, 0: all)";
+    schema["properties"]["gs_zxdma_since"]["type"] = "integer";
+    schema["properties"]["gs_zxdma_since"]["description"] = "'audio_gs_zxdma': the rows after this seq";
     schema["properties"]["gs_stats_fresh"]["type"] = "boolean";
     schema["properties"]["gs_stats_fresh"]["description"] = "'audio_gs_stats': a block from a frame end after this call";
     schema["properties"]["nr_sd_kinds"]["type"] = "string";
@@ -3156,11 +3247,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices" && aspect != "boards" &&
                     aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0 &&
                     aspect != "audio_gs_firmware" && aspect.rfind("audio_gs_firmware.", 0) != 0 &&
-                    aspect != "audio_gs_firmware_profiles")
+                    aspect != "audio_gs_firmware_profiles" && aspect != "audio_gs_zxdma")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles, audio_gs_zxdma"));
                     return;
                 }
             }
@@ -3263,10 +3354,16 @@ void RegisterInspectState(ToolRegistry& registry)
                 add("since", text("gs_stats_since"));
                 if (text("gs_stats_fresh") == "true")
                     add("fresh", "1");
+                add("cpu", text("gs_cpu"));
                 nrReports["audio_gs_stats"] = q;
                 q.clear();
                 add("profile", text("gs_firmware_profile"));
+                add("cpu", text("gs_cpu"));
                 nrReports["audio_gs_firmware"] = q;
+                q.clear();
+                add("last", text("gs_zxdma_last"));
+                add("since", text("gs_zxdma_since"));
+                nrReports["audio_gs_zxdma"] = q;
                 q.clear();
                 add("kinds", text("nr_nmi_kinds"));
                 add("since", text("nr_nmi_since"));
@@ -3887,6 +3984,18 @@ void RegisterInspectState(ToolRegistry& registry)
                             const std::string path = "/state/audio/gs/stats" +
                                                      (aspect.size() > 14 ? "/" + aspect.substr(15) : std::string()) +
                                                      nrReports.at("audio_gs_stats");
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "audio_gs_zxdma")
+                        {
+                            // The NeoGS ZX-DMA trace via the WebAPI (gszxdmatrace.h); 404 without a NeoGS
+                            const std::string path = "/state/audio/gs/zxdma" + nrReports.at("audio_gs_zxdma");
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -5138,6 +5247,36 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (Json::ArrayIndex i = 0; i < gsChannels.size(); ++i)
                                         out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
                                             << " vol " << gsChannels[i]["volume"].asUInt();
+                                    // The lightweight player (no CPU): its interpreter and player, read-only
+                                    if (value["interpreter"].isObject())
+                                    {
+                                        const Json::Value& in = value["interpreter"];
+                                        char command[8];
+                                        std::snprintf(command, sizeof(command), "#%02X", in["command"].asUInt() & 0xFF);
+                                        out << "\n  interpreter: " << in["text"].asString() << " (state "
+                                            << in["state"].asString() << ", last command " << command
+                                            << (in.isMember("command_name") ? " " + in["command_name"].asString() : std::string())
+                                            << ", params " << in["params_queued"].asUInt() << ", replies "
+                                            << in["replies_queued"].asUInt() << ")";
+                                    }
+                                    if (value["player"].isObject())
+                                    {
+                                        const Json::Value& pl = value["player"];
+                                        out << "\n  player: " << pl["state"].asString();
+                                        if (pl["loaded"].asBool())
+                                        {
+                                            out << " '" << pl["modules"][0]["name"].asString() << "', pos "
+                                                << pl["position"].asUInt() << "/" << pl["song_length"].asUInt() << " pattern "
+                                                << pl["pattern"].asUInt() << " row " << pl["row"].asUInt() << " tick "
+                                                << pl["tick"].asUInt() << ", speed " << pl["speed"].asUInt() << ", "
+                                                << pl["bpm"].asUInt() << " BPM, " << pl["samples"].size() << " sample(s)";
+                                            for (const Json::Value& c : pl["channels"])
+                                                out << "\n    voice" << c["channel"].asUInt() << ": sample " << c["sample"].asUInt()
+                                                    << " vol " << c["volume"].asUInt() << " period " << c["period"].asUInt()
+                                                    << (c["note"].asString().empty() ? std::string() : " " + c["note"].asString());
+                                        }
+                                        out << "; FX " << pl["fx"]["count"].asUInt() << " counted, none stored";
+                                    }
                                 }
                             }
                             else if (aspect == "boards")
@@ -5156,7 +5295,7 @@ void RegisterInspectState(ToolRegistry& registry)
                             }
                             else if (aspect == "audio_gs_stats" || aspect.rfind("audio_gs_stats.", 0) == 0 ||
                                      aspect == "audio_gs_firmware" || aspect.rfind("audio_gs_firmware.", 0) == 0 ||
-                                     aspect == "audio_gs_firmware_profiles")
+                                     aspect == "audio_gs_firmware_profiles" || aspect == "audio_gs_zxdma")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();
@@ -5247,6 +5386,19 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << value["midi"]["active_voices"].asUInt() << " voice(s)";
                                     for (const Json::Value& device : value["shadowed_devices"])
                                         out << "\n  built-in " << device["id"].asString() << ": " << device["state"].asString();
+                                    // Its General Sound: the GS slot report's fields under `gs` (debugger CPU `ms`)
+                                    const Json::Value& msGs = value["gs"];
+                                    if (msGs.isMember("device"))
+                                    {
+                                        out << "\n  gs (cpu ms): " << msGs["strip"].asString() << "; " << msGs["device"].asString()
+                                            << ", ram " << msGs["ram_kb"].asUInt() << " KB"
+                                            << (msGs["command_pending"].asBool() ? ", cmd pending" : "")
+                                            << (msGs["data_pending"].asBool() ? ", data pending" : "");
+                                        if (msGs["protocol"].isObject())
+                                            out << "\n  gs protocol: " << msGs["protocol"]["text"].asString();
+                                        out << "\n  gs panes: audio_gs_firmware / audio_gs_stats with gs_cpu=ms, "
+                                               "device_history " << value["slot"].asString() << ".gs.commands";
+                                    }
                                 }
                             }
                             else if (aspect == "audio_midi")
@@ -6343,6 +6495,13 @@ void CallAndSummarize(const std::string& method, const std::string& path, const 
                       std::function<std::string(const Json::Value&)> summarize, ToolCallback done)
 {
     caller.Call(method, path, body, [summarize, done](int status, Json::Value responseBody) {
+        if (status == 202 && responseBody.isObject() && responseBody.isMember("job"))
+        {
+            // async=true: queued as a job; the body is {job, state, status_url, text}, not the verb's answer
+            const std::string text = responseBody.get("text", "").asString();
+            done(ToolResult::Ok(text, std::move(responseBody)));
+            return;
+        }
         if (status >= 200 && status < 300 && responseBody.isObject() && responseBody.isMember("ok") &&
             !responseBody["ok"].asBool())
         {
@@ -6823,6 +6982,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "branch_list / branch_prune: only branches created at or after this time (Unix seconds)";
     schema["properties"]["created_before"]["description"] =
         "branch_list / branch_prune: only branches created before this time (Unix seconds)";
+    schema["properties"]["async"]["type"] = "boolean";
+    schema["properties"]["async"]["description"] =
+        "dump, load, probe_frames, memory_series, journal_build, export_clip: run it as a job (default false): the "
+        "answer is the job id at once; the jobs tool (action 'wait', job=<id>) waits for the result. Other long "
+        "verbs: jobs action 'start'";
     schema["properties"]["lineage"]["type"] = "boolean";
     schema["properties"]["lineage"]["description"] =
         "dump: only the active branch's lineage, as one linear history (default false: every branch)";
@@ -7572,6 +7736,26 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     }
                     (*body)["lineage"] = args["lineage"].asBool();
                 }
+            }
+
+            // A long action as a job (PLAN #122 S2): async=true answers {job, state} at once, `jobs` waits for it
+            if (args.isMember("async"))
+            {
+                static const std::set<std::string> asyncActions = {"dump",          "load",         "probe_frames",
+                                                                   "memory_series", "journal_build", "export_clip"};
+                if (!args["async"].isBool())
+                {
+                    done(ToolResult::Error("'async' must be true or false"));
+                    return;
+                }
+                if (args["async"].asBool() && asyncActions.count(action) == 0)
+                {
+                    done(ToolResult::Error("'async' is for dump, load, probe_frames, memory_series, journal_build and "
+                                           "export_clip; other long verbs: the jobs tool, action 'start'"));
+                    return;
+                }
+                if (asyncActions.count(action) != 0)
+                    (*body)["async"] = args["async"].asBool();
             }
 
             auto forward = [&caller, &args, action, body, done](const std::string& id) {
@@ -9366,6 +9550,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
     RegisterDeviceHistory(*registry);
+    // jobs: the long verbs run as jobs, list / status / wait (long-poll) / cancel / start (PLAN #122 S2)
+    RegisterJobs(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
     // vdac4_state: the TS-Conf VDAC4 board (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2)

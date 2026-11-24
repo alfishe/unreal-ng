@@ -5,6 +5,8 @@
 /// (ReplayBuild, replaytracer.h), runs the L2 detectors on it (detectors/detectors.h) and keeps both, one job and one result per source instance. The verbs
 /// (analysiscontrol.h) start it and read it; the WebSocket topics `analysis.progress` and `analysis.ready`
 /// (monitoringapi.h) read JobView, which is published state only (a short lock, no wait for the worker).
+/// The build is a job of the registry every long verb shares (emulator/jobs/jobregistry.h, kind analysis.build, lane
+/// analysis@<instance>): its id is the job id, `jobs` status / wait / cancel and the jobs.* topics see it too.
 
 #include <atomic>
 #include <condition_variable>
@@ -14,10 +16,14 @@
 #include <mutex>
 #include <set>
 #include <string>
-#include <thread>
 
 #include "debugger/analyzers/analysis/l2model.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
+
+namespace jobs
+{
+class Context;
+}
 
 namespace analysis
 {
@@ -25,7 +31,7 @@ namespace analysis
 struct JobView
 {
     uint64_t id = 0;              ///< 0: no build yet
-    std::string state = "none";   ///< none, running, done, failed, cancelled
+    std::string state = "none";   ///< none, queued, running, done, failed, cancelled
     uint64_t framesDone = 0;
     uint64_t framesTotal = 0;
     uint32_t percent = 0;
@@ -54,6 +60,7 @@ class L1Jobs
 {
 public:
     static L1Jobs& Instance();
+    L1Jobs();
     ~L1Jobs();
 
     /// Start a build of @p bundle for @p emulatorId; false with @p error when one is running
@@ -80,15 +87,14 @@ public:
 private:
     struct Job
     {
-        uint64_t id = 0;
-        std::thread thread;
+        std::atomic<uint64_t> id{0};  ///< the registry's job id
         std::atomic<uint64_t> done{0};
         std::atomic<uint64_t> total{0};
         std::atomic<bool> cancel{false};
         std::atomic<bool> finished{false};
         mutable std::mutex mutex;
         mutable std::condition_variable ended;
-        std::string state = "running";  ///< under mutex
+        std::string state = "queued";  ///< under mutex: queued, running, then done / failed / cancelled
         std::string error;
         std::string path;
         uint64_t hostMicros = 0;
@@ -105,12 +111,15 @@ private:
         uint64_t resultJob = 0;
     };
 
-    void Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceBundle bundle, ReplayOptions options);
+    void Run(const std::string& emulatorId, std::shared_ptr<Job> job, std::shared_ptr<const TraceBundle> bundle,
+             ReplayOptions options, jobs::Context& context);
+    static void End(Job& job, const std::string& state, const std::string& error);
+    /// Until the job has ended (cancelled first by the caller)
+    static void WaitEnded(Job& job);
 
     mutable std::mutex _mutex;
     std::map<std::string, Slot> _slots;
     std::set<std::string> _recordings;
-    std::atomic<uint64_t> _nextId{1};
 };
 
 }  // namespace analysis

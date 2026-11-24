@@ -245,4 +245,9 @@ uint8_t EveExchange(EveChip* chip, uint8_t mosi)
     return SpiExchange(*chip, mosi);
 }
 
+size_t EveWriteRamGWords(EveChip* chip, uint32_t address, const uint8_t* words, size_t count)
+{
+    return SpiWriteRamGWords(*chip, address, words, count);
+}
+
 } // extern "C"

@@ -34,6 +34,7 @@
 #include "emulator/sound/chips/gs/gsmodplayer.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/state/statenode.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdserializable.h"
 
@@ -121,10 +122,30 @@ public:
     bool isPortTraceArmed() const override { return _portTrace.isArmed(); }
     std::vector<GSTraceEvent> getPortTraceEvents() const override { return _portTrace.getAll(); }
     std::vector<GSTraceEvent> getPortTraceLast(size_t count) const override { return _portTrace.getLast(count); }
+    std::vector<std::pair<uint64_t, GSTraceEvent>> getPortTraceSide(GSTraceSide side, uint64_t since, size_t last,
+                                                                    size_t& matched, uint64_t& lastSeq,
+                                                                    uint64_t& evicted) const override
+    {
+        evicted = _portTrace.totalEvicted();
+        return _portTrace.select(side, since, last, matched, lastSeq);
+    }
     size_t getPortTraceEventCount() const override { return _portTrace.eventCount(); }
     uint64_t getPortTraceTotalProduced() const override { return _portTrace.totalProduced(); }
     uint64_t getPortTraceTotalEvicted() const override { return _portTrace.totalEvicted(); }
     /// endregion </Diagnostics>
+
+    /// region <Inspector (gs-debugger A10, W2-W3): read-only, any thread>
+    /// The interpreter now (the `gs` report's `interpreter`): state idle / params / command / upload / reply / covox,
+    /// the command, the byte counts of the state, the queues, the upload. Scalars and fixed arrays only, never the
+    /// upload store's bytes: a report polled while the machine runs reads no memory the machine thread reallocates
+    StateNode interpreterState() const;
+    /// The player now (the `gs` report's `player`): position, row, tick, speed, BPM, playing, the four channels, the
+    /// module and its samples with the Unreal Speccy GS dialog's columns, the FX count. Same rules as above
+    StateNode playerState() const;
+    /// A variable of the v1.05a firmware's window the interpreter mirrors (MODVOL, CNTMOD, MTSTAT, MTSNGPS, ...): the
+    /// firmware objects read (gsfirmwareobjects.h) answers them on this card; false for one without a mirror
+    bool mirroredVariable(const std::string& name, uint32_t& value) const;
+    /// endregion </Inspector>
 
     // Automation actions mirroring host-port semantics
     uint8_t readStatus() override;           // IN  #BB: _mb.status | 0x7E
@@ -262,6 +283,10 @@ private:
 
     // Module store: raw upload bytes; parsed live by the player
     std::vector<uint8_t> _store;
+    // The inspector's upload progress, kept on the machine thread: the module's full size from its header once 1084
+    // bytes are in (0 before; recomputed from the store after a TTD load), and the bytes an FX upload discarded
+    uint32_t _uploadTotal = 0;
+    uint32_t _fxUploadReceived = 0;
     GSModPlayer _player;
 
     // DAC channels with the gs_vfx volume curve (LLE shape)

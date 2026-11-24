@@ -4,6 +4,7 @@
 
 #include <chrono>
 
+#include "vdac4appruntime.h"
 #include "vdac4tang.h"
 
 namespace
@@ -78,6 +79,24 @@ void Vdac4FtWorker::Write(uint64_t stamp, uint32_t address, uint32_t value)
         return;
     }
     Push({stamp, address, value});
+}
+
+void Vdac4FtWorker::WriteFt(uint64_t stamp, uint32_t ftAddress, const uint8_t* words, size_t count)
+{
+    if (!_threaded)
+    {
+        _tang.PinNow(stamp);
+        _tang.LinkFtWrite(ftAddress, words, count);
+        return;
+    }
+    Push({stamp, IVdac4TangLink::kLinkFtAddr, ftAddress});
+    for (size_t i = 0; i < count; i++)
+    {
+        const uint8_t* p = words + 4 * i;
+        Push({stamp, IVdac4TangLink::kLinkFtData,
+              static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) | (static_cast<uint32_t>(p[2]) << 16) |
+                  (static_cast<uint32_t>(p[3]) << 24)});
+    }
 }
 
 uint32_t Vdac4FtWorker::Read(uint64_t stamp, uint32_t address)

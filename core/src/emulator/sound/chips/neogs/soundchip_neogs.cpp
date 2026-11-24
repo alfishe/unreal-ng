@@ -630,6 +630,8 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
         out.windowFlash[w] = _mem.isFlash(w);
     }
     out.mpag = _mem.lastMpag();
+    out.mpagex = _mem.lastMpagEx();
+    out.extendedPaging = _mem.extendedPaging();
     out.ledOn = ledOn();
     out.readyForCommands = isReadyForCommands();
     out.dacLeft = dacLevel(false);
@@ -692,6 +694,7 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
         out.zxOverlayInstalled = _zx.installed();
         out.zxHostMemoryBus = zxHostMemoryBus();
         out.zxReadLatch = _zx.readLatch();
+        out.zxNextByte = _zx.nextReadByte();
         out.zxPending = kPending[static_cast<int>(_zx.pending())];
         out.zxPendingAddress = _zx.pendingAddress();
         out.zxBytesRead = _zx.bytesRead();
@@ -1168,20 +1171,24 @@ void SoundChip_NeoGS::zxRamWritten(uint32_t offset, uint8_t value)
                                       static_cast<uint16_t>(offset % NeoGSMemory::PAGE_SIZE), value);
 }
 
-void SoundChip_NeoGS::zxTrace(bool write, uint32_t address, uint8_t value)
+void SoundChip_NeoGS::zxTrace(bool write, uint32_t address, uint8_t value, uint32_t waitT, bool dropped)
 {
-    if (!_portTrace.isCapturing())
+    if (!_portTrace.isCapturing() && !_zxDmaTrace.isCapturing())
         return;
     GSTraceEvent event;
     event.timestamp = _runner.now();
     event.frameNumber = currentFrameNumber();
     event.port = static_cast<uint16_t>(address);
     event.channel = static_cast<uint8_t>((address >> 16) & 0x1F);
-    event.pc = (_context && _context->pCore && _context->pCore->GetZ80()) ? _context->pCore->GetZ80()->m1_pc : 0;
+    const Z80* cpu = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    event.pc = cpu ? cpu->m1_pc : 0;
+    // The host side (gsporttrace.h): its T-state in the frame at the access end, after the wait, and the wait
+    event.iterations = GSTraceEvent::PackZxDmaHost(cpu ? cpu->t : 0, waitT);
     event.value = value;
     event.side = GSTraceSide::ZxDma;
-    event.flags = write ? GSTraceFlags::kDirectionOut : 0;
+    event.flags = static_cast<uint8_t>((write ? GSTraceFlags::kDirectionOut : 0) | (dropped ? GSTraceFlags::kDropped : 0));
     _portTrace.record(event);
+    _zxDmaTrace.record(event);
 }
 
 void SoundChip_NeoGS::flush()
@@ -1386,7 +1393,7 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
             logHostCommand(value);
             onHostCommandWrite(value);
-            GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value);
+            GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value, -1, this);
             return;
         default:
             return;
@@ -1923,7 +1930,9 @@ void SoundChip_NeoGS::serializeFixedState(uint8_t* dst) const
         at[9] = s.rx;
         at[10] = s.pending ? 1 : 0;
     }
-    // 66..78: DMA registers until layout 2; now in the DMA block
+    // 66: the MPAGEX shadow (a layout 4 blob made before it has 0 there: what power-on sets). 67..78: DMA registers
+    // until layout 2, now in the DMA block (zero)
+    dst[66] = _mem.lastMpagEx();
     dst[79] = static_cast<uint8_t>(_ticksPerCycle);
     dst[80] = static_cast<uint8_t>(_nextTicksPerCycle);
     put64(dst + 81, _phaseOrigin);
@@ -2089,7 +2098,7 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     _dma.loadState(src + TTD_DMA_OFFSET);
 
     const uint8_t pages[4] = {src[6], src[7], src[8], src[9]};
-    _mem.setPagesRaw(pages, src[10], _gscfg0);
+    _mem.setPagesRaw(pages, src[10], src[66], _gscfg0);
 
     // After the DMA registers: the ZX mode follows from them, and loading
     // re-selects the host memory interface

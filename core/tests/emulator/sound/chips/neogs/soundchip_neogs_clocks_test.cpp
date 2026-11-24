@@ -500,7 +500,7 @@ struct ZxHost : NeoGSZxDma::Host
     uint32_t zxFrame() const override { return 100; }
     void zxReschedule() override {}
     void zxLateStart(int64_t) override {}
-    void zxTrace(bool, uint32_t, uint8_t) override {}
+    void zxTrace(bool, uint32_t, uint8_t, uint32_t, bool) override {}
 };
 
 struct ZxFixture

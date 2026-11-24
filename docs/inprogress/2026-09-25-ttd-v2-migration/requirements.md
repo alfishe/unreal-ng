@@ -221,6 +221,127 @@ Release build), reference workloads of §5.3.
   **Measured** (Phase 0, Step 2): seek p99 ≤ 3.8 ms on every configuration of
   the full matrix, 3.46 ms on the heaviest 10-minute session, so Phase 0,
   Step 4 was dropped ([v0b-benchmark-results.md](v0b-benchmark-results.md) §3).
+  **Measured on long sessions** (P1.S10 follow-up, 2026-11-21): the soak found
+  seeks of 10-23 s at 239k frames. The benchmarks had missed it: they ran
+  10-minute sessions without a recording folder, without the write journal
+  and pause / resume cycles, with nothing evicted, and no length scaling. The
+  causes were costs that grew with the session: each pause rewrote the whole
+  write journal and the whole coverage index into the folder, the memory
+  report walked every checkpoint, and the timeline decoded the whole journal
+  and read every evicted segment back. Fixed. The
+  measurement is `TTDSeekScaling_Test.Measure` (`ttdseekscaling_test.cpp`: a
+  Pentagon writing 8 K bytes a frame, with journal, folder, 15,000-frame
+  window and a pause and seek per cycle, lengths by
+  `UNREAL_TTD_SEEK_SCALING`); the guards are `TTDSeekScaling_Folder_Test`
+  (short tier) and its `LongSession` (500 and 2,000 frames: the pause and the
+  median seek do not follow the length; `UNREAL_LONG_TESTS=1`). Measured (20-core Mac at load 50-120, so tails are
+  noisy), 10k / 50k / 100k / 240k frames, before -> after:
+  - pause + first seek: 652 / 2,423 / 4,532 / 10,990 ms -> 5.2 / 4.8 / 6.6 /
+    19 ms;
+  - seek inside the window, frame-aligned: p50 1.45 / 1.45 / 1.55 / 1.74 ms,
+    p95 ≤ 3.4 ms (PR-7 holds). About 0.9-1.0 ms of each is composing the
+    picture (the run to the frame end); the restore itself is 0.5-0.8 ms. PR-6's
+    p50 ≤ 1 ms holds for the restore but not with the picture;
+  - seek into an evicted segment (read back from its file, a 4-segment
+    cache): p50 5.1-5.8 ms at 50k-100k, 7-11 ms at 240k. The disk read is
+    about 5 % of it; zstd decode about 25 %, import 22 %, validation and the
+    full tables 34 %. PR-5 holds inside memory, not for a seek into evicted
+    history;
+  - timeline: 735 / 3,155 / 6,485 / 16,090 ms -> 8.5 / 78 / 154 / 367 ms
+    (71 ms at 240k without port facts). With coverage on, 10k / 50k / 240k:
+    348 / 1,338 / 13,276 ms -> 31 / 184 / 1,924 ms (the last at load 115:
+    port facts about half of it, this harness reads `#FE` thousands of times
+    a frame; the coverage counts 15 %);
+  - a pause with coverage writes the coverage blocks sealed since the last
+    pause: 0.4-0.5 s after 240k frames without one (89 MB).
+
+  **Measured** (P1.S10 seek tails, 2026-11-22, the same harness at load 10-35),
+  before -> after:
+  - seek into an evicted segment at 240k frames: p50 / p95 11.4 / 43 ms ->
+    4.1 / 5.5 ms (max 5.7), 3.9 / 5.0 ms at 100k: a restore reads back only
+    the file's prefix up to the target's part, the file in one read. PR-5
+    holds within noise for evicted history too;
+  - seek inside the window, frame-aligned: p50 1.45-1.74 ms -> 1.0-1.2 ms,
+    p95 ≤ 1.5 ms. The restore is 0.5-0.7 ms (the full memory decode), the
+    picture 0.5 ms (one frame run from the checkpoint before, the run's
+    write checks off, memory moved along the piece chains, buffers pooled).
+    PR-6's p50 ≤ 1 ms holds up to 100k frames and is 1.2 ms at 240k: the
+    floor is the full decode plus one frame of emulation;
+  - timeline at 240k: 367 -> 84 ms; with coverage 13,276 ms (1,924 at the
+    2026-11-21 follow-up) -> 290 ms, 72 ms at 50k (port facts from per-block
+    tallies, no decode of the port journal);
+  - a first pause with coverage at 240k: 413 -> 9 ms (every closed trunk file
+    carries the coverage blocks since the previous one);
+  - capture with coverage (A/B of the index alone, min of 15 rounds): 19.3 ->
+    13.0 us a frame at 1,100 keys a frame (10.9 before the summaries), 71.7 ->
+    45.3 us at 8 K; the port journal's tallies cost 2.2 us a frame at 3,000
+    port records a frame.
+
+  **Measured** (P1.S10 seek A/B, 2026-11-22). The seek-tails landing
+  was compared with its parent: interleaved rounds with an A/A beside each,
+  load 5-75, `BM_Prof_*_Ttd*` ladders on Pentagon and TSL, and
+  `TTDSeekScaling_Test.Measure`.
+  - recording: TTD off, TTD on, and TTD on with coverage and the write journal
+    all stay inside the A/A on both machines. TTD off costs nothing (Pentagon
+    +2.0 % against A/A +2.1 %, TSL 0.0 %). The port tallies are under the
+    noise floor;
+  - under the same load, the landing holds at 240k frames:
+    - an evicted seek: 6.5 -> 4.2 ms p50;
+    - a window seek: 1.8 -> 1.3 ms p50;
+    - the timeline: 394 -> 97 ms;
+  - this step:
+    - stepping back frame by frame: 0.97 / 1.33 -> 0.65 / 0.93 ms p50 at
+      50k / 240k. A restore that does not know memory copies, from the
+      engine's decoded copy, the pieces whose version it holds, or moves them
+      along their chains;
+    - the timeline with coverage: 71 / 287 -> 46 / 167 ms at 50k / 240k.
+      The coverage index unites runs of 4 and 32 blocks as they seal, so a
+      long range counts a run's keys once, not each block's;
+    - neither costs anything measurable in recording;
+  - tried and reverted, no win:
+    - keeping container records compressed only when that saves an eighth;
+    - running sums for the port journal's heap;
+  - still open:
+    - an evicted seek at 240k is 4.0 / 6.3 ms p50 / p95 with coverage, so
+      p99 is not under 5 ms. The floor is the read back: the records' zstd,
+      their crc and the table rebuild;
+    - PR-6's 1 ms p50 is 1.3-1.4 ms at 240k. The floor is the full decode
+      plus one frame run for the picture.
+
+  **Measured** (P1.S10 seek format, 2026-11-24). The same harness with sides
+  interleaved in one process (`UNREAL_TTD_SEEK_SIDES`), every mechanism
+  switched off for "before", the shipped tree twice for the A/A, 100 seeks
+  per kind, 2 rounds, on a machine at load 14-330 (so the tails are read from
+  the quieter rounds). At 240k frames, before -> after:
+  - seek inside the window, frame-aligned: p50 1.31 -> 0.69-0.71 ms (0.73
+    with coverage); stepping back 0.85 -> 0.57-0.59 ms. The memory decode is
+    0.45 -> 0.14 ms (153 -> 41 differences applied), the session's publish
+    0.26 -> 0.01 ms; the picture's frame run, 0.55 ms, is what is left. PR-6's
+    p50 <= 1 ms holds at every length (0.69-0.80 ms from 10k to 240k);
+  - seek into evicted history: p50 4.70 -> 1.33-2.44 ms (the A/A's two
+    rounds: load 14 and load 80-147), p95 / p99 1.68 / 1.82 and 2.14 / 2.53 ms
+    in the rounds at load 52-170, 36 / 68 ms before under the same load. The
+    read back is 3.30 -> 0.42 ms: about 410 KB of 7-8 parts of a 4.3 MB file,
+    500 versions imported. PR-5's p99 <= 5 ms holds for evicted history on a
+    machine that is not starved; under load 200-330 the same binary shows p99
+    of 15-40 ms on any seek, in memory too;
+  - what did it: a seek reads one stretch of the segment's file through a
+    seek index and piece tables (`ReadSegmentWindow`; evicted p50 3.81 ->
+    1.5 ms alone); every 7th version of a piece's chain builds on the one 7
+    before (decode 0.29 -> 0.14 ms); a baseline keeps the version of an
+    unchanged piece (0.27 -> 0.14 ms); piece records uncompressed in the
+    file (read back 0.71 -> 0.42 ms); running sums for the journals' sizes
+    (0.20 -> 0.01 ms of every seek);
+  - cost: the recording folder 535.9 -> 569.3 MB (+6.2 %: uncompressed piece
+    records +24 MB, the anchor differences +9 MB, tables and index 0.1 %);
+    engine heap 1,233.8 -> 1,228.0 MB. Recording cost: see
+    [DONE.md](DONE.md), P1.S10 seek format.
+  - the tails on a quiet machine (M3 Ultra at load 3-7, 200 seeks per kind,
+    3 rounds, the A/A within 0.06 ms), before -> after, p50 / p99: evicted,
+    frame-aligned 3.14 / 4.49 -> 0.81 / 1.09 ms; evicted, inside a frame
+    3.35 / 4.88 -> 1.28 / 1.75 ms (1.30 / 1.86 with coverage, 3.54 / 5.17
+    before); inside the window 0.82 / 1.06 -> 0.50 / 0.59 ms; stepping back
+    0.49 / 0.63 -> 0.40 / 0.48 ms. PR-5 and PR-6 hold with their tails.
 
 ### 3.3 Storage efficiency
 

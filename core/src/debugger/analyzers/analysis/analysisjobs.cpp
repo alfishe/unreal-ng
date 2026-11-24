@@ -6,6 +6,7 @@
 
 #include "debugger/analyzers/analysis/detectors/detectors.h"
 #include "debugger/analyzers/analysis/l3session.h"
+#include "emulator/jobs/jobregistry.h"
 
 namespace analysis
 {
@@ -46,6 +47,31 @@ L1Jobs& L1Jobs::Instance()
     return jobs;
 }
 
+L1Jobs::L1Jobs()
+{
+    // The registry runs the builds: made first, it is destroyed after this (which waits for its builds)
+    (void)jobs::Registry::Instance();
+}
+
+void L1Jobs::End(Job& job, const std::string& state, const std::string& error)
+{
+    {
+        std::lock_guard<std::mutex> lock(job.mutex);
+        if (job.finished)
+            return;
+        job.state = state;
+        job.error = error;
+        job.finished = true;
+    }
+    job.ended.notify_all();
+}
+
+void L1Jobs::WaitEnded(Job& job)
+{
+    std::unique_lock<std::mutex> lock(job.mutex);
+    job.ended.wait(lock, [&job] { return job.finished.load(); });
+}
+
 L1Jobs::~L1Jobs()
 {
     std::map<std::string, Slot> slots;
@@ -56,11 +82,12 @@ L1Jobs::~L1Jobs()
     for (auto& [id, slot] : slots)
     {
         (void)id;
-        if (slot.job)
+        if (slot.job && !slot.job->finished)
         {
             slot.job->cancel = true;
-            if (slot.job->thread.joinable())
-                slot.job->thread.join();
+            if (jobs::Registry::Alive())
+                (void)jobs::Registry::Instance().Cancel(slot.job->id);
+            WaitEnded(*slot.job);
         }
     }
 }
@@ -70,6 +97,7 @@ bool L1Jobs::Start(const std::string& emulatorId, TraceBundle bundle, ReplayOpti
 {
     std::shared_ptr<Job> previous;
     std::shared_ptr<Job> job = std::make_shared<Job>();
+    uint64_t frames = 0;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         Slot& slot = _slots[emulatorId];
@@ -79,42 +107,94 @@ bool L1Jobs::Start(const std::string& emulatorId, TraceBundle bundle, ReplayOpti
             return false;
         }
         previous = slot.job;
-        job->id = _nextId++;
         job->path = path;
         job->bundle = bundle.ToStateNode();
-        job->total = bundle.endFrame > bundle.firstFrame ? bundle.endFrame - bundle.firstFrame : 0;
+        frames = bundle.endFrame > bundle.firstFrame ? bundle.endFrame - bundle.firstFrame : 0;
+        job->total = frames;
         if (options.maxFrames != 0 && job->total > options.maxFrames)
             job->total = options.maxFrames;
-        slot.job = job;
+        slot.job = job;  // the slot is taken before the job can start
     }
-    if (previous && previous->thread.joinable())
-        previous->thread.join();
-    id = job->id;
-    job->thread = std::thread(&L1Jobs::Run, this, emulatorId, job, std::move(bundle), std::move(options));
+
+    // One job of the registry (S2): queued in the instance's analysis lane, run on a registry worker
+    auto kept = std::make_shared<const TraceBundle>(std::move(bundle));
+    jobs::Spec spec;
+    spec.kind = "analysis.build";
+    spec.emulatorId = emulatorId;
+    spec.lane = "analysis@" + emulatorId;
+    spec.summary = "build " + std::to_string(job->total.load()) + " of " + std::to_string(frames) + " frames" +
+                   (path.empty() ? std::string() : " path=" + path);
+    spec.cancellable = true;
+    spec.onCancel = [job] { job->cancel = true; };
+    spec.onSkipped = [job, emulatorId] {
+        End(*job, "cancelled", "cancelled before it ran");
+        NotifyReadoutsChanged(emulatorId, "analysis");
+    };
+    spec.work = [this, emulatorId, job, kept, options](jobs::Context& context) -> jobs::Outcome {
+        job->id = context.Id();
+        Run(emulatorId, job, kept, options, context);
+        jobs::Outcome outcome;
+        const JobView view = View(emulatorId);
+        std::lock_guard<std::mutex> lock(job->mutex);
+        outcome.ok = job->state == "done";
+        outcome.cancelled = job->state == "cancelled";
+        outcome.status = outcome.ok ? 200 : 409;
+        outcome.error = job->error;
+        StateNode result = StateNode::Object();
+        result["progress"] = view.ProgressNode();
+        result["ready"] = view.ReadyNode();
+        outcome.result = std::move(result);
+        outcome.text = outcome.ok ? "L1 built: " + std::to_string(view.routines) + " routines, " +
+                                        std::to_string(view.blocks) + " blocks, " + std::to_string(view.loops) +
+                                        " loops, " + std::to_string(view.instructions) + " instructions, " +
+                                        std::to_string(view.regions) + " L2 regions" +
+                                        (job->path.empty() ? "" : ", written to " + job->path)
+                                  : "L1 build " + job->state + (job->error.empty() ? "" : ": " + job->error);
+        return outcome;
+    };
+    id = jobs::Registry::Instance().Submit(std::move(spec), error);
+    if (id == 0)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        Slot& slot = _slots[emulatorId];
+        if (slot.job == job)
+            slot.job = previous;
+        error = "the build was not queued: " + error;
+        return false;
+    }
+    job->id = id;
     NotifyReadoutsChanged(emulatorId, "analysis");  // analysis.progress / analysis.ready: on the job, not on frames
     return true;
 }
 
-void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceBundle bundle, ReplayOptions options)
+void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, std::shared_ptr<const TraceBundle> kept,
+                 ReplayOptions options, jobs::Context& context)
 {
     Job& j = *job;
+    {
+        std::lock_guard<std::mutex> lock(j.mutex);
+        j.state = "running";
+    }
+    NotifyReadoutsChanged(emulatorId, "analysis");
     // A whole percent more: told (the job runs on its thread, beside or without the machine's frames)
     uint64_t percent = 0;
-    options.progress = [&j, &percent, &emulatorId](uint64_t done, uint64_t total) {
+    options.progress = [&j, &percent, &emulatorId, &context](uint64_t done, uint64_t total) {
         j.done = done;
         j.total = total;
+        context.Progress(done, total, "frames");
         const uint64_t now = total != 0 ? done * 100 / total : 0;
         if (now != percent)
         {
             percent = now;
             NotifyReadoutsChanged(emulatorId, "analysis");
         }
-        return !j.cancel.load();
+        return !j.cancel.load() && !context.CancelRequested();
     };
     auto result = std::make_shared<L1Result>();
     std::string error;
-    const auto kept = std::make_shared<const TraceBundle>(std::move(bundle));
-    const bool ok = ReplayBuild(*kept, options, *result, error);
+    const bool ok = !j.cancel.load() && ReplayBuild(*kept, options, *result, error);
+    if (!ok && error.empty())
+        error = "cancelled";
     std::shared_ptr<const L2Result> structure;
     uint64_t conflicts = 0;
     if (ok)
@@ -250,11 +330,18 @@ bool L1Jobs::Wait(const std::string& emulatorId, int timeoutMs) const
 
 bool L1Jobs::Cancel(const std::string& emulatorId)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    const auto it = _slots.find(emulatorId);
-    if (it == _slots.end() || !it->second.job || it->second.job->finished)
-        return false;
-    it->second.job->cancel = true;
+    uint64_t id = 0;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _slots.find(emulatorId);
+        if (it == _slots.end() || !it->second.job || it->second.job->finished)
+            return false;
+        it->second.job->cancel = true;
+        id = it->second.job->id;
+    }
+    // A queued build ends at once (onSkipped); a running one stops at its next frame
+    if (id != 0)
+        (void)jobs::Registry::Instance().Cancel(id);
     return true;
 }
 
@@ -272,11 +359,12 @@ void L1Jobs::Forget(const std::string& emulatorId)
         _recordings.erase(emulatorId);
     }
     L3Sessions::Instance().Forget(emulatorId);
-    if (slot.job)
+    if (slot.job && !slot.job->finished)
     {
         slot.job->cancel = true;
-        if (slot.job->thread.joinable())
-            slot.job->thread.join();
+        if (slot.job->id != 0)
+            (void)jobs::Registry::Instance().Cancel(slot.job->id);
+        WaitEnded(*slot.job);
     }
     NotifyReadoutsChanged(emulatorId, "analysis");
 }

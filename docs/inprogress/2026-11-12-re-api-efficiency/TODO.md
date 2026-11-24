@@ -70,7 +70,24 @@
   longer than `max_frames` also answers `more`. Test `TTDFindEvent_Test.T13_ExecIndexCandidatesThatDidNotRun`
   (the same offset #1000 in two pages; it fails on the old code with hits at `t` 0 and no text). Docs:
   [find-event design §exec](../2026-11-02-ttd-find-event/design.md), `command-interface.md` `ttd find-event`.
-- [ ] S2: job model / long-poll for long verbs; clients drop `sleep(5)` (M).
+- [x] S2: job model / long-poll for long verbs; clients drop `sleep(5)` (M).
+  As built (2026-11-22, uncommitted on `api-jobs`): one registry for every kind (`core/src/emulator/jobs/jobregistry.h`,
+  the verbs `jobcontrol.h`; design [jobs.md](../../emulator/design/control-interfaces/jobs.md)). `async=true` on TTD
+  `dump`, `load`, `probe-frames`, `memory-series`, `find-event`, `replay-check`, `export-clip`, `journal-build`,
+  `branch-create` and analysis `build`, `trace`, `experiment`, `cover` answers 202 `{job, state, status_url}` at
+  once; without it nothing changes. States queued / running / done / failed / cancelled; the TTD jobs of an instance
+  run in order in one lane, its analysis jobs in another, 4 workers; `probe-frames`, `memory-series` (stop at the next
+  frame, `cancelled: true` with what they got), `journal-build` and the build cancel, the others refuse (409). The
+  `analysis build` job (L1Jobs) runs on the registry now (no thread of its own; `analysis.progress` /
+  `analysis.ready` as before, state `queued` added). REST `GET /api/v1/jobs`, `GET|POST /api/v1/emulator/{id}/jobs`,
+  `GET /api/v1/jobs/{job}?wait_ms=` (long-poll up to 60000 ms, more refused; a registry watch and an event-loop timer,
+  no thread held; 256 at once), `DELETE /api/v1/jobs/{job}` or `POST .../cancel`; WebSocket: the same `call`s, topics
+  `jobs.progress` (active jobs, progress throttled to 100 ms) and `jobs.done` (the last 8 ends); MCP `jobs`
+  (list / status / wait / cancel / start) and `async` on `time_travel` / `analysis`; CLI `jobs`, Lua / Python
+  `jobs()`. Retention 64 finished, 30 min, 64 MiB of results (the oldest lose their payload). Removing an instance
+  cancels its jobs. `re_session.py` and `mcplib.py` (`wait_job`) long-poll instead of `sleep(5)`. Tests
+  `JobRegistry_Test`, `JobControl_Test`, `JobsVerbs_Test`, `WebAPIJobsRoutes_Test`, `McpTools_Test.*Async*` /
+  `Jobs_*`; live `tools/verification/mcp/test_jobs.py`.
 - [ ] S3: server-side input script player with TTD recording (M).
 - [ ] V1: L1 over several sessions (M).
 - [x] V2: `screen_at` (shown / normal / shadow) at a past frame (S). As built 2026-11-19: verb `screen-at`

@@ -58,6 +58,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
     // The operation log (machine state coordinator, api/operations_api.cpp): who did what to the machine, when, result
     ADD_METHOD_TO(EmulatorAPI::getOperations, "/api/v1/emulator/{id}/operations", drogon::Get);
+    // Jobs (api/jobs_api.cpp, PLAN #122 S2): the long verbs run with async=true; list, long-poll, cancel
+    ADD_METHOD_TO(EmulatorAPI::listJobs, "/api/v1/jobs", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::listInstanceJobs, "/api/v1/emulator/{id}/jobs", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::startJob, "/api/v1/emulator/{id}/jobs", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getJob, "/api/v1/jobs/{job}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::cancelJob, "/api/v1/jobs/{job}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::cancelJob, "/api/v1/jobs/{job}/cancel", drogon::Post);
     // NMI pulse (Scorpion MNI "magic button" with {"magic": true})
     ADD_METHOD_TO(EmulatorAPI::requestNmi, "/api/v1/emulator/{id}/nmi", drogon::Post);
     // Front-panel switches (Profi TURBO): GET lists them, POST {"name": "turbo", "on": true} flips one
@@ -409,6 +416,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStatsSection, "/api/v1/emulator/{id}/state/audio/gs/stats/{section}",
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmware, "/api/v1/emulator/{id}/state/audio/gs/firmware", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSZxDma, "/api/v1/emulator/{id}/state/audio/gs/zxdma", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmwareProfiles, "/api/v1/emulator/{id}/state/audio/gs/firmware/profiles",
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovox, "/api/v1/emulator/{id}/state/audio/covox", drogon::Get);
@@ -558,6 +566,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::stepOver, "/api/v1/emulator/{id}/stepover", drogon::Post);
         ADD_METHOD_TO(EmulatorAPI::stepOut, "/api/v1/emulator/{id}/stepout", drogon::Post);
         ADD_METHOD_TO(EmulatorAPI::skipUntil, "/api/v1/emulator/{id}/skip_until", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::cardRunTo, "/api/v1/emulator/{id}/card_run_to", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runTStates, "/api/v1/emulator/{id}/run_tstates", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runToScanline, "/api/v1/emulator/{id}/run_to_scanline", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runNScanlines, "/api/v1/emulator/{id}/run_scanlines", drogon::Post);
@@ -934,6 +943,23 @@ public:
     /// @brief GET /api/v1/emulator/{id}/operations[?since=&limit=] — the operation log (OperationsStatus::Report)
     void getOperations(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // region Jobs (implementation: api/jobs_api.cpp; core: emulator/jobs/jobcontrol.h)
+    /// @brief GET /api/v1/jobs[?instance=&state=&limit=] — every instance's jobs (instance=<id> filters)
+    void listJobs(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// @brief GET /api/v1/emulator/{id}/jobs[?state=&limit=] — the instance's jobs
+    void listInstanceJobs(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/jobs {domain: ttd | analysis, verb, <the verb's options>} — 202 {job, ...}
+    void startJob(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    /// @brief GET /api/v1/jobs/{job}[?wait_ms=&result=] — one job; wait_ms long-polls (no thread held) up to 60000
+    void getJob(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                const std::string& job) const;
+    /// @brief DELETE /api/v1/jobs/{job}, POST /api/v1/jobs/{job}/cancel — cancel it
+    void cancelJob(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& job) const;
+    // endregion Jobs
 
     // Pulse the NMI line; body {"magic": true} selects the Scorpion MNI variant
     // (Shadow Monitor paged before the NMI so #0066 executes monitor code)
@@ -1529,7 +1555,7 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void setVideoViewport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& id) const;
     /// @brief POST /api/v1/emulator/{id}/video/window/record — body {path, keyboard ("" | "default" | a picture id),
-    /// codec (prores | h264 | h265), hardware, fit, fps, scale, picture_height, width, height, layout (below | side)}: record the window as it draws, the on-screen keyboard under it (409 headless)
+    /// codec (prores | h264 | h265), hardware, fit, fps, scale, picture_height, width, height, layout (below | side), transfer (picture | nv12)}: record the window as it draws, the on-screen keyboard under it (409 headless)
     void startVideoWindowRecord(const drogon::HttpRequestPtr& req,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                 const std::string& id) const;
@@ -1602,6 +1628,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioGSFirmware(const drogon::HttpRequestPtr& req,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                  const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/zxdma?last=N&since=S
+    ///        The NeoGS ZX-DMA trace (gszxdmatrace.h, gs-debugger N6): the bytes the host moved through the window,
+    ///        one row each (host time, card time, direction, card address, value, wait, host PC), from the GS port
+    ///        trace while it captures. 404 without a NeoGS
+    void getStateAudioGSZxDma(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
     /// @brief GET /api/v1/emulator/{id}/state/audio/gs/firmware/profiles — the firmware profiles known (built-in and
     ///        the files of <symbols>/gs/profiles)
     void getStateAudioGSFirmwareProfiles(const drogon::HttpRequestPtr& req,
@@ -1944,6 +1977,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     ///        Fast-forwards execution until PC reaches the target (breakpoints are skipped)
     void skipUntil(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/card_run_to — body: {"cpu": "gs", "until": "cycle" | "int" | "command" |
+    ///        "main_t", "value": N}: a card CPU's run to a moment (RunControl::CardRunTo)
+    void cardRunTo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    void cardRunToNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
     void runTStates(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
     void runToScanline(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

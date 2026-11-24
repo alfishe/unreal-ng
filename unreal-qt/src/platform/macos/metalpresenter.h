@@ -5,8 +5,10 @@
 /// The native presenter on macOS (nativepresenter.h): the GL renderer draws each picture into one of a few IOSurfaces,
 /// and this class shows it on the window's CAMetalLayer with presentDrawable:atTime: at the frame's audio time.
 ///
-/// Every present gets a presented handler: MTLDrawable.presentedTime (CACurrentMediaTime = mach_absolute_time, the
-/// steady clock) against the time asked for gives the on-screen error, 0 = the system dropped the frame.
+/// Every present gets a presented handler: MTLDrawable.presentedTime against the time asked for gives the on-screen
+/// error, 0 = the system dropped the frame. Core Animation's times (CACurrentMediaTime = mach_absolute_time, stopped
+/// while the Mac sleeps) and the steady clock (mach_continuous_time) part by every sleep since the boot: the presenter
+/// turns times over between them.
 ///
 /// The handlers run on Metal's threads and touch only the statistics, which they share with the presenter: a handler
 /// that comes after the presenter is gone finds them alive. The window's occlusion and its screen's refresh range are
@@ -21,7 +23,7 @@ public:
 
     unsigned BeginFrame(int width, int height) override;
     void PresentFrame(int64_t atNs, const TraceInfo& trace) override;
-    /// NSWindowOcclusionStateVisible (cached)
+    /// NSWindowOcclusionStateVisible: read again on the GUI thread, cached for the others
     bool IsVisible() const override;
     /// The window server composes a refresh ahead, so a drawable needs about a refresh before its vsync, and the
     /// draw (a GL fence wait up to 10 ms on a busy GPU) comes on top. Frames latch some 60 ms before their target, so

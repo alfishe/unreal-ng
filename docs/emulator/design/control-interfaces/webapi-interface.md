@@ -426,6 +426,7 @@ POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"cou
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
 POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop; ?cpu=gs / ms: that card CPU runs to pc, a breakpoint ends it, answers the card step's reply plus hit)
+POST /api/v1/emulator/{id}/card_run_to       A card CPU to a moment (body: {"cpu": "gs"|"ms" (default gs), "until": "cycle"|"int"|"command"|"main_t", "value": N}; the machine paused; answers the card step's reply plus until, hit, target_cycle / target_t, card_cycle, main_t, frame, command)
 POST /api/v1/emulator/{id}/run_until         Whole frames until frame-end rules hold (body: {"if"?, "text"?, "screen"?: "changed"|"stable", "stable_frames"?, "event"?, "match"?: "any"|"all", "max_frames"?: 1..200000 (3000), "breakpoints"?: false}; answers met, outcome (met|budget|breakpoint|aborted), frames, frame, pc, ttd_frame?, ms, hit {frame, reasons, text_line?, stable_for?, event_fires?}, text; long-call pool)
 GET  /api/v1/emulator/{id}/watches           Armed frame watches: {count, watches: [{id, label?, spec, then, once, armed_frame, hits, last_hit?, error?}], text}
 POST /api/v1/emulator/{id}/watches           Arm a frame watch (the run_until rules plus "label"?, "then"?: "pause"|"notify", "once"?: true): 201 {id, watch, text}; 400 a bad spec or 16 armed. A hit: watch_hit on debug.events, debug/wait wakes, then=pause pauses (stop reason "watch")
@@ -518,7 +519,19 @@ with the card - `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary` an
 `elapsed_t`, `total_t`, `total_t_alt`, `bus_cycles`, `bus_cycle`, `bus_cycle_index`, `contended`), the card CPU's `pc` and `sp`, `main_pc`, `main_sp`,
 `state`; 409 when not paused or a step of that CPU is under way. The step runs the card in tight mode: the main CPU
 moves on only as far as the card's time needs, and parks at the start of an instruction; none within 2 s (over / out
-5 s) is a `timeout`.
+5 s) is a `timeout`. The card step's reply also has `card_cycle` (the card CPU's cycle of the ZX frame, as the `gs`
+report's `cpu.frame_cycle`), `main_t` (the main CPU's T of the frame) and `frame`.
+
+`POST /card_run_to {cpu, until, value}` runs a card CPU (`gs` by default) to a moment, the machine paused:
+`until` `cycle` parks the card at the first instruction boundary at or after card cycle `value` of the ZX frame (a
+cycle it already stands at or passed: the next frame's; `value` past the frame's card cycles is a 400); `int` at the
+first instruction of the handler of its next accepted interrupt (where an `int` event breakpoint parks); `command`
+pauses the machine after the main CPU's next OUT to the card's command port, before the card takes it (`command`: the
+byte, in `stop` too; the stop has no `main`); `main_t` runs the main CPU to T-state `value` of the frame (the next
+frame's when at or past it; a direct run of at most a frame, `stop.cpu` main). A breakpoint of any CPU on the way ends
+it (`hit` false); none of the others within 5 s is a `timeout`. The reply: the card step's plus `until`, `hit`,
+`target_cycle` / `target_t`; the message says where it stopped ("Ran cpu gs to card cycle 120000: stopped at card
+cycle 120007, #0278"). 400 for no or an unknown `until` or `cpu` main, 409 when not paused or a step is under way.
 
 `GET` / `PUT /debug/selected_cpu` (`{cpu: "main" | "gs" | "ms"}` or `?cpu=`): the CPU the debugger front-ends show,
 one per machine, `{cpu, follows}`. A card shown follows the main CPU's steps of the paused machine (step, steps,
@@ -606,6 +619,7 @@ GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and ch
 GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
 GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, page, DAC channels, card CPU, "neogs" block (404 without a card; ?ram=1 adds the #4000-#7FFF window)
+GET  /api/v1/emulator/{id}/state/audio/gs/zxdma?last=N&since=S  NeoGS ZX-DMA trace: a row a byte the host moved (seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped), last_seq, text; recorded while the GS port trace captures (404 without a NeoGS)
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
@@ -680,7 +694,7 @@ PUT  /api/v1/emulator/{id}/video/window/crt_params        {values: {name: number
 POST /api/v1/emulator/{id}/video/window/crt_params/reset  every parameter back to its initial value
 GET  /api/v1/emulator/{id}/video/viewport                 the overscan frame and its crop: {overscan, overscan_available, viewport (full | symmetric | standard | screen_only | custom), viewports[], framebuffer, display, video_mode}; the machine's, answers headless too
 PUT  /api/v1/emulator/{id}/video/viewport                 {"viewport": "standard" | "next" | "prev" | ...} (POST too); a crop other than full needs overscan on (409 unavailable); answers the report + changed; changes the picture, not the machine: no control session
-POST /api/v1/emulator/{id}/video/window/record         GUI window recording (the picture as drawn, CRT and all, + the on-screen keyboard) through ffmpeg: {"path", "keyboard": "default"|<picture id>, "codec": "prores"|"h264", "audio": true (the machine's sound, frame for frame), "fps" (left out = the machine's rate; only with audio false), "scale": 1..4, "hardware", "engine": "native"|"ffmpeg", "fit", "picture_height": 0..4320 (the CRT drawn at that height), "width", "height", "layout": "below"|"side"}; answers {recording, path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples}; 409 no-window / unavailable, 400 bad-parameter
+POST /api/v1/emulator/{id}/video/window/record         GUI window recording (the picture as drawn, CRT and all, + the on-screen keyboard) through ffmpeg: {"path", "keyboard": "default"|<picture id>, "codec": "prores"|"h264", "audio": true (the machine's sound, frame for frame), "fps" (left out = the machine's rate; only with audio false), "scale": 1..4, "hardware", "engine": "native"|"ffmpeg", "fit", "picture_height": 0..4320 (the CRT drawn at that height), "width", "height", "layout": "below"|"side", "transfer": "picture"|"nv12" (what ffmpeg gets: the window's picture, scaled by ffmpeg, or the frame at the file's size as NV12)}; answers {recording, path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples, transfer}; 409 no-window / unavailable, 400 bad-parameter
 GET  /api/v1/emulator/{id}/video/window/record         its status, the same fields
 POST /api/v1/emulator/{id}/video/window/record/frames  {"frames": N}: a paused machine runs N frames, each one recorded before the next (every frame whatever the load); adds "ran"; 409 not-paused / unavailable / run-control-held
 POST /api/v1/emulator/{id}/video/window/record/stop    closes the file (waits for ffmpeg, muxes the sound in). Recipe: .recipe/media/window-recording.md
@@ -845,7 +859,9 @@ GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, record
 POST /api/v1/emulator/{id}/analysis/build     {frames?, from_frame?, from_tinframe?, to_frame?, path?,
                                                wait?: ms <= 30000}: the L1 build job (a window: one stage,
                                                analysis-layers.md#stages-and-windows)
-                                              {job, state, bundle, progress, ready, text}
+                                              {job, state, bundle, progress, ready, text}; async: true instead
+                                              of wait answers 202 with the job (Jobs below); trace, experiment
+                                              and cover take async too
 POST /api/v1/emulator/{id}/analysis/cancel    cancel the running build: {job, state, text}
 GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3][&what=auto|routine|byte]
                                               routine (L1 ready, auto or what=routine): {what: "routine", address,
@@ -2413,6 +2429,38 @@ At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value` is r
 | 503 | The emulator is shutting down. |
 
 Everything else is reported in a 200 body: `reached: false`, `stepped: false`, `resumed: false`, `found: false`, `matched: false`.
+
+### Jobs
+
+The long verbs as jobs (PLAN #122 S2, [jobs.md](./jobs.md); `jobs_api.cpp` over `jobs::Execute`; OpenAPI tag `Jobs`).
+`"async": true` in the body (or `?async=true` on a GET verb) of TTD `dump`, `load`, `probe-frames`, `memory-series`,
+`find-event`, `replay-check`, `export-clip`, `journal/build`, `branches` (create) and analysis `build`, `trace`,
+`experiment`, `cover` answers **202** at once; the job holds the answer the call gives without `async`.
+
+```
+POST   /api/v1/emulator/{id}/ttd/dump       {"path": "/tmp/a.ttd", "async": true}
+       202 {job, state, kind, emulator_id, summary, async: true, status_url, wait_url, text}
+POST   /api/v1/emulator/{id}/jobs           {"domain": "ttd" | "analysis", "verb": "dump", <the verb's options>}: 202, the same
+GET    /api/v1/jobs[?instance=all|<id>&state=active|finished|all&limit=50]
+       {instance, state, count, total, active, jobs: [job], limits {workers, max_queued, keep_finished, keep_ms,
+        keep_result_bytes, max_wait_ms}, text}
+GET    /api/v1/emulator/{id}/jobs[?state=&limit=]   the instance's
+GET    /api/v1/jobs/{job}[?result=false]    {job, kind, emulator_id, summary, state, progress {done, total, unit,
+                                             percent}, cancellable, cancel_requested, created_ms, started_ms,
+                                             ended_ms, elapsed_ms, queue_position?, status?, error?, result?, text}
+GET    /api/v1/jobs/{job}?wait_ms=30000     the long-poll: answered when the job ends or after wait_ms (1..60000,
+                                             more: 400), with ended and wait_ms; no server thread waits
+DELETE /api/v1/jobs/{job}                   cancel; also POST /api/v1/jobs/{job}/cancel
+       {..., cancel: "cancelled" | "requested", text}; 409: it ended, or cannot stop
+```
+
+| HTTP | When |
+| :--- | :--- |
+| 202 | A job was queued (`async=true`, `POST .../jobs`). |
+| 400 | Unknown option, `async` on a verb that is not long, `async` and `wait` on a build, `wait_ms` over 60000. |
+| 404 | No such job (never was, or forgotten: 64 finished jobs kept, 30 min), no such emulator. |
+| 409 | The job ended already or cannot stop (cancel); the queue is full (64). |
+| 503 | The emulator is shutting down, the registry stops. |
 
 ## WebSocket
 

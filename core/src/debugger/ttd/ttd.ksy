@@ -45,6 +45,14 @@
 # size). Kaitai has no zstd process: the stream payload types below describe
 # the bytes after decompression (`payload_*`), to be applied by the reader.
 #
+# A recording folder's segment file (P1.S10 seek format, 2026-11-23) also holds
+# what a seek into it needs to read one stretch of its checkpoints instead of
+# the file from its start: stream 2 (ancillary, `payload_piece_tables`), every
+# piece's current version at each checkpoint that holds full reference tables,
+# and a seek index in the index extra (`seek_index`), the places of each part's
+# piece, checkpoint and table records. A saved or joined file has neither; a
+# reader that ignores both reads the file as before.
+#
 # No compatibility promise before the release (owner decision 2026-10-03):
 # the layout is amended in place, fixtures rewritten.
 
@@ -118,12 +126,18 @@ types:
       - id: id
         type: u2
         doc: |
-          0 container (part ends), 1 pieces, 3 checkpoints, 5 events,
+          0 container (part ends), 1 pieces, 2 piece tables (ancillary, a
+          recording folder's segment files only: payload_piece_tables), 3
+          checkpoints, 5 events,
           6 configuration, 7 write journal, 13 bus reads, 14 bus writes,
           15 bus vectors, 16 media (sector) reads; 0x0100-0x013F frame-boundary
           streams. The holder's streams (ancillary, opaque to the engine, written
-          whole with the last part): 8 coverage, 12 bookmarks, 17 controller facts,
-          18 branch state (payload_branch_state); 9-11 and 19-0xFF free for it.
+          with the last part): 8 coverage, 12 bookmarks, 17 controller facts,
+          18 branch state (payload_branch_state), 19 coverage-from (u8 x8: in a
+          recording folder each pause's file holds a part of the coverage index,
+          the blocks from this frame on; a reader joins the parts in file order,
+          a later one replacing the blocks it repeats; absent: 8 is whole);
+          9-11 and 20-0xFF free for it.
           Branches (ancillary, so a reader without them loads the trunk):
           0x0200 the branch table (payload_branch_table), 0x0200 + S (0x0201-0x023F)
           the twin of stream S for a branch's records (same layout, except the
@@ -326,6 +340,84 @@ types:
         type: u4
       - id: extra
         size: extra_size
+        type: index_extra
+
+  index_extra:
+    doc: |
+      The session layer's index data: empty, or a recording folder's segment
+      file's seek index (its first byte is 0x53)
+    instances:
+      first:
+        pos: 0
+        type: u1
+        if: _io.size > 0
+      seek:
+        pos: 0
+        type: seek_index
+        if: _io.size > 10 and first == 0x53
+
+  seek_index:
+    doc: |
+      The index extra of a recording folder's segment file: where each part's
+      piece, checkpoint and piece-table records lie, so a read back of one
+      checkpoint reads the parts it needs (TTDSessionFile::ReadSegmentWindow).
+      index_offset is the offset of the container's index in the file it was
+      written for: in a copy whose records moved it differs from the trailer's,
+      and the seek index is ignored (the file is read from its start).
+    seq:
+      - id: magic
+        contents: [0x53]
+      - id: version
+        type: u1
+        valid: 1
+      - id: index_offset
+        type: u8
+      - id: line
+        type: vlq
+        doc: the line the file's parts hold (part_end.branch; 0 the trunk)
+      - id: part_count
+        type: vlq
+      - id: parts
+        type: seek_part
+        repeat: expr
+        repeat-expr: part_count.value
+
+  seek_part:
+    doc: One part of the file, in part order. An offset of 0 - the part has no such record
+    seq:
+      - id: pieces_offset
+        type: vlq
+        doc: of the record header of the part's stream 1 (0x0201 in a branch's file) record
+      - id: pieces_stored
+        type: vlq
+        doc: its stored payload size
+      - id: checkpoints_offset
+        type: vlq
+      - id: checkpoints_stored
+        type: vlq
+      - id: tables_offset
+        type: vlq
+        doc: of the part's stream 2 (0x0202) record
+      - id: tables_stored
+        type: vlq
+      - id: first_item
+        type: vlq
+        doc: the number in the file of the first version of the part's piece record
+      - id: items
+        type: vlq
+        doc: the versions its piece record holds
+      - id: first_frame
+        type: vlq
+      - id: table_count
+        type: vlq
+      - id: table_frame_deltas
+        type: vlq
+        repeat: expr
+        repeat-expr: table_count.value
+        doc: |
+          the frames of the checkpoints the part's table record holds a table of,
+          ascending: the first as the difference from first_frame, each next one
+          from the one before
 
   index_part:
     seq:
@@ -395,6 +487,50 @@ types:
         type: vlq
       - id: payload
         size: payload_size.value
+
+  payload_piece_tables:
+    doc: |
+      Stream 2 (0x0202 in a branch's file), in a recording folder's segment
+      files: for each checkpoint of the part that holds a full reference table
+      of every region (a segment's first, a branch's fork copy, every
+      checkpoint whose number in the session is a multiple of the header's
+      snapshot interval), the version every piece has after that checkpoint's
+      changes. A read back of a later checkpoint starts from the nearest table
+      and needs none of the checkpoints before it.
+    seq:
+      - id: count
+        type: vlq
+      - id: tables
+        type: piece_table
+        repeat: expr
+        repeat-expr: count.value
+
+  piece_table:
+    seq:
+      - id: checkpoint
+        type: vlq
+        doc: the checkpoint's place in the part's checkpoint record (0 its first)
+      - id: region_count
+        type: vlq
+      - id: regions
+        type: piece_table_region
+        repeat: expr
+        repeat-expr: region_count.value
+
+  piece_table_region:
+    seq:
+      - id: region
+        type: vlq
+      - id: piece_count
+        type: vlq
+      - id: versions_plus_one
+        type: vlq
+        repeat: expr
+        repeat-expr: piece_count.value
+        doc: |
+          per piece of the region, in order: the number in the file of its
+          current version + 1 (numbered as stream 1's versions are, from the
+          file's start); 0 - the piece has no version yet
 
   payload_branch_pieces:
     doc: |
@@ -732,9 +868,17 @@ types:
 
   payload_write_journal:
     doc: |
-      Stream 7 (ancillary, D40), with the session's last part: the records in
-      blocks of 2,048 in v1's column layout (EncodeWriteBlock,
-      ttdwritejournal.cpp), then the segments the journal covers
+      Stream 7 (ancillary, D40): the records in blocks of 2,048 in v1's
+      column layout (EncodeWriteBlock, ttdwritejournal.cpp), then the
+      segments the journal covers. A saved session holds it whole with its
+      last part. A recording folder's file (since 2026-11-21) holds it with
+      every part: that part's own records, a write at machine time t
+      belonging to the part whose (first checkpoint's start, next part's
+      start] holds t (the line's first part from the line's start, the part
+      at the session's end up to its end), and the segments clipped to that
+      range; a reader appends the parts' records in order and joins their
+      segments. Older folder files held it whole with the part a stop or a
+      pause for browsing finished
     seq:
       - id: record_count
         type: vlq

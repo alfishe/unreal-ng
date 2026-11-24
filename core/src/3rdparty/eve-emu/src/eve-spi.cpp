@@ -197,6 +197,35 @@ void SpiSelect(EveChip& chip, bool selected)
     }
 }
 
+size_t SpiWriteRamGWords(EveChip& chip, uint32_t address, const uint8_t* words, size_t count)
+{
+    // What the transactions would do apart from the stores: none of them changes the state but its end
+    // (EndTransaction of a write); the lines due are drawn before the first store (BusWrite), the time does
+    // not move between them, and a RAM_G store does not change what is due
+    if (chip.state.spi.selected || (kMemoryAccessOnlyWhenActive && !IsActive(chip)) || Sweeping(chip))
+        return 0;
+    size_t written = 0;
+    for (; written < count; ++written)
+    {
+        const uint32_t at = (address + 4 * static_cast<uint32_t>(written)) & kAddressMask;
+        if (at >= chip.ramGLimit || chip.ramGLimit - at < 4)
+            break;
+        if (written == 0 && chip.drawing)
+            CatchUp(chip);
+        const uint8_t* word = words + 4 * written;
+        for (uint32_t i = 0; i < 4; ++i)
+            StoreRamG(chip, at + i, word[i]);
+    }
+    if (written == 0)
+        return 0;
+    FlushPendingRegister(chip);
+    if (kCmdbDropPartialWord)
+        chip.state.bus.cmdbFill = 0;
+    chip.state.spi = SpiState{};
+    chip.state.spi.phase = SpiPhase::Idle;
+    return written;
+}
+
 uint8_t SpiExchange(EveChip& chip, uint8_t mosi)
 {
     SpiState& spi = chip.state.spi;

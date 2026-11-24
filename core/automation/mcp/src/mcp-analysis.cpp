@@ -1590,6 +1590,10 @@ void RegisterAnalysis(ToolRegistry& registry)
         "export, review, cover: hex Z80 ranges, comma separated (default 4000-FFFF), e.g. 5900-59FF,8000-FFFF";
     schema["properties"]["width"]["type"] = "integer";
     schema["properties"]["width"]["description"] = "export: bytes per DEFB line (default 8)";
+    schema["properties"]["async"]["type"] = "boolean";
+    schema["properties"]["async"]["description"] =
+        "build, trace, experiment, cover: run it as a job (default false): the answer is the job id at once, the jobs "
+        "tool (action 'wait', job=<id>) waits for the result";
     schema["properties"]["wait"]["type"] = "integer";
     schema["properties"]["wait"]["description"] = "build: milliseconds to wait for the result (0..30000, default 20000)";
     schema["properties"]["from_frame"]["type"] = "integer";
@@ -1703,10 +1707,22 @@ void RegisterAnalysis(ToolRegistry& registry)
             const std::string action = args["action"].asString();
             // The core answer's text is the readable answer; the target goes in front
             auto withText = [done](ToolResult result) {
-                if (!result.isError && result.structured.isObject() && result.structured.isMember("text"))
+                if (!result.isError && result.structured.isObject() && result.structured.isMember("text") &&
+                    result.text.find(result.structured["text"].asString()) == std::string::npos)
                     result.text = result.text + "\n" + result.structured["text"].asString();
                 done(std::move(result));
             };
+            if (args.isMember("async") && !args["async"].isBool())
+            {
+                done(ToolResult::Error("'async' must be true or false"));
+                return;
+            }
+            if (args["async"].asBool() && action != "build" && action != "trace" && action != "experiment" &&
+                action != "cover")
+            {
+                done(ToolResult::Error("'async' is for build, trace, experiment and cover"));
+                return;
+            }
             if (action == "start")
             {
                 Json::Value body(Json::objectValue);
@@ -1721,10 +1737,10 @@ void RegisterAnalysis(ToolRegistry& registry)
             if (action == "build")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"frames", "wait", "from_frame", "from_tinframe", "to_frame"})
+                for (const char* name : {"frames", "wait", "from_frame", "from_tinframe", "to_frame", "async"})
                     if (args.isMember(name))
                         body[name] = args[name];  // a number or its text: the core checks it
-                if (!args.isMember("wait"))
+                if (!args.isMember("wait") && !args["async"].asBool())
                     body["wait"] = 20000;
                 if (args.isMember("path"))
                     body["path"] = args["path"].asString();
@@ -1817,7 +1833,8 @@ void RegisterAnalysis(ToolRegistry& registry)
             if (action == "trace")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"path", "from_frame", "from_tinframe", "to_frame", "to_tinframe", "max_cycles"})
+                for (const char* name : {"path", "from_frame", "from_tinframe", "to_frame", "to_tinframe", "max_cycles",
+                                         "async"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name];
                 ResolveAndForward(args, "POST", "/analysis/trace", &body, caller, "Analysis access trace", withText);
@@ -1833,8 +1850,8 @@ void RegisterAnalysis(ToolRegistry& registry)
                                   "title"}},
                     {"review", {"op", "id", "verdict", "label", "title", "comment", "kind", "names", "by", "experiment",
                                 "ranges", "reason", "offset", "limit"}},
-                    {"experiment", {"spec", "path", "parallel", "finding", "keep_branches", "run"}},
-                    {"cover", {"budget", "per_branch", "frames", "parallel", "limit", "ranges"}},
+                    {"experiment", {"spec", "path", "parallel", "finding", "keep_branches", "run", "async"}},
+                    {"cover", {"budget", "per_branch", "frames", "parallel", "limit", "ranges", "async"}},
                 };
                 Json::Value body(Json::objectValue);
                 for (const char* name : kOptions.at(action))

@@ -14,6 +14,8 @@
 ///   TtdRecordNormal    shipped config + a TTD recording (debugmode, timetravel), 1x
 ///   TtdRecordSoundOff  TtdRecordNormal with the sound feature off (a headless automation instance)
 ///   TtdRecordSoundLQ   TtdRecordNormal with soundhq off
+///   TtdRecordNoCoverage TtdRecordNormal without the coverage index (checkpoints and the port journals only)
+///   TtdRecordFull      TtdRecordNormal with the write journal too (every TTD capture stream on)
 ///   NoCardsTurbo       AY in the AY socket, no bus cards, turbo                           (slot trees only)
 ///   Only<Card>Turbo    NoCardsTurbo + one card (neogs, gs, moonsound, soundrive; tsfm in the AY socket)
 ///   MaxTurbo           NoCardsTurbo + everything BareTurbo switches off
@@ -30,11 +32,13 @@
 
 #include <benchmark/benchmark.h>
 
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <string>
 
 #include "base/featuremanager.h"
+#include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -75,12 +79,15 @@ enum class RunProfile
     TtdRecordNormal,
     TtdRecordSoundOff,
     TtdRecordSoundLQ,
+    TtdRecordNoCoverage,
+    TtdRecordFull,
 };
 
 bool RecordsTtd(RunProfile profile)
 {
     return profile == RunProfile::WorstNormal || profile == RunProfile::TtdRecordNormal ||
-           profile == RunProfile::TtdRecordSoundOff || profile == RunProfile::TtdRecordSoundLQ;
+           profile == RunProfile::TtdRecordSoundOff || profile == RunProfile::TtdRecordSoundLQ ||
+           profile == RunProfile::TtdRecordNoCoverage || profile == RunProfile::TtdRecordFull;
 }
 
 bool ReplacesCards(RunProfile profile)
@@ -107,6 +114,11 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::shared_ptr<Emulator> emulator;
+
+    // UNREAL_TTD_PIECE_STRIDE=<n>: the piece store's skip stride of the machines made here (1: every version builds
+    // on the previous one, the capture before 2026-11-23): the other side of an A/B of the TtdRecord rows
+    if (const char* stride = std::getenv("UNREAL_TTD_PIECE_STRIDE"))
+        ttd::TTDPieceStore::SetDefaultSkipStride(static_cast<uint16_t>(std::atoi(stride)));
 
 #ifdef FRAME_PROFILE_HAS_SLOTS
     std::function<void(CONFIG&)> configOverride;
@@ -199,6 +211,11 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
         }
         SetFeature(context, Features::kTimeTravel, true);
         context->pMemory->UpdateFeatureCache();
+
+        if (context->pTimeTravelController && profile == RunProfile::TtdRecordNoCoverage)
+            context->pTimeTravelController->SetEnableCoverageIndex(false);
+        if (context->pTimeTravelController && profile == RunProfile::TtdRecordFull)
+            context->pTimeTravelController->SetEnableWriteJournal(true);
 
         bool started = false;
 #ifdef FRAME_PROFILE_HAS_SLOTS
@@ -308,6 +325,16 @@ FRAME_PROFILE(Next_BareTurbo, "NEXT", RunProfile::BareTurbo);
 // Heavy machines running a program: TSU sprites over tiles (the TS-Conf SDK example)
 FRAME_PROFILE_WORKLOAD(TSConf_Sprites_ShipNormal, "TSL", RunProfile::ShipNormal, "machines/tsconf/spg/sprites.spg", 50);
 FRAME_PROFILE_WORKLOAD(TSConf_Sprites_ShipTurbo, "TSL", RunProfile::ShipTurbo, "machines/tsconf/spg/sprites.spg", 50);
+
+// What a TTD recording costs per capture stream: TTD off / on without coverage / on (coverage, the default) / on
+// with the write journal too, on a game and on the heavy TS-Conf
+#define FRAME_PROFILE_TTD_LADDER(prefix, model, snapshot)                                                       \
+    FRAME_PROFILE_WORKLOAD(prefix##_ShipNormal, model, RunProfile::ShipNormal, snapshot, 50);                  \
+    FRAME_PROFILE_WORKLOAD(prefix##_TtdRecordNoCoverage, model, RunProfile::TtdRecordNoCoverage, snapshot, 50); \
+    FRAME_PROFILE_WORKLOAD(prefix##_TtdRecordNormal, model, RunProfile::TtdRecordNormal, snapshot, 50);        \
+    FRAME_PROFILE_WORKLOAD(prefix##_TtdRecordFull, model, RunProfile::TtdRecordFull, snapshot, 50)
+FRAME_PROFILE_TTD_LADDER(Pentagon_Action, "PENTAGON", "loaders/sna/action.sna");
+FRAME_PROFILE_TTD_LADDER(TSConf_SpritesTtd, "TSL", "machines/tsconf/spg/sprites.spg");
 
 // A TurboSound FM tune (both chips, FM and SSG) under a TTD recording: what each host sound setting costs
 FRAME_PROFILE_WORKLOAD(Pentagon_TsfmTune_ShipNormal, "PENTAGON", RunProfile::ShipNormal, "sound/tsfm/tech_support.sna", 50);

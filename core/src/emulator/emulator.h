@@ -887,8 +887,12 @@ public:
     /// Run exact N t-states (1 = ULA step / 2 pixels); the run ends with the instruction that reaches the target.
     /// `onTimeline`: the target is N T-states after the previous timeline run's target (RunTimeline), as the
     /// automation planes' run_tstates does, so slices of a run end where one run ends; false (the default, the
-    /// internal callers: time travel, analysis) counts from the current position as before
-    DirectRunResult RunTStates(uint64_t tStates, bool skipBreakpoints = true, bool onTimeline = false);
+    /// internal callers: time travel, analysis) counts from the current position as before.
+    /// `stopAtFrameEnd`: the run also ends at the first frame end it passes. A frame's remainder counted before the
+    /// run is too long when the guest slows its clock inside the frame (an ATM3 boot leaves 14 MHz: the remainder of
+    /// a 4 x 69,888 T frame ran on at 3.5 MHz into three more frames); time travel's frame replays stop there
+    DirectRunResult RunTStates(uint64_t tStates, bool skipBreakpoints = true, bool onTimeline = false,
+                               bool stopAtFrameEnd = false);
     void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
     void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
@@ -1134,8 +1138,10 @@ public:
     void OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId, uint16_t address,
                                BreakpointHitKind kind, uint16_t cpuPc);
     /// Another CPU's step ended at its instruction boundary `cpuPc` (GSCardTarget::ArmStep, the emulation thread):
-    /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume()
-    void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
+    /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume().
+    /// `parkHere` false (a step the host side ended, inside the main CPU's instruction): no park here, the loop parks
+    /// at its next instruction boundary, and the stop has no `main` position
+    void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc, bool parkHere = true);
     /// WaitWhilePaused, marked as parked inside another CPU's run (IsParkedInsideCardRun)
     void ParkInsideCardRun();
     /// Where the main CPU stands as card `cpu` stops (the emulation thread, inside the card's run)

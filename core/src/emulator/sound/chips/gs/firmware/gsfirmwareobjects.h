@@ -23,6 +23,7 @@ struct GSFirmwareObjectsQuery
 {
     std::string profile; ///< a profile id ("" = the card's active one)
     std::string object;  ///< one instance or variable by name ("" = all)
+    std::string cpu;     ///< the card by its debugger CPU: "" or "gs" the GS slot's, "ms" the ZX-MultiSound's
 };
 
 struct GSFirmwareObjectsReply
@@ -36,7 +37,7 @@ struct GSFirmwareObjectsReply
 StateNode GSReadFirmwareObjects(const GeneralSoundCard& card, const GSFirmwareProfile& profile,
                                 const std::string& object = {});
 
-/// The objects of the machine's GS slot card (every plane: WebAPI `/state/audio/gs/firmware`, CLI `gs firmware`, MCP,
+/// The objects of the machine's GS slot card, or of the card `query.cpu` names (every plane: WebAPI `/state/audio/gs/firmware`, CLI `gs firmware`, MCP,
 /// Lua, Python)
 GSFirmwareObjectsReply GSFirmwareObjectsRead(EmulatorContext* context, const GSFirmwareObjectsQuery& query);
 /// The profiles known (built-in and files): {profiles: [{id, title, source, sha256, matches[], commands, structs,

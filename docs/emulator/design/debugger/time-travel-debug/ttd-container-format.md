@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | History. Section 2 describes v1's file, which nothing reads since v1 was deleted (2026-10-30). Sections 4-6 are the proposal that led to the engine's container, built differently: see [As built](#as-built-2026-10-31) |
-| **Last updated** | 2026-11-16 (chunked streams; as-built note 2026-10-31; text 2026-08-20) |
+| **Last updated** | 2026-11-23 (seek data of segment files; chunked streams 2026-11-16; as-built note 2026-10-31; text 2026-08-20) |
 | **Parent TDD** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) §6, §9 |
 | **Schema** | `core/src/debugger/ttd/ttd.ksy` (authoritative for the current layout: the engine's schema 2, not the layout in section 2) |
 
@@ -49,6 +49,37 @@ sizes (a stream over the limit without a declared twin), `Layout` for calls out 
 settable for tests (`SetRecordLimit`, `TTDSessionSaveParams::recordLimit`). Tests:
 `core/tests/debugger/ttd/engine/ttdcontainer_chunks_test.cpp`, `ttdsessionfile_chunks_test.cpp`,
 `tools/python/ttd/tests/test_chunks.py`; fixture `testdata/ttd/v2/chunked/`.
+
+### Seek data of a recording folder's segment file (2026-11-23)
+
+A seek into history that left memory reads its segment's file back. The file was read from its start up to the
+checkpoint wanted: on average half a segment's records decompressed, checked, imported and their reference tables
+rebuilt (4 ms of a 5 ms seek at 240k frames). A segment file now carries what lets a reader take one stretch of it
+(P1.S10 seek format; owner decision 2026-11-23: the format may change in place, schema 2 is not bumped, older
+recordings need not stay readable; in fact a file without the seek data still reads, from its start).
+
+| Part | Where | What |
+|---|---|---|
+| Piece tables | stream 2, ancillary (`piece-tables`; `0x0202` in a branch's file), one record in each part that has a table | For every checkpoint of the part that holds a full reference table of every region (the segment's first, a branch's fork copy, every checkpoint whose number is a multiple of the snapshot interval, 64): the checkpoint's place in the part, then per region every piece's current version as its number in the file + 1 (0: none). `payload_piece_tables` in `ttd.ksy` |
+| Seek index | the container's index extra | Magic `0x53`, version 1, the offset the container's index starts at, the file's line, then per part: offset and stored size of its piece, checkpoint and table records, the number of its first version and how many it holds, its first frame, the frames its tables are of. `seek_index` in `ttd.ksy` |
+
+- **Read** (`TTDSessionFile::ReadSegmentWindow`, `TimeTravelEngine::ReadBackSegmentWindow`): the trailer and the
+  index (two reads), the table of the last full-table checkpoint at or before the one wanted, the checkpoint records
+  of the parts from there to the next full-table checkpoint, then the piece records of the parts that hold a version
+  the table or those checkpoints name, or a version one of them builds on, found from the last part back. Only those
+  versions are imported. Each record is read in one read at the offset the index gives, its header (CRC, stream,
+  size) and payload CRC checked as any record's.
+- **Which files:** the files a recording folder writes (`TTDSessionSaveParams::fileLine` set). A saved file
+  (`Save`, a join) has neither stream 2's declaration nor a seek index, and is byte for byte what it was.
+- **A copy whose records moved** (a join, a part dropped by a tool) fails the index-offset check: the seek index is
+  ignored and the file read from its start, as an unfinished file (no trailer) and a file written before
+  2026-11-23 are. The Python tools copy stream 2 like any ancillary stream; `join` writes no index extra.
+- **Cost in the file:** a table is a few bytes a piece (about 0.4 KB for a 128K machine with its devices), one per
+  64 checkpoints; the seek index about 20 bytes a part.
+- **Checks:** `check_ksy.py` compares every table with the versions the checkpoints before it give each piece and
+  every seek index entry with the records it names; tests `core/tests/debugger/ttd/engine/ttdsegmentwindow_test.cpp`
+  (every checkpoint of an evicted segment read back alone, a branch's file, a file without the index, a copy whose
+  records moved, damage) and `TTDSeekScaling_Folder_Test.ASeekIntoEvictedHistoryCostsAboutASeekInMemory`.
 
 Design: [phase-4-session-file-tdd.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md),
 [integrity-and-versioning.md](../../../../inprogress/2026-09-25-ttd-v2-migration/integrity-and-versioning.md). The text below is kept as written.

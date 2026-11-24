@@ -36,7 +36,7 @@ The same handler as the REST route: same scopes, body and errors. Calls with dif
 order. The sound card CPU's registers, memory and code are the REST routes with `?cpu=gs`
 (`{"op":"call","method":"GET","path":"/api/v1/emulator/{id}/registers?cpu=gs"}`;
 [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), its steps `POST /step?cpu=gs`
-and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu`, `cpu_pc` and `main` (where
+and the others, its runs to a moment `POST /card_run_to {cpu, until, value}`; the `debug` topic's `paused` event after one has `reason` `step`, `cpu`, `cpu_pc` and `main` (where
 the main CPU parked with the card: `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary`, and its
 instruction's progress `elapsed_t`, `total_t`, `total_t_alt`, `bus_cycles`, `bus_cycle`, `bus_cycle_index`,
 `contended`; [instruction progress](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
@@ -145,6 +145,24 @@ the Qt menu), the same report and status. There is no transfer topic: a new inst
 ← {"op":"result","t":"call","rid":21,"status":201,"body":{"ok":true,"created":true,"target_id":"5c1e…","model":"PENTAGON","ram_kb":512,…}}
 ```
 
+### Jobs
+
+The long verbs run as jobs with `"async": true` ([jobs.md](./jobs.md), PLAN #122 S2): the call answers 202 with the
+job at once, and the long-poll `GET /api/v1/jobs/{job}?wait_ms=N` is a call like any other. Its `result` comes when the
+job ends (or after `wait_ms`, at most 60000): the hub forwards it to the REST handler, which holds no thread while it
+waits, so the socket's other calls and pushes go on meanwhile. The topics `jobs.progress` and `jobs.done` tell the
+same without a call.
+
+```json
+→ {"op":"subscribe","topics":["jobs.*"]}
+→ {"op":"call","rid":30,"method":"POST","path":"/api/v1/emulator/0/ttd/dump","body":{"path":"/tmp/a.ttd","async":true}}
+← {"op":"result","t":"call","rid":30,"status":202,"body":{"job":12,"state":"queued","kind":"ttd.dump","status_url":"/api/v1/jobs/12",…}}
+→ {"op":"call","rid":31,"method":"GET","path":"/api/v1/jobs/12?wait_ms=30000"}
+← {"t":"jobs.progress","op":"state","instance":"0f3a…","value":{"count":1,"active":[{"job":12,"kind":"ttd.dump","state":"running",…}]}}
+← {"t":"jobs.done","op":"state","instance":"0f3a…","value":{"last_job":12,"recent":[{"job":12,"state":"done","status":200,…}]}}
+← {"op":"result","t":"call","rid":31,"status":200,"body":{"job":12,"state":"done","ended":true,"result":{"ok":true,"bytes":1843200,…},…}}
+```
+
 ## 3. Topics
 
 ```json
@@ -169,8 +187,10 @@ the Qt menu), the same report and status. There is no transfer topic: a new inst
 | `cap.record` | per instance the video recording `{available, recording, paused, frames, seconds, bytes, output}` (`GET /video/record/status`) | none | implemented (2026-10-21) |
 | `machine.switches` | per instance the front-panel switches `{switches: [{name, on}]}` (`GET /switches`) | none | implemented (2026-10-21) |
 | `input.connectors` | per instance the joystick connectors `{connectors: [{id, kind, device, fixed, port?}]}` (`GET /controllers/connectors`) | none | implemented (2026-10-21) |
-| `analysis.progress` | per instance the `analysis build` job of the [analysis layers](../../analysis/analysis-layers.md) `{job, state: none \| running \| done \| failed \| cancelled, frames_done, frames_total, percent, error}` | none | implemented (P2, 2026-10-26) |
+| `analysis.progress` | per instance the `analysis build` job of the [analysis layers](../../analysis/analysis-layers.md) `{job, state: none \| queued \| running \| done \| failed \| cancelled, frames_done, frames_total, percent, error}` | none | implemented (P2, 2026-10-26) |
 | `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
+| `jobs.progress` | per instance its queued and running [jobs](./jobs.md) `{count, active [{job, kind, summary, state, done, total, unit, percent, cancel_requested}]}` (`GET /api/v1/monitor/jobs.progress`); a new value when a job is queued, starts or ends, and at most every 100 ms of its progress, coalesced at `max_hz` | none | implemented (S2, 2026-11-22) |
+| `jobs.done` | per instance the jobs that ended `{last_job, recent [{job, kind, summary, state: done \| failed \| cancelled, status, error, ended_ms}]}` (the last 8, newest first: two ends inside one push are both there; the result is `GET /api/v1/jobs/{job}`) | none | implemented (S2, 2026-11-22) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
 | `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error`, `section_timer_started` / `_stopped` / `_cleared` / `_break`, `edited`, `run_control`, `labels_changed`, `targets_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |

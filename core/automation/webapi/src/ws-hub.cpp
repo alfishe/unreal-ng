@@ -1467,7 +1467,7 @@ WsHub::ReadoutCadence WsHub::Cadence(const std::string& name)
         "debug.labels",      "debug.analyzers",  "surfaces.context", "media.recent",    "machine.previous",
         "machine.switches",  "input.connectors", "video.window",     "video.crt_params", "video.viewport",
         "video.temporal",    "actions.unavailable", "analysis.progress", "analysis.ready", "controllers.devices",
-        "debug.markup", "ttd.branches",
+        "debug.markup", "ttd.branches", "jobs.progress", "jobs.done",
     };
     // With wall time: read on time while subscribed
     static const std::set<std::string> meters = {"host.stats", "host.clients", kStreamDeck};

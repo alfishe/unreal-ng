@@ -50,9 +50,9 @@ A branch other than the trunk writes its records into the branch range, ancillar
 
 | Trunk stream | Branch stream |
 |---|---|
-| 0x0001-0x003F (pieces 1, checkpoints 3, events 5, configuration 6, write journal 7, coverage 8-10, bookmarks 12, bus / media journals 13-16, holder 17-0x3F) | 0x0200 + id (0x0201-0x023F); 0x0200 itself is the branch table |
+| 0x0001-0x003F (pieces 1, piece tables 2 (a folder's segment files, since 2026-11-23: §5.3), checkpoints 3, events 5, configuration 6, write journal 7, coverage 8-10, bookmarks 12, bus / media journals 13-16, holder 17-0x3F) | 0x0200 + id (0x0201-0x023F); 0x0200 itself is the branch table |
 | 0x0100-0x013F frame streams | 0x0240-0x027F |
-| (new) media writes | 4 for the trunk (2 and 4 are the engine ids not taken; 17-0xFF belong to the holder), 0x0204 for branches (S-10) |
+| (new) media writes | 4 for the trunk (4 is the engine id not taken; 2 went to the piece tables; 17-0xFF belong to the holder), 0x0204 for branches (S-10) |
 | 0x0280-0x02FF | reserved |
 
 Holder streams above 0x3F have no branch twin; the holders in use (8-12, 17 on) fit.
@@ -198,7 +198,16 @@ Option (b) + (c) of §4.1, with these choices:
 - **Join:** the header declares the union of the files' streams (a branch file declares the branch table and the
   twins).
 - **Holder data:** the session's holder streams go with the last file, a branch's too (trunk ids in a branch part,
-  read as the session's). The branch records of the folder are the creates' (the end as at the fork): the loaded
+  read as the session's). Two exceptions since 2026-11-21 (P1.S10 follow-up: a pause rewrote them whole, 11 s at
+  240k frames): the write journal (stream 7) goes with every file, each with its own records (the journals of a
+  file after a pause start where the paused file's ended: `JournalStart`), and the trunk's coverage index goes as
+  parts, stream 19 (`kCoverageFrom`, the part's first frame) before the part's stream 8: each trunk file the writer
+  closes during a recording ends with the blocks from the open block the previous part held on
+  (`TTDRecordingWriter::SetFileEndStreams`, since 2026-11-22: a first pause after a long recording wrote every block
+  since the start, 0.4 s at 240k frames), and a pause writes only the blocks since the last closed file; the loader
+  joins the parts in file order, a later part replacing the blocks it repeats (`TTDCoverageIndex::AppendLater`). A
+  truncate that rewrites closed files moves the next part's start back to the earliest of theirs. A part that will not read is left out with a warning,
+  the rest kept. The branch records of the folder are the creates' (the end as at the fork): the loaded
   end is the line's own when it holds more. Branch state, per-branch coverage and bookmarks are not in the folder
   (a save from memory has them).
 - **Disk full (S-7):** the free space is checked at each new file, every 25 captures and before a recording goes on
@@ -219,11 +228,40 @@ Option (b) + (c) of §4.1, with these choices:
   keeps its file for the session's life, and the limit only evicts segments from memory once their file is closed.
   A seek into an evicted segment reads only that segment's file (S-4): `TTDSessionFile::ReadSegmentPieces` imports
   its versions (a branch file through its twin streams, bases `(line + 1, number)` on its own line), the engine
-  rebuilds the segment's tables from them. Save reads every evicted segment back for the call. A branch forked
+  rebuilds the segment's tables from them. Since 2026-11-23 a seek reads one stretch of the file through its seek
+  index (§5.3); the whole file is read for a save, when the capture head moves into the segment, and for a segment
+  the window covers again. Save reads every evicted segment back for the call. A branch forked
   while the folder is written starts its files at its fork copy even when its first capture already began a
   second segment (segments of one frame: before P3 such a branch got no files).
 - **Not covered (edges):** the branch state, per-branch coverage and bookmarks are not in the folder (a save from
   memory has them).
+
+### 5.3 As built (2026-11-23: a segment file read in part)
+
+S-4 asks that a seek into an evicted segment reads only that branch's data. Since P3 it read one file, but from its
+start: every record up to the checkpoint wanted, on average half a segment. A folder's segment file now holds what
+a reader needs to take one stretch of it ([container format, seek data](../../emulator/design/debugger/time-travel-debug/ttd-container-format.md#seek-data-of-a-recording-folders-segment-file-2026-11-23);
+`ttd.ksy`: `payload_piece_tables`, `seek_index`):
+
+- **Piece tables, stream 2** (`piece-tables`, ancillary; `0x0202` in a branch's file): in every part that has one,
+  for each checkpoint holding a full reference table of every region (the segment's first, a branch's fork copy,
+  every 64th checkpoint of the session), every piece's current version by its number in the file. The writer has
+  that map already (`TTDSessionWriter::_liveItem`, the versions the part's dependencies are computed from).
+- **Seek index, the container's index extra** (`TTDSeekIndex`): per part the offsets and stored sizes of its piece,
+  checkpoint and table records, the number of its first version, its first frame and its tables' frames; and the
+  offset of the container's index, which a copy with moved records fails.
+- **The read** (`TTDSessionFile::ReadSegmentWindow`): the trailer, the index, the table at the last full-table
+  checkpoint at or before the one wanted, the checkpoint records from there to the next full-table checkpoint, and
+  the piece records of the parts holding a version the table, those checkpoints or one of their difference chains
+  names (a part's versions are found by walking their headers). Only those versions are imported; the engine
+  makes that stretch resident next to the ones already in memory (`TimeTravelEngine::ReadBackSegmentWindow`,
+  `TTDSegmentInfo::residentParts`; [architecture.md §5.4](architecture.md#54-read-back-from-disk)).
+- **Only folder files** (`TTDSessionSaveParams::fileLine`, `seekIndex`): a saved file and a join are written as
+  before, byte for byte. A join copies stream 2 with the parts (versions are numbered per file start, so the tables
+  stay true) and has no seek index. `ttdtool` copies both as it copies any ancillary stream and index extra; a copy
+  that dropped parts fails the index-offset check and is read from its start.
+- **A file without them** (unfinished, joined, written before): read from its start as before
+  (`ReadSegmentPieces` up to a frame).
 
 ## 6. Sizes and timings (measured, B-5 / B-9)
 

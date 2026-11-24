@@ -29,6 +29,7 @@
 #include "debugger/boards/debugboards.h"
 #include "debugger/targets/cpuview.h"
 #include <algorithm>
+#include <functional>
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -74,6 +75,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
+#include <emulator/sound/chips/gs/gszxdmatrace.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../temporalstatus.h"
@@ -97,6 +99,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "emulator/jobs/jobcontrol.h"
 #include "debugger/markup/markupcontrol.h"
 #include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
@@ -547,9 +550,10 @@ protected:
         return cpu;
     }
 
-    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`): the reply's body and ok = true, or
-    /// ok = false and error. The machine runs until the card ends it, then is paused
-    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0) const
+    /// A card CPU's step or run (`run`: the RunControl call): the reply's body and ok = true, or ok = false and error.
+    /// The machine runs until the card ends it, then is paused
+    sol::table CardRun(sol::state_view lua,
+                       const std::function<execution::RunReply(execution::RunControl&, const execution::Requester&)>& run) const
     {
         sol::table result = lua.create_table();
         Emulator* emulator = effectiveEmulator();
@@ -563,8 +567,8 @@ protected:
         }
         // The automation gate as every step of a script: its session, or an implicit one
         execution::script::Check(*emulator, execution::Origin::Lua);
-        const execution::RunReply reply = execution::RunControl(shared).CardStep(
-            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count, address);
+        execution::RunControl control(shared);
+        const execution::RunReply reply = run(control, execution::script::RequesterOf(*emulator, execution::Origin::Lua));
         if (reply.status == execution::RunReply::Status::Revoked)
             throw std::runtime_error(reply.message);
         if (!reply.Ok())
@@ -577,6 +581,14 @@ protected:
             result[key] = StateNodeToLua(lua.lua_state(), value);
         result["ok"] = true;
         return result;
+    }
+
+    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`)
+    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0) const
+    {
+        return CardRun(lua, [&](execution::RunControl& control, const execution::Requester& requester) {
+            return control.CardStep(requester, cpu, kind, count, address);
+        });
     }
 
     /// A table's members as frame watch options (docs/inprogress/2026-11-03-run-until-watches)
@@ -6056,20 +6068,32 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, GSConversationRead(ctx, id.value_or(0)).body);
         });
+        // The NeoGS ZX-DMA trace (gszxdmatrace.h, gs-debugger N6): the newest `last` bytes (default 256, 0: all)
+        // after the seq `since`; {available = false, description} without a NeoGS
+        lua.set_function("gs_zxdma", [this](sol::this_state s, sol::optional<uint64_t> last,
+                                            sol::optional<uint64_t> since) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSZxDmaTraceQuery query;
+            query.last = static_cast<size_t>(last.value_or(query.last));
+            query.since = since.value_or(0);
+            return StateNodeToLua(s, DeviceState::GsZxDmaTrace(ctx, query));
+        });
         // The GS slot's statistics (gsslotstats.h, gs-debugger N7): the block or one section, counters since a
         // baseline; a running machine answers from the next frame end (at most 500 ms; {error} after that)
         lua.set_function("gs_stats", [this](sol::this_state s, sol::optional<std::string> section,
-                                            sol::optional<uint32_t> since) -> sol::object {
+                                            sol::optional<uint32_t> since, sol::optional<std::string> cpu) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             GSStatsQuery query;
             query.section = section.value_or("");
             query.since = since.value_or(0);
+            query.cpu = cpu.value_or(""); // "ms": the ZX-MultiSound's GS
             query.waitMs = 500;
             return StateNodeToLua(s, GSStatsRead(ctx, query).body);
         });
-        lua.set_function("gs_reset_counters", [this](sol::this_state s) -> sol::object {
+        lua.set_function("gs_reset_counters", [this](sol::this_state s, sol::optional<std::string> cpu) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             GSStatsQuery query;
+            query.cpu = cpu.value_or("");
             query.waitMs = 500;
             return StateNodeToLua(s, GSStatsResetCounters(ctx, query).body);
         });
@@ -6077,11 +6101,13 @@ public:
         // The firmware objects through the card's profile (gsfirmwareobjects.h, gs-debugger §8A.9): struct instances
         // as rows of fields, variables; one object by name; another profile by id
         lua.set_function("gs_firmware", [this](sol::this_state s, sol::optional<std::string> object,
-                                               sol::optional<std::string> profile) -> sol::object {
+                                               sol::optional<std::string> profile,
+                                               sol::optional<std::string> cpu) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             GSFirmwareObjectsQuery query;
             query.object = object.value_or("");
             query.profile = profile.value_or("");
+            query.cpu = cpu.value_or(""); // "ms": the ZX-MultiSound's GS
             return StateNodeToLua(s, GSFirmwareObjectsRead(ctx, query).body);
         });
         lua.set_function("gs_firmware_profiles", [](sol::this_state s) -> sol::object {
@@ -6238,7 +6264,7 @@ public:
                 ev["value"] = e.value;
                 ev["pc"] = e.pc;
                 if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
-                if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
+                if (e.side == GSTraceSide::ZxDma) { ev["card_address"] = e.cardAddress(); ev["host_t"] = e.hostT(); ev["wait"] = e.waitT(); ev["dropped"] = e.isDropped(); }
                 if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                 if (e.side == GSTraceSide::Idle) ev["iterations"] = e.iterations;
                 result[idx++] = ev;
@@ -7183,6 +7209,18 @@ public:
             return result;
         });
 
+        // card_run_to(until, [value], [cpu]): a card CPU's run to a moment (RunControl::CardRunTo; cpu "gs" by default):
+        // "cycle" value, "int", "command", "main_t" value. The reply as a table with ok, or ok = false and error
+        lua.set_function("card_run_to", [this](const std::string& until, sol::optional<uint64_t> value,
+                                               sol::optional<std::string> cpuName, sol::this_state ts) -> sol::table {
+            const DebugCpuId cpu = ScriptCpu(cpuName ? cpuName : sol::optional<std::string>(std::string("gs")));
+            if (!IsCardCpu(cpu))
+                throw std::runtime_error("cpu must be a card's: gs or ms");
+            return CardRun(sol::state_view(ts), [&](execution::RunControl& control, const execution::Requester& requester) {
+                return control.CardRunTo(requester, cpu, until, value.value_or(0));
+            });
+        });
+
         // Fast-forward until PC reaches the target (breakpoints skipped). skip_until(pc, [max_tstates], [cpu]) or
         // skip_until(pc, cpu): "gs" / "ms" runs that sound card CPU to the cursor (CardStep "to"; breakpoints end it)
         lua.set_function("skip_until", [this](sol::object pcValue, sol::object second,
@@ -7780,7 +7818,7 @@ public:
         });
         // The GUI window recording (the picture as drawn, CRT and all, the on-screen keyboard, the machine's sound):
         // window_record(path, {keyboard = "default", codec = "h264", hardware = true, fit = true, audio = true, scale = 2, picture_height = 1080,
-        // width = 3840, height = 2160, layout = "side"}) starts, window_record_frames(n) runs a paused machine n frames
+        // width = 3840, height = 2160, layout = "side", transfer = "nv12"}) starts, window_record_frames(n) runs a paused machine n frames
         // with every one recorded, window_record_stop() finishes the file, window_record_status() reads. The
         // WindowRecording report every interface returns; refused: {ok = false, error, kind}
         lua.set_function("window_record", [this](sol::this_state s, const std::string& path,
@@ -7945,6 +7983,29 @@ public:
                                                              : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The long verbs as jobs through jobs::Execute (emulator/jobs/jobcontrol.h, PLAN #122 S2): jobs(action, opts)
+        // with action list {instance= ('this', 'all' or an id), state= (active, finished, all), limit=} | status
+        // {job=, result=} (or the job id) | wait {job=, wait_ms= (default 30000, <= 60000), result=} (blocks this
+        // script up to wait_ms) | cancel {job=} | start {domain= ('ttd' or 'analysis'), verb=, <the verb's options>}.
+        // analysis(action, {async=true, ...}) answers {job=, state=} the same way. The answer: the reply's
+        // fields plus text; a refusal: ok = false, error = why
+        lua.set_function("jobs", [this](sol::this_state ts, sol::optional<std::string> action,
+                                        sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = action.value_or("list");
+            Emulator* emulator = effectiveEmulator();
+            const jobs::Reply reply =
+                jobs::Execute(emulator, verb,
+                              opts ? SymbolOptions(*opts, verb == "list" ? "instance" : verb == "start" ? "domain" : "job")
+                                   : jobs::Options{});
             StateNode value = reply.ToValue();
             if (!reply.Ok())
             {

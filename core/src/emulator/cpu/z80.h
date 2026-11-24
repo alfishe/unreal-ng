@@ -486,6 +486,12 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     /// `t` at the current instruction's start, set while the instruction-start debug work runs (debug mode, exec
     /// taps, tight mode): how far a main CPU parked inside an instruction is into it
     uint32_t instrStartT = 0;
+    /// Device /WAIT added to the current instruction (AddWaitStates / AddWaitTicks: ZX-DMA, a card's wait), in
+    /// counter ticks (256 per 3.5 MHz T). Zeroed with instrStartT, so it means the same: known while the
+    /// instruction-start debug work runs
+    uint32_t instrWaitTicks = 0;
+    /// instrWaitTicks in T (rounded up: a wait shorter than a T still shows)
+    uint32_t InstructionWaitT() const { return (instrWaitTicks + 255u) >> 8; }
 
     int cycles_to_capture = 0;  // [NEW] Number of cycles to capture after trigger
 
@@ -1002,6 +1008,7 @@ public:
         if (_waitObserver) [[unlikely]]
             _waitObserver->OnWait(tt, tStates * rate);
         tt += tStates * rate;
+        instrWaitTicks += tStates * rate;
     }
     /// The same in counter ticks (256 per 3.5 MHz T): a wait shorter than one
     /// CPU clock of a turbo machine (TSConf's 28 MHz fclk waits at 14 MHz)
@@ -1010,6 +1017,7 @@ public:
         if (_waitObserver) [[unlikely]]
             _waitObserver->OnWait(tt, ticks);
         tt += ticks;
+        instrWaitTicks += ticks;
     }
 
     /// A tool's access to the machine outside the CPU's time (a debugger's port write): device waits added while
@@ -1017,13 +1025,15 @@ public:
     class OutOfTimeScope
     {
     public:
-        explicit OutOfTimeScope(Z80& cpu) : _cpu(cpu), _tt(cpu.tt), _observer(cpu._waitObserver)
+        explicit OutOfTimeScope(Z80& cpu)
+            : _cpu(cpu), _tt(cpu.tt), _waitTicks(cpu.instrWaitTicks), _observer(cpu._waitObserver)
         {
             _cpu._waitObserver = nullptr;
         }
         ~OutOfTimeScope()
         {
             _cpu.tt = _tt;
+            _cpu.instrWaitTicks = _waitTicks;
             _cpu._waitObserver = _observer;
         }
         OutOfTimeScope(const OutOfTimeScope&) = delete;
@@ -1032,6 +1042,7 @@ public:
     private:
         Z80& _cpu;
         uint32_t _tt;
+        uint32_t _waitTicks;
         IInterruptSource* _observer;
     };
 

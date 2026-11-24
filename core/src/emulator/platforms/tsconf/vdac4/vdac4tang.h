@@ -98,6 +98,8 @@ public:
     /// region <LINK (the ESP's side)>
     uint32_t LinkRead(uint32_t address);
     void LinkWrite(uint32_t address, uint32_t value);
+    /// LinkWrite(FT_ADDR, ftAddress), then LinkWrite(FT_DATA, word) for each of `count` words (little-endian bytes)
+    void LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count);
 
     /// region <The ESP's jobs (vdac4board.h)>
     /// The owner's position now, absolute raster tacts (the stamp of an ESP job; a job running meanwhile may have

@@ -12,6 +12,8 @@
 #include <common/threadpool.h>
 #include <emulator/video/smoothtile.h>
 
+#include "GLFrameReader.h"
+
 #include "TileLayoutManager.h"
 
 class Emulator;
@@ -95,8 +97,8 @@ public:
     /// is not in the widget tree, so QWidget::grab() of the window container shows none of it)
     void setCaptureEnabled(bool enable);
     /// The last painted frame at framebuffer resolution, R,G,B,A top row first; null before the first paint with
-    /// capture on
-    const QImage& capturedFrame() const { return _captured; }
+    /// capture on. The paint only starts the copy (GLFrameReader); this call finishes it
+    const QImage& capturedFrame();
 
 signals:
     /// Emitted when a tile is clicked
@@ -159,8 +161,7 @@ private:
     std::string _syncEmulatorId;
 
     bool _captureEnabled = false;
-    QImage _captured;
-    std::vector<uint8_t> _readBack;  ///< the framebuffer as GL returns it, bottom row first
+    GLFrameReader _reader;
 
     smoothmotion::Mode _smoothMode = smoothmotion::Mode::Off;
     std::unique_ptr<ThreadPool> _smoothPool;  ///< made with the first tile engine

@@ -482,6 +482,12 @@ public:
     }
     std::vector<unsigned int> get_breakpoints() override;
     std::string breakpoint_condition(unsigned int address) override;
+    std::vector<std::string> event_kinds() override { return m_event_kinds; }
+    std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override;
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override;
+    bool remove_event_breakpoint(unsigned int id) override;
+    bool enable_event_breakpoint(unsigned int id, bool on) override;
+    void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
     std::vector<ecatshim::AddressWindow> get_windows() override;
     void set_pages(ecatshim::AddressableDevice * ram, ecatshim::AddressableDevice * rom, const ZxPaging &paging)
     {
@@ -495,6 +501,7 @@ private:
     ecatshim::AddressableDevice * m_ram = nullptr;
     ecatshim::AddressableDevice * m_rom = nullptr;
     ZxPaging m_paging;
+    std::vector<std::string> m_event_kinds;
 };
 
 // A sound card's Z80: the General Sound's ("gs") or the GS of a MultiSound card ("ms"). Its registers, windows and
@@ -527,7 +534,14 @@ public:
         for (unsigned int a : get_breakpoints()) remove_breakpoint(a);
     }
     std::vector<unsigned int> get_breakpoints() override;
+    std::vector<std::string> event_kinds() override { return m_event_kinds; }
+    std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override;
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override;
+    bool remove_event_breakpoint(unsigned int id) override;
+    bool enable_event_breakpoint(unsigned int id, bool on) override;
+    void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
     std::vector<ecatshim::AddressWindow> get_windows() override;
+    bool card_cycle(CardCycle &out) override;
 
     // The card's RAM and ROM (flash on the NeoGS) as paged memories, when the machine lists them
     void set_ram(ecatshim::AddressableDevice * ram) { m_ram = ram; }
@@ -543,6 +557,7 @@ private:
     RemoteMachine * m_m;
     QString m_cpu;
     QString m_history;
+    std::vector<std::string> m_event_kinds;
     ecatshim::AddressableDevice * m_ram = nullptr;
     ecatshim::AddressableDevice * m_rom = nullptr;
     bool m_flash = false;
@@ -623,16 +638,20 @@ public:
         auto rom = std::make_shared<RemotePages>(this, "rom", std::max(1u, rom_pages));
         m_mapper = std::make_shared<RemoteMapper>(this, ram.get(), rom.get());
         m_cpu->mm = m_mapper.get();
-        const ZxPaging paging = ZxModelPaging(m_http.json("GET", m_base + "/state/paging").value("model").toString().toStdString());
+        const std::string model = m_http.json("GET", m_base + "/state/paging").value("model").toString().toStdString();
+        const ZxPaging paging = ZxModelPaging(model);
         m_cpu->set_pages(ram.get(), rom.get(), paging);
+        m_cpu->set_event_kinds(ZxMainEventKinds(model, !m_cards.empty()));
         ram->set_paging(paging);
         m_dm.add(ram);
         m_dm.add(rom);
 
         const QJsonArray regions = m_http.json("GET", m_base + "/memory/regions").value("regions").toArray();
+        bool neogs = false;
         for (const QJsonValue &v : regions) {
             const QJsonObject r = v.toObject();
             const QString n = r.value("name").toString();
+            neogs = neogs || n.startsWith("neogs.");
             const QString kind = n.mid(n.lastIndexOf('.') + 1);
             const unsigned int size = (unsigned int)r.value("size").toDouble();
             const bool writable = r.value("writable").toBool();
@@ -654,6 +673,8 @@ public:
             else
                 m_dm.add(std::make_shared<RemoteRegion<ecatshim::AddressableDevice>>(this, n, size, writable, desc));
         }
+
+        for (const auto &c : m_cards) c->set_event_kinds(ZxCardEventKinds(c->cpu() == "gs" && neogs));
 
         // The reports this machine has, as the device catalog lists them (its cards are fixed: a slot change makes a
         // new machine, another id)
@@ -718,6 +739,160 @@ public:
     QString endpoint() const { return QString("http://%1:%2").arg(m_host).arg(m_port); }
 
     bool debug_online() const override { return m_online.load(); }
+    // A device board: GET /debug/boards/{id}, its layout as the shim's board
+    Board read_board(const std::string &id) override
+    {
+        Board out;
+        out.id = id;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        int status = 0;
+        const QJsonObject body = m_http.json("GET", m_base + "/debug/boards/" + QString::fromStdString(id), QJsonObject(), &status);
+        out.ok = status == 200;
+        if (!out.ok) {
+            out.message = status == 0 ? std::string("No answer from the emulator") : body.value("message").toString().toStdString();
+            return out;
+        }
+        auto str = [](const QJsonObject &o, const char * key) { return o.value(key).toString().toStdString(); };
+        out.title = str(body, "title");
+        out.available = body.value("available").toBool();
+        for (const QJsonValue &column : body.value("columns").toArray())
+            for (const QJsonValue &gv : column.toObject().value("groups").toArray()) {
+                const QJsonObject g = gv.toObject();
+                BoardGroup group{str(g, "title"), str(g, "raw"), {}};
+                for (const QJsonValue &cv : g.value("controls").toArray()) {
+                    const QJsonObject c = cv.toObject();
+                    BoardControl control;
+                    control.id = str(c, "id");
+                    control.label = str(c, "label");
+                    control.type = str(c, "type");
+                    control.note = str(c, "note");
+                    control.value = scalar_text(c.value("value"));
+                    for (const QJsonValue &name : c.value("names").toArray()) control.names.push_back(name.toString().toStdString());
+                    if (c.value("max").isDouble()) control.max = (long long)c.value("max").toDouble();
+                    group.controls.push_back(std::move(control));
+                }
+                out.groups.push_back(std::move(group));
+            }
+        for (const QJsonValue &a : body.value("actions").toArray())
+            out.actions.emplace_back(str(a.toObject(), "id"), str(a.toObject(), "title"));
+        return out;
+    }
+    // A board's action: POST /debug/boards/{board}/actions/{action} {arg}
+    BoardAnswer board_action(const std::string &board, const std::string &action, const std::string &arg) override
+    {
+        if (!m_online.load()) return {false, "The emulator is not connected"};
+        QJsonObject body;
+        if (!arg.empty()) body.insert("arg", QString::fromStdString(arg));
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/debug/boards/" + QString::fromStdString(board) + "/actions/" +
+                                                      QString::fromStdString(action), body, &status);
+        if (status == 0) return {false, "No answer from the emulator"};
+        if (status != 200) return {false, r.value("message").toString().toStdString()};
+        return {true, board + " " + action + ": " + r.value("status").toString().toStdString()};
+    }
+
+    // A card's `gs` report (gs: GET state/audio/gs; ms: the gs part of GET state/audio/multisound), once per snapshot
+    // of the machine; not given, the last one read stays
+    QJsonObject card_report(const QString &cpu)
+    {
+        CardReport &c = m_card_reports[cpu];
+        const uint64_t gen = snap().generation;
+        if (c.generation != gen && m_online.load()) {
+            c.generation = gen;
+            int status = 0;
+            const bool ms = cpu == "ms";
+            const QJsonObject o = m_http.json("GET", m_base + (ms ? "/state/audio/multisound" : "/state/audio/gs"), QJsonObject(), &status);
+            if (status == 200) c.report = ms ? o.value("gs").toObject() : o;
+        }
+        return c.report;
+    }
+    // The ZX-DMA banner: the `gs` report's neogs.dma.zx (no NeoGS: no such part, no banner)
+    ZxDmaBanner zxdma_banner() override
+    {
+        ZxDmaBanner out;
+        if (card("gs") == nullptr) return out;
+        const QJsonObject zx = card_report("gs").value("neogs").toObject().value("dma").toObject().value("zx").toObject();
+        out.text = zx.value("banner").toString().toStdString();
+        out.card_bytes = !out.text.empty() && zx.value("mode").toString() == "divert" && zx.value("rom_paged").toBool(true);
+        out.window_start = (unsigned int)zx.value("window_start").toInt(0x0000);
+        out.window_end = (unsigned int)zx.value("window_end").toInt(0x3FFF);
+        return out;
+    }
+    // Plain GETs, a second apart: the card's line and the banner of a running machine
+    unsigned int live_card_ms() const override { return 1000; }
+
+    // The ZX-DMA trace: GET state/audio/gs/zxdma?last=&since=
+    ZxDmaTrace read_zxdma_trace(size_t last, uint64_t since) override
+    {
+        ZxDmaTrace out;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        int status = 0;
+        const QJsonObject body = m_http.json("GET", m_base + QString("/state/audio/gs/zxdma?last=%1&since=%2")
+                                                                  .arg((qulonglong)last).arg((qulonglong)since),
+                                             QJsonObject(), &status);
+        if (status != 200) {
+            out.message = status == 0 ? std::string("No answer from the emulator") : body.value("message").toString().toStdString();
+            return out;
+        }
+        auto str = [](const QJsonObject &o, const char * key) { return o.value(key).toString().toStdString(); };
+        auto num = [](const QJsonObject &o, const char * key) { return (int64_t)o.value(key).toDouble(); };
+        out.ok = true;
+        out.available = body.value("available").toBool();
+        if (!out.available) {
+            out.message = str(body, "description");
+            return out;
+        }
+        out.card = str(body, "card");
+        out.device = str(body, "device");
+        out.capturing = body.value("capturing").toBool();
+        out.armed = body.value("armed").toBool();
+        out.total_bytes_kept = (uint64_t)num(body, "total_bytes_kept");
+        out.evicted = (uint64_t)num(body, "evicted");
+        out.last_seq = (uint64_t)num(body, "last_seq");
+        out.restarted = body.value("restarted").toBool();
+        const QJsonObject c = body.value("counters").toObject();
+        out.bytes_read = (uint64_t)num(c, "bytes_read");
+        out.bytes_written = (uint64_t)num(c, "bytes_written");
+        out.bytes_dropped = (uint64_t)num(c, "bytes_dropped");
+        out.wait_t_states = (uint64_t)num(c, "wait_t_states");
+        for (const QJsonValue &v : body.value("rows").toArray()) {
+            const QJsonObject r = v.toObject();
+            ZxDmaRow row;
+            row.seq = (uint64_t)num(r, "seq");
+            row.frame = num(r, "frame");
+            row.host_t = num(r, "host_t");
+            row.card_time = num(r, "card_time");
+            row.write = r.value("direction").toString() == "write";
+            row.card_address = (unsigned int)num(r, "card_address");
+            row.page = (unsigned int)num(r, "page");
+            row.value = (unsigned int)num(r, "value");
+            row.wait = (unsigned int)num(r, "wait");
+            row.host_pc = (unsigned int)num(r, "host_pc");
+            row.dropped = r.value("dropped").toBool();
+            out.rows.push_back(row);
+        }
+        out.text = str(body, "text");
+        out.how_to_start = str(body, "how_to_start");
+        return out;
+    }
+    // The port trace's capture: POST control/audio/gs/porttrace {action}
+    BoardAnswer zxdma_trace_capture(const std::string &action) override
+    {
+        if (!m_online.load()) return {false, "The emulator is not connected"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs/porttrace",
+                                          QJsonObject{{"action", QString::fromStdString(action)}}, &status);
+        if (status == 0) return {false, "No answer from the emulator"};
+        if (status != 200) return {false, r.value("message").toString().toStdString()};
+        return {true, "port trace " + action + ": " + r.value("status").toString().toStdString()};
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }
@@ -890,9 +1065,20 @@ public:
             l.generation = m_snap.generation;
             l.dirty = false;
             l.list.clear();
+            l.events.clear();
             const QJsonArray list = m_http.json("GET", m_base + "/breakpoints?cpu=" + cpu).value("breakpoints").toArray();
             for (const QJsonValue &v : list) {
                 const QJsonObject b = v.toObject();
+                if (b.value("type").toString() == "event") {
+                    ecatshim::EventBreakpoint x;
+                    x.id = (unsigned int)b.value("id").toInt();
+                    x.kind = b.value("event").toString().toStdString();
+                    x.value = (unsigned int)b.value("value").toInt();
+                    x.mask = (unsigned int)b.value("value_mask").toInt();
+                    x.enabled = b.value("active").toBool(true);
+                    l.events.push_back(x);
+                    continue;
+                }
                 if (b.value("type").toString() != "memory" || !b.value("execute").toBool() || b.contains("address_end"))
                     continue;
                 l.list.push_back(Breakpoint{b.value("id").toInt(), (unsigned int)b.value("address").toInt(),
@@ -905,6 +1091,47 @@ public:
     void breakpoints_changed()
     {
         for (auto &l : m_bps) l.second.dirty = true;
+    }
+    // The event breakpoints of a CPU (main, gs, ms), read with its execution ones
+    std::vector<ecatshim::EventBreakpoint> event_breakpoints(const QString &cpu)
+    {
+        breakpoints(cpu);
+        return m_bps[cpu].events;
+    }
+    bool add_event_breakpoint(const QString &cpu, const std::string &kind, unsigned int value, unsigned int mask,
+                              std::string &error)
+    {
+        if (value > 0xFF || mask > 0xFF) {
+            error = "the value and the mask are bytes (0..255)";
+            return false;
+        }
+        QJsonObject body{{"type", "event"}, {"event", QString::fromStdString(kind)}, {"cpu", cpu}};
+        if (mask != 0) {
+            body["value"] = (int)(value & mask);
+            body["value_mask"] = (int)mask;
+        }
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/breakpoints", body, &status);
+        breakpoints_changed();
+        if (status == 200 || status == 201) return true;
+        error = r.value("message").toString().toStdString();
+        if (error.empty()) error = "the emulator did not add it (HTTP " + std::to_string(status) + ")";
+        return false;
+    }
+    bool remove_event_breakpoint(const QString &cpu, unsigned int id)
+    {
+        int status = 0;
+        m_http.json("DELETE", m_base + "/breakpoints/" + QString::number(id) + "?cpu=" + cpu, QJsonObject(), &status);
+        breakpoints_changed();
+        return status == 200;
+    }
+    bool enable_event_breakpoint(const QString &cpu, unsigned int id, bool on)
+    {
+        int status = 0;
+        m_http.json("PUT", m_base + "/breakpoints/" + QString::number(id) + (on ? "/enable" : "/disable") + "?cpu=" + cpu,
+                    QJsonObject(), &status);
+        breakpoints_changed();
+        return status == 200;
     }
     RemoteCardZ80 * card(const QString &cpu) const
     {
@@ -972,6 +1199,32 @@ public:
         drop_run_to();
         m_http.json("POST", m_base + "/stepout" + step_query(c), QJsonObject(), nullptr, 15000);
         changed();
+    }
+    // A card's run to a moment (POST /card_run_to {cpu, until, value}): it answers when the run has ended (a breakpoint
+    // or 5 s at most)
+    CardRunAnswer debug_card_run_to(ecatshim::CPU * c, const std::string &until, uint64_t value) override
+    {
+        CardRunAnswer a;
+        auto * card = dynamic_cast<RemoteCardZ80 *>(c);
+        if (card == nullptr) {
+            a.message = "A card run takes a card's CPU (gs, ms)";
+            return a;
+        }
+        drop_run_to();
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/card_run_to",
+                                          QJsonObject{{"cpu", card->cpu()}, {"until", QString::fromStdString(until)},
+                                                      {"value", (qint64)value}},
+                                          &status, 15000);
+        a.ok = status >= 200 && status < 300;
+        a.message = r.value("message").toString(status == 0 ? QString("No answer from the emulator") : QString()).toStdString();
+        a.hit = r.value("hit").toBool();
+        a.stop_reason = r.value("stop").toObject().value("reason").toString().toStdString();
+        a.card_cycle = r.contains("card_cycle") ? r.value("card_cycle").toInteger() : -1;
+        a.main_t = r.contains("main_t") ? r.value("main_t").toInteger() : -1;
+        a.frame = r.contains("frame") ? r.value("frame").toInteger() : -1;
+        changed();
+        return a;
     }
     // The tab's CPU shown (GET / PUT /debug/selected_cpu): a card's follows the main CPU's steps of the paused machine
     void debug_select(ecatshim::CPU * c) override
@@ -1075,6 +1328,11 @@ private:
     ecatshim::DeviceManager m_dm;
     std::shared_ptr<RemoteZ80> m_cpu;
     std::shared_ptr<RemoteMapper> m_mapper;
+    struct CardReport {
+        uint64_t generation = ~0ull;
+        QJsonObject report;
+    };
+    std::map<QString, CardReport> m_card_reports;
 
     Snapshot m_snap;
     QElapsedTimer m_age;
@@ -1086,6 +1344,7 @@ private:
     std::vector<std::shared_ptr<RemoteCardZ80>> m_cards;
     struct BreakpointList {
         std::vector<Breakpoint> list;
+        std::vector<ecatshim::EventBreakpoint> events;
         uint64_t generation = 0;
         bool dirty = true;
     };
@@ -1555,6 +1814,46 @@ std::vector<unsigned int> RemoteZ80::get_breakpoints()
     return r;
 }
 
+std::vector<ecatshim::EventBreakpoint> RemoteZ80::get_event_breakpoints()
+{
+    return m_m->event_breakpoints("main");
+}
+
+bool RemoteZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+{
+    return m_m->add_event_breakpoint("main", kind, value, mask, error);
+}
+
+bool RemoteZ80::remove_event_breakpoint(unsigned int id)
+{
+    return m_m->remove_event_breakpoint("main", id);
+}
+
+bool RemoteZ80::enable_event_breakpoint(unsigned int id, bool on)
+{
+    return m_m->enable_event_breakpoint("main", id, on);
+}
+
+std::vector<ecatshim::EventBreakpoint> RemoteCardZ80::get_event_breakpoints()
+{
+    return m_m->event_breakpoints(m_cpu);
+}
+
+bool RemoteCardZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+{
+    return m_m->add_event_breakpoint(m_cpu, kind, value, mask, error);
+}
+
+bool RemoteCardZ80::remove_event_breakpoint(unsigned int id)
+{
+    return m_m->remove_event_breakpoint(m_cpu, id);
+}
+
+bool RemoteCardZ80::enable_event_breakpoint(unsigned int id, bool on)
+{
+    return m_m->enable_event_breakpoint(m_cpu, id, on);
+}
+
 QString RemoteCardZ80::route(const QString &path) const
 {
     return m_m->base() + path + (path.contains('?') ? "&cpu=" : "?cpu=") + m_cpu;
@@ -1598,6 +1897,19 @@ bool RemoteCardZ80::poke_mem(unsigned int a, unsigned int v)
                      &status);
     m_m->changed();
     return status == 200;
+}
+
+// The card's clock: the `gs` report's cpu.frame_cycle (its cycles since it started are not there: the change is
+// taken within one frame)
+bool RemoteCardZ80::card_cycle(CardCycle &out)
+{
+    const QJsonObject cpu = m_m->card_report(m_cpu).value("cpu").toObject();
+    if (!cpu.contains("frame_cycle")) return false;
+    out.frame_cycle = (int64_t)cpu.value("frame_cycle").toDouble();
+    out.total = -1;
+    out.frame = m_m->snap().frame;
+    out.clock_hz = (unsigned int)cpu.value("clock_hz").toDouble();
+    return true;
 }
 
 std::vector<CpuRegister> RemoteCardZ80::get_register_values()

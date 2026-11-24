@@ -63,7 +63,20 @@ struct ZxHost : NeoGSZxDma::Host
     uint32_t zxFrame() const override { return frame; }
     void zxReschedule() override {}
     void zxLateStart(int64_t units) override { late.push_back(units); }
-    void zxTrace(bool, uint32_t, uint8_t) override {}
+    /// What the port trace gets (SoundChip_NeoGS::zxTrace records it while capturing)
+    struct Traced
+    {
+        bool write;
+        uint32_t address;
+        uint8_t value;
+        uint32_t wait;
+        bool dropped;
+    };
+    std::vector<Traced> traced;
+    void zxTrace(bool write, uint32_t address, uint8_t value, uint32_t wait, bool dropped) override
+    {
+        traced.push_back({write, address, value, wait, dropped});
+    }
     std::vector<std::pair<uint32_t, uint8_t>> written;  // what a debugger's page watchpoints see
     void zxRamWritten(uint32_t offset, uint8_t value) override { written.emplace_back(offset, value); }
 };
@@ -299,6 +312,53 @@ TEST(NeoGSZxDma, MixedDirectionsDropThePendingByte)
     EXPECT_NE(f.mem.ram()[0x400], 0x55) << "the write was lost";
     EXPECT_EQ(f.dma.address(NeoGSDma::ZX), 0x401u) << "only the read was granted";
     (void)latchBefore;
+}
+
+TEST(NeoGSZxDma, TheTraceCarriesEachAccessWait)
+{
+    // The trace's wait is the one the host CPU got (gs-debugger N6): the worked example above, one row per read
+    Fixture f;
+    f.host.unitsPerT = 120e6 / 14e6;
+    f.startAt(0x100);
+    f.read(21);
+    f.read(3);
+    f.read(21);
+    ASSERT_EQ(f.host.traced.size(), 3u);
+    EXPECT_EQ(f.host.traced[0].wait, 0u);
+    EXPECT_EQ(f.host.traced[1].wait, 6u) << "the wait of neogs-zxdma-design.md §5.8";
+    EXPECT_EQ(f.host.traced[2].wait, 0u) << "21 T later the fetch is done";
+    uint64_t sum = 0;
+    for (size_t i = 0; i < f.host.traced.size(); i++)
+    {
+        EXPECT_FALSE(f.host.traced[i].write);
+        EXPECT_FALSE(f.host.traced[i].dropped);
+        EXPECT_EQ(f.host.traced[i].address, 0x100u + i) << "consecutive card addresses";
+        sum += f.host.traced[i].wait;
+    }
+    EXPECT_EQ(sum, f.zx.waitTStates()) << "the rows add up to the module's wait total";
+}
+
+TEST(NeoGSZxDma, TheTraceShowsTheDroppedByte)
+{
+    // A read while a write waits for its grant: the write is lost, and the trace says which byte and where
+    Fixture f;
+    f.host.unitsPerT = 120e6 / 14e6;
+    f.startAt(0x400);
+    f.write(21, 0x55);
+    f.read(3);
+    ASSERT_EQ(f.host.traced.size(), 3u) << "the write, its drop, the read";
+    EXPECT_TRUE(f.host.traced[0].write);
+    EXPECT_FALSE(f.host.traced[0].dropped);
+    const auto& drop = f.host.traced[1];
+    EXPECT_TRUE(drop.dropped);
+    EXPECT_TRUE(drop.write) << "the dropped byte's own direction";
+    EXPECT_EQ(drop.address, 0x400u);
+    EXPECT_EQ(drop.value, 0x55);
+    EXPECT_EQ(drop.wait, 0u) << "a drop puts no wait";
+    EXPECT_FALSE(f.host.traced[2].write);
+    EXPECT_FALSE(f.host.traced[2].dropped);
+    EXPECT_EQ(f.host.traced[2].address, 0x400u) << "the read takes the address the write never moved";
+    EXPECT_EQ(f.zx.bytesDropped(), 1u);
 }
 
 TEST(NeoGSZxDma, ClearingCstDiscardsThePendingByteAndDiverts)

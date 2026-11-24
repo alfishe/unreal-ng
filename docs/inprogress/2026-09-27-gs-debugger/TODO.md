@@ -194,14 +194,14 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
 7. [ ] **F4 extensions.** `reply_read_without_poll`, `data_before_command`, `command_while_busy`,
    `card_reply_stall`, `stale_reply_drain`, `upload_over_running_code`, `command_rejected_in_state`; the handshake
    (M6) suppresses legal firmware-specific ones; the same flags on LW (W4).
-   Done (uncommitted): the host status-read hook on LLE / LW / NeoGS; handshake `ack`, `barrier`, `strobe`,
+   Done (landed d770c9b67): the host status-read hook on LLE / LW / NeoGS; handshake `ack`, `barrier`, `strobe`,
    `replyWait`, `exit`; profile `modes`, `unsolicitedReplies`; design §6.3. Left: an A/B of the status-read hook
    (P2), batched with the next .20 run.
-8. [ ] **Profiles for uploaded code (M5).** The `#14` upload hashed as it arrives, `#13` pushes the matching
+8. [x] **Profiles for uploaded code (M5).** The `#14` upload hashed as it arrives, `#13` pushes the matching
    profile, a card reset pops to the ROM's, the decoder asks the stack top-down; an unknown upload logged with its
    address, length and digest. Profiles: GP `gscode.bin`, the kernel's `ngssd.bin`, NeoTracker `ngsldr` / `ngsdrv`
    / `neopg2`.
-   Done (uncommitted): `GSCommandLog::Uploads()` (also `uploads` in the protocol state), the profile stack with
+   Done (landed d770c9b67, 2026-11-21; uploads and the stack follow TTD since): `GSCommandLog::Uploads()` (also `uploads` in the protocol state), the profile stack with
    `extends`, upload matches that cover a prefix (the kernel's padded 768 bytes), five NedoOS profiles in
    `data/symbols/gs/profiles/`, the blobs in `testdata/software/nedoos/card-code/`. The `#1E` sector transfer with its
    `#BB` strobes (M12): the profile transfer `sectors` (design §6.3), done with V-5.
@@ -281,6 +281,119 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
     acceptance checklist.
 13. [ ] **Card debugger** per [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md) (GS, then
     NeoGS): two Qt windows paused together, its acceptance checklists.
+
+Owner decisions 2026-11-21: phase 5 extends the two debuggers that exist (the embedded one in unreal-qt and eCat,
+debuggers/qt), not a new window system; both get each step in parallel. Both already debug the card's CPU (a tab per
+CPU, registers, disassembly with the firmware's symbols, steps, exec breakpoints, TTD on the card). The steps, each in
+both debuggers, each pane a view of a report every automation plane serves (the Next panes' rule: the debugger shows
+what an agent reads):
+
+- [x] **P5.1 The card zone (A5.2).** Done 2026-11-21: embedded `CardPanes` (unreal-qt/src/debugger/cardpanes.cpp, test
+  `cardpanes_test.cpp`), eCat `CreateCardTabs` (nextviews.cpp, `--self-check` "card tabs"), catalog
+  `devicecatalog_test.cpp`. Side tabs shown while a GS or NeoGS is fitted, as the Next tabs are: Log (the
+  `gs.commands` history, decoded), Protocol (the `gs` report's `protocol`, `last_send`), Firmware
+  (`/state/audio/gs/firmware`: objects, dispatch, unknown commands, the profile stack), Hardware (the `gs` report:
+  MPAG, mailbox, channels, NeoGS registers), Stats (`/state/audio/gs/stats`). New device catalog entries `gs-commands`,
+  `gs-firmware`, `gs-stats` (eCat reads a pane by its catalog entry, in process or over the WebAPI).
+- [x] **P5.2 Whose pause and where the other CPU is (A6 S1-S3, A4).** The card strip / inside-an-instruction strip
+  (MainPositionNode: the main instruction, elapsed / total T, the bus cycle), the paused-by line naming the CPU, the
+  card cycle and Δ in the card's registers, the profile line (`Symbols: GS v1.05a`).
+  - [x] 2026-11-22: the `gs` report's `strip` and `cpu.clock_hz` / `cpu.frame_cycle` (DeviceState::GeneralSoundStrip,
+    `GeneralSoundCard::cardCpuClockHz`): "GS Z80 12 MHz · PC #0C32 · cycle 119,985 · MPAG #03 · Symbols: GS v1.05a".
+    Embedded: the card line under the stop banner at every stop, with "paused by the card (gs)" and the main CPU's
+    MainPositionText after a card's stop (CardPanes::StripText). eCat: the same line in the state label.
+  - [x] 2026-11-22: embedded, the card CPU's T field is its cycle in the frame and Δ since the value shown before
+    (`c119985 Δ12`, GeneralSoundCard::cardCycles).
+  - [x] 2026-11-23: the S3 strip over the main registers (embedded: "in #8000 LD A,(HL) · T 6 of 7 + 3 T wait ·
+    memory read", the card line then drops the position; eCat: the state label), eCat's card `T` row `c2015 Δ13`
+    (remote: Δ within one host frame, the report has no running card total), a live card line while running
+    (embedded 4 Hz, eCat 4 Hz in process / 1 Hz remote; side-effect-free reads, nothing parks). Tests
+    `CardPanes_Test.TheMainStripShowsTheWaitOfTheInstruction`, `.TheCardLineIsLiveWhileTheMachineRuns`, eCat
+    `--self-check`.
+- [x] **P5.3 Breakpoints (A4 B1-B4, A6 S5).** The event kinds (INT, NMI, card reset, page switch) and the protocol
+  kinds on the card side and the host side in both editors; card breakpoints listed with a CPU column.
+  Done 2026-11-22. Embedded: the editor's Event kind (grouped Card / Protocol, card side / Protocol, host side /
+  Machine, plain words, value / mask) and a CPU row for memory and port kinds; the list shows every CPU's
+  breakpoints with a CPU column and filter; event hits in plain words in the stop banner, its Edit on the stopping
+  CPU (test `breakpointcardevents_test.cpp`). eCat: the shim's event breakpoints per CPU (in process and over the
+  WebAPI), the breakpoint list as a tree with a CPU column, an Events menu (`--self-check` "event bp", also run
+  with `--connect`).
+  Left: the hit's own byte in the banner (the stop carries no value: `BreakpointTriggeredPayload` /
+  `Emulator::BreakpointStop` would need it; now the filter's value is named); eCat's CPU filter;
+  `unreal-debugger --no-gs` still has the Pentagon config's NeoGS.
+- [x] **P5.4 Run control (A4 S5/S7, A6 S6).** Step main / step other, Run to: card cycle, main T, next card
+  interrupt, next host command; the card CPU by its shortcut.
+  Done 2026-11-22. Core: `RunControl::CardRunTo(requester, cpu, until, value)` with `until`
+  `cycle` / `int` / `command` / `main_t` (`GSCardTarget::ArmUntil`, StepKind Cycle / Int / Command; main_t a direct
+  `RunTStates` run) on every plane: CLI `card_run_to`, Lua `card_run_to`, Python `emu.card_run_to`, MCP
+  `control_execution` `card_run_to`, REST / WebSocket `POST /card_run_to {cpu, until, value}`; every card step's reply
+  adds `card_cycle`, `main_t`, `frame`. "Step main" from a card view is the main CPU's own step (`POST /step` without
+  `cpu`, `RunControl::StepIn`): no new call. Tests `GSCardRunTo_Test.*`.
+  Embedded (`debuggercardrun.{h,cpp}`): the four Run-to entries in "Adv Step ▾", Step other (Alt+F11; "Step main" with
+  the card in front, "Step GS" with main), Ctrl+1 / Ctrl+2 and the CPU tab bar's menu, the run's message in the stop
+  line (test `debuggercardrun_test.cpp`). eCat: the shim's `debug_card_run_to` (in process and `POST /card_run_to`),
+  a "Run to ▾" button, Step other, Ctrl+1 / Ctrl+2 (`--self-check` "run control", also over `--connect`).
+  Found on the way: a card fitted with the machine got its firmware symbols only after a card switch
+  (`Emulator::ApplySymbolBundles` now applies the cards' too), `GET /symbols/sets` ignored `cpu`, MCP `sets` had no
+  list in its text.
+  Left: `int` / `command` reached only in core tests (the idle NeoGS loader has interrupts off); Step other from the
+  main tab steps the card live, not through the TTD history; the GUI control plane has no verbs for these.
+  Ctrl+1 / Ctrl+2 vs the disassembly's marks (owner, 2026-11-22): the focused disassembly keeps Ctrl / Alt+1..5
+  (`DisassemblyView::event`, ShortcutOverride); elsewhere they switch the CPU.
+- [x] **P5.5 NeoGS and the rest of the slot (B3, A10).** NeoGS DMA, SD · MP3 · Flash tabs; the LW player inspector;
+  the MultiSound's GS.
+  Core data (2026-11-22): the `gs` report on the LW card carries `interpreter` (state idle / params / command /
+  upload / reply / covox, the command, the state's byte counts, the queues, the upload's received of total from the
+  module header) and `player` (position, pattern, row, tick, speed, BPM, the four channels with period, note and
+  rate, the module row (P) / (S), the samples with the Unreal GS dialog's columns, the FX count); the strip adds both;
+  `gs firmware` answers the v1.05a window variables the interpreter mirrors (`source: mirror`), so the Firmware pane
+  works on LW unchanged. The MultiSound's GS: its `gs` report part was already the GS report; the catalog adds
+  `ms-gs-commands` (history `<slot>.gs.commands`), `ms-gs-firmware`, `ms-gs-stats`; firmware and statistics take the
+  card by CPU (`--cpu ms`, `?cpu=ms`, Lua / Python `cpu`, MCP `gs_cpu`; the card publishes its own statistics at its
+  frame ends). Fields: [command-interface `state audio gs`](../../emulator/design/control-interfaces/command-interface.md).
+  Tests `SoundChip_GSLightweight_Test.Inspector_*`, `GSModPlayer_Notes.*`,
+  `MultiSoundDeviceState_Test.TheCardsGsHasTheGsReportAndTheCardPanes`.
+  UI done 2026-11-22, both debuggers on the same sources: the NeoGS board, "NeoGS DMA" and "SD · MP3 · Flash" read
+  the debug boards (`neogs`, `neogs_dma`, `neogs_sd`, `neogs_mp3`, `neogs_flash`) plus the `gs_stats` counters, with
+  the boards' actions (SD insert image / folder, eject, save flash). Embedded: `boardpane.{h,cpp}` renders any board;
+  `gslwpane.{h,cpp}` the LW "GS interpreter" (state chips, the queues of 16, the upload's progress) and "GS player"
+  (song, module, channels, samples); the card panes follow the card CPU tab in front (ms in front or no slot card:
+  the MultiSound's GS) — tests `CardPanes_Test.*`. eCat: the shim's `read_board` / `board_action` (in process, `GET
+  /debug/boards/{id}`), the two LW tabs, the ms tabs (same rule) — `--self-check` with neogs, gs, gs-lw, multisound,
+  in process and over `--connect`.
+  Fixed on the way: `neogs_dma` named the selected module one off (DMA_MOD 1 ZX, 2 SD, 3 MP3); MCP
+  `gs_reset_counters` takes `gs_cpu`.
+  ZX-DMA trace (N6, 2026-11-23): every byte the Spectrum moves through the window with the host frame and T, the
+  card cycle, the address, the value, the /WAIT T-states and dropped bytes, in a ring of its own on the NeoGS (the
+  port trace's DAC fetches evicted them within half a second); report `gs-zxdma` on every plane (REST
+  `state/audio/gs/zxdma?last=&since=`, CLI `gs zxdma`, Lua / Python `gs_zxdma`, MCP `audio_gs_zxdma`); "Trace ▸" on
+  the NeoGS DMA pane / tab in both debuggers (Start / Stop / Clear, rows appended by `since`, double-click to the
+  host PC's disassembly / the card memory). Tests `GSZxDmaTrace_Test.*`, `NeoGSZxDma.TheTrace*`,
+  `CardPanes_Test.TheDmaPaneTracesTheZxDmaBytes`, eCat `--self-check` (17 real bytes, in process and `--connect`).
+  Core data for MPAGEX, the banner (S4) and the wait (S3) (2026-11-23, uncommitted): `NeoGSMemory::lastMpagEx()`
+  (the last #10 write that took effect, TTD fixed byte 66, a layout 4 blob from before reads 0), NeoGSStateInfo
+  `mpagex` / `extendedPaging`, the `gs` report's `neogs.mpag` / `mpagex` / `extended_paging`, the `neogs` board's
+  Paging group (`mpagex`, `extended_paging`, header `MPAG=#03 MPAGEX=#05` while EXPAG), the strip `MPAG #03 · MPAGEX
+  #05` while EXPAG; `neogs.dma.zx` `window_start`, `window_end`, `card_address`, `next_byte`, `rom_paged`, `banner`
+  ("ZX-DMA active: reads at #0000-#3FFF return card RAM @#012345; next byte #A7"), in process
+  `DeviceState::ZxDmaBanner(context)`; `Z80::instrWaitTicks` / `InstructionWaitT()`, MainPosition `waitT`, the text
+  `... T 17 of 16 + 1 T wait, ...` and `wait_t` in MainPositionNode. Tests `NeoGSMemory.MpagExShadow*`,
+  `SoundChip_NeoGS_Ttd.TheMpagExShadowTravelsInTheBlob`, `DeviceStateGs_Test.NeoGsReportNamesMpagEx` /
+  `TheClassicCardHasNoZxDmaBanner`, `DebugBoards_Test.TheNeoGSPagingGroupNamesMpagEx`,
+  `Modes/NeoGSZxDma_Test.HostReadsABlockOfCardRam` (banner), `.AWriteWaitShowsInTheMainPosition`. The two
+  debuggers' UI (2026-11-23): the banner over the main CPU's memory view and disassembly (Divert / Watch), the rows
+  #0000-#3FFF marked "card bytes at run time" in Divert with the ROM paged (embedded and eCat, in process and
+  remote); "Open media panel" on the SD card opens the media panel on slot `sd.ngs` (embedded; eCat has no media
+  panel). Tests `CardPanes_Test.TheZxDmaBannerShowsWhileTheModuleDiverts`, `.TheSdCardOpensTheMediaPanelOnItsSlot`,
+  eCat `--self-check`.
+  Left: the trace restarted from outside (CLI / REST) past the
+  panes' cursor before their next refresh loses that session's first rows; a live "+ N T wait" after a card's stop not produced in
+  eCat's self-check (the field only); the disassembly's run-time marks refresh at stops only; the LW panes do not mark
+  the values changed since the last stop; the card strip follows a CPU-tab switch only at the next stop; LW checked
+  live only idle (an upload and a module in the Qt test); gs + ms together not run; the LW FX upload counter is not
+  in the TTD state.
+- [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
+  console, the protocol monitor, the analysis tabs (A5.2a).
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

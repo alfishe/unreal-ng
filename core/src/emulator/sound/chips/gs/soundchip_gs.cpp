@@ -627,7 +627,7 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
             logHostCommand(value);
             onHostCommandWrite(value);
-            GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value);
+            GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value, -1, this);
             return;
         default:
             return;

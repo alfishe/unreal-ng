@@ -62,6 +62,7 @@ set(SOURCES
     src/commands/cli-processor-mouse.cpp
     src/commands/cli-processor-joystick.cpp
     src/commands/cli-processor-analysis.cpp
+    src/commands/cli-processor-jobs.cpp
 )
 
 # Create the library

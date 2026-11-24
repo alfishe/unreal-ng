@@ -301,6 +301,13 @@ written again from memory, and a cached segment without a known file would be dr
 soak 2026-11-21; `TimeTravelController_TwoTiers_Test.ResumeAtTheEndOfAnEvictedTrunk`). A resume before a line's end
 whose branch cannot fork is refused; it never cuts the history after it instead.
 
+What stays in memory grows with the session, by design: the write journal (under 3 bytes a write record: 985 MB
+at 240k frames of a Pentagon writing 8 K bytes a frame) and the coverage index with its block summaries (about 200 bytes a frame, a quarter of the index, for range counts without decoding frames; runs of 4 and 32 blocks get their keys united as they seal, so a long range counts a run once). Their cost
+per query does not grow: the memory report keeps running sums (no walk over the checkpoints), the journal answers a
+range from per-block running counts, and a pause writes only the part of the journal and of the coverage index the
+folder lacks (a per-part journal and `kCoverageFrom` parts; `storage.md`), not all of it (P1.S10 follow-up,
+2026-11-21, measured in requirements.md PR-7).
+
 The check is cheap per frame: the full pass runs only when a segment started, a file completed, or the bytes are
 over budget. `SetHistoryLimit` with the disk tier active evicts whatever the state (a stopped session too: nothing
 is lost).
@@ -316,6 +323,41 @@ checkpoint's frame and every changed piece present) before anything changes, the
 rebuilds the full tables as `CloseRegion` built them (the segment's first table from its first checkpoint's full
 list, each later one derived with the pieces changed since). The result is bit-identical (T-C9). The cache is then
 trimmed to its capacity, never dropping the segment just read.
+
+A restore reads back only the prefix it needs (2026-11-22, P1.S10 seek tails): the loader gets the target
+checkpoint, `ReadSegmentPieces` stops after the file's part that follows it (a part is 50 checkpoints), and the
+segment is resident up to `TTDSegmentInfo::residentEnd` (the end of the checkpoints read). A restore past it reads
+the segment again whole; whatever needs a whole segment (a save, `ReadBackAll`, a segment the window covers again)
+reads it whole. The file is read in one read into a reused buffer (the container index checks every record header,
+a read each before). Before -> after at 240k frames, a seek into an evicted segment p50 / p95: 11.4 / 43 ms ->
+4.1 / 5.5 ms, against 1.2 / 1.4 ms inside memory (`TTDSeekScaling_Test.Measure`; the guard is
+`TTDSeekScaling_Folder_Test.ASeekIntoEvictedHistoryCostsAboutASeekInMemory`, with a long-tier variant on the
+harness's 1,875-frame segments). What is left of it is the decode of the records read (zstd and the crc), the
+validation and the full tables. The timeline reads nothing back: a checkpoint's changed pieces are in its
+change record, and a baseline (which stores every piece) keeps the list of pieces that differ from the checkpoint
+before it, computed at capture (`TTDSegmentInfo::baselineDiff`), so the frames where the picture changed are known
+without the segment (`TTDSeekScaling_Folder_Test.TheTimelineReadsNoEvictedSegmentBack`).
+
+A restore reads back one stretch through the file's seek index (2026-11-23, P1.S10 seek format). The prefix still
+decoded, imported and rebuilt half a segment on average, 4 ms of a 5 ms seek. A segment file now carries a piece
+table at every checkpoint with full reference tables and a seek index
+([storage.md §5.3](storage.md#53-as-built-2026-11-23-a-segment-file-read-in-part)), and the loader asks for the
+checkpoint alone:
+
+- `TimeTravelEngine::ReadBackSegmentWindow` takes the stretch from the last checkpoint with full tables at or before
+  the one wanted to the next such checkpoint (at most 65 checkpoints of a segment of up to 3,000; the checkpoint
+  after the one wanted is inside, for the next frame's restore and a seek check).
+  `TTDSessionFile::ReadSegmentWindow` reads the table, the stretch's checkpoint records and the piece records of the
+  parts that hold a version the stretch needs, and imports only those versions.
+- The stretch becomes resident (`TTDSegmentInfo::residentParts`). Another restore elsewhere in the segment adds its
+  stretch; the stretches in memory keep their versions, so a query that holds versions of one checkpoint while it
+  asks for another of the same segment is safe (the prefix read evicted and read the segment again there).
+  Neighbouring stretches join, and a segment whose stretches cover it is whole.
+- The whole segment is read when the capture head moves into it (`EnsureWhole`: a truncate, a switch of line; the
+  head's segment cannot leave memory to be read again), for a save (`ReadBackAll`) and when the memory window covers
+  it again. A file without a seek index (unfinished, joined) is read as before: a prefix first, whole at the second
+  restore in it.
+- The read-back cache counts segments as before (4); a segment's stretches leave with it.
 
 The read back runs on the thread of the operation that needs it (an operation parks a recording machine first);
 read-only queries never load the emulation thread. A failed read back counts `read_back_failures` and the restore

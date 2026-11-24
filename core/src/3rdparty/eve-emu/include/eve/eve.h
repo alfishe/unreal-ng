@@ -59,6 +59,11 @@ const char* EveLastError(void);
 
 void EveSelect(EveChip* chip, int selected); /* CS_N low (1) / high (0) */
 uint8_t EveExchange(EveChip* chip, uint8_t mosi);
+/* `count` 32-bit words (little-endian bytes) at address, address + 4, ... (22-bit addresses) as
+   that many write transactions of one word each would store them, while the words lie in RAM_G:
+   the number written; it stops at the first word that does not (the caller sends that one as a
+   transaction). 0 while CS_N is low, the chip is not ACTIVE or a VDAC4 reset sweep runs. */
+size_t EveWriteRamGWords(EveChip* chip, uint32_t address, const uint8_t* words, size_t count);
 
 /* --- Time -------------------------------------------------------------------------- */
 
@@ -94,7 +99,8 @@ uint64_t EveCompletedFrames(const EveChip* chip); /* frames fully scanned out */
    draws it into the frame buffer. The picture, the line costs, the metrics and REG_TAG are those of the
    drawing on the caller's thread, whatever the renderer's pace (the producer runs at most two frames ahead).
    onFrame (may be NULL) is called on the renderer thread at each frame end, after the frame's last line is
-   drawn and its metrics folded; the frame buffer holds that frame until it returns. `drawn` = 0: the frame
+   drawn and its metrics folded; the frame buffer holds that frame until it returns. `frame`: the frame's
+   EveCompletedFrames count (what the chip's own call returns right after that frame). `drawn` = 0: the frame
    was passed without drawing (EveSetOutput drawing = 0). The calls that read the drawing's state
    (EveSaveState, EveGetLineCost, EveGetFrameMetrics, EveProbePixel, a host read of REG_TAG) wait for the
    renderer; EveSetOutput with another buffer or size waits too, so the old buffer is free when it returns.
@@ -106,6 +112,11 @@ int EveSetAsyncDrawing(EveChip* chip, int on, EveFrameCallback onFrame, void* us
 int EveAsyncDrawing(const EveChip* chip);
 /* Wait until the renderer has drawn everything queued (no-op when off) */
 void EveDrawingBarrier(EveChip* chip);
+/* Wait until the renderer has finished every frame queued (onFrame called for each; no-op when
+   off): the lines of the next frame may still be drawing. REG_TAG reads as after
+   EveDrawingBarrier: the renderer keeps the tag of this point, the chip takes it when its
+   register is read (a host read, EvePeek, EveGetRegion of "REG") */
+void EveFramesBarrier(EveChip* chip);
 
 /* --- State ------------------------------------------------------------------------- */
 

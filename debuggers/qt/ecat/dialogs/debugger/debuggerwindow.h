@@ -16,6 +16,7 @@ class QLabel;
 class QLineEdit;
 class QSplitter;
 class QToolBar;
+class QToolButton;
 class QTabWidget;
 class QTimer;
 class BankStrip;
@@ -84,6 +85,19 @@ public:
     //F4 and F2 at the cursor of the listing in front; false when the machine is not held, or only seen
     bool run_to_cursor();
     bool toggle_breakpoint_at_cursor();
+    //Not in ecat (gs-debugger P5.4): a sound card's CPU run to a moment, the Run to menu's card entries: `until`
+    //"cycle" / "main_t" (value: the card cycle / the main CPU's T of the frame), "int", "command". The card in front,
+    //else the first one; the core's message joins the state label. False when not held or without a card
+    bool card_run_to(const QString &until, uint64_t value, Emulator::CardRunAnswer * answer = nullptr);
+    //The card CPU the card actions act on: the one in front, else the first card's; nullptr without a card
+    CPU * card_cpu();
+    //Step other (Alt+F11): one instruction of the CPU not in front (main from a card's tab, the card from main's);
+    //the tab in front stays
+    bool step_other();
+    //The state label's text
+    QString state_text() const;
+    //The ZX-DMA banner shown over the main CPU's listing and dump (gui-card-debugger S4), empty when none
+    QString zxdma_banner_text() const;
     //The time travel group of the toolbar (not in ecat): the self-check drives it
     TtdControls * ttd() { return m_ttd; }
 
@@ -106,6 +120,7 @@ protected:
 private:
     struct CpuPane {
         CPU * cpu;
+        QLabel * banner;    //The ZX-DMA banner over the main CPU's listing (S4), null on a card's
         BankStrip * banks;
         DisasmView * code;
         RegistersView * regs;
@@ -125,6 +140,8 @@ private:
     HistoryView * m_history;
     DevicesView * m_devices;
     std::vector<NextTab> m_next_tabs;
+    //a General Sound card's (or the MultiSound's GS), a NeoGS's and the LW player's own too (gs-debugger P5.1, P5.5)
+    std::vector<NextTab> m_card_tabs;
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
     QLabel * m_state;
@@ -148,6 +165,14 @@ private:
     QAction * m_bp_remove;
     QAction * m_bp_toggle;
     QAction * m_bp_clear;
+    QToolButton * m_bp_events;
+    QToolButton * m_run_to_menu;     //Run to: the card's moments (gs-debugger P5.4), with a card
+    QAction * m_run_to_menu_action;  //its place in the toolbar
+    QAction * m_step_other;          //Alt+F11
+    QAction * m_select_main;         //Ctrl+1
+    QAction * m_select_card;         //Ctrl+2
+    QString m_run_message;           //The last card run's message, until the next command
+    bool m_keep_front = false;       //The stop of a Step other leaves the tab in front
     TtdControls * m_ttd = nullptr;
     unsigned int m_serial;
     bool m_paused;
@@ -164,6 +189,8 @@ private:
 
     CpuPane * pane();
     QString code_text(unsigned int address);
+    //In the listing of that processor
+    QString code_text(CPU * cpu, unsigned int address);
     void build_toolbar(QWidget * host);
     //Every view read again; a stop also brings PC into view
     void refresh_all(bool stopped);
@@ -171,6 +198,19 @@ private:
     //What the next stop shows changes against
     void mark_all();
     void show_state();
+    //The followed card's line at the last stop (gs-debugger A6 S1): the `gs` report's strip (the MultiSound's: its
+    //gs part's), empty without a card
+    QString m_card_strip;
+    QString read_card_strip() const;
+    //The NeoGS ZX-DMA banner (S4) over the main CPU's listing and dump, its run-time bytes marked in the listing:
+    //read at the stops and, while the machine runs, with the card line
+    QString m_zxdma_banner;
+    void refresh_banner();
+    //While the machine runs: the card line and the banner, every Emulator::live_card_ms
+    qint64 m_card_live_ms = -1;
+    void follow_card_live();
+    //The card the card tabs follow: "gs", "ms", "" none; "?" before the first look
+    std::string m_card_source = "?";
     void update_cursor();
     //What can be done now: the steps only while the machine is held, the
     //run while it is not running already

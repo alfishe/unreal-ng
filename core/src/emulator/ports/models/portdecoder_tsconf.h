@@ -164,8 +164,9 @@ public:
     /// The board's ROM chip as a flash: MEM_CONFIG.W0_WE with ROM in window 0 writes it ([V] zmem.v:297)
     EvoFlash& GetFlash() { return _flash; }
     EvoFlash* GetEvoFlash() override { return &_flash; }
-    /// The machine goes away: a flashed board stays flashed (the saved flash file)
-    void BeforeRelease() override { _flash.SaveIfUnsaved(); }
+    /// The machine goes away: a flashed board stays flashed (the saved flash file); the FT812's renderer thread
+    /// stops before the Screen and the CPU it presents into are released
+    void BeforeRelease() override;
     /// The frame ended: a flash operation that finished since takes the overlay away; a quiet change is saved
     void OnFrameEnd() override;
     /// The saved flash (zxevo-flash-tsconf-<hash>.rom) replaces the image's bytes

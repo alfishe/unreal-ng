@@ -37,6 +37,7 @@ openapi/
 ├── openapi_lifecycle.inc  # Emulator create/start/stop
 ├── openapi_machine.inc    # Recent files, recording presets and the video record / export-clip options of the machine area
 ├── openapi_operations.inc # Operation log (machine state coordinator) + openapi_operations_schemas.inc
+├── openapi_jobs.inc       # Jobs: list, long-poll, cancel, start; async on the long verbs (after ttd / analysislayers) + openapi_jobs_schemas.inc
 ├── openapi_porttrace.inc  # I/O port tracing
 ├── openapi_vdac2.inc      # TS-Conf VDAC2 card (FT812): bus capture
 ├── openapi_vdac4.inc      # TS-Conf VDAC4 board (Tang + ESP32-S3): state

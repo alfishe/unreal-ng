@@ -47,6 +47,11 @@ public:
     /// The newest record with afterT < globalT <= upToT matching @p pred
     std::optional<TTDWriteRecord> FindLastInRange(uint64_t afterT, uint64_t upToT,
                                                   const std::function<bool(const TTDWriteRecord&)>& pred) const;
+    /// Memory writes (not port OUTs) with globalT <= @p globalT: per sealed block a running count, so at most one
+    /// block is decoded (the timeline counts a range's writes without visiting them)
+    uint64_t MemoryWritesUpTo(uint64_t globalT) const;
+    /// The records with fromT <= globalT < toT in time order (a recording folder's part: its own time range)
+    void ForEachInRange(uint64_t fromT, uint64_t toT, const std::function<void(const TTDWriteRecord&)>& visit) const;
     /// Every record in time order
     void ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const;
     /// The records with afterT < globalT <= upToT, newest first, until @p visit returns false
@@ -65,6 +70,12 @@ public:
     void DropAfter(uint64_t globalT);
     /// Sealed blocks, their directory and the open block
     size_t HeapBytes() const;
+    /// A measurement's switch (the write and port journals): the size getters walk every block again, as before
+    /// the running sums
+    static void SetWalkBlocksForMeasurement(bool on);
+    static bool WalkBlocksForMeasurement();
+    /// Blocks decompressed so far (the work a query did: a counted measure for tests)
+    uint64_t BlocksDecoded() const { return _blocksDecoded; }
 
 private:
     struct Block
@@ -73,6 +84,8 @@ private:
         uint64_t lastT = 0;
         uint32_t count = 0;
         uint32_t rawSize = 0;
+        uint64_t memBefore = 0;   ///< memory writes in the blocks sealed before this one (since the last Clear)
+        uint32_t memCount = 0;    ///< memory writes in this block
         std::vector<uint8_t> payload;   ///< columns (EncodeWriteBlock), zstd
     };
     void Seal();
@@ -82,9 +95,14 @@ private:
     std::vector<TTDWriteRecord> _open;   ///< the newest records, not sealed yet
     std::vector<TTDJournalSegment> _segments;
     uint64_t _size = 0;
+    /// The sealed blocks' payload capacities, summed as blocks come and go: HeapBytes is asked at every seek's
+    /// publish and walked every block (177,000 after 240,000 frames, a third of a millisecond; P1.S10 seek format)
+    size_t _payloadHeap = 0;
+    uint64_t _memSealed = 0;   ///< memory writes ever sealed since the last Clear (Block::memBefore of the next one)
     uint64_t _droppedUpTo = 0;   ///< the newest record DropBefore released (0: none)
     mutable int64_t _cachedBlock = -1;   ///< the last decoded block (queries scan backward)
     mutable std::vector<TTDWriteRecord> _cached;
+    mutable uint64_t _blocksDecoded = 0;
 };
 
 }  // namespace ttd

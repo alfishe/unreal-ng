@@ -10,14 +10,17 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QGraphicsColorizeEffect>
 #include <QHeaderView>
 #include <QIcon>
 #include <QImage>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QPixmap>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QSplitter>
 #include <QTabWidget>
@@ -76,11 +79,13 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         CpuPane p;
         p.cpu = cpu;
         p.split = new QSplitter(Qt::Horizontal, m_cpu_tabs);
-        //The listing under the windows of its space
+        //The listing under the windows of its space; the main CPU's under the ZX-DMA banner while there is one
         QWidget * left = new QWidget(p.split);
         QVBoxLayout * ll = new QVBoxLayout(left);
         ll->setContentsMargins(0, 0, 0, 0);
         ll->setSpacing(1);
+        p.banner = m_panes.empty() ? create_banner(left) : nullptr;
+        if (p.banner != nullptr) ll->addWidget(p.banner);
         p.banks = new BankStrip([cpu]() { return cpu->get_windows(); }, view_base(cpu), left);
         p.banks->set_pc([cpu]() { return cpu->get_pc(); });
         p.banks->set_cpu(cpu);
@@ -138,7 +143,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
 
     m_side_tabs = new QTabWidget(m_split_bottom);
     m_stack = new StackView(current_cpu(), m_side_tabs);
-    m_breakpoints = new BreakpointsView(m_side_tabs);
+    m_breakpoints = new BreakpointsView(e, m_side_tabs);
     m_history = new HistoryView(e, m_side_tabs);
     m_devices = new DevicesView(e, m_side_tabs);
     m_side_tabs->addTab(m_stack, tr("Stack"));
@@ -148,6 +153,8 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     //A Next's own tabs: shown while the machine has their reports
     m_next_tabs = CreateNextTabs(e, m_side_tabs);
     for (const NextTab &t : m_next_tabs) m_side_tabs->setTabVisible(m_side_tabs->addTab(t.view, t.title), false);
+    m_card_tabs = CreateCardTabs(e, m_side_tabs);
+    for (const NextTab &t : m_card_tabs) m_side_tabs->setTabVisible(m_side_tabs->addTab(t.view, t.title), false);
     update_next_tabs();
     m_split_bottom->setStretchFactor(0, 2);
     m_split_bottom->setStretchFactor(1, 1);
@@ -175,6 +182,9 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     connect(router, &AddressRouter::show_page, this, [this](CPU * cpu, unsigned int address) {
         m_memory_tabs->show_page(cpu, address);
     });
+    connect(router, &AddressRouter::show_memory_offset, this, [this](Memory * memory, unsigned int offset) {
+        m_memory_tabs->show_memory_offset(memory, offset);
+    });
     connect(router, &AddressRouter::toggle_breakpoint, this, [this](CPU * cpu, unsigned int address) {
         for (CpuPane &p : m_panes)
             if (p.cpu == cpu) p.code->toggle_breakpoint(address);
@@ -198,11 +208,14 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         m_stack->refresh();
     });
 
-    connect(m_breakpoints, &BreakpointsView::activated, this, show_code);
+    //A breakpoint of any processor: its tab, its listing
+    connect(m_breakpoints, &BreakpointsView::activated, router, &AddressRouter::show_code);
     connect(m_history, &HistoryView::activated, this, show_code);
     connect(m_stack, &StackView::activated, this, show_code);
-    connect(m_breakpoints, &BreakpointsView::remove, this, [this](unsigned int address) {
-        if (CpuPane * p = pane()) p->code->toggle_breakpoint(address);
+    connect(m_breakpoints, &BreakpointsView::remove, router, &AddressRouter::toggle_breakpoint);
+    connect(m_breakpoints, &BreakpointsView::changed, this, [this]() {
+        refresh_side();
+        update_cursor();
     });
     connect(m_history, &HistoryView::toggle_breakpoint, this, [this](unsigned int address) {
         if (CpuPane * p = pane()) p->code->toggle_breakpoint(address);
@@ -217,6 +230,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         m_stack->set_cpu(current_cpu());
         refresh_side();
         update_cursor();
+        show_state();  //the card tabs' card, its line, may have followed the tab
         //The time group follows the tab: a card's back steps are the card's, the moment names where it stands
         if (m_ttd != nullptr && this->e->loaded && m_ttd->shown()) m_ttd->poll(true);
     });
@@ -252,6 +266,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     //The stop before the window: taken (the tab its caller asked for stays)
     if (e->loaded) m_stop_serial = e->debug_stop_serial();
     refresh_all(true);
+    refresh_banner();
     mark_all();
     if (e->loaded) m_ttd->poll(true);
     show_state();
@@ -304,6 +319,13 @@ QString DebuggerWindow::code_text(unsigned int address)
     CpuPane * p = pane();
     if (p == nullptr) return QString();
     return p->code->describe(address);
+}
+
+QString DebuggerWindow::code_text(CPU * cpu, unsigned int address)
+{
+    for (CpuPane &p : m_panes)
+        if (p.cpu == cpu) return p.code->describe(address);
+    return QString();
 }
 
 //A toolbar icon whose off state reads as off: gray, half seen (the platform's own barely pales a coloured one)
@@ -395,6 +417,79 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     addAction(m_to_cursor);
     connect(m_to_cursor, &QAction::triggered, this, [this]() { run_to_cursor(); });
 
+    //Not in ecat (gs-debugger P5.4, gui-card-debugger A4 Toolbar): Step other, the CPU not in front one instruction,
+    //and Run to, a sound card's moments. Both only with a card
+    m_step_other = tb->addAction(tr("Step other"));
+    m_step_other->setObjectName("step_other");
+    m_step_other->setShortcut(QKeySequence(Qt::ALT | Qt::Key_F11));
+    m_step_other->setShortcutContext(Qt::WindowShortcut);
+    addAction(m_step_other);
+    connect(m_step_other, &QAction::triggered, this, [this]() { step_other(); });
+
+    m_run_to_menu = new QToolButton(tb);
+    m_run_to_menu->setText(tr("Run to"));
+    m_run_to_menu->setToolTip(tr("Run the card to a moment: its cycle, a main CPU T-state, its next interrupt, the "
+                                 "host's next command"));
+    m_run_to_menu->setPopupMode(QToolButton::InstantPopup);
+    QMenu * run_to = new QMenu(m_run_to_menu);
+    m_run_to_menu->setMenu(run_to);
+    auto run_to_entry = [this, run_to](const QString &text, const char * name, const char * until, const QString &ask) {
+        QAction * a = run_to->addAction(text);
+        a->setObjectName(name);
+        const QString what = QString::fromLatin1(until);
+        connect(a, &QAction::triggered, this, [this, what, ask, text]() {
+            uint64_t value = 0;
+            if (!ask.isEmpty()) {
+                bool ok = false;
+                const QString input = QInputDialog::getText(this, text, ask, QLineEdit::Normal, QString(), &ok).trimmed();
+                if (!ok || input.isEmpty()) return;
+                //Plain digits decimal; #, $ or 0x hex
+                QString digits = input;
+                int base = 10;
+                if (digits.startsWith('#') || digits.startsWith('$')) {
+                    digits = digits.mid(1);
+                    base = 16;
+                } else if (digits.startsWith("0x", Qt::CaseInsensitive)) {
+                    digits = digits.mid(2);
+                    base = 16;
+                }
+                value = digits.toULongLong(&ok, base);
+                if (!ok) {
+                    QMessageBox::critical(this, tr("Error"), tr("Incorrect number: %1").arg(input));
+                    return;
+                }
+            }
+            card_run_to(what, value);
+        });
+    };
+    run_to->addAction(m_to_cursor);
+    run_to->addSeparator();
+    run_to_entry(tr("Card cycle..."), "run_to_card_cycle", "cycle",
+                 tr("The card cycle of the frame to run the card to (decimal; #, $ or 0x for hex):"));
+    run_to_entry(tr("Main T..."), "run_to_main_t", "main_t",
+                 tr("The main CPU's T-state of the frame to run to (decimal; #, $ or 0x for hex):"));
+    run_to_entry(tr("Next card interrupt"), "run_to_card_int", "int", QString());
+    run_to_entry(tr("Next host command"), "run_to_host_command", "command", QString());
+    m_run_to_menu_action = tb->addWidget(m_run_to_menu);
+
+    //The processor in front: the machine's own (Ctrl+1), the card's (Ctrl+2)
+    m_select_main = new QAction(tr("Main CPU"), this);
+    m_select_main->setObjectName("select_main_cpu");
+    m_select_main->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_select_main->setShortcutContext(Qt::WindowShortcut);
+    addAction(m_select_main);
+    connect(m_select_main, &QAction::triggered, this, [this]() {
+        if (CPU * c = main_cpu()) select_cpu(c);
+    });
+    m_select_card = new QAction(tr("Card CPU"), this);
+    m_select_card->setObjectName("select_card_cpu");
+    m_select_card->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
+    m_select_card->setShortcutContext(Qt::WindowShortcut);
+    addAction(m_select_card);
+    connect(m_select_card, &QAction::triggered, this, [this]() {
+        if (m_panes.size() > 1) select_cpu(m_panes[1].cpu);
+    });
+
     //Back in time (not in ecat): shown only while the machine has a recorded history
     m_ttd = new TtdControls(this, tb, e, [this]() { return main_cpu(); }, [this]() { return current_cpu(); });
     connect(m_ttd, &TtdControls::moved, this, [this]() {
@@ -452,19 +547,36 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_bp_clear = tb->addAction(tool_icon(":/icons/cancel"), tr("Remove all breakpoints"));
     connect(m_bp_clear, &QAction::triggered, this, [this]() {
         CPU * c = current_cpu();
-        if (c == nullptr || c->get_breakpoints().empty()) return;
+        if (c == nullptr || (c->get_breakpoints().empty() && c->get_event_breakpoints().empty())) return;
         if (QMessageBox::question(this, tr("Breakpoints"),
                 tr("Remove all breakpoints of %1?").arg(QString::fromStdString(c->name)),
                 QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
             return;
         e->invoke([c]() {
             c->clear_breakpoints();
+            for (const EventBreakpoint &b : c->get_event_breakpoints()) c->remove_event_breakpoint(b.id);
             if (c->m_debug == DEBUG_BRAKES && !c->has_temp_break()) c->m_debug = DEBUG_OFF;
         });
         refresh_side();
         if (CpuPane * p = pane()) p->code->viewport()->update();
         update_cursor();
     });
+    //Not in ecat: event breakpoints (a card's event or protocol step, a machine's event; gui-card-debugger A4, A6
+    //S5), the kinds of every processor in one menu
+    m_bp_events = new QToolButton(tb);
+    m_bp_events->setText(tr("Events"));
+    m_bp_events->setToolTip(tr("Add an event breakpoint: the card takes a command, the host sends one, ..."));
+    m_bp_events->setPopupMode(QToolButton::InstantPopup);
+    QMenu * events = new QMenu(m_bp_events);
+    m_bp_events->setMenu(events);
+    connect(events, &QMenu::aboutToShow, this, [this, events]() {
+        events->clear();
+        add_event_breakpoint_actions(events, e, this, [this]() {
+            refresh_side();
+            update_cursor();
+        });
+    });
+    tb->addWidget(m_bp_events);
     tb->addSeparator();
 
     m_state = new QLabel(tb);
@@ -622,6 +734,57 @@ bool DebuggerWindow::run_to_cursor()
     return true;
 }
 
+CPU * DebuggerWindow::card_cpu()
+{
+    if (m_panes.size() < 2) return nullptr;
+    CPU * c = current_cpu();
+    return (c != nullptr && c != main_cpu()) ? c : m_panes[1].cpu;
+}
+
+bool DebuggerWindow::card_run_to(const QString &until, uint64_t value, Emulator::CardRunAnswer * answer)
+{
+    CPU * card = card_cpu();
+    if (card == nullptr || !held()) return false;
+    mark_all();
+    Emulator * em = e;
+    Emulator::CardRunAnswer a;
+    const std::string what = until.toStdString();
+    e->invoke([em, card, what, value, &a]() { a = em->debug_card_run_to(card, what, value); });
+    //Said where the machine's state is: the core's sentence (where it stopped, or why it did not run)
+    m_run_message = QString::fromStdString(a.message);
+    //Taken as a stop of its own: every view read again (a run to a main T is a direct run, with no stop event)
+    m_serial = e->debug_serial();
+    m_paused = e->debug_paused() && !e->debug_stepping();
+    if (m_paused) {
+        refresh_all(true);
+        m_card_strip = read_card_strip();
+        refresh_banner();
+    }
+    show_state();
+    if (answer != nullptr) *answer = a;
+    return true;
+}
+
+bool DebuggerWindow::step_other()
+{
+    CPU * front = current_cpu();
+    if (front == nullptr || m_panes.size() < 2 || !held()) return false;
+    CPU * other = front == main_cpu() ? card_cpu() : main_cpu();
+    if (other == nullptr) return false;
+    mark_all();
+    //Its stop leaves the tab in front: the other CPU steps, the one looked at stays
+    m_keep_front = true;
+    Emulator * em = e;
+    e->invoke([em, other]() { em->debug_step(other); });
+    show_state();
+    return true;
+}
+
+QString DebuggerWindow::state_text() const
+{
+    return m_state->text();
+}
+
 bool DebuggerWindow::toggle_breakpoint_at_cursor()
 {
     CpuPane * p = pane();
@@ -660,7 +823,7 @@ void DebuggerWindow::update_actions()
     if (running)
         for (CPU * c : e->dm->get_cpus()) {
             if (c->m_debug == DEBUG_BRAKES) watching = true;
-            if (!c->get_breakpoints().empty()) any_breakpoints = true;
+            if (!c->get_breakpoints().empty() || !c->get_event_breakpoints().empty()) any_breakpoints = true;
         }
 
     m_run->setEnabled(held || (running && !watching && any_breakpoints));
@@ -671,6 +834,18 @@ void DebuggerWindow::update_actions()
     m_step_over->setEnabled(held);
     m_step_out->setEnabled(held);
     m_to_cursor->setEnabled(held);
+    //A card's actions: there with a card, made while held
+    const bool card = m_panes.size() > 1;
+    m_run_to_menu_action->setVisible(card);
+    m_run_to_menu->setEnabled(held && card);
+    m_step_other->setVisible(card);
+    m_step_other->setEnabled(held && card);
+    if (card && p != nullptr) {
+        const QString other = QString::fromStdString(p->cpu == main_cpu() ? m_panes[1].cpu->name : main_cpu()->name);
+        m_step_other->setText(tr("Step %1").arg(other));
+        m_step_other->setToolTip(tr("Step %1: one instruction of the CPU not in front (Alt+F11)").arg(other));
+    }
+    m_select_card->setEnabled(card);
     m_to_pc->setEnabled(loaded);
     m_go->setEnabled(loaded);
     m_goto->setEnabled(loaded);
@@ -679,7 +854,11 @@ void DebuggerWindow::update_actions()
     m_bp_add->setEnabled(live && !on);
     m_bp_remove->setEnabled(on);
     m_bp_toggle->setEnabled(live);
-    m_bp_clear->setEnabled(live && !p->cpu->get_breakpoints().empty());
+    m_bp_clear->setEnabled(live && (!p->cpu->get_breakpoints().empty() || !p->cpu->get_event_breakpoints().empty()));
+    bool kinds = false;
+    if (live)
+        for (CPU * c : e->dm->get_cpus()) kinds = kinds || !c->event_kinds().empty();
+    m_bp_events->setEnabled(kinds);
     if (m_ttd != nullptr) m_ttd->set_live(live);
 }
 
@@ -695,6 +874,9 @@ void DebuggerWindow::run_command(void (*command)(Emulator *, CPU *))
 
 void DebuggerWindow::mark_all()
 {
+    //A new command: the last card run's message and the kept tab are over
+    m_run_message.clear();
+    m_keep_front = false;
     for (CpuPane &p : m_panes) {
         p.banks->mark_stop();
         p.regs->mark_stop();
@@ -703,20 +885,43 @@ void DebuggerWindow::mark_all()
     m_memory_tabs->mark_stop();
     m_stack->mark_stop();
     for (const NextTab &t : m_next_tabs) t.view->mark_stop();
+    for (const NextTab &t : m_card_tabs) t.view->mark_stop();
 }
 
-//The Next tabs while the machine is one; a tab in sight that goes leaves the side on the stack
+//The Next tabs while the machine is one, the card tabs while it has a General Sound, a NeoGS's own while the card is
+//one, the lightweight player's while it is (the report's part they need, read once); a tab in sight that goes leaves
+//the side on the stack. The card tabs follow a card (gs-debugger P5.5): with a General Sound and a MultiSound's GS
+//both, the card CPU's tab in front, else the first card CPU (as the card runs); else the one there
 void DebuggerWindow::update_next_tabs()
 {
-    const bool next = !m_next_tabs.empty() && m_next_tabs.front().view->present();
-    for (const NextTab &t : m_next_tabs) m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), next);
+    CPU * card = card_cpu();
+    const std::string source = CardTabsCard(e, card != nullptr ? card->name : std::string());
+    if (source != m_card_source) {
+        m_card_source = source;
+        CardTabsFollow(m_card_tabs, source);
+        m_card_strip = read_card_strip();
+    }
+    for (const std::vector<NextTab> *group : {&m_next_tabs, &m_card_tabs}) {
+        const bool present = !group->empty() && group->front().view->present();
+        std::map<std::string, bool> needed;
+        for (const NextTab &t : *group) {
+            bool shown = present;
+            if (shown && !t.view->needs().empty()) {
+                auto it = needed.find(t.view->needs());
+                if (it == needed.end()) it = needed.emplace(t.view->needs(), t.view->present()).first;
+                shown = it->second;
+            }
+            m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), shown);
+        }
+    }
 }
 
 NextReportView * DebuggerWindow::next_view_in_sight() const
 {
     QWidget * side = m_side_tabs->currentWidget();
-    for (const NextTab &t : m_next_tabs)
-        if (t.view == side) return t.view;
+    for (const std::vector<NextTab> *group : {&m_next_tabs, &m_card_tabs})
+        for (const NextTab &t : *group)
+            if (t.view == side) return t.view;
     return nullptr;
 }
 
@@ -726,7 +931,7 @@ void DebuggerWindow::refresh_side()
     QWidget * side = m_side_tabs->currentWidget();
     auto fmt = [this](unsigned int a) { return code_text(a); };
     if (side == m_stack) m_stack->refresh();
-    m_breakpoints->refresh(c, fmt);
+    m_breakpoints->refresh([this](CPU * cpu, unsigned int a) { return code_text(cpu, a); });
     if (side == m_history) m_history->refresh(c, fmt);
     if (side == m_devices) m_devices->refresh();
     update_next_tabs();
@@ -781,8 +986,14 @@ void DebuggerWindow::show_state()
         //A card's stop: where the main CPU stood at the card's moment
         const std::string main = e->debug_stop_main_text();
         if (!main.empty()) text += (QString(" ") + QChar(0x00B7) + " ") + QString::fromStdString(main);
+        //The card: its CPU, PC, cycle in the frame, page, symbols
+        if (!m_card_strip.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_card_strip;
+        //A card's run to a moment: the core's sentence
+        if (!m_run_message.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_run_message;
     } else {
         text = tr("Running");
+        //The card's line followed while it runs (follow_card_live)
+        if (!m_card_strip.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_card_strip;
     }
     //Where the machine is in time: "History: frame 12 of 40, replaying" (forward actions replay)
     if (m_ttd != nullptr && !m_ttd->moment().isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_ttd->moment();
@@ -810,12 +1021,79 @@ void DebuggerWindow::on_debug_event()
             m_stop_serial = stop;
             const int reason = e->debug_stop_reason();
             CPU * c = e->debug_stop_cpu();
-            if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE) select_cpu(c);
+            if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE && !m_keep_front)
+                select_cpu(c);
         }
         refresh_all(true);
+        m_card_strip = read_card_strip();
+        refresh_banner();
         if (CpuPane * p = pane()) p->code->setFocus();
     }
     show_state();
+}
+
+void DebuggerWindow::refresh_banner()
+{
+    //Only with a card CPU (a NeoGS is one): no read of the machine for nothing
+    Emulator::ZxDmaBanner b;
+    if (e->loaded && m_panes.size() > 1 && e->debug_online()) b = e->zxdma_banner();
+    m_zxdma_banner = QString::fromStdString(b.text);
+    if (m_panes.empty()) return;
+    CpuPane &main = m_panes.front();
+    set_banner_text(main.banner, m_zxdma_banner);
+    m_memory_tabs->set_banner(main.cpu, m_zxdma_banner);
+    auto hex4 = [](unsigned int v) { return QString("#%1").arg(v & 0xFFFF, 4, 16, QChar('0')).toUpper(); };
+    if (b.card_bytes)
+        main.code->set_runtime_bytes(b.window_start, b.window_end,
+                                     tr("Bytes come from the card at run time: the NeoGS's ZX-DMA diverts the main CPU's "
+                                        "reads of %1-%2 to card RAM (the listing shows the ROM)")
+                                         .arg(hex4(b.window_start), hex4(b.window_end)));
+    else
+        main.code->set_runtime_bytes(1, 0, QString());
+}
+
+QString DebuggerWindow::zxdma_banner_text() const
+{
+    return m_zxdma_banner;
+}
+
+void DebuggerWindow::follow_card_live()
+{
+    if (m_card_source.empty() || m_card_source == "?") return;
+    const qint64 ms = QDateTime::currentMSecsSinceEpoch();
+    if (m_card_live_ms >= 0 && ms - m_card_live_ms < (qint64)e->live_card_ms()) return;
+    m_card_live_ms = ms;
+    m_card_strip = read_card_strip();
+    refresh_banner();
+}
+
+QString DebuggerWindow::read_card_strip() const
+{
+    if (!e->loaded || e->dm == nullptr || m_card_source.empty()) return QString();
+    const bool ms = m_card_source == "ms";
+    for (unsigned int i = 0; i < e->dm->device_count; i++) {
+        ComputerDevice * d = e->dm->get_device(i)->device.get();
+        if (d->name != (ms ? "multisound" : "gs") || d->type != "report") continue;  //"gs" is the card's CPU as well
+        if (ms) {
+            //The MultiSound's GS: its part of the multisound report (read whole: past the fields' bound)
+            DeviceNode report;
+            bool read = false;
+            e->invoke([d, &report, &read]() { read = d->get_tree(true, report); });
+            for (const DeviceNode &part : report.children)
+                if (read && part.name == "gs")
+                    for (const DeviceNode &field : part.children)
+                        if (field.name == "strip") return tr("MultiSound %1").arg(QString::fromStdString(field.value));
+            return QString();
+        }
+        DeviceFieldValue v;
+        bool read = false;
+        e->invoke([d, &v, &read]() {
+            d->get_device_fields();
+            read = d->get_field("strip", 0, 0, v);
+        });
+        return read ? QString::fromStdString(v.text) : QString();
+    }
+    return QString();
 }
 
 //While the machine runs the views follow it; a stop that came without an
@@ -832,10 +1110,16 @@ void DebuggerWindow::on_timer()
     const bool paused = e->debug_paused() && !e->debug_stepping();
     if (paused != m_paused) {
         m_paused = paused;
-        if (paused) refresh_all(true);
+        if (paused) {
+            refresh_all(true);
+            m_card_strip = read_card_strip();
+            refresh_banner();
+        }
+        m_card_live_ms = -1;
     } else if (!paused && isVisible() && !isMinimized()) {
         //Following a running machine is for the eyes: not while minimized
         refresh_all(false);
+        follow_card_live();
         //The devices and the history cost a read of the machine each: once a second, the one in sight
         QWidget * side = m_side_tabs->currentWidget();
         NextReportView * next = next_view_in_sight();
@@ -865,6 +1149,8 @@ bool DebuggerWindow::follow_online()
         m_serial = e->debug_serial();
         m_paused = e->debug_paused() && !e->debug_stepping();
         refresh_all(true);
+        m_card_strip = read_card_strip();
+        refresh_banner();
     }
     show_state();
     return true;

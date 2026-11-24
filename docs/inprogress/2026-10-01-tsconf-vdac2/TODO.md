@@ -28,6 +28,7 @@ History (2026-10-01): research done, design written, nothing implemented.
 - [x] Line budget metrics L1: metrics block in the chip state (eve-emu `db828d0`, state version 8); design [line-budget-metrics.md](line-budget-metrics.md), the model explained in [line-budget-model.md](line-budget-model.md)
 - [x] Line budget metrics L2: Vdac2Control metrics API (+ the frame in flight, eve-emu `125876d` `EveFrameLinesPassed`), `[VDAC2] LineBudgetMargin`, measure-always, the five automation surfaces, OpenAPI, recipe
 - [x] Line budget metrics L3: Debug -> FT812 Debug window (TSL-VDAC2 only, bars in the main screen's scale, the metrics kept with the presented picture)
+- [x] The FT812 draws on the eve-emu renderer thread (`[VDAC2] FtDrawThread`, default 1; env `UNREAL_VDAC2_FT_DRAW_THREAD`), the renderer woken in batches: Heroes II -8 %, R-Type -16 %, Zuma -12 %, pictures bit-exact ([eve-async-drawing.md §6.4](../2026-11-15-tsconf-vdac4/eve-async-drawing.md#64-vdac2-on-the-renderer-thread-2026-11-23), 2026-11-23)
 - [ ] Line budget metrics L4: calibration on a card (line overhead, fill rates, the look of an overflow)
 - [ ] When TTD v2 memory regions exist: `Vdac2Memory` as changed pages only
 - [x] I1 parts that need no library, on master 2026-10-01: VDAC2 LUT `b115af790`, IDE off

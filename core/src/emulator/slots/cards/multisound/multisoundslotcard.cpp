@@ -227,6 +227,8 @@ void MultiSoundSlotCard::FrameEnd(size_t samples)
     const uint64_t duration = FrameDuration();
     _card.FrameEnd(_origin + duration, samples);
     _origin += duration;
+    // The GS's statistics: one relaxed load unless a `gs stats --cpu ms` read asked in the last 2 s
+    _gsStats.FrameEnd(&_card.Gs(), _context->config.frame_duration_us / 1e6, _context->pTimeTravelHooks);
 }
 
 void MultiSoundSlotCard::SetOutputRate(uint32_t rate)

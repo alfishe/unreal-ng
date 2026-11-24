@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""POC 054: summary of one or more wlvk CSV runs.
+"""POC 056: summary of one or more wlvk CSV runs.
 
 For each run: frames, screen times (wp_presentation) and present_wait returns, discarded frames, the error (screen
 time minus the frame's target), present_wait minus the screen time, frames per refresh (a refresh that showed two

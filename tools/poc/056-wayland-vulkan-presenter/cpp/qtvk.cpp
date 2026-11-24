@@ -1,4 +1,4 @@
-// POC 054, questions 3 and 4: GL draws, Vulkan shows, inside a Qt 6 window on Wayland.
+// POC 056, questions 3 and 4: GL draws, Vulkan shows, inside a Qt 6 window on Wayland.
 //
 //   qtvk --window top|container --source gl|vk [--frames N] [--lead-ms N] [--gl-size WxH] [--out frames.csv]
 //
@@ -854,16 +854,16 @@ int main(int argc, char** argv)
         top = new QWidget;
         auto* layout = new QVBoxLayout(top);
         layout->setContentsMargins(0, 0, 0, 0);
-        layout->addWidget(new QLabel("POC 054: a Vulkan QWindow inside QWidget::createWindowContainer"));
+        layout->addWidget(new QLabel("POC 056: a Vulkan QWindow inside QWidget::createWindowContainer"));
         QWidget* container = QWidget::createWindowContainer(vkWindow, top);
         container->setFixedSize(1280, 720);
         layout->addWidget(container);
-        top->setWindowTitle("POC 054 container");
+        top->setWindowTitle("POC 056 container");
         top->show();
     }
     else
     {
-        vkWindow->setTitle("POC 054 top");
+        vkWindow->setTitle("POC 056 top");
         vkWindow->resize(1280, 720);
         vkWindow->show();
     }
