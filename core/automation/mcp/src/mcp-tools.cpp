@@ -26,6 +26,7 @@
 #include "mcp-gui.h"
 #include "mcp-streamdeck.h"
 #include "mcp-audio.h"
+#include "mcp-gsanalysis.h"
 #include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -160,7 +161,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_send", "gs_conversation",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
-                               "gs_stereo_mode", "gs_reset_counters", "board_action",
+                               "gs_stereo_mode", "gs_reset_counters", "gs_profile_start", "gs_profile_stop",
+                               "gs_profile_clear", "board_action",
                                "rom_flash_status", "rom_flash_save", "rom_flash_discard",
                                "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
                                "network_configure", "switches", "switch"})
@@ -203,7 +205,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "cross-feed like the classic GS, or 'mono'; applied at the next frame); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod'); 'gs_reset_counters' stores the GS "
         "slot's statistics counters as a baseline and returns its id (inspect_state aspect 'audio_gs_stats' with "
-        "'since': the counters since then; the card is not touched). "
+        "'since': the counters since then; the card is not touched). 'gs_profile_start' / 'gs_profile_stop' / "
+        "'gs_profile_clear' drive the card CPU's profiler (start clears and switches it on, stop keeps the data; "
+        "'gs_cpu' 'ms' for the ZX-MultiSound's GS; read with inspect_state aspects 'audio_gs_profile' and "
+        "'audio_gs_events'). "
         "'board_action' runs a device board's action (inspect_state aspect 'boards' lists them): 'board' the board, "
         "'operation' its action, 'path' the argument - board neogs_sd: insert (path: an SD image or a host folder) / "
         "eject through the media manager's slot sd.ngs, board neogs_flash: save. "
@@ -333,7 +338,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["limit"]["description"] = "operations: only the newest N entries (default 20; 0: every entry kept)";
     schema["properties"]["gs_cpu"]["type"] = "string";
     schema["properties"]["gs_cpu"]["description"] =
-        "gs_reset_counters: the card whose counters ('gs' or empty: the slot's General Sound, 'ms': the ZX-MultiSound's)";
+        "gs_reset_counters, gs_profile_*: the card ('gs' or empty: the slot's General Sound, 'ms': the ZX-MultiSound's)";
     schema["properties"]["personality"]["type"] = "string";
     schema["properties"]["personality"]["description"] =
         "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
@@ -837,7 +842,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                          action == "gs_send" || action == "gs_conversation" ||
                          action == "gs_switch_personality" || action == "gs_dump_module" || action == "gs_sd_insert" ||
                          action == "gs_sd_eject" || action == "gs_flash_save" || action == "gs_stereo_mode" ||
-                         action == "gs_reset_counters")
+                         action == "gs_reset_counters" || action == "gs_profile_start" || action == "gs_profile_stop" ||
+                         action == "gs_profile_clear")
                 {
                     // GS card control (GS design §11.3): forwards to the same
                     // /control/audio/gs endpoint the WebAPI serves - the "gs_"
@@ -898,7 +904,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         }
                         body["mode"] = args["mode"].asString();
                     }
-                    else if (action == "gs_reset_counters" && args.isMember("gs_cpu") && args["gs_cpu"].isString())
+                    else if ((action == "gs_reset_counters" || action.rfind("gs_profile_", 0) == 0) && args.isMember("gs_cpu") &&
+                             args["gs_cpu"].isString())
                         body["cpu"] = args["gs_cpu"].asString();  // "ms": the ZX-MultiSound's GS
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
                         if (action == "gs_switch_personality" && response.isMember("status"))
@@ -912,6 +919,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                             // The decoded line: the agent may see only the text
                             std::string message = "GS send " + std::to_string(response.get("id", 0).asUInt()) + ": " +
                                                   response.get("text", "").asString();
+                            done(ToolResult::Ok(std::move(message), std::move(response)));
+                            return;
+                        }
+                        if (status >= 200 && status < 300 && action.rfind("gs_profile_", 0) == 0)
+                        {
+                            std::string message = response.get("text", "").asString();
                             done(ToolResult::Ok(std::move(message), std::move(response)));
                             return;
                         }
@@ -2880,7 +2893,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
                                "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
-                               "audio_gs_firmware_profiles", "audio_gs_zxdma"})
+                               "audio_gs_firmware_profiles", "audio_gs_zxdma", "audio_gs_profile", "audio_gs_events"})
     {
         allowed.append(aspect);
     }
@@ -2945,6 +2958,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "captures (invoke_api POST /api/v1/emulator/{id}/control/audio/gs/porttrace {action: start}); "
         "'gs_zxdma_last' the newest N (default 256, 0: all), 'gs_zxdma_since' the rows after a seq (last_seq of the "
         "previous read); "
+        "'audio_gs_profile' = the card CPU's profiler (GET /state/audio/gs/profile; start it with emulator_manage "
+        "gs_profile_start): the ISR budget (min / avg / max cycles against the interrupt period, headroom, overruns, "
+        "latency, lost requests) over the last frame and since the start, each host command's cost (count / avg / "
+        "max cycles), the routines by inclusive cycles with firmware labels (interrupts excluded, the ISR its own "
+        "root) and per-frame activity (ISR / idle / halted %, commands); 'gs_profile_routines' the top N (default "
+        "32, 0: all); 'audio_gs_events' = the last complete host frame per card interrupt period (GET "
+        "/state/audio/gs/events): ISR bars and the host #B3 / #BB accesses, DAC fetches, page and volume writes in "
+        "card cycles (the ISR bars need the profiler on, the rest the GS port trace capturing); 'gs_events_first' / "
+        "'gs_events_count' the period rows; both take 'gs_cpu'; "
         "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
         "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
@@ -3080,12 +3102,18 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["gs_firmware_profile"]["description"] = "'audio_gs_firmware': a profile id (default: the card's)";
     schema["properties"]["gs_cpu"]["type"] = "string";
     schema["properties"]["gs_cpu"]["description"] =
-        "'audio_gs_stats' / 'audio_gs_firmware': the card by its debugger CPU: gs (default, the GS slot's) or ms (the "
+        "'audio_gs_stats' / 'audio_gs_firmware' / 'audio_gs_profile' / 'audio_gs_events': the card by its debugger CPU: gs (default, the GS slot's) or ms (the "
         "ZX-MultiSound's GS; its hardware and protocol are in 'audio_multisound')";
     schema["properties"]["gs_zxdma_last"]["type"] = "integer";
     schema["properties"]["gs_zxdma_last"]["description"] = "'audio_gs_zxdma': the newest N bytes (default 256, 0: all)";
     schema["properties"]["gs_zxdma_since"]["type"] = "integer";
     schema["properties"]["gs_zxdma_since"]["description"] = "'audio_gs_zxdma': the rows after this seq";
+    schema["properties"]["gs_profile_routines"]["type"] = "integer";
+    schema["properties"]["gs_profile_routines"]["description"] = "'audio_gs_profile': the top N routines (default 32, 0: all)";
+    schema["properties"]["gs_events_first"]["type"] = "integer";
+    schema["properties"]["gs_events_first"]["description"] = "'audio_gs_events': the first period row (default 0)";
+    schema["properties"]["gs_events_count"]["type"] = "integer";
+    schema["properties"]["gs_events_count"]["description"] = "'audio_gs_events': rows from the first (default 0: to the frame's end)";
     schema["properties"]["gs_stats_fresh"]["type"] = "boolean";
     schema["properties"]["gs_stats_fresh"]["description"] = "'audio_gs_stats': a block from a frame end after this call";
     schema["properties"]["nr_sd_kinds"]["type"] = "string";
@@ -3247,11 +3275,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices" && aspect != "boards" &&
                     aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0 &&
                     aspect != "audio_gs_firmware" && aspect.rfind("audio_gs_firmware.", 0) != 0 &&
-                    aspect != "audio_gs_firmware_profiles" && aspect != "audio_gs_zxdma")
+                    aspect != "audio_gs_firmware_profiles" && aspect != "audio_gs_zxdma" && aspect != "audio_gs_profile" &&
+                    aspect != "audio_gs_events")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles, audio_gs_zxdma"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles, audio_gs_zxdma, audio_gs_profile, audio_gs_events"));
                     return;
                 }
             }
@@ -3364,6 +3393,16 @@ void RegisterInspectState(ToolRegistry& registry)
                 add("last", text("gs_zxdma_last"));
                 add("since", text("gs_zxdma_since"));
                 nrReports["audio_gs_zxdma"] = q;
+                q.clear();
+                add("cpu", text("gs_cpu"));
+                add("routines", text("gs_profile_routines"));
+                add("activity", "16");  // the text shows the newest frames; the agent reads the rest by REST
+                nrReports["audio_gs_profile"] = q;
+                q.clear();
+                add("cpu", text("gs_cpu"));
+                add("first", text("gs_events_first"));
+                add("count", text("gs_events_count"));
+                nrReports["audio_gs_events"] = q;
                 q.clear();
                 add("kinds", text("nr_nmi_kinds"));
                 add("since", text("nr_nmi_since"));
@@ -3992,10 +4031,11 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "audio_gs_zxdma")
+                        else if (aspect == "audio_gs_zxdma" || aspect == "audio_gs_profile" || aspect == "audio_gs_events")
                         {
-                            // The NeoGS ZX-DMA trace via the WebAPI (gszxdmatrace.h); 404 without a NeoGS
-                            const std::string path = "/state/audio/gs/zxdma" + nrReports.at("audio_gs_zxdma");
+                            // The NeoGS ZX-DMA trace (gszxdmatrace.h; 404 without a NeoGS), the card CPU's profiler and
+                            // frame map (gsprofilereport.h; 404 without a card CPU) via the WebAPI
+                            const std::string path = "/state/audio/gs/" + aspect.substr(9) + nrReports.at(aspect);
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -5295,7 +5335,8 @@ void RegisterInspectState(ToolRegistry& registry)
                             }
                             else if (aspect == "audio_gs_stats" || aspect.rfind("audio_gs_stats.", 0) == 0 ||
                                      aspect == "audio_gs_firmware" || aspect.rfind("audio_gs_firmware.", 0) == 0 ||
-                                     aspect == "audio_gs_firmware_profiles" || aspect == "audio_gs_zxdma")
+                                     aspect == "audio_gs_firmware_profiles" || aspect == "audio_gs_zxdma" ||
+                                     aspect == "audio_gs_profile" || aspect == "audio_gs_events")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();
@@ -9554,6 +9595,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterJobs(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
+    // gs_analysis: the GS card CPU coverage / heat map (docs/inprogress/2026-09-27-gs-debugger, P5.6)
+    RegisterGSAnalysis(*registry);
     // vdac4_state: the TS-Conf VDAC4 board (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2)
     RegisterVdac4State(*registry);
 

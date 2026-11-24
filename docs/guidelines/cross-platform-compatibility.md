@@ -37,6 +37,8 @@ The image is multi-arch and runs natively by default, so there is no emulation c
 - **Path Handling**: Never hardcode `\` or `/` for file paths. Always rely on `std::filesystem::path` and its overloaded `/` operator to naturally build paths.
 - **Platform-Specific Code**: Try to avoid platform-specific `#ifdef` macros (e.g., `#ifdef _WIN32` or `#ifdef __APPLE__`) unless absolutely necessary (like OS-specific system calls). Abstract platform-specific logic behind common interfaces.
 - **Data Types**: Use explicit fixed-width integer types (`uint8_t`, `uint16_t`, `uint32_t`, etc.) from `<cstdint>` instead of ambiguous types like `int` or `long` to guarantee size consistency across 32-bit and 64-bit platforms.
+- **Names `windows.h` takes**: `far`, `near`, `min`, `max`, `small`, `interface` and the like are macros on MSVC;
+  a variable or field with such a name breaks the Windows build only (`farCycle`, `nearFrame`, not `far`, `near`).
 - **Standard Library**: Stick to the C++ standard library. Avoid POSIX-only or Windows-only APIs.
 
 By maintaining strict compatibility across these diverse environments, we ensure Unreal-NG remains universally accessible and robust.

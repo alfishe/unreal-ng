@@ -163,6 +163,8 @@ public:
     static bool isGPUAvailable();
     /// Asks again (a session, display or adapter change). @return the answer or the GPU's renderer changed
     static bool recheckGPUAvailable();
+    /// What the GPU screen draws with: "gl" / "vulkan"; "" for the software screen
+    std::string activeRenderer() const;
 
     /// @brief Enable/disable CRT effects (GPU mode only)
     void setCRTEffectsEnabled(bool enabled);

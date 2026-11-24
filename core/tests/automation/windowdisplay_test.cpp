@@ -50,6 +50,8 @@ public:
             settings.gpu = *change.gpu;
             settings.backend = settings.gpu ? "gpu" : "software";
         }
+        if (change.renderer)
+            settings.renderer = settings.rendererActive = *change.renderer;
         if (change.crtProfile)
         {
             settings.crtProfile = *change.crtProfile;
@@ -217,7 +219,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     std::string keys;
     for (const auto& member : report.members)
         keys += member.first + " ";
-    EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
+    EXPECT_EQ(keys, "backend gpu_available gpu renderer renderers renderer_active crt crt_profile crt_profiles blending blending_frames blending_weights "
                     "blending_decay smooth_motion effects_device present_policy display_rate lip_sync_offset_ms present emulator fullscreen view views scale toolbar status_bar hud hud_theme hud_themes hud_notices "
                     "osd_keyboard osd_keyboard_picture osd_keyboard_pictures osd_keyboard_style osd_keyboard_styles next_layers "
                     "next_layers_mode "
@@ -241,6 +243,11 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.present.late = 3;
     fake.settings.present.smooth = "interpolate";
     fake.settings.present.heldFlicker = 7;
+    fake.settings.present.smoothBehind = 3;
+    fake.settings.present.smoothTooSlow = true;
+    fake.settings.present.smoothSteppedDown = true;
+    fake.settings.present.lite = 19;
+    fake.settings.present.smoothStarved = 11;
     fake.settings.present.clock = "audio";
     fake.settings.present.beatFrames = 500;
     fake.settings.present.offBeat = 4;
@@ -266,6 +273,11 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_DOUBLE_EQ(present.find("sound_offset_ms")->find("p99")->d, 6.5);
     EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");
     EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
+    EXPECT_EQ(present.find("smooth")->find("behind")->i, 3);
+    EXPECT_TRUE(present.find("smooth")->find("too_slow")->b);
+    EXPECT_TRUE(present.find("smooth")->find("stepped_down")->b);
+    EXPECT_EQ(present.find("smooth")->find("lite")->i, 19);
+    EXPECT_EQ(present.find("smooth")->find("starved")->i, 11);
     ASSERT_NE(present.find("vrr"), nullptr);
     ASSERT_NE(present.find("display"), nullptr);
 
@@ -346,6 +358,50 @@ TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "hud_notice.ram-page", "maybe", error));
 }
 
+TEST(WindowDisplay_Test, RendererWordsOfferAndSummary)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "renderer", "Vulkan", error)) << error;
+    EXPECT_EQ(change.renderer, "vulkan");
+    EXPECT_FALSE(change.Empty());
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "renderer", "OpenGL", error)) << error;
+    EXPECT_EQ(change.renderer, "gl");
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "renderer", "metal", error));
+    EXPECT_NE(error.find("gl or vulkan"), std::string::npos) << error;
+
+    // Vulkan only where the window offers it
+    auto fake = std::make_shared<FakeDisplay>();
+    fake->settings.gpu = true;
+    fake->settings.renderers = {"gl"};
+    fake->settings.rendererActive = "gl";
+    ScopedDisplay scoped(fake);
+    WindowDisplayChange vulkan;
+    vulkan.renderer = "vulkan";
+    const WindowDisplay::Result refused = WindowDisplay::Set(vulkan);
+    EXPECT_EQ(refused.status, WindowDisplay::Status::Unavailable);
+    EXPECT_NE(refused.error.find("use gl"), std::string::npos) << refused.error;
+    EXPECT_EQ(fake->applied, 0);
+
+    fake->settings.renderers = {"gl", "vulkan"};
+    const WindowDisplay::Result set = WindowDisplay::Set(vulkan);
+    ASSERT_TRUE(set.Ok()) << set.error;
+    EXPECT_EQ(set.settings.renderer, "vulkan");
+    EXPECT_EQ(fake->applied, 1);
+    EXPECT_NE(WindowDisplay::Summary(set.settings).find(", renderer vulkan,"), std::string::npos)
+        << WindowDisplay::Summary(set.settings);
+
+    // Fallen back to GL: the summary says what draws
+    WindowDisplaySettings fallen = set.settings;
+    fallen.rendererActive = "gl";
+    EXPECT_NE(WindowDisplay::Summary(fallen).find(", renderer vulkan (gl draws),"), std::string::npos)
+        << WindowDisplay::Summary(fallen);
+    const StateNode report = WindowDisplay::Report(fallen);
+    const StateNode* active = report.find("renderer_active");
+    ASSERT_NE(active, nullptr);
+    EXPECT_EQ(active->s, "gl");
+}
+
 TEST(WindowDisplay_Test, SmoothMotionWords)
 {
     WindowDisplayChange change;
@@ -355,8 +411,11 @@ TEST(WindowDisplay_Test, SmoothMotionWords)
     EXPECT_EQ(change.smoothMotion, "interpolate");
     EXPECT_EQ(change.effectsDevice, "cpu");
     EXPECT_FALSE(change.Empty());
+    WindowDisplayChange lite;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(lite, "smooth_motion", "Interpolate-Lite", error)) << error;
+    EXPECT_EQ(lite.smoothMotion, "interpolate-lite");
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "smooth_motion", "motion", error));
-    EXPECT_NE(error.find("off, blend, interpolate or auto"), std::string::npos) << error;
+    EXPECT_NE(error.find("off, blend, interpolate, interpolate-lite or auto"), std::string::npos) << error;
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "effects_device", "npu", error));
     // View > Video Synchronization's mode
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "smooth_motion", "AUTO", error)) << error;

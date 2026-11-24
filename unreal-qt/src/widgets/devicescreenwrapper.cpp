@@ -649,6 +649,11 @@ bool DeviceScreenWrapper::isGPUAvailable()
     return DeviceScreenGLWindow::probeGPUAcceleration();
 }
 
+std::string DeviceScreenWrapper::activeRenderer() const
+{
+    return _useGPU && _gpuWindow ? _gpuWindow->activeRenderer() : std::string();
+}
+
 bool DeviceScreenWrapper::recheckGPUAvailable()
 {
     return DeviceScreenGLWindow::reprobeGPUAcceleration();

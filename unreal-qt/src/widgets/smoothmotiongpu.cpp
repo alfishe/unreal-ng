@@ -1,7 +1,5 @@
 #include "smoothmotiongpu.h"
 
-#include <QOpenGLContext>
-
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -57,13 +55,13 @@ QString ShaderHeader()
                              static_cast<int>(LayerFlow::kMaxAllowed), 255);
 }
 
-// The quad over the viewport from the vertex index (a strip). Fragment (x, y) is pixel (x, y), rows top first as the
+// The layer's quad over the viewport (corners 0..1). Fragment (x, y) is pixel (x, y), rows top first as the
 // pictures are uploaded and read back: nothing is turned over
 const char* const kVertexShader = R"(
 #version 330
+layout(location = 0) in vec4 Position;
 void main() {
-    vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
-    gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
+    gl_Position = vec4(Position.xy * 2.0 - 1.0, 0.0, 1.0);
 }
 )";
 
@@ -781,16 +779,12 @@ void main() {
 }
 )";
 
-QOpenGLShaderProgram* Build(const QString& fragment, QString& log)
+std::unique_ptr<gpu::Program> Build(gpu::Device& device, const QString& fragment, QString& log)
 {
-    auto* program = new QOpenGLShaderProgram();
-    if (!program->addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader) ||
-        !program->addShaderFromSourceCode(QOpenGLShader::Fragment, ShaderHeader() + fragment) || !program->link())
-    {
-        log += program->log();
-        delete program;
-        return nullptr;
-    }
+    std::string messages;
+    auto program = device.CreateProgram(kVertexShader, (ShaderHeader() + fragment).toStdString(), messages);
+    if (!program)
+        log += QString::fromStdString(messages);
     return program;
 }
 
@@ -809,23 +803,17 @@ constexpr int kCoverMasksReads = 2 * LayerFlow::kSupportRadius;
 constexpr int kOwnReads = 2 * kBlockPixels * 6;
 constexpr int kBlockColoursReads = 5 * kBlockPixels;
 constexpr int kContinuesReads = 4 * kBlockPixels;
-constexpr int kMaxErrors = 16;  // GL errors cleared at most: a lost context reports one for ever
 }  // namespace
 
-SmoothMotionGPU::~SmoothMotionGPU()
+SmoothMotionGPU::~SmoothMotionGPU() = default;
+
+std::vector<std::unique_ptr<gpu::Program>*> SmoothMotionGPU::Programs()
 {
-    // GL objects need their context: Destroy() with it current; here only what is left in CPU memory
-    for (QOpenGLShaderProgram* program : Programs())
-        delete program;
+    return {&_blend, &_searchChunks, &_search, &_refine, &_compose, &_changed, &_rowSums, &_columnSums, &_fit,
+            &_coverMasks, &_explained, &_rowCounts, &_counts, &_blockColours, &_top, &_own, &_continues, &_layers};
 }
 
-std::vector<QOpenGLShaderProgram*> SmoothMotionGPU::Programs() const
-{
-    return {_blend, _searchChunks, _search, _refine, _compose, _changed, _rowSums, _columnSums, _fit, _coverMasks,
-            _explained, _rowCounts, _counts, _blockColours, _top, _own, _continues, _layers};
-}
-
-SmoothMotionGPU::Format SmoothMotionGPU::FormatOf(Texture texture)
+gpu::Format SmoothMotionGPU::FormatOf(Texture texture)
 {
     switch (texture)
     {
@@ -834,24 +822,24 @@ SmoothMotionGPU::Format SmoothMotionGPU::FormatOf(Texture texture)
         case Changed:
         case Explained:
         case FitBits:
-            return {GL_R8UI, GL_RED_INTEGER, GL_UNSIGNED_BYTE};
+            return gpu::Format::R8UI;
         case RowSums:
         case StillSums:
         case ExplainedSums:
-            return {GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT};
+            return gpu::Format::RG16UI;
         case Sums:
-            return {GL_RGBA16UI, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT};
+            return gpu::Format::RGBA16UI;
         case CoverMasks:
-            return {GL_RG32UI, GL_RG_INTEGER, GL_UNSIGNED_INT};
+            return gpu::Format::RG32UI;
         case Order:
         case Asks:
         case Vectors:
-            return {GL_RG32I, GL_RG_INTEGER, GL_INT};
+            return gpu::Format::RG32I;
         case AskAt:
         case Allowed:
         case RowCounts:
         case BlockColours:
-            return {GL_R32I, GL_RED_INTEGER, GL_INT};
+            return gpu::Format::R32I;
         case FieldChunks:
         case FieldOne:
         case FieldPing:
@@ -862,76 +850,81 @@ SmoothMotionGPU::Format SmoothMotionGPU::FormatOf(Texture texture)
         case Edges:
         case EdgeAnswers:
         case BlockInfo:
-            return {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT};
+            return gpu::Format::RGBA32I;
         default:
-            return {GL_RGBA8UI, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE};
+            return gpu::Format::RGBA8UI;
     }
 }
 
-bool SmoothMotionGPU::Create()
+bool SmoothMotionGPU::Create(gpu::Device* device)
 {
     Destroy();
-    QOpenGLContext* context = QOpenGLContext::currentContext();
-    if (!context)
+    if (!device)
     {
-        _log = "no current context";
+        _log = "no GPU device";
         return false;
     }
     _log.clear();
+    gpu::Device& d = *device;
     const QString common = QString::fromLatin1(kCommon);
-    _blend = Build(common + kBlendShader, _log);
-    _searchChunks = Build(common + kCost + kSearchChunkShader, _log);
-    _search = Build(common + kCost + kSearchShader, _log);
-    _refine = Build(common + kCost + kRefineShader, _log);
-    _compose = Build(common + kComposeShader, _log);
+    _blend = Build(d, common + kBlendShader, _log);
+    _searchChunks = Build(d, common + kCost + kSearchChunkShader, _log);
+    _search = Build(d, common + kCost + kSearchShader, _log);
+    _refine = Build(d, common + kCost + kRefineShader, _log);
+    _compose = Build(d, common + kComposeShader, _log);
     const QString frames = common + kLayerFrames;
     const QString fields = frames + kLayerFields;
-    _changed = Build(common + kChangedShader, _log);
-    _rowSums = Build(common + kRowSumsShader, _log);
-    _columnSums = Build(common + kColumnSumsShader, _log);
-    _fit = Build(frames + kFitShader, _log);
-    _coverMasks = Build(fields + kCoverMasksShader, _log);
-    _explained = Build(frames + kExplainedShader, _log);
-    _rowCounts = Build(fields + kRowCountsShader, _log);
-    _counts = Build(fields + kCountsShader, _log);
-    _blockColours = Build(fields + kBlockColoursShader, _log);
-    _top = Build(fields + kTopShader, _log);
-    _own = Build(fields + kOwnShader, _log);
-    _continues = Build(fields + kContinuesShader, _log);
-    _layers = Build(fields + kLayersShader, _log);
-    const std::vector<QOpenGLShaderProgram*> built = Programs();
-    if (std::find(built.begin(), built.end(), nullptr) != built.end() || !_vao.create())
-    {
-        Destroy();
-        return false;
-    }
-    _gl = context->extraFunctions();
-    _gl->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &_maxSize);
-    _gl->glGenFramebuffers(1, &_framebuffer);
-    _gl->glGenTextures(TextureCount, _textures);
-    for (auto& size : _sizes)
-        size[0] = size[1] = 0;
+    _changed = Build(d, common + kChangedShader, _log);
+    _rowSums = Build(d, common + kRowSumsShader, _log);
+    _columnSums = Build(d, common + kColumnSumsShader, _log);
+    _fit = Build(d, frames + kFitShader, _log);
+    _coverMasks = Build(d, fields + kCoverMasksShader, _log);
+    _explained = Build(d, frames + kExplainedShader, _log);
+    _rowCounts = Build(d, fields + kRowCountsShader, _log);
+    _counts = Build(d, fields + kCountsShader, _log);
+    _blockColours = Build(d, fields + kBlockColoursShader, _log);
+    _top = Build(d, fields + kTopShader, _log);
+    _own = Build(d, fields + kOwnShader, _log);
+    _continues = Build(d, fields + kContinuesShader, _log);
+    _layers = Build(d, fields + kLayersShader, _log);
+    for (std::unique_ptr<gpu::Program>* program : Programs())
+        if (!*program)
+        {
+            Destroy();
+            return false;
+        }
+    _device = device;
+    _maxSize = d.MaxTextureSize();
     // UNREAL_SMOOTH_FIELDS=gpu: the motion field on the GPU too (cpu, unset: on the CPU, measured faster)
-    if (const char* fields = std::getenv("UNREAL_SMOOTH_FIELDS"))
-        _fieldsOnGpu = std::strcmp(fields, "gpu") == 0;
-    _readBytes = true;
+    if (const char* fieldsOn = std::getenv("UNREAL_SMOOTH_FIELDS"))
+        _fieldsOnGpu = std::strcmp(fieldsOn, "gpu") == 0;
     ReleaseBuffers();
+    if (!_device)
+        return false;  // a texture refused
     return true;
 }
 
 void SmoothMotionGPU::ReleaseBuffers()
 {
-    if (!_gl)
+    if (!_device)
         return;
-    // Every texture complete at 1 x 1: a sampler the pass does not read (the mask without one) still has one
+    // Every texture at 1 x 1: a sampler the pass does not read (the mask without one) still has one
     const int32_t zero[4] = {};
     for (int t = 0; t < TextureCount; t++)
+    {
+        _textures[t].reset();
         Allocate(static_cast<Texture>(t), 1, 1, zero);
+        if (!_textures[t])
+        {
+            _log = QStringLiteral("a 1 x 1 %1 texture refused").arg(gpu::FormatName(FormatOf(static_cast<Texture>(t))));
+            Destroy();
+            return;
+        }
+    }
     for (auto& copy : _frameCopies)
         std::vector<uint32_t>().swap(copy);
     for (uint64_t& id : _frameIds)
         id = 0;
-    std::vector<uint32_t>().swap(_readBack);
     _holdsBuffers = false;
     _layersWidth = _layersHeight = 0;
     _orderRange = -1;
@@ -939,71 +932,39 @@ void SmoothMotionGPU::ReleaseBuffers()
 
 void SmoothMotionGPU::Destroy()
 {
-    if (_gl)
-    {
-        _gl->glDeleteTextures(TextureCount, _textures);
-        _gl->glDeleteFramebuffers(1, &_framebuffer);
-    }
-    for (unsigned& texture : _textures)
-        texture = 0;
+    for (auto& texture : _textures)
+        texture.reset();
     for (auto& copy : _frameCopies)
         copy.clear();
     for (uint64_t& id : _frameIds)
         id = 0;
     _layersWidth = _layersHeight = 0;
-    _framebuffer = 0;
-    for (QOpenGLShaderProgram* program : Programs())
-        delete program;
-    _blend = _searchChunks = _search = _refine = _compose = nullptr;
-    _changed = _rowSums = _columnSums = _fit = _coverMasks = _explained = nullptr;
-    _rowCounts = _counts = _blockColours = _top = _own = _continues = _layers = nullptr;
-    if (_vao.isCreated())
-        _vao.destroy();
-    _gl = nullptr;
+    for (std::unique_ptr<gpu::Program>* program : Programs())
+        program->reset();
+    _device = nullptr;
 }
 
 void SmoothMotionGPU::Allocate(Texture texture, int width, int height, const void* data)
 {
-    const Format format = FormatOf(texture);
-    _gl->glActiveTexture(GL_TEXTURE0);
-    _gl->glBindTexture(GL_TEXTURE_2D, _textures[texture]);
-    _gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    _gl->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    if (_sizes[texture][0] != width || _sizes[texture][1] != height)
+    std::unique_ptr<gpu::Texture>& t = _textures[texture];
+    if (!t || t->Width() != width || t->Height() != height)
     {
-        _gl->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(format.internal), width, height, 0, format.format,
-                          format.type, data);
-        _gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        _gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        _gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        _gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        _gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-        _sizes[texture][0] = width;
-        _sizes[texture][1] = height;
+        t = _device->CreateTexture(width, height, FormatOf(texture));
+        if (!t)
+            return;
         _holdsBuffers = _holdsBuffers || width > 1 || height > 1;
     }
-    else if (data)
-    {
-        _gl->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format.format, format.type, data);
-    }
-    // Back to GL's default: QPainter's glyph cache uploads its 4-byte aligned masks assuming it (the HUD's text broke)
-    _gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (data)
+        _device->Upload(*t, {0, 0, width, height}, data);
 }
 
 void SmoothMotionGPU::Grow(Texture texture, int width, int height, const void* data)
 {
-    const int w = std::max(width, _sizes[texture][0]), h = std::max(height, _sizes[texture][1]);
-    if (w != _sizes[texture][0] || h != _sizes[texture][1])
+    const int w = std::max(width, Width(texture)), h = std::max(height, Height(texture));
+    if (w != Width(texture) || h != Height(texture))
         Allocate(texture, w, h, nullptr);
-    if (!data)
-        return;
-    const Format format = FormatOf(texture);
-    _gl->glActiveTexture(GL_TEXTURE0);
-    _gl->glBindTexture(GL_TEXTURE_2D, _textures[texture]);
-    _gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    _gl->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    _gl->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format.format, format.type, data);
-    _gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (data && _textures[texture])
+        _device->Upload(*_textures[texture], {0, 0, width, height}, data);
 }
 
 std::vector<uint32_t>* SmoothMotionGPU::FrameCopy(Texture texture)
@@ -1039,7 +1000,7 @@ uint64_t* SmoothMotionGPU::FrameId(Texture texture)
 bool SmoothMotionGPU::Holds(Texture texture, const Picture& picture)
 {
     const std::vector<uint32_t>* copy = FrameCopy(texture);
-    if (!copy || _sizes[texture][0] != picture.width || _sizes[texture][1] != picture.height)
+    if (!copy || Width(texture) != picture.width || Height(texture) != picture.height)
         return false;
     // A picture with an id is known by it; one without by its pixels
     if (picture.id != 0)
@@ -1076,7 +1037,6 @@ void SmoothMotionGPU::UploadFrames(const Picture& p, const Picture& a, const Pic
                 if (Holds(roles[other], *pictures[r]))
                 {
                     std::swap(_textures[roles[r]], _textures[roles[other]]);
-                    std::swap(_sizes[roles[r]], _sizes[roles[other]]);
                     std::swap(*FrameCopy(roles[r]), *FrameCopy(roles[other]));
                     std::swap(*FrameId(roles[r]), *FrameId(roles[other]));
                     break;
@@ -1090,17 +1050,9 @@ void SmoothMotionGPU::UploadMask(const uint8_t* mask, int width, int height)
     Allocate(Mask, width, height, mask);
 }
 
-void SmoothMotionGPU::BindTexture(int unit, Texture texture)
+void SmoothMotionGPU::BindTexture(gpu::Program* program, const char* name, Texture texture)
 {
-    _gl->glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
-    _gl->glBindTexture(GL_TEXTURE_2D, _textures[texture]);
-}
-
-void SmoothMotionGPU::ClearErrors()
-{
-    for (int i = 0; i < kMaxErrors && _gl->glGetError() != GL_NO_ERROR; i++)
-    {
-    }
+    program->SetTexture(name, _textures[texture].get());
 }
 
 void SmoothMotionGPU::GpuBegin()
@@ -1115,100 +1067,71 @@ void SmoothMotionGPU::GpuEnd()
         _times->End(GpuPassTimes::Smooth);
 }
 
-bool SmoothMotionGPU::DrawInto(QOpenGLShaderProgram* program, Texture target, int width, int height,
-                               int readsPerFragment)
+bool SmoothMotionGPU::DrawInto(gpu::Program* program, Texture target, int width, int height, int readsPerFragment)
 {
-    _gl->glBindFramebuffer(GL_FRAMEBUFFER, _framebuffer);
-    _gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _textures[target], 0);
-    if (_gl->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    if (!_textures[target] || _device->Lost())
     {
-        _log = "incomplete framebuffer";
+        _log = _device->Lost() ? "the GPU device is lost" : "a texture refused";
         return false;
     }
     GpuBegin();
-    _gl->glViewport(0, 0, width, height);
-    _gl->glDisable(GL_BLEND);
-    _gl->glDisable(GL_DITHER);
-    _gl->glUniform2i(program->uniformLocation("size"), _sizes[FrameA][0], _sizes[FrameA][1]);
-    _vao.bind();
+    program->SetInt2("size", Width(FrameA), Height(FrameA));
+    gpu::DrawState state;
+    state.viewport = {0, 0, width, height};
     // A stripe of rows reads _maxReadsPerDraw texels at most, each submitted on its own (fragments read only their
     // inputs, so the stripes draw the same pixels as one draw)
     const int64_t rowReads = static_cast<int64_t>(width) * std::max(readsPerFragment, 1);
     const int rows = static_cast<int>(std::clamp<int64_t>(_maxReadsPerDraw / rowReads, 1, height));
     if (rows >= height)
     {
-        _gl->glDisable(GL_SCISSOR_TEST);
-        _gl->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        _device->Draw(*program, *_textures[target], state);
     }
     else
     {
-        _gl->glEnable(GL_SCISSOR_TEST);
+        state.scissor = true;
         for (int y = 0; y < height; y += rows)
         {
-            _gl->glScissor(0, y, width, std::min(rows, height - y));
-            _gl->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            _gl->glFlush();
+            state.scissorRect = {0, y, width, std::min(rows, height - y)};
+            _device->Draw(*program, *_textures[target], state);
+            _device->Flush();
         }
-        _gl->glDisable(GL_SCISSOR_TEST);
     }
-    _vao.release();
-    return true;
+    _lastTarget = target;
+    return !_device->Lost();
 }
 
 bool SmoothMotionGPU::ReadField(int blocksWide, int blocksHigh, std::vector<MotionField::Block>& out)
 {
-    // From the target DrawInto left bound
     GpuEnd();
     _fieldValues.resize(static_cast<size_t>(blocksWide) * blocksHigh * 4);
-    _gl->glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    _gl->glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    _gl->glReadPixels(0, 0, blocksWide, blocksHigh, GL_RGBA_INTEGER, GL_INT, _fieldValues.data());
+    if (!_device->Read(*_textures[_lastTarget], {0, 0, blocksWide, blocksHigh}, _fieldValues.data()))
+        return false;
     out.resize(static_cast<size_t>(blocksWide) * blocksHigh);
     for (size_t i = 0; i < out.size(); i++)
     {
         out[i].v = {_fieldValues[i * 4], _fieldValues[i * 4 + 1]};
         out[i].matched = _fieldValues[i * 4 + 2] != 0;
     }
-    return _gl->glGetError() == GL_NO_ERROR;
+    return true;
 }
 
 bool SmoothMotionGPU::ReadPicture(int width, int height, uint32_t* out)
 {
-    // From the target DrawInto left bound. Desktop GL converts an unsigned integer buffer to any unsigned integer
-    // type: bytes straight into `out`; a GL that refuses reads RGBA_INTEGER / UNSIGNED_INT (always allowed)
+    // RGBA8UI: the bytes straight into `out`
     GpuEnd();
-    _gl->glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    _gl->glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    if (_readBytes)
-    {
-        _gl->glReadPixels(0, 0, width, height, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, out);
-        if (_gl->glGetError() == GL_NO_ERROR)
-            return true;
-        _readBytes = false;
-        ClearErrors();
-    }
-    _readBack.resize(static_cast<size_t>(width) * height * 4);
-    _gl->glReadPixels(0, 0, width, height, GL_RGBA_INTEGER, GL_UNSIGNED_INT, _readBack.data());
-    auto* bytes = reinterpret_cast<uint8_t*>(out);
-    for (size_t i = 0; i < _readBack.size(); i++)
-        bytes[i] = static_cast<uint8_t>(_readBack[i]);
-    return _gl->glGetError() == GL_NO_ERROR;
+    return _device->Read(*_textures[_lastTarget], {0, 0, width, height}, out);
 }
 
-bool SmoothMotionGPU::ReadInts(int width, int height, std::vector<int32_t>& out)
+bool SmoothMotionGPU::ReadInts(Texture texture, int width, int height, std::vector<int32_t>& out)
 {
-    // From the target DrawInto left bound
     GpuEnd();
     out.resize(static_cast<size_t>(width) * height * 4);
-    _gl->glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    _gl->glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    _gl->glReadPixels(0, 0, width, height, GL_RGBA_INTEGER, GL_INT, out.data());
-    return _gl->glGetError() == GL_NO_ERROR;
+    return _device->Read(*_textures[texture], {0, 0, width, height}, out.data());
 }
 
 bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, MotionField& field)
 {
-    if (!_fieldsOnGpu || !_gl || a.width <= 0 || a.height <= 0)
+    if (!_fieldsOnGpu || !_device || a.width <= 0 || a.height <= 0)
         return false;
     const int blocksWide = (a.width + MotionField::kBlock - 1) / MotionField::kBlock;
     const int blocksHigh = (a.height + MotionField::kBlock - 1) / MotionField::kBlock;
@@ -1218,11 +1141,6 @@ bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, Mo
     // Past the GL's limits: the CPU
     if (orderCount > _maxSize || static_cast<int64_t>(blocksWide) * chunks > _maxSize || blocksHigh > _maxSize)
         return false;
-    GLint previousFramebuffer = 0;
-    GLint viewport[4] = {};
-    _gl->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
-    _gl->glGetIntegerv(GL_VIEWPORT, viewport);
-    ClearErrors();
 
     UploadPicture(FrameA, a);
     UploadPicture(FrameB, b);
@@ -1240,27 +1158,19 @@ bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, Mo
 
     // Pass 1: the chunks, then the blocks
     Allocate(FieldChunks, blocksWide * chunks, blocksHigh, nullptr);
-    _searchChunks->bind();
-    BindTexture(0, FrameA);
-    BindTexture(1, FrameB);
-    BindTexture(2, Order);
-    _searchChunks->setUniformValue("frameA", 0);
-    _searchChunks->setUniformValue("frameB", 1);
-    _searchChunks->setUniformValue("order", 2);
-    _searchChunks->setUniformValue("orderCount", _orderCount);
-    _searchChunks->setUniformValue("blocksWide", blocksWide);
-    _searchChunks->setUniformValue("chunk", kSearchChunk);
-    bool ok = DrawInto(_searchChunks, FieldChunks, blocksWide * chunks, blocksHigh, kSearchChunkReads);
-    _searchChunks->release();
-    _search->bind();
-    BindTexture(2, FieldChunks);
-    _search->setUniformValue("chunks", 2);
-    _search->setUniformValue("chunkCount", chunks);
-    _search->setUniformValue("blocksWide", blocksWide);
-    ok = ok && DrawInto(_search, FieldOne, blocksWide, blocksHigh, chunks);
+    BindTexture(_searchChunks.get(), "frameA", FrameA);
+    BindTexture(_searchChunks.get(), "frameB", FrameB);
+    BindTexture(_searchChunks.get(), "order", Order);
+    _searchChunks->SetInt("orderCount", _orderCount);
+    _searchChunks->SetInt("blocksWide", blocksWide);
+    _searchChunks->SetInt("chunk", kSearchChunk);
+    bool ok = DrawInto(_searchChunks.get(), FieldChunks, blocksWide * chunks, blocksHigh, kSearchChunkReads);
+    BindTexture(_search.get(), "chunks", FieldChunks);
+    _search->SetInt("chunkCount", chunks);
+    _search->SetInt("blocksWide", blocksWide);
+    ok = ok && DrawInto(_search.get(), FieldOne, blocksWide, blocksHigh, chunks);
     std::vector<MotionField::Block> prev;
     ok = ok && ReadField(blocksWide, blocksHigh, prev);
-    _search->release();
 
     // The refinement passes, the votes counted on the CPU between them
     Texture source = FieldOne;
@@ -1269,34 +1179,25 @@ bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, Mo
     {
         const std::vector<MotionField::Vector> votes =
             MotionField::CommonVectors(prev, MotionField::kGlobalVectors, range);
-        GLint packed[2 * MotionField::kGlobalVectors] = {};
+        int32_t packed[2 * MotionField::kGlobalVectors] = {};
         for (size_t k = 0; k < votes.size(); k++)
         {
             packed[k * 2] = votes[k].x;
             packed[k * 2 + 1] = votes[k].y;
         }
-        _refine->bind();
-        BindTexture(0, FrameA);
-        BindTexture(1, FrameB);
-        BindTexture(2, source);
-        BindTexture(3, FieldOne);
-        _refine->setUniformValue("frameA", 0);
-        _refine->setUniformValue("frameB", 1);
-        _refine->setUniformValue("prevField", 2);
-        _refine->setUniformValue("firstField", 3);
-        _gl->glUniform2i(_refine->uniformLocation("blocks"), blocksWide, blocksHigh);
-        _refine->setUniformValue("voteCount", static_cast<int>(votes.size()));
-        _gl->glUniform2iv(_refine->uniformLocation("votes"), static_cast<GLsizei>(MotionField::kGlobalVectors), packed);
-        ok = DrawInto(_refine, target, blocksWide, blocksHigh, kRefineReads) && ReadField(blocksWide, blocksHigh, prev);
-        _refine->release();
+        BindTexture(_refine.get(), "frameA", FrameA);
+        BindTexture(_refine.get(), "frameB", FrameB);
+        BindTexture(_refine.get(), "prevField", source);
+        BindTexture(_refine.get(), "firstField", FieldOne);
+        _refine->SetInt2("blocks", blocksWide, blocksHigh);
+        _refine->SetInt("voteCount", static_cast<int>(votes.size()));
+        _refine->SetInts("votes", packed, 2, static_cast<int>(MotionField::kGlobalVectors));
+        ok = DrawInto(_refine.get(), target, blocksWide, blocksHigh, kRefineReads) && ReadField(blocksWide, blocksHigh, prev);
         source = target;
         target = target == FieldPing ? FieldPong : FieldPing;
     }
 
     GpuEnd();
-    _gl->glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
-    _gl->glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    _gl->glActiveTexture(GL_TEXTURE0);
     if (!ok)
         return false;
     field.Assign(blocksWide, blocksHigh, std::move(prev), range);
@@ -1305,41 +1206,24 @@ bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, Mo
 
 bool SmoothMotionGPU::Blend(const Picture& a, const Picture& b, int w, uint32_t* out)
 {
-    if (!_gl || a.width <= 0 || a.height <= 0 || !out)
+    if (!_device || a.width <= 0 || a.height <= 0 || !out)
         return false;
-    GLint previousFramebuffer = 0;
-    GLint viewport[4] = {};
-    _gl->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
-    _gl->glGetIntegerv(GL_VIEWPORT, viewport);
-    ClearErrors();
     UploadPicture(FrameA, a);
     UploadPicture(FrameB, b);
     Allocate(Output, a.width, a.height, nullptr);
-    _blend->bind();
-    BindTexture(0, FrameA);
-    BindTexture(1, FrameB);
-    _blend->setUniformValue("frameA", 0);
-    _blend->setUniformValue("frameB", 1);
-    _blend->setUniformValue("weight", w);
-    const bool ok = DrawInto(_blend, Output, a.width, a.height, kPixelReads) && ReadPicture(a.width, a.height, out);
-    _blend->release();
+    BindTexture(_blend.get(), "frameA", FrameA);
+    BindTexture(_blend.get(), "frameB", FrameB);
+    _blend->SetInt("weight", w);
+    const bool ok = DrawInto(_blend.get(), Output, a.width, a.height, kPixelReads) && ReadPicture(a.width, a.height, out);
     GpuEnd();
-    _gl->glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
-    _gl->glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    _gl->glActiveTexture(GL_TEXTURE0);
     return ok;
 }
 
 bool SmoothMotionGPU::Compose(const MotionField& field, const Picture& a, const Picture& b, int w, uint32_t* out,
                               const uint8_t* mask)
 {
-    if (!_gl || a.width <= 0 || a.height <= 0 || !out || field.BlocksWide() <= 0)
+    if (!_device || a.width <= 0 || a.height <= 0 || !out || field.BlocksWide() <= 0)
         return false;
-    GLint previousFramebuffer = 0;
-    GLint viewport[4] = {};
-    _gl->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
-    _gl->glGetIntegerv(GL_VIEWPORT, viewport);
-    ClearErrors();
     UploadPicture(FrameA, a);
     UploadPicture(FrameB, b);
     // The field as the CPU holds it (a field estimated on the CPU, or this one's read back)
@@ -1358,7 +1242,7 @@ bool SmoothMotionGPU::Compose(const MotionField& field, const Picture& a, const 
     }
     Allocate(Output, a.width, a.height, nullptr);
 
-    GLint common[2 * MotionField::kComposeCommon] = {};
+    int32_t common[2 * MotionField::kComposeCommon] = {};
     const std::vector<MotionField::Vector>& vectors = field.Common();
     const size_t commonCount = std::min(vectors.size(), MotionField::kComposeCommon);
     for (size_t k = 0; k < commonCount; k++)
@@ -1366,57 +1250,37 @@ bool SmoothMotionGPU::Compose(const MotionField& field, const Picture& a, const 
         common[k * 2] = vectors[k].x;
         common[k * 2 + 1] = vectors[k].y;
     }
-    _compose->bind();
-    BindTexture(0, FrameA);
-    BindTexture(1, FrameB);
-    BindTexture(2, FieldOne);
-    BindTexture(3, Mask);
-    BindTexture(4, Base);
-    _compose->setUniformValue("frameA", 0);
-    _compose->setUniformValue("frameB", 1);
-    _compose->setUniformValue("field", 2);
-    _compose->setUniformValue("mask", 3);
-    _compose->setUniformValue("base", 4);
-    _compose->setUniformValue("useMask", static_cast<GLint>(mask != nullptr));
-    _gl->glUniform2i(_compose->uniformLocation("blocks"), field.BlocksWide(), field.BlocksHigh());
-    _compose->setUniformValue("weight", w);
-    _compose->setUniformValue("commonCount", static_cast<int>(commonCount));
-    _gl->glUniform2iv(_compose->uniformLocation("commonVectors"), static_cast<GLsizei>(MotionField::kComposeCommon),
-                      common);
+    BindTexture(_compose.get(), "frameA", FrameA);
+    BindTexture(_compose.get(), "frameB", FrameB);
+    BindTexture(_compose.get(), "field", FieldOne);
+    BindTexture(_compose.get(), "mask", Mask);
+    BindTexture(_compose.get(), "base", Base);
+    _compose->SetInt("useMask", static_cast<int32_t>(mask != nullptr));
+    _compose->SetInt2("blocks", field.BlocksWide(), field.BlocksHigh());
+    _compose->SetInt("weight", w);
+    _compose->SetInt("commonCount", static_cast<int>(commonCount));
+    _compose->SetInts("commonVectors", common, 2, static_cast<int>(MotionField::kComposeCommon));
     const bool ok =
-        DrawInto(_compose, Output, a.width, a.height, kComposeReads) && ReadPicture(a.width, a.height, out);
-    _compose->release();
+        DrawInto(_compose.get(), Output, a.width, a.height, kComposeReads) && ReadPicture(a.width, a.height, out);
     GpuEnd();
-    _gl->glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
-    _gl->glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    _gl->glActiveTexture(GL_TEXTURE0);
     return ok;
 }
 
 bool SmoothMotionGPU::WindowSums(Texture source, unsigned mask0, int radius0, unsigned mask1, int radius1, bool flags,
                                  Texture target, int width, int height)
 {
-    _rowSums->bind();
-    BindTexture(0, source);
-    _rowSums->setUniformValue("source", 0);
-    _gl->glUniform2i(_rowSums->uniformLocation("masks"), static_cast<GLint>(mask0), static_cast<GLint>(mask1));
-    _gl->glUniform2i(_rowSums->uniformLocation("radii"), radius0, radius1);
-    bool ok = DrawInto(_rowSums, RowSums, width, height, kWindowReads);
-    _rowSums->release();
-    _columnSums->bind();
-    BindTexture(0, RowSums);
-    BindTexture(1, FitBits);
-    BindTexture(2, StillSums);
-    BindTexture(3, ExplainedSums);
-    _columnSums->setUniformValue("source", 0);
-    _columnSums->setUniformValue("fitBits", 1);
-    _columnSums->setUniformValue("stillSums", 2);
-    _columnSums->setUniformValue("explainedSums", 3);
-    _columnSums->setUniformValue("flags", static_cast<GLint>(flags));
-    _columnSums->setUniformValue("tileCols", _tileCols);
-    _gl->glUniform2i(_columnSums->uniformLocation("radii"), radius0, radius1);
-    ok = ok && DrawInto(_columnSums, target, width, height, kWindowReads);
-    _columnSums->release();
+    BindTexture(_rowSums.get(), "source", source);
+    _rowSums->SetInt2("masks", static_cast<int32_t>(mask0), static_cast<int32_t>(mask1));
+    _rowSums->SetInt2("radii", radius0, radius1);
+    bool ok = DrawInto(_rowSums.get(), RowSums, width, height, kWindowReads);
+    BindTexture(_columnSums.get(), "source", RowSums);
+    BindTexture(_columnSums.get(), "fitBits", FitBits);
+    BindTexture(_columnSums.get(), "stillSums", StillSums);
+    BindTexture(_columnSums.get(), "explainedSums", ExplainedSums);
+    _columnSums->SetInt("flags", static_cast<int32_t>(flags));
+    _columnSums->SetInt("tileCols", _tileCols);
+    _columnSums->SetInt2("radii", radius0, radius1);
+    ok = ok && DrawInto(_columnSums.get(), target, width, height, kWindowReads);
     return ok;
 }
 
@@ -1452,18 +1316,10 @@ bool SmoothMotionGPU::AllocateLayers(int width, int height)
 bool SmoothMotionGPU::ComposeLayers(const Picture& p, const Picture& a, const Picture& b, const MotionField& prev,
                                     const MotionField& next, int w, uint32_t* out)
 {
-    if (!_gl || a.width <= 0 || a.height <= 0 || !out || next.BlocksWide() <= 0)
+    if (!_device || a.width <= 0 || a.height <= 0 || !out || next.BlocksWide() <= 0)
         return false;
-    GLint previousFramebuffer = 0;
-    GLint viewport[4] = {};
-    _gl->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
-    _gl->glGetIntegerv(GL_VIEWPORT, viewport);
-    ClearErrors();
     const bool ok = ComposeLayersHere(p, a, b, prev, next, w, out);
     GpuEnd();
-    _gl->glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
-    _gl->glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    _gl->glActiveTexture(GL_TEXTURE0);
     return ok;
 }
 
@@ -1496,58 +1352,43 @@ bool SmoothMotionGPU::ComposeLayersHere(const Picture& p, const Picture& a, cons
     Grow(Vectors, n, 1, _ints.data());
 
     // The changes and the still windows round them
-    _changed->bind();
-    BindTexture(0, FrameA);
-    BindTexture(1, FrameB);
-    _changed->setUniformValue("frameA", 0);
-    _changed->setUniformValue("frameB", 1);
-    bool ok = DrawInto(_changed, Changed, width, height, kPixelReads);
-    _changed->release();
+    BindTexture(_changed.get(), "frameA", FrameA);
+    BindTexture(_changed.get(), "frameB", FrameB);
+    bool ok = DrawInto(_changed.get(), Changed, width, height, kPixelReads);
     ok = ok && WindowSums(Changed, 1, LayerFlow::kRadius, 1, LayerFlow::kSupportRadius, false, StillSums, width, height);
 
     // Per vector what it fits; the changes a moving vector explains and the windows round them; per vector its
     // score, support and what it may take; the cover rule's masks
     if (ok)
     {
-        _fit->bind();
-        BindLayerFields(_fit);
-        ok = DrawInto(_fit, FitBits, tiledWidth, tiledHeight, kFitReads);
-        _fit->release();
+        BindLayerFields(_fit.get());
+        ok = DrawInto(_fit.get(), FitBits, tiledWidth, tiledHeight, kFitReads);
     }
     if (ok)
     {
-        _explained->bind();
-        BindLayerFields(_explained);
-        ok = DrawInto(_explained, Explained, width, height, kVectorReads);
-        _explained->release();
+        BindLayerFields(_explained.get());
+        ok = DrawInto(_explained.get(), Explained, width, height, kVectorReads);
     }
     ok = ok && WindowSums(Explained, 0, 0, 1, LayerFlow::kSupportRadius, false, ExplainedSums, width, height);
     ok = ok && WindowSums(FitBits, 2, LayerFlow::kRadius, 4, LayerFlow::kSupportRadius, true, Sums, tiledWidth,
                           tiledHeight);
     if (ok)
     {
-        _coverMasks->bind();
-        BindLayerFields(_coverMasks);
-        ok = DrawInto(_coverMasks, CoverMasks, tiledWidth, tiledHeight, kCoverMasksReads);
-        _coverMasks->release();
+        BindLayerFields(_coverMasks.get());
+        ok = DrawInto(_coverMasks.get(), CoverMasks, tiledWidth, tiledHeight, kCoverMasksReads);
     }
 
     // The counts per block, read back for the block decisions
     if (ok)
     {
-        _rowCounts->bind();
-        BindLayerFields(_rowCounts);
-        ok = DrawInto(_rowCounts, RowCounts, _tileCols * bw, tiledHeight, kRowCountsReads);
-        _rowCounts->release();
+        BindLayerFields(_rowCounts.get());
+        ok = DrawInto(_rowCounts.get(), RowCounts, _tileCols * bw, tiledHeight, kRowCountsReads);
     }
     if (ok)
     {
-        _counts->bind();
-        BindLayerFields(_counts);
-        BindTexture(8, RowCounts);
-        _counts->setUniformValue("rowCounts", 8);
-        ok = DrawInto(_counts, Counts, bw, bh * groups, kCountsReads) && ReadInts(bw, bh * groups, _ints);
-        _counts->release();
+        BindLayerFields(_counts.get());
+        BindTexture(_counts.get(), "rowCounts", RowCounts);
+        ok = DrawInto(_counts.get(), Counts, bw, bh * groups, kCountsReads) && ReadInts(Counts, bw, bh * groups, _ints);
     }
     if (!ok)
         return false;
@@ -1591,44 +1432,31 @@ bool SmoothMotionGPU::ComposeLayersHere(const Picture& p, const Picture& a, cons
     _colourAt.resize(static_cast<size_t>(width) * height);
     LayerFlow::Palette(a, _palette, _colourAt.data());
     Allocate(Colour, width, height, _colourAt.data());
-    _layers->bind();
-    BindLayerFields(_layers);
-    BindTexture(8, BlockInfo);
-    BindTexture(9, Allowed);
-    BindTexture(10, Colour);
-    BindTexture(11, CoverMasks);
-    _layers->setUniformValue("blockInfo", 8);
-    _layers->setUniformValue("allowed", 9);
-    _layers->setUniformValue("colour", 10);
-    _layers->setUniformValue("coverMasks", 11);
-    ok = DrawInto(_layers, Output, width, height, kLayersReads) && ReadPicture(width, height, out);
-    _layers->release();
+    BindLayerFields(_layers.get());
+    BindTexture(_layers.get(), "blockInfo", BlockInfo);
+    BindTexture(_layers.get(), "allowed", Allowed);
+    BindTexture(_layers.get(), "colour", Colour);
+    BindTexture(_layers.get(), "coverMasks", CoverMasks);
+    ok = DrawInto(_layers.get(), Output, width, height, kLayersReads) && ReadPicture(width, height, out);
     if (ok)
         LayerFlow::KeepInk(a, b, w < smoothmotion::kOne / 2 ? a : b, out);
     return ok;
 }
 
-void SmoothMotionGPU::BindLayerFields(QOpenGLShaderProgram* program)
+void SmoothMotionGPU::BindLayerFields(gpu::Program* program)
 {
     // Units 0..7: the frames, the vectors and the per-pixel evidence
-    BindTexture(0, FrameA);
-    BindTexture(1, FrameB);
-    BindTexture(2, FrameP);
-    BindTexture(3, Vectors);
-    BindTexture(4, FitBits);
-    BindTexture(5, Sums);
-    BindTexture(6, StillSums);
-    program->setUniformValue("frameA", 0);
-    program->setUniformValue("frameB", 1);
-    program->setUniformValue("frameP", 2);
-    program->setUniformValue("vectors", 3);
-    program->setUniformValue("fitBits", 4);
-    program->setUniformValue("sums", 5);
-    program->setUniformValue("stillSums", 6);
-    program->setUniformValue("vectorCount", _n);
-    program->setUniformValue("weight", _weight);
-    program->setUniformValue("tileCols", _tileCols);
-    _gl->glUniform2i(program->uniformLocation("blocks"), _layerSet.blocksWide, _layerSet.blocksHigh);
+    BindTexture(program, "frameA", FrameA);
+    BindTexture(program, "frameB", FrameB);
+    BindTexture(program, "frameP", FrameP);
+    BindTexture(program, "vectors", Vectors);
+    BindTexture(program, "fitBits", FitBits);
+    BindTexture(program, "sums", Sums);
+    BindTexture(program, "stillSums", StillSums);
+    program->SetInt("vectorCount", _n);
+    program->SetInt("weight", _weight);
+    program->SetInt("tileCols", _tileCols);
+    program->SetInt2("blocks", _layerSet.blocksWide, _layerSet.blocksHigh);
 }
 
 void SmoothMotionGPU::Ask(const std::vector<std::pair<size_t, int>>& blocks,
@@ -1645,7 +1473,7 @@ void SmoothMotionGPU::Ask(const std::vector<std::pair<size_t, int>>& blocks,
         return;
     }
     const int bw = _layerSet.blocksWide, bh = _layerSet.blocksHigh;
-    const int width = _sizes[FrameA][0], height = _sizes[FrameA][1];
+    const int width = Width(FrameA), height = Height(FrameA);
     bool ok = true;
     // The aliases rule: the top three per pixel of the asked blocks, then own(...) per ask and vector
     if (asks > 0)
@@ -1660,22 +1488,14 @@ void SmoothMotionGPU::Ask(const std::vector<std::pair<size_t, int>>& blocks,
         Grow(Asks, asks, 1, _ints.data());
         Allocate(AskAt, bw, bh, _askOf.data());
         Grow(OwnAnswers, _n, asks, nullptr);
-        _top->bind();
-        BindLayerFields(_top);
-        BindTexture(8, AskAt);
-        BindTexture(9, Counts);
-        _top->setUniformValue("askAt", 8);
-        _top->setUniformValue("counts", 9);
-        ok = DrawInto(_top, Top, width, height, kVectorReads);
-        _top->release();
-        _own->bind();
-        BindLayerFields(_own);
-        BindTexture(8, Asks);
-        BindTexture(9, Top);
-        _own->setUniformValue("asks", 8);
-        _own->setUniformValue("top", 9);
-        ok = ok && DrawInto(_own, OwnAnswers, _n, asks, kOwnReads);
-        _own->release();
+        BindLayerFields(_top.get());
+        BindTexture(_top.get(), "askAt", AskAt);
+        BindTexture(_top.get(), "counts", Counts);
+        ok = DrawInto(_top.get(), Top, width, height, kVectorReads);
+        BindLayerFields(_own.get());
+        BindTexture(_own.get(), "asks", Asks);
+        BindTexture(_own.get(), "top", Top);
+        ok = ok && DrawInto(_own.get(), OwnAnswers, _n, asks, kOwnReads);
     }
     // The regions rule: per edge and vector
     if (ok && count > 0)
@@ -1685,25 +1505,17 @@ void SmoothMotionGPU::Ask(const std::vector<std::pair<size_t, int>>& blocks,
             _ints.insert(_ints.end(), {e.bi, e.bj, (e.di + 1) + 3 * (e.dj + 1), 0});
         Grow(Edges, count, 1, _ints.data());
         Grow(EdgeAnswers, count, _n, nullptr);
-        _blockColours->bind();
-        BindLayerFields(_blockColours);
-        ok = DrawInto(_blockColours, BlockColours, width, height, kBlockColoursReads);
-        _blockColours->release();
-        _continues->bind();
-        BindLayerFields(_continues);
-        BindTexture(8, Edges);
-        BindTexture(9, BlockColours);
-        _continues->setUniformValue("edges", 8);
-        _continues->setUniformValue("blockColours", 9);
-        ok = ok && DrawInto(_continues, EdgeAnswers, count, _n, kContinuesReads) && ReadInts(count, _n, _edgeAnswers);
-        _continues->release();
+        BindLayerFields(_blockColours.get());
+        ok = DrawInto(_blockColours.get(), BlockColours, width, height, kBlockColoursReads);
+        BindLayerFields(_continues.get());
+        BindTexture(_continues.get(), "edges", Edges);
+        BindTexture(_continues.get(), "blockColours", BlockColours);
+        ok = ok && DrawInto(_continues.get(), EdgeAnswers, count, _n, kContinuesReads) && ReadInts(EdgeAnswers, count, _n, _edgeAnswers);
     }
     // Read back once the GPU did all
     if (ok && asks > 0)
     {
-        _gl->glBindFramebuffer(GL_FRAMEBUFFER, _framebuffer);
-        _gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _textures[OwnAnswers], 0);
-        ok = ReadInts(_n, asks, _ownAnswers);
+        ok = ReadInts(OwnAnswers, _n, asks, _ownAnswers);
     }
     _answered = ok;
 }

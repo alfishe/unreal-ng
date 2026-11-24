@@ -139,6 +139,37 @@ class Emulator:
         wait, host_pc, dropped}], last_seq (pass as since), counters, text. available=False without
         a NeoGS"""
 
+    def gs_profile(self, cpu: str = "", routines: int = 32, activity: int = 256) -> dict:
+        """The card CPU's profiler (cpu 'gs' / 'ms'): isr {last_frame, since_start} with count,
+        min, avg, max, headroom_pct, overruns, latency, lost; commands[] per host command code;
+        routines[] by inclusive cycles with labels; activity[] per frame; text. available=False
+        without a card CPU (the lightweight player)"""
+
+    def gs_profile_control(self, action: str, cpu: str = "") -> dict:
+        """'start' (cleared, then on), 'stop' (the data kept), 'clear'; ValueError on another
+        action, KeyError without a card CPU"""
+
+    def gs_events(self, cpu: str = "", first: int = 0, count: int = 0, rows: int = 16) -> dict:
+        """The last complete host frame per card interrupt period: rows[{period, start, isr[{accept,
+        end, length, entry, nmi}], events[[cycle, kind, value, detail]]}], totals, text"""
+
+    def gs_analysis(self, action: str = "status", cpu: str = "", decay: int = -1) -> dict:
+        """The card CPU analysis switch (classic GS, the ZX-MultiSound's GS with cpu="ms", NeoGS):
+        status / on / off (keep the data) / reset (clear) / release (free); decay the heat lost per
+        frame. Off by default, free while off. ValueError when not available (lightweight GS)"""
+
+    def gs_coverage(self, cpu: str = "", space: str = "", page: int = -1, ranges: int = 16,
+                    raw: bool = False) -> dict:
+        """Code / data log per physical byte: spaces[{space, totals, page_list[{page, exec, code,
+        read, write, jump, sub, dac, written, code_ranges, data_ranges, dac_ranges}]}],
+        handlers{executed, not_executed}, never_written{rows[{address, page, offset, pc, frame,
+        kind}]}, text"""
+
+    def gs_heatmap(self, cpu: str = "", channels: str = "", recent: str = "", frames: int = 50,
+                   cells: int = 4096, format: str = "base64") -> dict:
+        """The card RAM heat map: channels[{name, accesses, hot_cells, max, data}], recent{frames,
+        channels[{name, ranges[{start, end, length, page, offset}]}]} (default dac), text"""
+
     def audio_covox_state(self) -> dict:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""
@@ -2135,10 +2166,12 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
                                      #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
 emu.window_display()                 # GUI window display settings: {'backend' ('gpu' / 'software'), 'gpu_available',
-                                     #   'gpu', 'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
+                                     #   'gpu', 'renderer' ('gl' / 'vulkan'), 'renderers' (offered),
+                                     #   'renderer_active' (what draws: 'gl' / 'vulkan', '' software),
+                                     #   'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
                                      #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
                                      #   'exponential'), 'blending_decay' (0.1..0.9), 'smooth_motion' ('off' /
-                                     #   'blend' / 'interpolate' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
+                                     #   'blend' / 'interpolate' / 'interpolate-lite' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
                                      #   'present_policy' ('auto' / 'vrr' / 'vsync'), 'display_rate' ('keep' /
                                      #   'match'), 'lip_sync_offset_ms'
                                      #   (-200..200), 'present' {'presenter', 'vrr', 'vrr_support': {'state', 'reason'}, 'sync': {'mode', 'reason'}, 'clock', 'timing': {'delay_clamped', 'max_delay_ms', 'clamped_frames', 'early', 'carried', 'cuts', 'carry_ms'}, 'late', 'beat': {'frames', 'off'}, 'lead_ms', 'error_ms', 'sound_offset_ms': {'p50', 'p99'}, 'gpu_wait_ms', 'gpu_ms': {'smooth', 'smooth_cpu', 'picture': {'p50', 'max', 'longest', 'measured'}}, 'smooth': {'mode',
@@ -2149,7 +2182,8 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   'osd_keyboard_style', 'osd_keyboard_styles',
                                      #   'next_layers', 'next_layers_mode', 'next_layers_shown'}; headless
                                      #   {'ok': False, 'error', 'kind': 'no-window'}
-emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=, blending=, fullscreen=,
+emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, renderer= ('vulkan': one of
+                                     #   renderers; re-creates the GPU screen), crt=, blending=, fullscreen=,
                                      #   toolbar=, status_bar=, hud=, osd_keyboard=, next_layers= (bool),
                                      #   crt_profile= (one of crt_profiles: none, basic, ...,
                                      #   shader:<name> (a preset or a custom shader) with the GPU; other

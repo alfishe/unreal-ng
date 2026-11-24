@@ -17,8 +17,10 @@
 #include "emulator/sound/chips/gs/gshostdriver.h"
 #include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/gszxdmatrace.h"
+#include "emulator/sound/chips/gs/gsprofilereport.h"
 #include "emulator/sound/chips/gs/gsslotstats.h"
 #include "cli-processor.h"
+#include "cli-processor-gs-analysis.h"
 #include <emulator/state/devicestate.h>
 
 namespace
@@ -79,6 +81,12 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
     }
 
     EmulatorContext* context = emulator->GetContext();
+    // The card CPU analysis (cli-processor-gs-analysis.cpp): its own card lookup by --cpu
+    if (std::string reply; HandleGSAnalysisCommand(context, args, reply))
+    {
+        session.SendResponse(reply);
+        return;
+    }
     SoundManager* soundManager = context ? context->pSoundManager : nullptr;
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
     // `stats` and `firmware` read another card by its CPU (--cpu ms: the ZX-MultiSound's GS) without a GS slot card
@@ -229,6 +237,10 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs firmware [object] [--profile <id>] [--cpu gs|ms] - the firmware objects through the profile (gsfirmwareobjects.h, M1-M3)
 ///   gs firmware profiles              - the firmware profiles known (built-in and files)
 ///   gs zxdma [last] [--since <seq>]   - the NeoGS ZX-DMA trace (gszxdmatrace.h, N6): the bytes the host moved
+///   gs profile [start|stop|clear] [--cpu gs|ms] [--routines N] [--activity N] - the card CPU's profiler
+///                                       (gsprofilereport.h, X9 / X20): ISR budget, command cost, routines, activity
+///   gs events [--cpu gs|ms] [--first N] [--count N] [--rows N] - the last frame per interrupt period (X2)
+///   gs analysis|coverage|heatmap ...  - the card CPU analysis (cli-processor-gs-analysis.h, P5.6): CDL, heat map
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
 ///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - the card in the GS slot replaced (slots gs: a restart)
@@ -263,7 +275,10 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         "read_status|read_data|send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>]|"
         "conversation [id]|stats [section] [--since <id>] [--fresh] [--cpu gs|ms]|stats reset [--cpu gs|ms]|"
         "firmware [object] [--profile <id>] [--cpu gs|ms]|"
-        "firmware profiles|zxdma [last] [--since <seq>]|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
+        "firmware profiles|zxdma [last] [--since <seq>]|profile [start|stop|clear] [--cpu gs|ms] [--routines <n>] "
+        "[--activity <n>]|events [--cpu gs|ms] [--first <n>] [--count <n>] [--rows <n>]|"
+        "analysis [status|on|off|reset|release] [--cpu gs|ms]|"
+        "coverage [--space rom|ram] [--page N] [--cpu gs|ms]|heatmap [--recent dac] [--frames N] [--cpu gs|ms]|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
         "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
     if (args.empty())
@@ -443,6 +458,78 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         else
         {
             const StateNode report = DeviceState::GsZxDmaTrace(context, query);
+            const StateNode* available = report.find("available");
+            if (!available || !available->b)
+                ss << "Error: " << report.find("description")->s << NEWLINE;
+            else
+                ss << report.find("text")->s;
+        }
+    }
+    else if (sub == "profile")
+    {
+        // The card CPU's profiler (gsprofilereport.h): start / stop / clear, or the report
+        std::string action, cpu, routines, activity;
+        bool bad = false;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            if (args[i] == "--cpu" && i + 1 < args.size())
+                cpu = args[++i];
+            else if (args[i] == "--routines" && i + 1 < args.size())
+                routines = args[++i];
+            else if (args[i] == "--activity" && i + 1 < args.size())
+                activity = args[++i];
+            else if (i == 1 && (args[i] == "start" || args[i] == "stop" || args[i] == "clear"))
+                action = args[i];
+            else
+                bad = true;
+        }
+        GSProfileQuery query;
+        std::string error;
+        if (bad || !GSProfileQueryFromStrings(cpu, routines, activity, query, error))
+            ss << "Usage: gs profile [start|stop|clear] [--cpu gs|ms] [--routines <n> (default 32, 0: all)] "
+                  "[--activity <n> (default 256)]"
+               << (error.empty() ? "" : " - " + error) << NEWLINE;
+        else if (!action.empty())
+        {
+            const GSProfileControlReply reply = GSProfileControl(context, action, cpu);
+            ss << (reply.status == 200 ? "" : "Error: ") << reply.text << NEWLINE;
+        }
+        else
+        {
+            const StateNode report = DeviceState::GsProfile(context, query);
+            const StateNode* available = report.find("available");
+            if (!available || !available->b)
+                ss << "Error: " << report.find("description")->s << NEWLINE;
+            else
+                ss << report.find("text")->s;
+        }
+    }
+    else if (sub == "events")
+    {
+        // The last complete host frame per card interrupt period (gsprofilereport.h)
+        std::string cpu, first, count, rows;
+        bool bad = false;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            if (args[i] == "--cpu" && i + 1 < args.size())
+                cpu = args[++i];
+            else if (args[i] == "--first" && i + 1 < args.size())
+                first = args[++i];
+            else if (args[i] == "--count" && i + 1 < args.size())
+                count = args[++i];
+            else if (args[i] == "--rows" && i + 1 < args.size())
+                rows = args[++i];
+            else
+                bad = true;
+        }
+        GSEventsQuery query;
+        std::string error;
+        if (bad || !GSEventsQueryFromStrings(cpu, first, count, rows, query, error))
+            ss << "Usage: gs events [--cpu gs|ms] [--first <n>] [--count <n>] [--rows <n> (default 16)]"
+               << (error.empty() ? "" : " - " + error) << NEWLINE;
+        else
+        {
+            const StateNode report = DeviceState::GsEvents(context, query);
             const StateNode* available = report.find("available");
             if (!available || !available->b)
                 ss << "Error: " << report.find("description")->s << NEWLINE;

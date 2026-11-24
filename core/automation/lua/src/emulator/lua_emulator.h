@@ -76,6 +76,8 @@
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gszxdmatrace.h>
+#include <emulator/sound/chips/gs/gsprofilereport.h>
+#include <emulator/sound/chips/gs/gsanalysisreport.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../temporalstatus.h"
@@ -6078,6 +6080,88 @@ public:
             query.since = since.value_or(0);
             return StateNodeToLua(s, DeviceState::GsZxDmaTrace(ctx, query));
         });
+        // The card CPU's profiler (gsprofilereport.h, gs-debugger X9 / X20): the report (cpu "gs" / "ms", the top
+        // `routines`, the newest `activity` frames); {available = false, description} without a card CPU
+        lua.set_function("gs_profile", [this](sol::this_state s, sol::optional<std::string> cpu,
+                                              sol::optional<uint64_t> routines, sol::optional<uint64_t> activity) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSProfileQuery query;
+            query.cpu = cpu.value_or("");
+            query.routines = static_cast<size_t>(routines.value_or(query.routines));
+            query.activity = static_cast<size_t>(activity.value_or(query.activity));
+            return StateNodeToLua(s, DeviceState::GsProfile(ctx, query));
+        });
+        // "start" (cleared, then on), "stop", "clear": {action, cpu, card, on} or {error}
+        lua.set_function("gs_profile_control", [this](sol::this_state s, const std::string& action,
+                                                      sol::optional<std::string> cpu) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, GSProfileControl(ctx, action, cpu.value_or("")).body);
+        });
+        // The last complete host frame per card interrupt period (X2): rows `first` .. `first + count` (0: to the end)
+        lua.set_function("gs_events", [this](sol::this_state s, sol::optional<std::string> cpu, sol::optional<uint64_t> first,
+                                             sol::optional<uint64_t> count, sol::optional<uint64_t> rows) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSEventsQuery query;
+            query.cpu = cpu.value_or("");
+            query.first = static_cast<size_t>(first.value_or(0));
+            query.count = static_cast<size_t>(count.value_or(0));
+            query.rows = static_cast<size_t>(rows.value_or(query.rows));
+            return StateNodeToLua(s, DeviceState::GsEvents(ctx, query));
+        });
+        // The card CPU analysis (gsanalysisreport.h, gs-debugger P5.6): gs_analysis(action, {cpu =, decay =}) with
+        // action status / on / off / reset / release; gs_coverage({cpu, space, page, ranges, raw}) and
+        // gs_heatmap({cpu, channels, recent, frames, cells, format}); a bad option is {error = ...}
+        {
+            auto options = [](const sol::optional<sol::table>& table) {
+                return [table](const std::string& key) -> std::string {
+                    if (!table)
+                        return {};
+                    const sol::object value = (*table)[key];
+                    switch (value.get_type())
+                    {
+                        case sol::type::string: return value.as<std::string>();
+                        case sol::type::number:
+                            return std::to_string(static_cast<long long>(value.as<double>()));
+                        case sol::type::boolean: return value.as<bool>() ? "1" : "0";
+                        default: return {};
+                    }
+                };
+            };
+            auto failed = [](sol::this_state s, const std::string& message) {
+                StateNode error = StateNode::Object();
+                error["error"] = message;
+                return StateNodeToLua(s, error);
+            };
+            lua.set_function("gs_analysis", [this, options](sol::this_state s, sol::optional<std::string> action,
+                                                            sol::optional<sol::table> opts) -> sol::object {
+                EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+                const auto get = options(opts);
+                GSAnalysisControlRequest request;
+                request.action = action.value_or("status");
+                request.cpu = get("cpu");
+                if (const std::string decay = get("decay"); !decay.empty())
+                    request.decay = std::atoi(decay.c_str());
+                return StateNodeToLua(s, GSAnalysisControl(ctx, request).body);
+            });
+            lua.set_function("gs_coverage", [this, options, failed](sol::this_state s,
+                                                                    sol::optional<sol::table> opts) -> sol::object {
+                EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+                GSAnalysisQuery query;
+                std::string error;
+                if (!GSAnalysisQueryFromParams(options(opts), query, error))
+                    return failed(s, error);
+                return StateNodeToLua(s, DeviceState::GsCoverage(ctx, query));
+            });
+            lua.set_function("gs_heatmap", [this, options, failed](sol::this_state s,
+                                                                   sol::optional<sol::table> opts) -> sol::object {
+                EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+                GSAnalysisQuery query;
+                std::string error;
+                if (!GSAnalysisQueryFromParams(options(opts), query, error))
+                    return failed(s, error);
+                return StateNodeToLua(s, DeviceState::GsHeatmap(ctx, query));
+            });
+        }
         // The GS slot's statistics (gsslotstats.h, gs-debugger N7): the block or one section, counters since a
         // baseline; a running machine answers from the next frame end (at most 500 ms; {error} after that)
         lua.set_function("gs_stats", [this](sol::this_state s, sol::optional<std::string> section,

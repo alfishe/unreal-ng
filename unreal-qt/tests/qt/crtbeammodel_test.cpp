@@ -20,9 +20,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "widgets/crtbeammodel.h"
+#include "gpu/gldevice.h"
+#ifdef UNREAL_VULKAN
+#include "gpu/vulkandevice.h"
+#include "sharedvulkandevice.h"
+#endif
 #include "widgets/crtbeammodelgpu.h"
 
 namespace
@@ -246,52 +253,60 @@ TEST(CRTBeamModel_Test, TheGpuPictureIsTheSoftwarePicture)
     GLContext context;
     if (!context.create())
         GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
-    QOpenGLExtraFunctions* gl = context.gl();
-    CRTBeamModelGPU gpu;
-    ASSERT_TRUE(gpu.create()) << gpu.log().toStdString();
-
-    const std::vector<uint8_t> frame = MakeFrame();
-    // A whole frame at 2x, and a viewport crop at an odd size (phases off the grid)
-    const CRTBeamModel::Layout layouts[] = {MakeLayout(704, 576), MakeLayout(1001, 787, QRect(16, 8, 320, 272))};
-    for (const CRTBeamModel::Layout& layout : layouts)
+    // GL, and Vulkan where the build and the machine have it: the same picture, bit for bit
+    const std::unique_ptr<gpu::Device> gl = gpu::GlDevice::Create();
+    std::vector<gpu::Device*> devices{gl.get()};
+#ifdef UNREAL_VULKAN
     {
-        QOpenGLFramebufferObject target(layout.outWidth, layout.outHeight, QOpenGLFramebufferObject::NoAttachment,
-                                        GL_TEXTURE_2D, GL_RGBA8);
-        ASSERT_TRUE(target.bind());
-        gl->glViewport(0, 0, layout.outWidth, layout.outHeight);
-        gl->glDisable(GL_DITHER);
-        for (CRTProfile profile : Models())
-        {
-            CRTBeamModel model;
-            const std::vector<uint8_t> cpu = Compose(model, layout, profile, frame.data(), kFrameWidth * 4);
-            gpu.uploadTables(model);
-            gpu.uploadFrame(model);
-            gpu.draw(model);
-            std::vector<uint8_t> picture(cpu.size());
-            gl->glPixelStorei(GL_PACK_ALIGNMENT, 1);
-            gl->glReadPixels(0, 0, layout.outWidth, layout.outHeight, GL_RGBA, GL_UNSIGNED_BYTE, picture.data());
-            ASSERT_EQ(gl->glGetError(), static_cast<GLenum>(GL_NO_ERROR)) << Key(profile);
-            // GL rows bottom first
-            int differ = 0;
-            int firstX = -1;
-            int firstY = -1;
-            for (int y = 0; y < layout.outHeight; ++y)
-            {
-                const uint8_t* g = &picture[static_cast<size_t>(layout.outHeight - 1 - y) * layout.outWidth * 4];
-                const uint8_t* c = &cpu[static_cast<size_t>(y) * layout.outWidth * 4];
-                for (int x = 0; x < layout.outWidth; ++x)
-                    if (std::memcmp(g + x * 4, c + x * 4, 3) != 0 && differ++ == 0)
-                    {
-                        firstX = x;
-                        firstY = y;
-                    }
-            }
-            EXPECT_EQ(differ, 0) << Key(profile) << " at " << layout.outWidth << "x" << layout.outHeight
-                                 << ", first at " << firstX << "," << firstY;
-        }
-        target.release();
+        std::string error;
+        if (gpu::Device* vk = testgpu::SharedVulkanDevice(error))  // the run's (sharedvulkandevice.h)
+            devices.push_back(vk);
+        else
+            std::printf("no Vulkan device (%s): GL only\n", error.c_str());
     }
-    gpu.destroy();
+#endif
+    const std::vector<uint8_t> frame = MakeFrame();
+    for (gpu::Device* device : devices)
+    {
+        CRTBeamModelGPU gpu;
+        ASSERT_TRUE(gpu.create(device)) << gpu.log().toStdString();
+
+        // A whole frame at 2x, and a viewport crop at an odd size (phases off the grid)
+        const CRTBeamModel::Layout layouts[] = {MakeLayout(704, 576), MakeLayout(1001, 787, QRect(16, 8, 320, 272))};
+        for (const CRTBeamModel::Layout& layout : layouts)
+        {
+            auto target = device->CreateTexture(layout.outWidth, layout.outHeight, gpu::Format::RGBA8);
+            ASSERT_TRUE(target);
+            for (CRTProfile profile : Models())
+            {
+                CRTBeamModel model;
+                const std::vector<uint8_t> cpu = Compose(model, layout, profile, frame.data(), kFrameWidth * 4);
+                gpu.uploadTables(model);
+                gpu.uploadFrame(model);
+                gpu.draw(model, *target, {0, 0, layout.outWidth, layout.outHeight});
+                std::vector<uint8_t> picture(cpu.size());
+                ASSERT_TRUE(device->Read(*target, {0, 0, layout.outWidth, layout.outHeight}, picture.data())) << Key(profile);
+                // GL rows bottom first
+                int differ = 0;
+                int firstX = -1;
+                int firstY = -1;
+                for (int y = 0; y < layout.outHeight; ++y)
+                {
+                    const uint8_t* g = &picture[static_cast<size_t>(layout.outHeight - 1 - y) * layout.outWidth * 4];
+                    const uint8_t* c = &cpu[static_cast<size_t>(y) * layout.outWidth * 4];
+                    for (int x = 0; x < layout.outWidth; ++x)
+                        if (std::memcmp(g + x * 4, c + x * 4, 3) != 0 && differ++ == 0)
+                        {
+                            firstX = x;
+                            firstY = y;
+                        }
+                }
+                EXPECT_EQ(differ, 0) << Key(profile) << " at " << layout.outWidth << "x" << layout.outHeight
+                                     << ", first at " << firstX << "," << firstY << " on " << device->Describe();
+            }
+        }
+        gpu.destroy();
+    }
 }
 
 TEST(CRTBeamModel_Test, AgainstLibrashader)

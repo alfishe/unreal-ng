@@ -13,7 +13,7 @@ NvencEncoder (encoder_base.h interface)
         ├── NVENC Session (nvEncOpenEncodeSessionEx)
         ├── Buffer Queue (8 input/output pairs for B-frame pipeline)
         ├── Mp4Muxer (native MP4 container with ctts for B-frames)
-        └── NV12 conversion (RGBA → NV12 BT.601)
+        └── NV12 conversion (RGBA → NV12 BT.709 limited, VUI-tagged BT.709 / sRGB transfer)
 ```
 
 ## Key Files

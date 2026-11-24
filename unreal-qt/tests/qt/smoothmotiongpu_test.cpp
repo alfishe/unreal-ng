@@ -3,21 +3,25 @@
 /// field block for block, the same blend, interpolation, extrapolation and masked composition bit for bit, LayerFlow's
 /// pictures bit for bit (more vectors than the cap, the cover rule's worst content, a picture cut into stripes, frames
 /// known by their ids), and the engine on the GPU device the same pictures as on the CPU.
-/// The test needs an OpenGL 3.3 core context: the offscreen platform has none on macOS (UNREAL_QT_TEST_PLATFORM=cocoa),
-/// it skips without one.
+/// Every test on both backends of the GPU layer: GL needs an OpenGL 3.3 core context (the offscreen platform has none
+/// on macOS: UNREAL_QT_TEST_PLATFORM=cocoa), Vulkan a 1.3 device; each skips without its own.
 
 #include <gtest/gtest.h>
 
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "_helpers/testtier.h"
 #include "emulator/video/smoothlayers.h"
 #include "emulator/video/smoothmotion.h"
 #include "emulator/video/smoothscenes.h"
+#include "gpu/gldevice.h"
 #include "widgets/smoothmotiongpu.h"
+#include "sharedvulkandevice.h"
 
 using namespace smoothmotion;
 
@@ -99,28 +103,6 @@ Image LayerScene(int width, int height, int k)
     return img;
 }
 
-class GLContext
-{
-public:
-    bool create()
-    {
-        QSurfaceFormat format;
-        format.setRenderableType(QSurfaceFormat::OpenGL);
-        format.setVersion(3, 3);
-        format.setProfile(QSurfaceFormat::CoreProfile);
-        _context.setFormat(format);
-        if (!_context.create() || _context.isOpenGLES() || _context.format().version() < qMakePair(3, 3))
-            return false;
-        _surface.setFormat(_context.format());
-        _surface.create();
-        return _context.makeCurrent(&_surface);
-    }
-
-private:
-    QOpenGLContext _context;
-    QOffscreenSurface _surface;
-};
-
 /// The first pixel where two pictures differ, or -1
 long FirstDifference(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b)
 {
@@ -129,15 +111,70 @@ long FirstDifference(const std::vector<uint32_t>& a, const std::vector<uint32_t>
             return static_cast<long>(i);
     return a.size() == b.size() ? -1 : static_cast<long>(std::min(a.size(), b.size()));
 }
+/// A device of the backend the test runs on, the passes created on it
+class SmoothMotionGPU_Test : public ::testing::TestWithParam<gpu::Device::Backend>
+{
+protected:
+    void SetUp() override
+    {
+        if (GetParam() == gpu::Device::Backend::GL)
+        {
+            QSurfaceFormat format;
+            format.setRenderableType(QSurfaceFormat::OpenGL);
+            format.setVersion(3, 3);
+            format.setProfile(QSurfaceFormat::CoreProfile);
+            _context.setFormat(format);
+            if (!_context.create() || _context.isOpenGLES() || _context.format().version() < qMakePair(3, 3))
+                GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
+            _surface.setFormat(_context.format());
+            _surface.create();
+            if (!_context.makeCurrent(&_surface))
+                GTEST_SKIP() << "the GL context is not made current";
+            _gl = gpu::GlDevice::Create();
+            _device = _gl.get();
+        }
+        else
+        {
+#ifdef UNREAL_VULKAN
+            std::string error;
+            _device = testgpu::SharedVulkanDevice(error);  // the run's: one device made, not one a test
+            if (!_device)
+                GTEST_SKIP() << "no Vulkan: " << error;
+#else
+            GTEST_SKIP() << "built without Vulkan";
+#endif
+        }
+        ASSERT_TRUE(_device);
+        ASSERT_TRUE(gpu.Create(_device)) << gpu.Log().toStdString();
+    }
+
+    void TearDown() override
+    {
+        gpu.Destroy();
+        _device = nullptr;
+        _gl.reset();
+        if (_context.isValid())
+            _context.doneCurrent();
+    }
+
+    SmoothMotionGPU gpu;
+
+private:
+    QOpenGLContext _context;
+    QOffscreenSurface _surface;
+    std::unique_ptr<gpu::Device> _gl;  ///< GL: the test's own (its context)
+    gpu::Device* _device = nullptr;   ///< the device the test draws on (Vulkan: the run's)
+};
 }  // namespace
 
-TEST(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
+INSTANTIATE_TEST_SUITE_P(Backends, SmoothMotionGPU_Test,
+                         ::testing::Values(gpu::Device::Backend::GL, gpu::Device::Backend::Vulkan),
+                         [](const ::testing::TestParamInfo<gpu::Device::Backend>& info) {
+                             return info.param == gpu::Device::Backend::GL ? std::string("GL") : std::string("Vulkan");
+                         });
+
+TEST_P(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
 {
-    GLContext context;
-    if (!context.create())
-        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
-    SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
     gpu.SetFieldsOnGpu(true);
 
     // An odd size (a partial block row and column), motion along both axes, both ranges
@@ -193,16 +230,10 @@ TEST(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
             EXPECT_EQ(FirstDifference(out.pixels, cpu.pixels), -1) << "masked compose at " << w;
         }
     }
-    gpu.Destroy();
 }
 
-TEST(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
+TEST_P(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
 {
-    GLContext context;
-    if (!context.create())
-        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
-    SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
 
     // An odd size (a partial block row and column); the first pair after a seek (p = a, everything still before)
     LayerFlow cpu;
@@ -232,16 +263,10 @@ TEST(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
         }
     EXPECT_GT(asks, 0) << "the aliases rule asked the GPU";
     EXPECT_GT(edges, 0) << "the regions rule asked the GPU";
-    gpu.Destroy();
 }
 
-TEST(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
+TEST_P(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
 {
-    GLContext context;
-    if (!context.create())
-        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
-    SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
 
     constexpr int64_t kPeriod = 20'000'000;
     SmoothMotion cpu, onGpu;
@@ -274,18 +299,12 @@ TEST(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
     }
     EXPECT_GT(onGpu.GetStats().onDevice, 0u);
     EXPECT_EQ(cpu.GetStats().onDevice, 0u);
-    gpu.Destroy();
 }
 
-TEST(SmoothMotionGPU_Test, TheWorstContentIsTheCpusBits)
+TEST_P(SmoothMotionGPU_Test, TheWorstContentIsTheCpusBits)
 {
     // More vectors than the cap (a block a vector of its own) and every still pixel asking the cover rule about many
     // moving vectors: the GPU keeps the CPU's vectors and bits. The screen's size in the long tier
-    GLContext context;
-    if (!context.create())
-        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
-    SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
     const int width = TestTier::Long() ? 352 : 96, height = TestTier::Long() ? 288 : 64;
     LayerFlow cpu;
     for (bool layered : {false, true})
@@ -310,20 +329,16 @@ TEST(SmoothMotionGPU_Test, TheWorstContentIsTheCpusBits)
             EXPECT_EQ(gpu.LastLayerCounts().vectors, static_cast<int>(layers.all.size()));
         }
         if (!layered)
+        {
             EXPECT_EQ(layers.all.size(), LayerFlow::kMaxVectors) << "the scene reaches the cap";
+        }
     }
-    gpu.Destroy();
 }
 
-TEST(SmoothMotionGPU_Test, FramesAreKnownByTheirIds)
+TEST_P(SmoothMotionGPU_Test, FramesAreKnownByTheirIds)
 {
     // A frame with an id is not compared again: the same id, the texture it is in. A new id uploads; pictures
     // without one compare their pixels. Released buffers come back on the next step
-    GLContext context;
-    if (!context.create())
-        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
-    SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
     const Image f0 = LayerScene(96, 64, 0), f1 = LayerScene(96, 64, 1), f2 = LayerScene(96, 64, 2),
                 f3 = LayerScene(96, 64, 3);
     const auto withId = [](const Image& img, uint64_t id) { return Picture{img.width, img.height, img.pixels.data(), id}; };
@@ -352,5 +367,4 @@ TEST(SmoothMotionGPU_Test, FramesAreKnownByTheirIds)
         if (round == 1)
             gpu.ReleaseBuffers();
     }
-    gpu.Destroy();
 }

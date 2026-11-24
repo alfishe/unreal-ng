@@ -129,7 +129,10 @@ void NeoGSZxDma::complete()
 {
     uint8_t& cell = _mem.ram()[_pendingAddress % _mem.ramSize()];
     if (_pending == Pending::Read)
+    {
         _readLatch = cell;
+        _host.zxRamRead(static_cast<uint32_t>(_pendingAddress % _mem.ramSize()));
+    }
     else
     {
         cell = _pendingData;

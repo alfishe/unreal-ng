@@ -22,6 +22,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -32,6 +34,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/history/exechistory.h"
+#include "debugger/history/historycontrol.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
 #include "debugger/search/memorysearch.h"
@@ -50,8 +53,14 @@
 #include "emulator/memory/rom.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/notifications.h"
+#include "emulator/slots/card.h"
 #include "emulator/slots/slotcontrol.h"
+#include "emulator/slots/slotmanager.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gsanalysisreport.h"
+#include "emulator/sound/chips/gs/gscommandlog.h"
+#include "emulator/sound/chips/gs/gsprofilereport.h"
 #include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicecatalog.h"
@@ -1449,6 +1458,517 @@ private:
             a = {true, action == "start" ? "port trace started" : action == "stop" ? "port trace stopped" : "port trace cleared"};
         });
         return a;
+    }
+
+    // The card a GS monitor reads: the GS slot's General Sound ("gs") or the ZX-MultiSound's ("ms"); null when none
+    static GeneralSoundCard * monitor_card(EmulatorContext * ctx, const std::string &card)
+    {
+        if (ctx == nullptr) return nullptr;
+        if (card == "ms") {
+            if (ctx->pSlotManager == nullptr) return nullptr;
+            for (const std::unique_ptr<ICard> &c : ctx->pSlotManager->Cards())
+                if (GeneralSoundCard * gs = c->DebugGeneralSound()) return gs;
+            return nullptr;
+        }
+        return ctx->pSoundManager != nullptr ? ctx->pSoundManager->getGeneralSound() : nullptr;
+    }
+
+    // The GS monitor in process: the card's report, its command log's newest records and the firmware's unknown
+    // commands, all read where the machine stands still (one coherent moment)
+    GsMonitor read_gs_monitor(const std::string &card, size_t last) override
+    {
+        GsMonitor out;
+        StateNode report, log, unknown;
+        bool found = false;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = monitor_card(ctx, card);
+            if (gs == nullptr) return;
+            found = true;
+            report = card == "ms" ? DeviceState::GeneralSoundReport(*gs, nullptr) : DeviceState::Gs(ctx);
+            const GSCommandLog * commands = gs->commandLog();
+            if (commands == nullptr) return;
+            out.log_device = commands->History().Device();
+            HistoryRequest request;
+            request.verb = "read";
+            request.device = out.log_device;
+            request.last = last;
+            const HistoryReply reply = HistoryControl::Execute(ctx, request);
+            if (reply.httpStatus == 200) log = reply.body;
+            if (!commands->On()) return;
+            GSFirmwareObjectsQuery query;
+            query.object = "unknown_commands";
+            query.cpu = card;
+            const GSFirmwareObjectsReply firmware = GSFirmwareObjectsRead(ctx, query);
+            if (firmware.status == 200) unknown = firmware.body;
+        });
+        if (!found) {
+            out.message = card == "ms" ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted";
+            return out;
+        }
+        out.ok = true;
+        auto str = [](const StateNode &o, const char * key) {
+            const StateNode * v = o.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::String ? v->s : std::string();
+        };
+        auto truth = [](const StateNode &o, const char * key) {
+            const StateNode * v = o.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::Bool && v->b;
+        };
+        auto num = [](const StateNode &o, const char * key, int64_t def = 0) -> int64_t {
+            const StateNode * v = o.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::Int ? v->i : def;
+        };
+        if (const StateNode * protocol = report.find("protocol")) {
+            out.protocol_on = truth(*protocol, "on");
+            out.protocol_text = str(*protocol, "text");
+        }
+        out.status = (int)num(report, "status", -1);
+        out.command_pending = truth(report, "command_pending");
+        out.data_pending = truth(report, "data_pending");
+        out.command_from_host = (int)num(report, "command_from_host", -1);
+        out.data_from_host = (int)num(report, "data_from_host", -1);
+        out.data_to_host = (int)num(report, "data_to_host", -1);
+        if (const StateNode * send = report.find("last_send"); send != nullptr && send->kind == StateNode::Kind::Object) {
+            out.has_last_send = true;
+            out.last_send_command = (int)num(*send, "command", -1);
+            out.last_send_name = str(*send, "name");
+            out.last_send_state = str(*send, "state");
+            if (const StateNode * replies = send->find("replies"))
+                for (const StateNode &r : replies->items) out.last_send_replies.push_back(r.kind == StateNode::Kind::Int ? (int)r.i : 0);
+        }
+        out.log_mode = str(log, "mode");
+        out.written = (uint64_t)num(log, "written");
+        out.kept = (uint64_t)num(log, "kept");
+        out.dropped = (uint64_t)num(log, "dropped");
+        if (const StateNode * records = log.find("records"))
+            for (const StateNode &r : records->items) {
+                GsMonitorRow row;
+                row.frame = num(r, "frame");
+                row.t = num(r, "t");
+                row.card_cycle = num(r, "card_cycle");
+                row.command = (int)num(r, "command", -1);
+                row.kind = str(r, "kind");
+                row.name = str(r, "name");
+                row.text = str(r, "text");
+                row.anomaly = str(r, "anomaly");
+                out.rows.push_back(std::move(row));
+            }
+        if (const StateNode * list = unknown.find("unknown_commands")) {
+            out.unknown_present = true;
+            for (const StateNode &u : list->items) {
+                const uint64_t count = (uint64_t)num(u, "count");
+                out.unknown.emplace_back((int)num(u, "command"), count);
+                out.unknown_total += count;
+            }
+        }
+        return out;
+    }
+    // The command log on or off in process: the history verb config (mode ring / off)
+    BoardAnswer gs_command_log(const std::string &card, bool on) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        GeneralSoundCard * gs = monitor_card(ctx, card);
+        const GSCommandLog * commands = gs != nullptr ? gs->commandLog() : nullptr;
+        if (commands == nullptr) return {false, "This card has no command log"};
+        HistoryRequest request;
+        request.verb = "config";
+        request.device = commands->History().Device();
+        request.mode = on ? "ring" : "off";
+        const HistoryReply reply = HistoryControl::Execute(ctx, request);
+        if (reply.httpStatus != 200) {
+            const StateNode * error = reply.body.find("error");
+            return {false, error != nullptr && error->kind == StateNode::Kind::String ? error->s : std::string("refused")};
+        }
+        return {true, "command log " + request.device + (on ? ": ring" : ": off")};
+    }
+
+    // A StateNode's member as text, number or truth (absent: "", the default, false)
+    static std::string node_str(const StateNode &o, const char * key)
+    {
+        const StateNode * v = o.find(key);
+        return v != nullptr && v->kind == StateNode::Kind::String ? v->s : std::string();
+    }
+    static int64_t node_num(const StateNode &o, const char * key, int64_t def = 0)
+    {
+        const StateNode * v = o.find(key);
+        return v != nullptr && v->kind == StateNode::Kind::Int ? v->i : def;
+    }
+    static bool node_truth(const StateNode &o, const char * key)
+    {
+        const StateNode * v = o.find(key);
+        return v != nullptr && v->kind == StateNode::Kind::Bool && v->b;
+    }
+    static unsigned int hex_value(const std::string &s)
+    {
+        if (s.empty()) return 0;
+        return (unsigned int)std::strtoul(s.c_str() + (s[0] == '#' ? 1 : 0), nullptr, 16);
+    }
+    // A struct field's value as a cell: a number under 256 decimal, a bigger one #hex; a list or a struct in brackets
+    static std::string field_text(const StateNode &v)
+    {
+        char b[16];
+        switch (v.kind) {
+        case StateNode::Kind::Int:
+            if (v.i < 256 || v.i > 0xFFFF) return std::to_string(v.i);
+            std::snprintf(b, sizeof(b), "#%04X", (unsigned int)v.i);
+            return b;
+        case StateNode::Kind::String: return v.s;
+        case StateNode::Kind::Array: {
+            std::string t = "[";
+            for (size_t i = 0; i < v.items.size(); i++) t += (i ? " " : "") + field_text(v.items[i]);
+            return t + "]";
+        }
+        case StateNode::Kind::Object: {
+            std::string t = "{";
+            for (size_t i = 0; i < v.members.size(); i++) t += (i ? ", " : "") + v.members[i].first + " " + field_text(v.members[i].second);
+            return t + "}";
+        }
+        default: return std::string();
+        }
+    }
+    // The label at @p pc in @p lm: the exact one (the mapped page's), else the nearest below within 256 bytes
+    // ("NAME+4"); "" none
+    static std::string label_near(LabelManager * lm, unsigned int pc)
+    {
+        if (lm == nullptr) return std::string();
+        if (std::shared_ptr<Label> l = lm->GetLabelByZ80Address((uint16_t)pc); l && l->active) return l->name;
+        const Label * best = nullptr;
+        for (const std::shared_ptr<Label> &l : lm->GetAllLabels())
+            if (l && l->active && l->address < pc && pc - l->address < 0x100 && (best == nullptr || l->address > best->address))
+                best = l.get();
+        return best != nullptr ? best->name + "+" + std::to_string(pc - best->address) : std::string();
+    }
+    static LabelManager * card_labels(EmulatorContext * ctx, const std::string &card)
+    {
+        if (ctx == nullptr || ctx->pDebugManager == nullptr) return nullptr;
+        return ctx->pDebugManager->GetLabelManager(card == "ms" ? DebugCpuId::MultiSoundGS : DebugCpuId::GS);
+    }
+
+    // The firmware objects in process (Dispatch, Unknown, Objects): GSFirmwareObjectsRead, the card's report and the
+    // handlers' labels, all where the machine stands still
+    GsFirmware read_gs_firmware(const std::string &card, const std::string &profile) override
+    {
+        GsFirmware out;
+        StateNode body, report;
+        int status = 0;
+        bool found = false;
+        std::map<unsigned int, std::string> labels;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = monitor_card(ctx, card);
+            if (gs == nullptr) return;
+            found = true;
+            report = card == "ms" ? DeviceState::GeneralSoundReport(*gs, nullptr) : DeviceState::Gs(ctx);
+            GSFirmwareObjectsQuery query;
+            query.profile = profile;
+            query.cpu = card;
+            GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(ctx, query);
+            status = reply.status;
+            body = std::move(reply.body);
+            LabelManager * lm = card_labels(ctx, card);
+            if (const StateNode * d = body.find("dispatch"); d != nullptr && lm != nullptr)
+                if (const StateNode * entries = d->find("entries"))
+                    for (const StateNode &e : entries->items) {
+                        const std::string h = node_str(e, "handler");
+                        if (h.empty()) continue;
+                        const unsigned int a = hex_value(h);
+                        if (labels.count(a)) continue;
+                        std::shared_ptr<Label> l = lm->GetLabelByZ80Address((uint16_t)a);
+                        labels[a] = l && l->active ? l->name : std::string();
+                    }
+        });
+        if (!found) {
+            out.message = card == "ms" ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted";
+            return out;
+        }
+        if (status != 200) {
+            out.message = node_str(body, "error");
+            if (out.message.empty()) out.message = "not read";
+            return out;
+        }
+        out.ok = true;
+        out.profile = node_str(body, "profile");
+        out.title = node_str(body, "title");
+        out.source = node_str(body, "source");
+        if (const StateNode * fp = report.find("firmware_profile")) {
+            out.rom_profile = node_str(*fp, "id");
+            out.rom_title = node_str(*fp, "title");
+        }
+        if (const StateNode * protocol = report.find("protocol")) {
+            out.log_on = node_truth(*protocol, "on");
+            out.top_profile = node_str(*protocol, "profile");
+            if (const StateNode * uploads = protocol->find("uploads"))
+                for (const StateNode &u : uploads->items) {
+                    GsUpload up;
+                    up.address = (unsigned int)node_num(u, "address");
+                    up.length = (uint64_t)node_num(u, "length");
+                    up.matched_length = (uint64_t)node_num(u, "matched_length", (int64_t)up.length);
+                    up.sha256 = node_str(u, "sha256");
+                    up.profile = node_str(u, "profile");
+                    up.frame = node_num(u, "frame");
+                    up.started = node_truth(u, "started");
+                    out.uploads.push_back(std::move(up));
+                }
+        }
+        if (const StateNode * d = body.find("dispatch")) {
+            out.has_dispatch = true;
+            out.table = node_str(*d, "table");
+            out.table_high = node_str(*d, "table_high");
+            out.patched = node_num(*d, "patched");
+            out.unknown = node_num(*d, "unknown");
+            if (const StateNode * entries = d->find("entries"))
+                for (const StateNode &e : entries->items) {
+                    GsDispatchEntry de;
+                    de.command = (int)node_num(e, "command");
+                    de.name = node_str(e, "name");
+                    de.readable = e.find("readable") == nullptr || node_truth(e, "readable");
+                    de.handler = hex_value(node_str(e, "handler"));
+                    if (de.readable) de.label = labels[de.handler];
+                    de.has_baseline = e.find("baseline") != nullptr;
+                    de.baseline = hex_value(node_str(e, "baseline"));
+                    de.patched = node_truth(e, "patched");
+                    de.patched_by = node_str(e, "patched_by");
+                    de.unknown = node_truth(e, "unknown");
+                    out.entries.push_back(std::move(de));
+                }
+        }
+        if (const StateNode * list = body.find("unknown_commands")) {
+            out.unknown_present = true;
+            for (const StateNode &u : list->items) out.unknown_commands.emplace_back((int)node_num(u, "command"), (uint64_t)node_num(u, "count"));
+        }
+        if (const StateNode * instances = body.find("instances"))
+            for (const StateNode &inst : instances->items) {
+                GsStructTable t;
+                t.name = node_str(inst, "name");
+                t.struct_name = node_str(inst, "struct");
+                t.at = node_str(inst, "at");
+                t.count = node_num(inst, "count");
+                t.size = node_num(inst, "size");
+                if (const StateNode * rows = inst.find("rows"))
+                    for (const StateNode &r : rows->items) {
+                        const StateNode * fields = r.find("fields");
+                        if (fields == nullptr) continue;
+                        if (t.columns.empty())
+                            for (const auto &m : fields->members) t.columns.push_back(m.first);
+                        std::vector<std::string> cells;
+                        for (const auto &m : fields->members) cells.push_back(field_text(m.second));
+                        t.row_at.push_back(node_str(r, "at"));
+                        t.rows.push_back(std::move(cells));
+                    }
+                out.structs.push_back(std::move(t));
+            }
+        if (const StateNode * vars = body.find("variables"))
+            for (const StateNode &v : vars->items) {
+                GsVariable gv;
+                gv.name = node_str(v, "name");
+                gv.kind = node_str(v, "kind");
+                gv.at = node_str(v, "at");
+                if (gv.at.empty()) gv.at = node_str(v, "register") + " " + node_str(v, "pc_range");
+                gv.meaning = node_str(v, "meaning");
+                gv.reason = node_str(v, "reason");
+                gv.valid = node_truth(v, "valid") && v.find("value") != nullptr;
+                gv.value = node_num(v, "value");
+                out.variables.push_back(std::move(gv));
+            }
+        return out;
+    }
+    std::vector<GsProfileInfo> gs_firmware_profiles() override
+    {
+        std::vector<GsProfileInfo> out;
+        const StateNode body = GSFirmwareProfilesState();
+        if (const StateNode * list = body.find("profiles"))
+            for (const StateNode &p : list->items) {
+                GsProfileInfo info;
+                info.id = node_str(p, "id");
+                info.title = node_str(p, "title");
+                info.source = node_str(p, "source");
+                info.commands = node_num(p, "commands");
+                info.structs = node_num(p, "structs");
+                info.instances = node_num(p, "instances");
+                info.variables = node_num(p, "variables");
+                out.push_back(std::move(info));
+            }
+        return out;
+    }
+
+    // The port writes in process (Writers): the command log's host records and the port trace's host and card sides
+    // read apart, where the machine stands still; the writers' labels from the main CPU's and the card's symbols
+    GsWrites read_gs_writes(const std::string &card) override
+    {
+        GsWrites out;
+        StateNode log;
+        bool found = false;
+        std::vector<GSTraceEvent> host, own;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = monitor_card(ctx, card);
+            if (gs == nullptr) return;
+            found = true;
+            out.card_cpu = gs->hasCoprocessor();
+            if (const GSCommandLog * commands = gs->commandLog()) {
+                out.log_device = commands->History().Device();
+                HistoryRequest request;
+                request.verb = "read";
+                request.device = out.log_device;
+                request.last = 400;
+                const HistoryReply reply = HistoryControl::Execute(ctx, request);
+                if (reply.httpStatus == 200) log = reply.body;
+            }
+            out.trace_present = true;
+            out.trace_capturing = gs->isPortTraceCapturing();
+            out.trace_kept = gs->getPortTraceEventCount();
+            out.trace_evicted = gs->getPortTraceTotalEvicted();
+            size_t matched = 0;
+            uint64_t last_seq = 0, evicted = 0;
+            for (const auto &e : gs->getPortTraceSide(GSTraceSide::Host, 0, 256, matched, last_seq, evicted))
+                if (e.second.isOut()) host.push_back(e.second);
+            for (const auto &e : gs->getPortTraceSide(GSTraceSide::GsInternal, 0, 1024, matched, last_seq, evicted))
+                if (e.second.isOut()) own.push_back(e.second);
+            out.trace_note = "the trace's host and card sides read apart";
+            // The writers' labels: the host's from the main CPU's symbols, the card's from its own
+            LabelManager * main_labels = ctx->pDebugManager != nullptr ? ctx->pDebugManager->GetLabelManager() : nullptr;
+            LabelManager * own_labels = card_labels(ctx, card);
+            std::map<unsigned int, std::string> main_cache, card_cache;
+            auto label_of = [](LabelManager * lm, std::map<unsigned int, std::string> &cache, unsigned int pc) {
+                auto it = cache.find(pc);
+                if (it == cache.end()) it = cache.emplace(pc, label_near(lm, pc)).first;
+                return it->second;
+            };
+            if (const StateNode * records = log.find("records"))
+                for (const StateNode &r : records->items) {
+                    const std::string kind = node_str(r, "kind");
+                    GsPortWrite w;
+                    w.host = true;
+                    w.kind = kind;
+                    if (kind == "command") {
+                        w.port = 0xBB;
+                        w.value = (unsigned int)node_num(r, "command");
+                    } else if (kind == "param" || kind == "data") {
+                        w.port = 0xB3;
+                        w.value = (unsigned int)node_num(r, "value");
+                    } else if (kind == "marker") {
+                        w.port = 0x33;
+                        w.value = 0x80;  // the card reset (#33 bit 7): the only #33 write the log keeps
+                    } else {
+                        continue;
+                    }
+                    w.frame = node_num(r, "frame");
+                    w.t = node_num(r, "t");
+                    w.card_cycle = node_num(r, "card_cycle", -1);
+                    w.has_pc = true;
+                    w.pc = (unsigned int)node_num(r, "pc");
+                    w.label = label_of(main_labels, main_cache, w.pc);
+                    w.source = "command log";
+                    out.writes.push_back(std::move(w));
+                }
+            for (const GSTraceEvent &e : host) {
+                GsPortWrite w;
+                w.host = true;
+                w.port = e.port & 0xFF;
+                w.value = e.value;
+                w.frame = e.frameNumber;
+                w.card_cycle = e.timestamp;
+                w.source = "port trace";
+                out.writes.push_back(std::move(w));
+            }
+            for (const GSTraceEvent &e : own) {
+                GsPortWrite w;
+                w.port = e.port & 0xFF;
+                w.value = e.value;
+                w.frame = e.frameNumber;
+                w.card_cycle = e.timestamp;
+                w.has_pc = true;
+                w.pc = e.pc;
+                w.label = label_of(own_labels, card_cache, w.pc);
+                w.source = "port trace";
+                out.writes.push_back(std::move(w));
+            }
+        });
+        if (!found) {
+            out.message = card == "ms" ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted";
+            return out;
+        }
+        out.ok = true;
+        out.log_mode = node_str(log, "mode");
+        return out;
+    }
+    BoardAnswer gs_port_trace(const std::string &card, const std::string &action) override
+    {
+        if (action != "start" && action != "stop" && action != "clear")
+            return {false, "Unknown action '" + action + "' (expected start, stop or clear)"};
+        ::Emulator * emu = m_emu.get();
+        BoardAnswer a{false, card == "ms" ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted"};
+        at_coherent_moment(emu, [&]() {
+            GeneralSoundCard * gs = monitor_card(emu->GetContext(), card);
+            if (gs == nullptr) return;
+            if (action == "start") gs->startPortTrace();
+            else if (action == "stop") gs->stopPortTrace();
+            else gs->clearPortTrace();
+            a = {true, "port trace " + action + (action == "stop" ? "ped" : "ed")};
+        });
+        return a;
+    }
+
+    // The profiler and analysis reports in process: the core's report on this thread under a lease of the context
+    // (the reads never park the machine: the WebAPI's handlers call the same on theirs)
+    GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query) override
+    {
+        auto get = [&query](const std::string &key) {
+            const auto it = query.find(key);
+            return it == query.end() ? std::string() : it->second;
+        };
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        std::string error;
+        StateNode n;
+        if (report == "profile") {
+            GSProfileQuery q;
+            if (!GSProfileQueryFromStrings(get("cpu"), get("routines"), get("activity"), q, error)) return {false, std::string(), error};
+            n = DeviceState::GsProfile(ctx, q);
+        } else if (report == "events") {
+            GSEventsQuery q;
+            if (!GSEventsQueryFromStrings(get("cpu"), get("first"), get("count"), get("rows"), q, error))
+                return {false, std::string(), error};
+            n = DeviceState::GsEvents(ctx, q);
+        } else if (report == "analysis") {
+            n = DeviceState::GsAnalysisStatus(ctx, get("cpu"));
+        } else if (report == "coverage" || report == "heatmap") {
+            GSAnalysisQuery q;
+            if (!GSAnalysisQueryFromParams(get, q, error)) return {false, std::string(), error};
+            n = report == "coverage" ? DeviceState::GsCoverage(ctx, q) : DeviceState::GsHeatmap(ctx, q);
+        } else {
+            return {false, std::string(), "Unknown GS report '" + report + "'"};
+        }
+        return {true, StateNodeToJsonText(n), std::string()};
+    }
+    GsJson gs_profiler(const std::string &card, const std::string &action) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        const GSProfileControlReply r = GSProfileControl(ctx, action, card);
+        return {r.status == 200, StateNodeToJsonText(r.body), r.text};
+    }
+    GsJson gs_analysis(const std::string &card, const std::string &action, int decay) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        GSAnalysisControlRequest request;
+        request.action = action;
+        request.cpu = card;
+        request.decay = decay;
+        const GSAnalysisReply r = GSAnalysisControl(ctx, request);
+        std::string message;
+        if (const StateNode * error = r.body.find("error")) message = error->s;
+        else if (const StateNode * text = r.body.find("text")) message = text->s;
+        return {r.status == 200, StateNodeToJsonText(r.body), message};
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads

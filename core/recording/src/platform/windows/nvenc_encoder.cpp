@@ -275,6 +275,20 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
     encCfg.frameIntervalP = (q >= 4) ? 3 : 1;
 
     // --- Profile & Codec-Specific Config ---
+    // The color tags: BT.709 matrix (FrameScaler::ScaleIntoNv12's arithmetic) and primaries, limited range, the sRGB
+    // transfer. The picture is an sRGB one: a BT.709 transfer tag makes macOS players show it lighter, an untagged
+    // file is played by guesses (tools/verification/recording/colors.py)
+    const auto tagColor = [](auto& vui)
+    {
+        vui.videoSignalTypePresentFlag = 1;
+        vui.videoFormat = NV_ENC_VUI_VIDEO_FORMAT_UNSPECIFIED;
+        vui.videoFullRangeFlag = 0;
+        vui.colourDescriptionPresentFlag = 1;
+        vui.colourPrimaries = NV_ENC_VUI_COLOR_PRIMARIES_BT709;
+        vui.transferCharacteristics = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SRGB;
+        vui.colourMatrix = NV_ENC_VUI_MATRIX_COEFFS_BT709;
+    };
+
     if (useHevc)
     {
         encCfg.profileGUID = NV_ENC_HEVC_PROFILE_MAIN_GUID;
@@ -299,6 +313,7 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
 
         // 4:2:0 chroma (matches NV12 input).
         hevc.chromaFormatIDC = 1;
+        tagColor(hevc.hevcVUIParameters);
     }
     else
     {
@@ -306,6 +321,7 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
 
         auto& h264 = encCfg.encodeCodecConfig.h264Config;
         h264.chromaFormatIDC = 1;
+        tagColor(h264.h264VUIParameters);
     }
 
     // --- Initialize ---
@@ -576,7 +592,7 @@ bool NvencEncoder::Impl::encodeFrame(const uint8_t* rgba)
     if (!beginFrame(bufferData, bufferPitch))
         return false;
 
-    // Nearest-neighbour scale x scaleFactor and BT.601 NV12 straight into the locked input buffer (Y, then the
+    // Nearest-neighbour scale x scaleFactor and BT.709 NV12 straight into the locked input buffer (Y, then the
     // interleaved UV plane below it at the same pitch). The SIMD FrameScaler path gives the bytes the former scalar
     // conversion and staging copy gave, 5-24x faster
     if (!FrameScaler::ScaleIntoNv12(rgba, srcWidth, srcHeight, bufferData, bufferPitch,

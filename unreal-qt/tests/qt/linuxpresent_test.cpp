@@ -154,6 +154,16 @@ TEST(LinuxPresent_Test, TheSwapWaitsForItsTimeAndGivesWayToALaterFrameDue)
     EXPECT_EQ(PlanSwap(10'000'000, 30'000'000, 31'000'000, 300'000, wake), SwapStep::Drop);
     // The next one not due yet: this one goes
     EXPECT_EQ(PlanSwap(10'000'000, 30'000'000, 12'000'000, 300'000, wake), SwapStep::Swap);
+    // Low latency: a frame at once gives way to a pile of later ones (frames faster than refreshes do not queue up)
+    EXPECT_EQ(PlanSwap(0, linuxpresent::kNextAtOnce, 5'000'000, 300'000, wake), SwapStep::Drop);
+    // One frame at once waiting is no pile: both are shown. Two are; a timed frame behind is told by its time
+    EXPECT_EQ(NextForPlan(0, 0), 0);
+    EXPECT_EQ(NextForPlan(1, 0), 0);
+    EXPECT_EQ(NextForPlan(2, 0), linuxpresent::kNextAtOnce);
+    EXPECT_EQ(NextForPlan(1, 30'000'000), 30'000'000);
+    // A timed frame keeps its place before a frame at once (a forced repaint of the picture before it)
+    EXPECT_EQ(PlanSwap(10'000'000, linuxpresent::kNextAtOnce, 12'000'000, 300'000, wake), SwapStep::Swap);
+    EXPECT_EQ(PlanSwap(10'000'000, linuxpresent::kNextAtOnce, 1'000'000, 300'000, wake), SwapStep::Wait);
 }
 
 TEST(LinuxPresent_Test, TheUstIsUsedOnlyOnTheSteadyClock)

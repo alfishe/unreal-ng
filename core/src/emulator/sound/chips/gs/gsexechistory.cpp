@@ -8,7 +8,7 @@
 
 #include "emulator/emulatorcontext.h"
 
-void GeneralSoundCard::recordExecStep(uint16_t pc)
+void GeneralSoundCard::pushExecStep(uint16_t pc)
 {
     if (_execContext && _execContext->ttdReplayActive)
         return;
@@ -34,15 +34,15 @@ bool GeneralSoundCard::execRecording() const
 
 void GeneralSoundCard::ExecRecorder::beforeStep(uint16_t pc)
 {
-    if (_card._execHistory && _card._execHistory->On())
-        _card.recordExecStep(pc);
+    _card.recordExecStep(pc);
     if (inner)
         inner->beforeStep(pc);
 }
 
 bool GeneralSoundCard::bindHooks()
 {
-    _execBound = _execHistory && _execHistory->On();
+    // The profiler takes the instructions through the recorder too
+    _execBound = (_execHistory && _execHistory->On()) || _profiler.On();
     _execRecorder.inner = _debuggerHooks;
     return setDebugHooks(_execBound && _debuggerHooks ? &_execRecorder : _debuggerHooks);
 }

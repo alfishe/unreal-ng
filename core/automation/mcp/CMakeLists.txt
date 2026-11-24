@@ -50,6 +50,8 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-jobs.cpp
     src/mcp-audio.h
     src/mcp-audio.cpp
+    src/mcp-gsanalysis.h
+    src/mcp-gsanalysis.cpp
     src/mcp-vdac4.h
     src/mcp-vdac4.cpp
     src/target-resolver.h

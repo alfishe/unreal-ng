@@ -67,6 +67,8 @@
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gszxdmatrace.h>
+#include <emulator/sound/chips/gs/gsprofilereport.h>
+#include <emulator/sound/chips/gs/gsanalysisreport.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
@@ -5740,6 +5742,90 @@ namespace PythonBindings
                "host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}], text}; last: the "
                "newest N bytes (0: all), since: the rows after this seq. Recorded while the GS port trace captures",
                py::arg("last") = 256, py::arg("since") = 0)
+            // The card CPU's profiler (gsprofilereport.h, gs-debugger X9 / X2 / X20)
+            .def("gs_profile", [](Emulator& self, const std::string& cpu, size_t routines, size_t activity) -> py::object {
+                GSProfileQuery query;
+                query.cpu = cpu;
+                query.routines = routines;
+                query.activity = activity;
+                return StateNodeToPy(DeviceState::GsProfile(self.GetContext(), query));
+            }, "The card CPU's profiler: {available, card, cpu, on, frames, period_cycles, isr: {last_frame, "
+               "since_start}, commands, current_command, routines, activity, text}; cpu 'gs' / 'ms', the top N routines "
+               "(0: all), the newest N frames of activity. Started with gs_profile_control('start')",
+               py::arg("cpu") = "", py::arg("routines") = 32, py::arg("activity") = 256)
+            .def("gs_profile_control", [](Emulator& self, const std::string& action, const std::string& cpu) -> py::object {
+                const GSProfileControlReply reply = GSProfileControl(self.GetContext(), action, cpu);
+                if (reply.status == 400)
+                    throw py::value_error(reply.text);
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "The profiler's start (cleared, then on), stop (the data kept) or clear: {action, cpu, card, on}",
+               py::arg("action"), py::arg("cpu") = "")
+            .def("gs_events", [](Emulator& self, const std::string& cpu, size_t first, size_t count, size_t rows) -> py::object {
+                GSEventsQuery query;
+                query.cpu = cpu;
+                query.first = first;
+                query.count = count;
+                query.rows = rows;
+                return StateNodeToPy(DeviceState::GsEvents(self.GetContext(), query));
+            }, "The last complete host frame per card interrupt period: {available, frame, period_cycles, periods, rows: "
+               "[{period, start, isr: [{accept, end, length, entry, nmi}], events: [[cycle, kind, value, detail]]}], "
+               "totals, text}",
+               py::arg("cpu") = "", py::arg("first") = 0, py::arg("count") = 0, py::arg("rows") = 16)
+            // The card CPU analysis (gsanalysisreport.h, gs-debugger P5.6): switch, coverage / CDL, heat map
+            .def("gs_analysis", [](Emulator& self, const std::string& action, const std::string& cpu, int decay) -> py::object {
+                GSAnalysisControlRequest request;
+                request.action = action;
+                request.cpu = cpu;
+                request.decay = decay;
+                const GSAnalysisReply reply = GSAnalysisControl(self.GetContext(), request);
+                const StateNode* error = reply.body.find("error");
+                if (reply.status == 400)
+                    throw py::value_error(error ? error->s : std::string("bad request"));
+                if (reply.status != 200)
+                    throw py::key_error(error ? error->s : std::string("no card"));
+                return StateNodeToPy(reply.body);
+            }, "The card CPU analysis switch: action status / on / off (keep the data) / reset (clear) / release (free); "
+               "cpu gs (default) or ms (the ZX-MultiSound's GS); decay the heat lost per frame (0-255, -1 keeps it). "
+               "Off by default; costs the card CPU nothing while off",
+               py::arg("action") = "status", py::arg("cpu") = "", py::arg("decay") = -1)
+            .def("gs_coverage", [](Emulator& self, const std::string& cpu, const std::string& space, int page,
+                                   int ranges, bool raw) -> py::object {
+                std::map<std::string, std::string> params{{"cpu", cpu}, {"space", space}, {"raw", raw ? "1" : ""}};
+                if (page >= 0)
+                    params["page"] = std::to_string(page);
+                if (ranges >= 0)
+                    params["ranges"] = std::to_string(ranges);
+                GSAnalysisQuery query;
+                std::string error;
+                if (!GSAnalysisQueryFromParams([&params](const std::string& key) { return params[key]; }, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::GsCoverage(self.GetContext(), query));
+            }, "Coverage / code-data log of the card CPU per physical page: {available, legend, spaces: [{space, totals, "
+               "page_list: [{page, exec, code, read, write, jump, sub, dac, written, code_ranges, data_ranges, "
+               "dac_ranges}]}], handlers: {executed, not_executed}, never_written: {rows: [{address, page, offset, pc, "
+               "frame, kind}]}, text}; space rom / ram, page one 16 KB page (with sub_entries, raw: its flag bytes)",
+               py::arg("cpu") = "", py::arg("space") = "", py::arg("page") = -1, py::arg("ranges") = 16,
+               py::arg("raw") = false)
+            .def("gs_heatmap", [](Emulator& self, const std::string& cpu, const std::string& channels,
+                                  const std::string& recent, int frames, int cells, const std::string& format) -> py::object {
+                std::map<std::string, std::string> params{{"cpu", cpu}, {"channels", channels}, {"recent", recent},
+                                                          {"format", format}};
+                if (frames >= 0)
+                    params["frames"] = std::to_string(frames);
+                if (cells >= 0)
+                    params["cells"] = std::to_string(cells);
+                GSAnalysisQuery query;
+                std::string error;
+                if (!GSAnalysisQueryFromParams([&params](const std::string& key) { return params[key]; }, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::GsHeatmap(self.GetContext(), query));
+            }, "The card RAM heat map: {cell_bytes, cells, group, columns, channels: [{name, accesses, hot_cells, max, "
+               "data (base64) | rows (hex)}], recent: {frames, channels: [{name, ranges: [{start, end, length, page, "
+               "offset}]}]}, text}; channels / recent comma lists of fetch, read, write, dac, sd_dma, zx_dma, all",
+               py::arg("cpu") = "", py::arg("channels") = "", py::arg("recent") = "", py::arg("frames") = 50,
+               py::arg("cells") = 4096, py::arg("format") = "base64")
             // The GS slot's statistics (gsslotstats.h, gs-debugger N7)
             .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since, const std::string& cpu) -> py::object {
                 GSStatsQuery query;

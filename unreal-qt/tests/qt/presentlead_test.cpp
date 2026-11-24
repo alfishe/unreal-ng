@@ -9,7 +9,8 @@
 namespace
 {
 constexpr int64_t kPeriod = 16'666'667;  // 60 Hz
-constexpr int64_t kLate = kPeriod + PresentLead::kJitterNs + 1;
+// A refresh late whatever offset the screen times have (the lead allows kMaxOffsetNs until it has measured it)
+constexpr int64_t kLate = kPeriod + PresentLead::kMaxOffsetNs + PresentLead::kJitterNs + 1;
 }  // namespace
 
 TEST(PresentLead_Test, TheStartIsKeptWithinTheBounds)
@@ -83,4 +84,35 @@ TEST(PresentLead_Test, ALateOneStartsTheRunOnTimeAfreshAndWideningStopsAtTheBoun
     // Uncounted presents (0) leave the numbers alone
     EXPECT_EQ(lead.LastLate(), 0u);
     EXPECT_EQ(lead.LastOnTime(), 0u);
+}
+
+TEST(PresentLead_Test, ScreenTimesAConstantLittleAfterTheVBlankAreNotLate)
+{
+    // The Steam Deck under gamescope (2026-11-22): frames shown at the first refresh after their time read 0.3 to
+    // 18.7 ms at 16.72 ms a refresh, gamescope's times 1.5-2 ms after the vblank. None is a refresh late
+    constexpr int64_t period = 16'720'000;
+    PresentLead lead(8'000'000);
+    lead.Margin(period);
+    for (uint64_t i = 0; i < 400; i++)
+        lead.Shown(1'900'000 + static_cast<int64_t>((i * 7919) % 1000) * 16'700, i + 1, 0);
+    EXPECT_EQ(lead.Late(), 0u);
+    EXPECT_EQ(lead.MarginNs(), 8'000'000);
+    EXPECT_NEAR(static_cast<double>(lead.OffsetNs()), 2'700'000.0, 900'000.0);
+
+    // One really a refresh late is still told
+    lead.Shown(period + 9'000'000, 401, 0);
+    EXPECT_EQ(lead.Late(), 1u);
+    EXPECT_EQ(lead.MarginNs(), 9'000'000);
+}
+
+TEST(PresentLead_Test, WithoutAnOffsetARefreshLateIsARefreshAndAMillisecond)
+{
+    // Screen times on the vblank (Metal, DXGI): once measured, the offset is none and the mark is the old one
+    PresentLead lead(8'000'000);
+    lead.Margin(kPeriod);
+    for (uint64_t i = 0; i < 200; i++)
+        lead.Shown(static_cast<int64_t>((i * 7919) % 1000) * 16'000, i + 1, 0);
+    EXPECT_LT(lead.OffsetNs(), 1'000'000);
+    lead.Shown(kPeriod + lead.OffsetNs() + PresentLead::kJitterNs + 1, 201, 0);
+    EXPECT_EQ(lead.Late(), 1u);
 }

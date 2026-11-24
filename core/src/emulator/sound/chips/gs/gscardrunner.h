@@ -118,7 +118,9 @@ public:
     }
 
     /// The execution history's loop: the fast loop's rounds with each instruction's PC told to the card first
-    /// (`card->recordExecStep(pc)`), no hooks; an idle sleep is one record (onSlept)
+    /// (`card->recordExecStep(pc)`) and each accepted INT / NMI with its acknowledge's units
+    /// (`card->recordExecInterrupt(nmi, units)`, the debug loop's too: the profiler), no hooks; an idle sleep is one
+    /// record (onSlept)
     template <class Policy = void>
     void runToRecord(int64_t target)
     {
@@ -195,6 +197,8 @@ private:
                 {
                     _now += units(t);
                     card->onNmiAccepted();
+                    if constexpr (kDebug || kRecord)
+                        card->recordExecInterrupt(true, units(t));
                     if constexpr (kDebug)
                         hooks->onEvent(GSCardEvent::Nmi, 0, 0);
                     continue;
@@ -208,6 +212,8 @@ private:
                 {
                     _now += units(t);
                     card->onIntAccepted();
+                    if constexpr (kDebug || kRecord)
+                        card->recordExecInterrupt(false, units(t));
                     if constexpr (kDebug)
                         hooks->onEvent(GSCardEvent::Int, 0, 0);
                 }
