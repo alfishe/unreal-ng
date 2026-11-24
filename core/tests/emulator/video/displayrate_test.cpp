@@ -203,3 +203,51 @@ TEST(DisplayRate_Test, VideoSyncKeepsItsStepWhileTheMachineIsNotSteady)
     EXPECT_EQ(PickVideoSync(false, 50.0, 0.0), VideoSync::Interpolate);
     EXPECT_EQ(PickVideoSync(true, 50.0, 0.0, VideoSync::Interpolate), VideoSync::Vrr);
 }
+
+TEST(DisplayRate_Test, SmoothGuardStepsDownOnLateOrSlowPictures)
+{
+    constexpr int64_t REFRESH = 16'666'667;
+    constexpr int64_t QUICK = 1'000'000;
+    SmoothGuard guard;
+    guard.Reset(100);
+    // In time: no step, window after window
+    for (uint32_t i = 0; i < SmoothGuard::kWindow * 3; i++)
+        EXPECT_FALSE(guard.Note(100, QUICK, REFRESH)) << i;
+    // The presenter's late presents: kLates of a window
+    uint64_t late = 100;
+    bool down = false;
+    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+    {
+        if (i < SmoothGuard::kLates)
+            late++;
+        down = guard.Note(late, QUICK, REFRESH);
+        if (i + 1 < SmoothGuard::kWindow)
+            EXPECT_FALSE(down) << "the verdict is the window's, not a picture's";
+    }
+    EXPECT_TRUE(down);
+    EXPECT_EQ(guard.ClosedLates(), SmoothGuard::kLates);
+    // One less: no step
+    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+    {
+        if (i + 1 < SmoothGuard::kLates)
+            late++;
+        down = guard.Note(late, QUICK, REFRESH);
+    }
+    EXPECT_FALSE(down);
+    // No presenter counts (the software screen): pictures drawn in most of a refresh tell
+    SmoothGuard software;
+    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+        down = software.Note(0, i < SmoothGuard::kLates ? REFRESH : QUICK, REFRESH);
+    EXPECT_TRUE(down);
+    EXPECT_EQ(software.ClosedSlow(), SmoothGuard::kLates);
+    EXPECT_EQ(software.ClosedLates(), 0u);
+    // Three quarters of a refresh is still in time
+    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+        down = software.Note(0, REFRESH * 3 / 4, REFRESH);
+    EXPECT_FALSE(down);
+    // A presenter set again counts from its number, not from zero
+    guard.Reset(5000);
+    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+        down = guard.Note(5000, QUICK, REFRESH);
+    EXPECT_FALSE(down);
+}

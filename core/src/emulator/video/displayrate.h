@@ -135,6 +135,47 @@ inline bool SmoothMotionHelps(bool vrr, double displayHz, double machineHz)
     return FitDisplayRate(displayHz, machineHz).error > kDisplayRateMaxError;
 }
 
+/// Smooth motion's step down: do the interpolated pictures reach the screen in time on this machine? Told per
+/// picture drawn by what the presenter saw (its count of late presents) and, where no presenter counts (the software
+/// screen), by the drawing itself taking most of a refresh. Of kWindow pictures, kLates late or slow ones: step down
+/// (the cheap interpolation, then the blend). The Steam Deck: 18.9 ms a picture on its GPU at 16.7 ms a refresh, 13
+/// pictures a second reached the screen
+class SmoothGuard
+{
+public:
+    static constexpr uint32_t kWindow = 20;
+    static constexpr uint32_t kLates = 4;
+
+    /// Start over; `latePresents`: the presenter's count now (0: none)
+    void Reset(uint64_t latePresents = 0)
+    {
+        _drawn = _lates = _slow = 0;
+        _lastLate = latePresents;
+    }
+    /// An interpolated picture drawn in `drawNs` at a refresh of `refreshNs`, the presenter's late presents at
+    /// `latePresents` so far. true: the window closed with too many late or slow pictures
+    bool Note(uint64_t latePresents, int64_t drawNs, int64_t refreshNs)
+    {
+        _lates += static_cast<uint32_t>(latePresents - (latePresents < _lastLate ? latePresents : _lastLate));
+        _lastLate = latePresents;
+        if (refreshNs > 0 && drawNs > refreshNs * 3 / 4)
+            _slow++;
+        if (++_drawn < kWindow)
+            return false;
+        _closedLates = _lates;
+        _closedSlow = _slow;
+        const bool down = _lates >= kLates || _slow >= kLates;
+        _drawn = _lates = _slow = 0;
+        return down;
+    }
+    uint32_t ClosedLates() const { return _closedLates; }  ///< of the last window closed
+    uint32_t ClosedSlow() const { return _closedSlow; }
+
+private:
+    uint32_t _drawn = 0, _lates = 0, _slow = 0, _closedLates = 0, _closedSlow = 0;
+    uint64_t _lastLate = 0;
+};
+
 inline VideoSync PickVideoSync(bool vrr, double displayHz, double machineHz, VideoSync last = VideoSync::Off)
 {
     if (vrr)
