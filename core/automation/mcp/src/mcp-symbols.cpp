@@ -359,9 +359,65 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
 
             if (action == "formats" || action == "sets")
             {
+                // An agent may see only the text: the sets / formats are listed there, not just in the structured answer
                 ResolveAndForward(args, "GET", action == "sets" ? withCpu("/symbols/sets") : "/symbols/formats", nullptr, caller,
-                                  action == "formats" ? "Symbol formats" : "Symbol sets",
-                                  done);
+                                  action == "formats" ? "Symbol formats" : "Symbol sets", [action, done](ToolResult result) {
+                    if (result.isError)
+                    {
+                        done(std::move(result));
+                        return;
+                    }
+                    std::ostringstream out;
+                    out << result.text;
+                    if (action == "sets")
+                    {
+                        const Json::Value& sets = result.structured["sets"];
+                        out << ": " << (sets.isArray() ? sets.size() : 0u) << " set(s)";
+                        if (result.structured["cpu"].isString())
+                            out << ", cpu " << result.structured["cpu"].asString();
+                        if (result.structured["labels"].isIntegral())
+                            out << ", " << result.structured["labels"].asUInt() << " label(s) resolved";
+                        if (sets.isArray())
+                        {
+                            for (const Json::Value& set : sets)
+                            {
+                                out << "\n" << set["id"].asString();
+                                if (set["title"].isString() && !set["title"].asString().empty())
+                                    out << " \"" << set["title"].asString() << "\"";
+                                out << ": " << set["symbols"].asUInt() << " symbol(s), priority " << set["priority"].asInt()
+                                    << (set["enabled"].asBool() ? "" : ", disabled");
+                                const Json::Value& origin = set["origin"];
+                                if (origin["kind"].isString())
+                                {
+                                    out << ", " << origin["kind"].asString();
+                                    if (origin["where"].isString() && !origin["where"].asString().empty())
+                                        out << " " << origin["where"].asString();
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        const Json::Value& formats = result.structured["formats"];
+                        out << ": " << (formats.isArray() ? formats.size() : 0u);
+                        if (formats.isArray())
+                        {
+                            for (const Json::Value& format : formats)
+                            {
+                                out << "\n" << format["id"].asString() << " \"" << format["title"].asString() << "\"";
+                                std::string extensions;
+                                for (const Json::Value& extension : format["extensions"])
+                                    extensions += (extensions.empty() ? "" : " ") + extension.asString();
+                                if (!extensions.empty())
+                                    out << " (" << extensions << ")";
+                                if (format["pages"].asBool())
+                                    out << ", pages";
+                            }
+                        }
+                    }
+                    result.text = out.str();
+                    done(std::move(result));
+                });
                 return;
             }
 
