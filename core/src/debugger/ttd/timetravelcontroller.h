@@ -299,6 +299,12 @@ public:
     void SetShadowRecordingRoot(const std::string& root) { _shadowRecordingRoot = root; }
     /// The folder the shadow session is written to (empty when none)
     std::string ShadowRecordingFolder() const;
+    /// A pause's file is still being written behind it (closed when written, at the next seek, or when the folder's
+    /// files are needed whole: a stop, a resume, a branch)
+    bool ShadowFilesFinishing() const { return _finishingWriter != nullptr; }
+    /// The folder's files whole on disk: waits for a pause's file still being written. A reader of the folder's
+    /// files by path (a folder joined into one file) calls it first
+    void WaitShadowFiles();
     /// The folder's free space as last checked (every 25 captures and at each new file)
     TTDDiskSpace ShadowDiskSpace() const { return _shadowDiskSpace; }
     /// Tests: the free bytes of the folder's volume (default: std::filesystem::space)
@@ -2491,6 +2497,11 @@ private:
     std::string _shadowRecordingRoot;
     std::unique_ptr<TTDRecordingFolder> _shadowFolder;
     std::unique_ptr<TTDRecordingWriter> _shadowWriter;
+    /// A pause's file still being written (FinishQueue done, FinishWait not yet): the pause does not wait for the
+    /// disk (a loaded host's writer backlog: 2-92 ms of a 6-118 ms pause, 2026-11-24). Closed when written (a seek
+    /// notices) or when anything needs the folder's files whole: WaitFinishingFiles
+    std::unique_ptr<TTDRecordingWriter> _finishingWriter;
+    bool _finishFilesInBackground = false;   ///< PauseRecordingForBrowsing: FinishLineFiles queues, does not wait
     /// Branches in the folder (storage.md §4): a file holds one line; only the active one records
     uint32_t _shadowWriterLine = 0;              ///< the engine line _shadowWriter writes
     std::set<uint32_t> _shadowLinesWithFiles;    ///< lines with a file in the folder
@@ -2528,6 +2539,10 @@ private:
     bool StartLineFiles(TimeTravelEngine& engine);
     /// The open writer finishes on its line; that line's next recording starts a segment of its own
     void FinishLineFiles();
+    /// The pause's file closed: waits for its writer (the folder's files are needed whole)
+    void WaitFinishingFiles();
+    /// The pause's file closed if its writer is done; never waits
+    void PollFinishingFiles();
     /// The branch's record for the branch table (identity, metadata, end)
     std::vector<uint8_t> BranchRecordBytes(uint32_t id) const;
     /// The shadow session's files: finished (stop, a new session) or deleted (invalidated)

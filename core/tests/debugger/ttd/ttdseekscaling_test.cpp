@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -183,11 +184,13 @@ protected:
         ASSERT_TRUE(_ttd->StartRecording());
     }
 
-    /// A browse: the first seek pauses the recording, which finishes the open file. The size of that file
+    /// A browse: the first seek pauses the recording, which finishes the open file (written behind the pause:
+    /// waited for here). The size of that file
     uint64_t PauseAndMeasure()
     {
         const ttd::TTDTimePoint end = _ttd->SessionEndPosition();
         EXPECT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));
+        _ttd->WaitShadowFiles();
         const std::vector<std::string> files = TrunkFiles(_ttd->ShadowRecordingFolder());
         return files.empty() ? 0 : FileBytes(files.back());
     }
@@ -516,6 +519,41 @@ TEST_F(TTDSeekScaling_Folder_Test, ASeekIntoEvictedHistoryLong)
     EXPECT_LT(evicted, resident * 2.5 + 1.5) << "resident " << resident << " ms";
 }
 
+/// A pause does not wait for the disk: the folder's open file is laid out and written behind it (a loaded host's
+/// writer backlog made pauses of 6-118 ms, 2-92 of them the wait, 2026-11-24). Here the writer threads write nothing
+/// until the test lets them: the pause returns with the file still being written, a resume waits for it, and the
+/// next pause's file and a stop after a pause end whole: the folder loads back every frame
+TEST_F(TTDSeekScaling_Folder_Test, APauseDoesNotWaitForTheDisk)
+{
+    Start(100);
+    _emulator->RunNFrames(250);
+    std::atomic<bool> disk{false};
+    ttd::TTDSessionWriter::SetWriteGateForTesting(&disk);
+    const ttd::TTDTimePoint end = _ttd->SessionEndPosition();
+    ASSERT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));   // the pause: returns with its file not written
+    EXPECT_TRUE(_ttd->ShadowFilesFinishing()) << "the pause's file is written behind it";
+    ASSERT_TRUE(_ttd->SeekTo({end.frame - 50, 0}));   // browsing goes on meanwhile
+    EXPECT_TRUE(_ttd->ShadowFilesFinishing());
+    disk = true;
+    ttd::TTDSessionWriter::SetWriteGateForTesting(nullptr);
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom(_ttd->SessionEndPosition()));   // waits for the paused file
+    EXPECT_FALSE(_ttd->ShadowFilesFinishing());
+    _emulator->RunNFrames(120);
+    const ttd::TTDTimePoint end2 = _ttd->SessionEndPosition();
+    ASSERT_TRUE(_ttd->SeekTo({end2.frame - 1, 0}));   // a second pause
+    _ttd->StopRecording();   // a stop after a pause: the files whole on return
+    EXPECT_FALSE(_ttd->ShadowFilesFinishing());
+
+    const std::vector<std::string> files = TrunkFiles(_ttd->ShadowRecordingFolder());
+    ASSERT_GE(files.size(), 2u);
+    ttd::TimeTravelEngine loaded;
+    std::string error;
+    ttd::TTDSessionLoadReport report;
+    ASSERT_TRUE(ttd::LoadRecording(loaded, files, 0, error, &report)) << error;
+    EXPECT_TRUE(report.complete) << report.stoppedAt;
+    EXPECT_EQ(loaded.CheckpointCount(), _ttd->GetEngine().CheckpointCount()) << "every checkpoint reached the disk";
+}
+
 /// Long tier: a folder recording with the write journal at N and 4N frames (segments of 250 frames). The first seek
 /// of a browse (the pause) and the seeks after it may not follow the length: medians, a loose bound (CI runs
 /// under load). Runtime: 2,000 frames of recording, about 1 s
@@ -525,11 +563,23 @@ TEST_F(TTDSeekScaling_Folder_Test, LongSession)
         GTEST_SKIP() << "long tier (UNREAL_LONG_TESTS=1)";
     Start(250);
     auto measure = [&](uint64_t frames, double& pauseMs, double& seekMs) {
-        _emulator->RunNFrames(static_cast<int>(frames));
-        const ttd::TTDTimePoint end = _ttd->SessionEndPosition();
-        const Clock::time_point p0 = Clock::now();
-        ASSERT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));
-        pauseMs = Ms(p0, Clock::now());
+        // The least of 3 pauses, 100 frames of recording apart: one pause is one sample, and a loaded host stalls
+        // a sample now and then (2 against 92 ms at load 52 on 20 cores, with the pause no longer waiting for the disk)
+        _emulator->RunNFrames(static_cast<int>(frames - 200));
+        ttd::TTDTimePoint end;
+        pauseMs = 1e9;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (i > 0)
+            {
+                ASSERT_TRUE(_ttd->ResumeRecordingFrom(_ttd->SessionEndPosition()));
+                _emulator->RunNFrames(100);
+            }
+            end = _ttd->SessionEndPosition();
+            const Clock::time_point p0 = Clock::now();
+            ASSERT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));
+            pauseMs = std::min(pauseMs, Ms(p0, Clock::now()));
+        }
         const uint64_t first = _ttd->GetEarliestRecordedFrame();
         std::mt19937 rng(9);
         std::vector<double> seeks;
@@ -548,7 +598,7 @@ TEST_F(TTDSeekScaling_Folder_Test, LongSession)
     double pause1 = 0, seek1 = 0, pause4 = 0, seek4 = 0;
     measure(500, pause1, seek1);
     measure(1500, pause4, seek4);   // 2,000 frames: 4x
-    std::printf("[ scaling  ] pause %.2f -> %.2f ms, seek (median of 40) %.3f -> %.3f ms\n", pause1, pause4, seek1, seek4);
+    std::printf("[ scaling  ] pause (least of 3) %.2f -> %.2f ms, seek (median of 40) %.3f -> %.3f ms\n", pause1, pause4, seek1, seek4);
     EXPECT_LT(pause4, pause1 * 2.0 + 20.0) << "the pause follows the history";
     EXPECT_LT(seek4, seek1 * 1.5 + 0.5) << "the seek follows the history";
     const Clock::time_point t0 = Clock::now();

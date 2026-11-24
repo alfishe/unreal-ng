@@ -234,7 +234,8 @@ Release build), reference workloads of §5.3.
   window and a pause and seek per cycle, lengths by
   `UNREAL_TTD_SEEK_SCALING`); the guards are `TTDSeekScaling_Folder_Test`
   (short tier) and its `LongSession` (500 and 2,000 frames: the pause and the
-  median seek do not follow the length; `UNREAL_LONG_TESTS=1`). Measured (20-core Mac at load 50-120, so tails are
+  median seek do not follow the length; `UNREAL_LONG_TESTS=1`; a pause does not
+  wait for the disk: the folder's open file is written behind it, see DONE.md P1.S10 pause). Measured (20-core Mac at load 50-120, so tails are
   noisy), 10k / 50k / 100k / 240k frames, before -> after:
   - pause + first seek: 652 / 2,423 / 4,532 / 10,990 ms -> 5.2 / 4.8 / 6.6 /
     19 ms;
