@@ -297,6 +297,9 @@ struct WindowRecorder::Writer
     QSize size;
     QRect screenRect, keyboardRect;
     int scale = 1;
+    // transfer nv12: the frame built in NV12 itself (composeNv12), the writer thread's alone
+    FrameScaler::PlaneScaler lumaScaler, chromaScaler;
+    std::vector<uint8_t> pictureYuv;  ///< the picture's Y, U, V planes at its own size (scaled from)
     MuxJob mux;
     bool native = false;   ///< the macOS hardware encoder writes the file itself (no ffmpeg, no muxing)
     bool nv12 = false;     ///< transfer nv12: the composed frame goes to ffmpeg as NV12 (else B,G,R,A)
@@ -522,6 +525,150 @@ struct WindowRecorder::Writer
             helper.join();
     }
 
+    /// One NV12 frame of transfer nv12 built in place: the background is written once per buffer, then only the
+    /// picture's rectangle every frame and the keyboard's when it changes
+    struct Nv12Frame
+    {
+        std::vector<uint8_t> bytes;  ///< Y plane (width x height), then the U,V pairs (width x height / 2)
+        bool background = false;     ///< the background is in
+        QImage keyboard;             ///< the keyboard drawn into it (a shared copy: compared with the next)
+    };
+
+    static bool Bgra(QImage::Format format)
+    {
+        return format == QImage::Format_RGB32 || format == QImage::Format_ARGB32 ||
+               format == QImage::Format_ARGB32_Premultiplied;
+    }
+
+    static bool Even(const QRect& rect)
+    {
+        return ((rect.x() | rect.y() | rect.width() | rect.height()) & 1) == 0;
+    }
+
+    /// Same pixels: the same image, or equal bytes
+    static bool SameImage(const QImage& a, const QImage& b)
+    {
+        if (a.isNull() || b.isNull())
+            return a.isNull() == b.isNull();
+        return a.size() == b.size() && a.format() == b.format() && a.bytesPerLine() == b.bytesPerLine() &&
+               (a.cacheKey() == b.cacheKey() ||
+                std::memcmp(a.constBits(), b.constBits(), static_cast<size_t>(a.sizeInBytes())) == 0);
+    }
+
+    /// Whether composeNv12 takes this job: even rectangles (NV12's 2x2 chroma blocks), a 32-bit picture no larger
+    /// than its place (a smaller one is scaled up; Qt's area averaging stays for the rare one to scale down)
+    bool canComposeNv12(const Job& job) const
+    {
+        const QImage& picture = job.picture;
+        const QImage::Format format = picture.format();
+        if (scale != 1 || !(Bgra(format) || format == QImage::Format_RGBA8888) || picture.width() < 4 ||
+            picture.height() < 4 || picture.width() > screenRect.width() || picture.height() > screenRect.height() ||
+            !Even(screenRect) || !QRect(QPoint(0, 0), size).contains(screenRect))
+            return false;
+        return job.keyboard.isNull() || (Even(keyboardRect) && QRect(QPoint(0, 0), size).contains(keyboardRect));
+    }
+
+    /// The frame of transfer nv12 straight in NV12, no B,G,R,A frame: the picture converted at its own size and
+    /// scaled in its planes (Y at the place's size, U,V at half: a third of the samples of a 4K B,G,R,A frame), a
+    /// picture of its place's size converted into it. The layout's rectangles are even (canComposeNv12)
+    void composeNv12(Nv12Frame& out, const Job& job)
+    {
+        const int width = size.width();
+        const int height = size.height();
+        const size_t ySize = static_cast<size_t>(width) * height;
+        uint8_t* yPlane;
+        uint8_t* uvPlane;
+        if (out.bytes.size() != ySize * 3 / 2 || (job.keyboard.isNull() && !out.keyboard.isNull()))
+            out.background = false;
+        if (!out.background)
+        {
+            out.bytes.resize(ySize * 3 / 2);
+            // The background's Y and U,V: PackedToNv12 of a 2x2 block of it
+            const uint32_t argb = kBackground.rgb();
+            const uint8_t pixel[4] = {static_cast<uint8_t>(argb), static_cast<uint8_t>(argb >> 8),
+                                      static_cast<uint8_t>(argb >> 16), 255};
+            uint8_t block[16], y[4], uv[2];
+            for (int i = 0; i < 4; ++i)
+                std::memcpy(block + i * 4, pixel, 4);
+            FrameScaler::PackedToNv12(block, 8, 2, 2, y, 2, uv, 2, true);
+            std::memset(out.bytes.data(), y[0], ySize);
+            for (size_t at = ySize; at < out.bytes.size(); at += 2)
+            {
+                out.bytes[at] = uv[0];
+                out.bytes[at + 1] = uv[1];
+            }
+            out.background = true;
+            out.keyboard = QImage();
+        }
+        yPlane = out.bytes.data();
+        uvPlane = yPlane + ySize;
+        const size_t stride = static_cast<size_t>(width);
+
+        const QImage& picture = job.picture;
+        const bool bgra = Bgra(picture.format());
+        const uint32_t pw = static_cast<uint32_t>(picture.width());
+        const uint32_t ph = static_cast<uint32_t>(picture.height());
+        const uint32_t rw = static_cast<uint32_t>(screenRect.width());
+        const uint32_t rh = static_cast<uint32_t>(screenRect.height());
+        uint8_t* yAt = yPlane + static_cast<size_t>(screenRect.y()) * stride + screenRect.x();
+        uint8_t* uvAt = uvPlane + static_cast<size_t>(screenRect.y() / 2) * stride + screenRect.x();
+        const size_t srcStride = static_cast<size_t>(picture.bytesPerLine());
+        constexpr int kParts = 4;
+        std::function<void(int)> band;
+        if (pw == rw && ph == rh)
+        {
+            band = [&](int part)
+            {
+                const uint32_t first = rh / 2 * part / kParts * 2;
+                const uint32_t last = rh / 2 * (part + 1) / kParts * 2;
+                FrameScaler::PackedToNv12(picture.constBits() + first * srcStride, srcStride, rw, last - first,
+                                          yAt + first * stride, stride, uvAt + first / 2 * stride, stride, bgra);
+            };
+        }
+        else
+        {
+            // Converted at its own size (a few hundred thousand pixels), then each plane scaled: Y to the place,
+            // U and V to half of it, written as NV12's pairs
+            const size_t planeSize = static_cast<size_t>(pw) * ph;
+            pictureYuv.resize(planeSize * 3);
+            FrameScaler::PackedToYuv(picture.constBits(), srcStride, pw, ph, bgra, pictureYuv.data(),
+                                     pictureYuv.data() + planeSize, pictureYuv.data() + planeSize * 2, pw);
+            lumaScaler.Prepare(pw, ph, rw, rh);
+            chromaScaler.Prepare(pw, ph, rw / 2, rh / 2);
+            // By value: the band runs after this block (planeSize is its own)
+            const uint8_t* planes = pictureYuv.data();
+            band = [this, planes, planeSize, pw, rh, yAt, uvAt, stride](int part)
+            {
+                lumaScaler.Rows(planes, pw, yAt, stride, rh * part / kParts, rh * (part + 1) / kParts);
+                chromaScaler.RowsInterleaved(planes + planeSize, planes + planeSize * 2, pw, uvAt, stride,
+                                             rh / 2 * part / kParts, rh / 2 * (part + 1) / kParts);
+            };
+        }
+        std::thread helpers[kParts - 1];
+        for (int part = 1; part < kParts; ++part)
+            helpers[part - 1] = std::thread(band, part);
+        band(0);
+        for (std::thread& helper : helpers)
+            helper.join();
+
+        // The keyboard over the background, as QPainter draws it (its corners are transparent), when it changed
+        if (!job.keyboard.isNull() && !SameImage(job.keyboard, out.keyboard))
+        {
+            QImage drawn(keyboardRect.size(), QImage::Format_ARGB32_Premultiplied);
+            drawn.fill(kBackground);
+            {
+                QPainter painter(&drawn);
+                painter.drawImage(QPoint(0, 0), job.keyboard);
+            }
+            FrameScaler::PackedToNv12(drawn.constBits(), static_cast<size_t>(drawn.bytesPerLine()),
+                                      static_cast<uint32_t>(drawn.width()), static_cast<uint32_t>(drawn.height()),
+                                      yPlane + static_cast<size_t>(keyboardRect.y()) * stride + keyboardRect.x(), stride,
+                                      uvPlane + static_cast<size_t>(keyboardRect.y() / 2) * stride + keyboardRect.x(),
+                                      stride, true);
+            out.keyboard = job.keyboard;
+        }
+    }
+
 #ifdef __APPLE__
     /// The macOS hardware encoder (AVAssetWriter / VideoToolbox) writes picture and sound into one file itself. The
     /// picture goes straight into the encoder's own pixel buffer; a picture is held until the next one's time, so
@@ -671,6 +818,9 @@ struct WindowRecorder::Writer
         // QImage took 4.1 ms on Windows, a reused one 2.0; the same on Linux and macOS). lastSent points at one of them
         QImage frames[2];
         std::vector<uint8_t> converted[2];  // transfer nv12: the frame of the same index as NV12
+        Nv12Frame nv12Frames[2];            // transfer nv12 built in NV12 itself (composeNv12)
+        bool lastDirect = false;            // the last frame sent was built by composeNv12 (lastSent is a stand-in)
+        QImage lastPicture, lastKeyboard;   // its picture and keyboard (compared with the next)
         int composing = 0;
         const QImage* lastSent = nullptr;   // the composed frame last sent (compared with the next one)
         QByteArrayView lastSentBytes;       // its bytes as ffmpeg got them (the frame's, or its NV12)
@@ -763,11 +913,35 @@ struct WindowRecorder::Writer
             // B,G,R,A bytes on a little-endian host: the stream's order. Premultiplied, QPainter's own format (the
             // keyboard drawn into plain ARGB32 took most of a frame's time at 1080p); the frame is opaque, so the bytes
             // are the same
+            if (nv12 && canComposeNv12(job))
+            {
+                // Compared by the picture and the keyboard (a few hundred KB, not the 4K frame), built only when sent
+                const bool same = lastSent && lastDirect && job.frameStart < lastSentFrame + resendFrames &&
+                                  SameImage(job.picture, lastPicture) && SameImage(job.keyboard, lastKeyboard);
+                if (feedSound() && !same)
+                {
+                    Nv12Frame& out = nv12Frames[composing];
+                    composeNv12(out, job);
+                    lastPicture = job.picture;
+                    lastKeyboard = job.keyboard;
+                    sendFrame(&frames[composing],
+                              QByteArrayView(reinterpret_cast<const char*>(out.bytes.data()),
+                                             static_cast<qsizetype>(out.bytes.size())),
+                              job.frameStart);
+                    lastDirect = true;
+                    composing ^= 1;
+                }
+                framesDone = job.frameStart + job.repeat;
+                if (!pumpSound())
+                    fail("ffmpeg stopped taking the sound");
+                pictureHandled(pictureStartUs);
+                continue;
+            }
             QImage& frame = frames[composing];
             if (frame.size() != size)
                 frame = QImage(size, QImage::Format_ARGB32_Premultiplied);
             composeInto(frame, job);
-            const bool same = lastSent && job.frameStart < lastSentFrame + resendFrames &&
+            const bool same = lastSent && !lastDirect && job.frameStart < lastSentFrame + resendFrames &&
                               std::memcmp(frame.constBits(), lastSent->constBits(),
                                           static_cast<size_t>(frame.sizeInBytes())) == 0;
             if (feedSound() && !same)
@@ -781,6 +955,7 @@ struct WindowRecorder::Writer
                     bytes = QByteArrayView(reinterpret_cast<const char*>(out.data()), static_cast<qsizetype>(out.size()));
                 }
                 sendFrame(&frame, bytes, job.frameStart);
+                lastDirect = false;
                 composing ^= 1;  // the frame sent is kept; the next one goes into the other buffer
             }
             framesDone = job.frameStart + job.repeat;
@@ -1082,6 +1257,14 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         _size = QSize(width, (picture.height() + height) & ~1);
         _screenRect = QRect(QPoint(0, 0), picture);
         _keyboardRect = QRect(0, picture.height(), width, height);
+    }
+    if (request.transfer == "nv12")
+    {
+        // NV12 colours 2x2 blocks: the frame is built in place only on even rectangles (a pixel off the centre)
+        const auto even = [](const QRect& rect)
+        { return rect.isEmpty() ? rect : QRect(rect.x() & ~1, rect.y() & ~1, rect.width() & ~1, rect.height() & ~1); };
+        _screenRect = even(_screenRect);
+        _keyboardRect = even(_keyboardRect);
     }
 
     // The machine's frame rate, exact (3500000/71680 on a Pentagon): the sound's clock is the same frames

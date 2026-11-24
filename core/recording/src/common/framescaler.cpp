@@ -1,6 +1,7 @@
 #include "framescaler.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -372,10 +373,13 @@ void LumaRow(const uint8_t* FRAMESCALER_RESTRICT rgba, uint32_t count, uint8_t* 
         out[x] = LumaOf(rgba[x * 4 + R], rgba[x * 4 + 1], rgba[x * 4 + B]);
 }
 
-/// U and V of each of `count` pixels (into two arrays)
+/// U and V of each of `count` pixels (into two arrays); B,G,R,A pixels with `Bgra`
+template <bool Bgra = false>
 void ChromaRow(const uint8_t* FRAMESCALER_RESTRICT rgba, uint32_t count, uint8_t* FRAMESCALER_RESTRICT u,
                uint8_t* FRAMESCALER_RESTRICT v)
 {
+    constexpr int R = Bgra ? 2 : 0;
+    constexpr int B = Bgra ? 0 : 2;
     uint32_t x = 0;
 #if FRAMESCALER_NEON
     auto chroma8 = [](uint16x8_t r16, uint16x8_t g16, uint16x8_t b16, uint8x8_t& uOut, uint8x8_t& vOut) {
@@ -398,18 +402,23 @@ void ChromaRow(const uint8_t* FRAMESCALER_RESTRICT rgba, uint32_t count, uint8_t
     {
         const uint8x16x4_t p = vld4q_u8(rgba + static_cast<size_t>(x) * 4);
         uint8x8_t u0, v0, u1, v1;
-        chroma8(vmovl_u8(vget_low_u8(p.val[0])), vmovl_u8(vget_low_u8(p.val[1])), vmovl_u8(vget_low_u8(p.val[2])), u0,
+        chroma8(vmovl_u8(vget_low_u8(p.val[R])), vmovl_u8(vget_low_u8(p.val[1])), vmovl_u8(vget_low_u8(p.val[B])), u0,
                 v0);
-        chroma8(vmovl_u8(vget_high_u8(p.val[0])), vmovl_u8(vget_high_u8(p.val[1])),
-                vmovl_u8(vget_high_u8(p.val[2])), u1, v1);
+        chroma8(vmovl_u8(vget_high_u8(p.val[R])), vmovl_u8(vget_high_u8(p.val[1])),
+                vmovl_u8(vget_high_u8(p.val[B])), u1, v1);
         vst1q_u8(u + x, vcombine_u8(u0, u1));
         vst1q_u8(v + x, vcombine_u8(v0, v1));
     }
 #elif FRAMESCALER_SSE2
     const __m128i low = _mm_set1_epi32(0x00FF00FF);
-    const __m128i coefURB = _mm_set1_epi32(static_cast<int>((112u << 16) | static_cast<uint16_t>(-38)));
+    // 16-bit lanes (byte 0, byte 2) of each pixel: (R, B), or (B, R) with Bgra: the coefficients swap with them
+    const __m128i coefURB =
+        Bgra ? _mm_set1_epi32(static_cast<int>((static_cast<uint32_t>(static_cast<uint16_t>(-38)) << 16) | 112u))
+             : _mm_set1_epi32(static_cast<int>((112u << 16) | static_cast<uint16_t>(-38)));
     const __m128i coefUGA = _mm_set1_epi32(static_cast<uint16_t>(-74));
-    const __m128i coefVRB = _mm_set1_epi32(static_cast<int>((static_cast<uint32_t>(static_cast<uint16_t>(-18)) << 16) | 112u));
+    const __m128i coefVRB =
+        Bgra ? _mm_set1_epi32(static_cast<int>((112u << 16) | static_cast<uint16_t>(-18)))
+             : _mm_set1_epi32(static_cast<int>((static_cast<uint32_t>(static_cast<uint16_t>(-18)) << 16) | 112u));
     const __m128i coefVGA = _mm_set1_epi32(static_cast<uint16_t>(-94));
     const __m128i half = _mm_set1_epi32(128);
     auto chroma4 = [&](const uint8_t* p, __m128i& cu, __m128i& cv) {
@@ -436,7 +445,7 @@ void ChromaRow(const uint8_t* FRAMESCALER_RESTRICT rgba, uint32_t count, uint8_t
     }
 #endif
     for (; x < count; x++)
-        ChromaOf(rgba[x * 4], rgba[x * 4 + 1], rgba[x * 4 + 2], u[x], v[x]);
+        ChromaOf(rgba[x * 4 + R], rgba[x * 4 + 1], rgba[x * 4 + B], u[x], v[x]);
 }
 
 /// The interleaved U,V row of NV12 from two pixel rows: one pair per 2x2 block, of the block's average color
@@ -969,5 +978,183 @@ const uint8_t* Scaler::Scale(const uint8_t* src, uint32_t srcW, uint32_t srcH, u
     DrawPicture(srcWords, srcW, srcH, layout, outWords, dstStride, false);
 
     return _output.data();
+}
+void PackedToYuv(const uint8_t* src, size_t srcStride, uint32_t w, uint32_t h, bool bgra, uint8_t* y, uint8_t* u,
+                 uint8_t* v, size_t planeStride)
+{
+    for (uint32_t row = 0; row < h; row++)
+    {
+        const uint8_t* line = src + static_cast<size_t>(row) * srcStride;
+        const size_t at = static_cast<size_t>(row) * planeStride;
+        if (bgra)
+        {
+            LumaRow<true>(line, w, y + at);
+            ChromaRow<true>(line, w, u + at, v + at);
+        }
+        else
+        {
+            LumaRow<false>(line, w, y + at);
+            ChromaRow<false>(line, w, u + at, v + at);
+        }
+    }
+}
+
+namespace
+{
+constexpr int kCubicBits = 14;  ///< weight scale
+constexpr int kCubicMid = 6;    ///< fraction bits kept between the horizontal and the vertical pass
+
+/// Keys' cubic convolution, a = -0.6 (ffmpeg's bicubic default: Mitchell-Netravali B = 0, C = 0.6)
+double KeysCubic(double x)
+{
+    constexpr double a = -0.6;
+    x = std::fabs(x);
+    if (x < 1)
+        return ((a + 2) * x - (a + 3)) * x * x + 1;
+    if (x < 2)
+        return ((a * x - 5 * a) * x + 8 * a) * x - 4 * a;
+    return 0;
+}
+}  // namespace
+
+PlaneScaler::Axis PlaneScaler::MakeAxis(uint32_t src, uint32_t dst)
+{
+    Axis axis;
+    axis.first.resize(dst);
+    axis.weights.resize(static_cast<size_t>(dst) * 4);
+    const int last = static_cast<int>(src) - 1;
+    for (uint32_t i = 0; i < dst; i++)
+    {
+        const double centre = (i + 0.5) * src / dst - 0.5;
+        const int base = static_cast<int>(std::floor(centre)) - 1;
+        double raw[4], sum = 0;
+        for (int k = 0; k < 4; k++)
+            sum += raw[k] = KeysCubic(centre - (base + k));
+        int weight[4], total = 0;
+        for (int k = 0; k < 4; k++)
+            total += weight[k] = static_cast<int>(std::lround(raw[k] / sum * (1 << kCubicBits)));
+        weight[1] += (1 << kCubicBits) - total;  // exact unity: a flat plane stays the same
+        // Taps off the picture take its edge sample: they fold onto the 4 samples from `low`, all inside it
+        const int low = std::clamp(base, 0, last - 3);
+        int folded[4] = {0, 0, 0, 0};
+        for (int k = 0; k < 4; k++)
+            folded[std::clamp(base + k, 0, last) - low] += weight[k];
+        axis.first[i] = low;
+        for (int k = 0; k < 4; k++)
+            axis.weights[static_cast<size_t>(i) * 4 + k] = static_cast<int16_t>(folded[k]);
+    }
+    return axis;
+}
+
+bool PlaneScaler::Prepare(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH)
+{
+    if (srcW < 4 || srcH < 4 || dstW == 0 || dstH == 0)
+        return false;
+    if (srcW != _srcW || dstW != _dstW)
+        _x = MakeAxis(srcW, dstW);
+    if (srcH != _srcH || dstH != _dstH)
+        _y = MakeAxis(srcH, dstH);
+    _srcW = srcW;
+    _srcH = srcH;
+    _dstW = dstW;
+    _dstH = dstH;
+    return true;
+}
+
+namespace
+{
+/// The horizontal pass of one plane row: _dstW samples, kCubicMid fraction bits, `step` apart in `out`
+void CubicRow(const uint8_t* FRAMESCALER_RESTRICT row, const int32_t* first, const int16_t* weights, uint32_t count,
+              int16_t* FRAMESCALER_RESTRICT out)
+{
+    constexpr int shift = kCubicBits - kCubicMid;
+    constexpr int half = 1 << (shift - 1);
+    for (uint32_t x = 0; x < count; x++)
+    {
+        const uint8_t* p = row + first[x];
+        const int16_t* w = weights + static_cast<size_t>(x) * 4;
+        out[x] = static_cast<int16_t>((p[0] * w[0] + p[1] * w[1] + p[2] * w[2] + p[3] * w[3] + half) >> shift);
+    }
+}
+
+/// The vertical pass: 4 horizontally scaled rows into bytes
+inline uint8_t CubicColumn(int a, int b, int c, int d, int w0, int w1, int w2, int w3)
+{
+    constexpr int shift = kCubicBits + kCubicMid;
+    const int v = (a * w0 + b * w1 + c * w2 + d * w3 + (1 << (shift - 1))) >> shift;
+    return static_cast<uint8_t>(v < 0 ? 0 : v > 255 ? 255 : v);
+}
+}  // namespace
+
+void PlaneScaler::Rows(const uint8_t* src, size_t srcStride, uint8_t* dst, size_t dstStride, uint32_t firstRow,
+                       uint32_t endRow) const
+{
+    endRow = std::min(endRow, _dstH);
+    if (firstRow >= endRow)
+        return;
+    // A source row's horizontal pass serves every output row that uses it: a ring of 4, slot = source row & 3
+    std::vector<int16_t> ring(static_cast<size_t>(_dstW) * 4);
+    int ringRow[4] = {-1, -1, -1, -1};
+    for (uint32_t y = firstRow; y < endRow; y++)
+    {
+        const int16_t* rows[4];
+        for (int k = 0; k < 4; k++)
+        {
+            const int sourceRow = _y.first[y] + k;
+            int16_t* slot = &ring[static_cast<size_t>(sourceRow & 3) * _dstW];
+            if (ringRow[sourceRow & 3] != sourceRow)
+            {
+                CubicRow(src + static_cast<size_t>(sourceRow) * srcStride, _x.first.data(), _x.weights.data(), _dstW,
+                         slot);
+                ringRow[sourceRow & 3] = sourceRow;
+            }
+            rows[k] = slot;
+        }
+        const int16_t* w = &_y.weights[static_cast<size_t>(y) * 4];
+        const int w0 = w[0], w1 = w[1], w2 = w[2], w3 = w[3];
+        const int16_t* FRAMESCALER_RESTRICT r0 = rows[0];
+        const int16_t* FRAMESCALER_RESTRICT r1 = rows[1];
+        const int16_t* FRAMESCALER_RESTRICT r2 = rows[2];
+        const int16_t* FRAMESCALER_RESTRICT r3 = rows[3];
+        uint8_t* FRAMESCALER_RESTRICT out = dst + static_cast<size_t>(y) * dstStride;
+        for (uint32_t x = 0; x < _dstW; x++)
+            out[x] = CubicColumn(r0[x], r1[x], r2[x], r3[x], w0, w1, w2, w3);
+    }
+}
+
+void PlaneScaler::RowsInterleaved(const uint8_t* srcU, const uint8_t* srcV, size_t srcStride, uint8_t* dst,
+                                  size_t dstStride, uint32_t firstRow, uint32_t endRow) const
+{
+    endRow = std::min(endRow, _dstH);
+    if (firstRow >= endRow)
+        return;
+    const size_t n = _dstW;
+    std::vector<int16_t> ring(n * 8);  // 4 slots, each the U row then the V row
+    int ringRow[4] = {-1, -1, -1, -1};
+    for (uint32_t y = firstRow; y < endRow; y++)
+    {
+        const int16_t* rows[4];
+        for (int k = 0; k < 4; k++)
+        {
+            const int sourceRow = _y.first[y] + k;
+            int16_t* slot = &ring[static_cast<size_t>(sourceRow & 3) * n * 2];
+            if (ringRow[sourceRow & 3] != sourceRow)
+            {
+                const size_t at = static_cast<size_t>(sourceRow) * srcStride;
+                CubicRow(srcU + at, _x.first.data(), _x.weights.data(), _dstW, slot);
+                CubicRow(srcV + at, _x.first.data(), _x.weights.data(), _dstW, slot + n);
+                ringRow[sourceRow & 3] = sourceRow;
+            }
+            rows[k] = slot;
+        }
+        const int16_t* w = &_y.weights[static_cast<size_t>(y) * 4];
+        const int w0 = w[0], w1 = w[1], w2 = w[2], w3 = w[3];
+        uint8_t* FRAMESCALER_RESTRICT out = dst + static_cast<size_t>(y) * dstStride;
+        for (size_t x = 0; x < n; x++)
+        {
+            out[x * 2] = CubicColumn(rows[0][x], rows[1][x], rows[2][x], rows[3][x], w0, w1, w2, w3);
+            out[x * 2 + 1] = CubicColumn(rows[0][n + x], rows[1][n + x], rows[2][n + x], rows[3][n + x], w0, w1, w2, w3);
+        }
+    }
 }
 }  // namespace FrameScaler

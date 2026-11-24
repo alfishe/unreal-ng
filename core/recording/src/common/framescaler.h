@@ -56,6 +56,43 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
 void PackedToNv12(const uint8_t* rgba, size_t srcStride, uint32_t w, uint32_t h, uint8_t* yDst, size_t yStride,
                   uint8_t* uvDst, size_t uvStride, bool bgra = false);
 
+/// Per-pixel Y, U and V planes (w x h each, rows `planeStride` bytes apart) of a packed picture: the arithmetic of
+/// PackedToNv12 without the 2x2 chroma average. `bgra`: B,G,R,A pixels (a QImage RGB32 / ARGB32), else R,G,B,A
+void PackedToYuv(const uint8_t* src, size_t srcStride, uint32_t w, uint32_t h, bool bgra, uint8_t* y, uint8_t* u,
+                 uint8_t* v, size_t planeStride);
+
+/// Smooth scaling of one 8-bit plane (or of the U and V planes into NV12's interleaved one): separable bicubic, the
+/// kernel of ffmpeg's `scale=flags=bicubic` (Keys a = -0.6), pixel centres aligned, edges clamped. The window
+/// recorder's transfer nv12 scales the picture in Y / U,V instead of a 4K B,G,R,A frame (a third of the samples, no
+/// conversion of the big frame). Fixed point: weights 14 bits, 6 fraction bits between the passes. Output rows are
+/// independent: a call takes a range, callers split them over threads
+class PlaneScaler
+{
+public:
+    /// The weights for srcW x srcH into dstW x dstH (kept while the sizes stay); false for a source side under 4
+    /// samples or a zero size
+    bool Prepare(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH);
+
+    /// Output rows [firstRow, endRow): `src` rows `srcStride` bytes apart, `dst` at the target's top left
+    void Rows(const uint8_t* src, size_t srcStride, uint8_t* dst, size_t dstStride, uint32_t firstRow,
+              uint32_t endRow) const;
+
+    /// The same for two planes written interleaved (U,V pairs: NV12's chroma plane); dstW counts the pairs
+    void RowsInterleaved(const uint8_t* srcU, const uint8_t* srcV, size_t srcStride, uint8_t* dst, size_t dstStride,
+                         uint32_t firstRow, uint32_t endRow) const;
+
+private:
+    struct Axis
+    {
+        std::vector<int32_t> first;    ///< the first of 4 source samples per output position (inside the plane)
+        std::vector<int16_t> weights;  ///< 4 per output position, summing to 1 << 14
+    };
+    static Axis MakeAxis(uint32_t src, uint32_t dst);
+
+    uint32_t _srcW = 0, _srcH = 0, _dstW = 0, _dstH = 0;
+    Axis _x, _y;
+};
+
 /// One reusable scaler: holds the output buffer and remembers where the bars are
 class Scaler
 {

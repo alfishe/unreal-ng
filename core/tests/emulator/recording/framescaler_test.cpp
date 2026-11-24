@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -428,3 +430,155 @@ TEST(FrameScaler_Test, ScaleInto_NonWholeFactorFitsWithBarsAndSwaps)
         for (uint32_t x = 0; x < 10; x++)
             ASSERT_EQ(PixelAt(dst.data(), 10, x, 2 + y), src[(y * 2 / 6) * 3 + x * 3 / 10]) << "x=" << x << " y=" << y;
 }
+
+/// region <PackedToYuv, PlaneScaler>
+
+namespace
+{
+std::vector<uint8_t> NoiseBytes(size_t count, uint32_t seed)
+{
+    std::vector<uint8_t> bytes(count);
+    uint32_t state = seed;
+    for (uint8_t& byte : bytes)
+    {
+        state = state * 1664525u + 1013904223u;
+        byte = static_cast<uint8_t>(state >> 24);
+    }
+    return bytes;
+}
+
+double KeysReference(double x)
+{
+    const double a = -0.6;
+    x = std::fabs(x);
+    return x < 1 ? ((a + 2) * x - (a + 3)) * x * x + 1 : x < 2 ? ((a * x - 5 * a) * x + 8 * a) * x - 4 * a : 0;
+}
+
+/// The kernel in doubles, edges clamped: the reference of the fixed point
+double CubicReference(const std::vector<uint8_t>& plane, uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh, uint32_t x,
+                      uint32_t y)
+{
+    const double cx = (x + 0.5) * sw / dw - 0.5, cy = (y + 0.5) * sh / dh - 0.5;
+    const int bx = static_cast<int>(std::floor(cx)) - 1, by = static_cast<int>(std::floor(cy)) - 1;
+    double sum = 0, wsum = 0;
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++)
+        {
+            const double w = KeysReference(cx - (bx + i)) * KeysReference(cy - (by + j));
+            const int sx = std::clamp(bx + i, 0, static_cast<int>(sw) - 1);
+            const int sy = std::clamp(by + j, 0, static_cast<int>(sh) - 1);
+            sum += w * plane[static_cast<size_t>(sy) * sw + sx];
+            wsum += w;
+        }
+    return std::clamp(sum / wsum, 0.0, 255.0);
+}
+}  // namespace
+
+TEST(FrameScaler_Test, PackedToYuv_LumaIsPackedToNv12sAndChromaOfFlatBlocksIsItsToo)
+{
+    // Every width 2..70 (the vector bodies and their tails); RGBA and the swapped BGRA give the same planes
+    for (uint32_t w = 2; w <= 70; w += 2)
+    {
+        const uint32_t h = 4;
+        std::vector<uint8_t> rgba = NoiseBytes(static_cast<size_t>(w) * h * 4, w);
+        for (uint32_t y = 0; y < h; y += 2)  // flat 2x2 blocks: their averaged chroma is any pixel's chroma
+            for (uint32_t x = 0; x < w; x += 2)
+                for (uint32_t dy = 0; dy < 2; dy++)
+                    for (uint32_t dx = 0; dx < 2; dx++)
+                        std::memcpy(&rgba[(static_cast<size_t>(y + dy) * w + x + dx) * 4],
+                                    &rgba[(static_cast<size_t>(y) * w + x) * 4], 4);
+        std::vector<uint8_t> bgra = rgba;
+        for (size_t p = 0; p < bgra.size(); p += 4)
+            std::swap(bgra[p], bgra[p + 2]);
+        std::vector<uint8_t> nvY(static_cast<size_t>(w) * h), nvUV(static_cast<size_t>(w) * h / 2);
+        FrameScaler::PackedToNv12(rgba.data(), w * 4, w, h, nvY.data(), w, nvUV.data(), w);
+        for (const bool swapped : {false, true})
+        {
+            std::vector<uint8_t> y(static_cast<size_t>(w) * h), u(y.size()), v(y.size());
+            FrameScaler::PackedToYuv((swapped ? bgra : rgba).data(), w * 4, w, h, swapped, y.data(), u.data(), v.data(), w);
+            ASSERT_EQ(y, nvY) << "width " << w << (swapped ? " bgra" : " rgba");
+            for (uint32_t row = 0; row < h; row += 2)
+                for (uint32_t x = 0; x < w; x += 2)
+                {
+                    ASSERT_EQ(u[static_cast<size_t>(row) * w + x], nvUV[static_cast<size_t>(row / 2) * w + x]) << w;
+                    ASSERT_EQ(v[static_cast<size_t>(row) * w + x], nvUV[static_cast<size_t>(row / 2) * w + x + 1]) << w;
+                }
+        }
+    }
+}
+
+TEST(FrameScaler_Test, PlaneScaler_SameSizeIsACopyAndAFlatPlaneStaysFlat)
+{
+    const uint32_t w = 37, h = 21;
+    const std::vector<uint8_t> plane = NoiseBytes(static_cast<size_t>(w) * h, 3);
+    std::vector<uint8_t> out(plane.size());
+    FrameScaler::PlaneScaler scaler;
+    ASSERT_TRUE(scaler.Prepare(w, h, w, h));
+    scaler.Rows(plane.data(), w, out.data(), w, 0, h);
+    EXPECT_EQ(out, plane);
+
+    const struct { uint32_t sw, sh, dw, dh; } sizes[] = {{8, 6, 16, 12}, {9, 7, 25, 19}, {40, 30, 13, 11}, {5, 4, 63, 47}};
+    for (const auto& s : sizes)
+    {
+        const std::vector<uint8_t> flat(static_cast<size_t>(s.sw) * s.sh, 77);
+        std::vector<uint8_t> scaled(static_cast<size_t>(s.dw) * s.dh);
+        ASSERT_TRUE(scaler.Prepare(s.sw, s.sh, s.dw, s.dh));
+        scaler.Rows(flat.data(), s.sw, scaled.data(), s.dw, 0, s.dh);
+        EXPECT_TRUE(std::all_of(scaled.begin(), scaled.end(), [](uint8_t b) { return b == 77; }))
+            << s.sw << "x" << s.sh << " -> " << s.dw << "x" << s.dh;
+    }
+}
+
+TEST(FrameScaler_Test, PlaneScaler_FixedPointIsWithinOneOfTheKernelInDoubles)
+{
+    const struct { uint32_t sw, sh, dw, dh; } sizes[] = {{37, 23, 101, 64}, {32, 24, 64, 48}, {50, 40, 31, 17}, {659, 9, 2636, 36}};
+    for (const auto& s : sizes)
+    {
+        const std::vector<uint8_t> plane = NoiseBytes(static_cast<size_t>(s.sw) * s.sh, s.sw);
+        std::vector<uint8_t> out(static_cast<size_t>(s.dw) * s.dh);
+        FrameScaler::PlaneScaler scaler;
+        ASSERT_TRUE(scaler.Prepare(s.sw, s.sh, s.dw, s.dh));
+        scaler.Rows(plane.data(), s.sw, out.data(), s.dw, 0, s.dh);
+        for (uint32_t y = 0; y < s.dh; y++)
+            for (uint32_t x = 0; x < s.dw; x++)
+                ASSERT_LE(std::fabs(out[static_cast<size_t>(y) * s.dw + x] - CubicReference(plane, s.sw, s.sh, s.dw, s.dh, x, y)), 1.0)
+                    << s.sw << "x" << s.sh << " -> " << s.dw << "x" << s.dh << " at " << x << "," << y;
+    }
+}
+
+TEST(FrameScaler_Test, PlaneScaler_BandsAndTheInterleavedPairGiveTheBytesOfWholeCalls)
+{
+    const uint32_t sw = 44, sh = 33, dw = 60, dh = 45, stride = 80;
+    const std::vector<uint8_t> u = NoiseBytes(static_cast<size_t>(sw) * sh, 5), v = NoiseBytes(u.size(), 6);
+    FrameScaler::PlaneScaler scaler;
+    ASSERT_TRUE(scaler.Prepare(sw, sh, dw, dh));
+    std::vector<uint8_t> wholeU(static_cast<size_t>(stride) * dh, 0x55), wholeV = wholeU;
+    scaler.Rows(u.data(), sw, wholeU.data(), stride, 0, dh);
+    scaler.Rows(v.data(), sw, wholeV.data(), stride, 0, dh);
+    std::vector<uint8_t> bands(static_cast<size_t>(stride) * dh, 0x55);
+    for (uint32_t first = 0; first < dh; first += 7)
+        scaler.Rows(u.data(), sw, bands.data(), stride, first, first + 7);
+    EXPECT_EQ(bands, wholeU);
+    EXPECT_EQ(bands[dw], 0x55) << "nothing written past the target's width";
+
+    std::vector<uint8_t> pairs(static_cast<size_t>(dw) * 2 * dh);
+    for (uint32_t first = 0; first < dh; first += 11)
+        scaler.RowsInterleaved(u.data(), v.data(), sw, pairs.data(), dw * 2, first, first + 11);
+    for (uint32_t y = 0; y < dh; y++)
+        for (uint32_t x = 0; x < dw; x++)
+        {
+            ASSERT_EQ(pairs[(static_cast<size_t>(y) * dw + x) * 2], wholeU[static_cast<size_t>(y) * stride + x]);
+            ASSERT_EQ(pairs[(static_cast<size_t>(y) * dw + x) * 2 + 1], wholeV[static_cast<size_t>(y) * stride + x]);
+        }
+}
+
+TEST(FrameScaler_Test, PlaneScaler_ASourceUnderFourSamplesOrAZeroSizeIsRefused)
+{
+    FrameScaler::PlaneScaler scaler;
+    EXPECT_FALSE(scaler.Prepare(3, 10, 20, 20));
+    EXPECT_FALSE(scaler.Prepare(10, 3, 20, 20));
+    EXPECT_FALSE(scaler.Prepare(10, 10, 0, 20));
+    EXPECT_TRUE(scaler.Prepare(4, 4, 1, 1));
+}
+
+/// endregion </PackedToYuv, PlaneScaler>

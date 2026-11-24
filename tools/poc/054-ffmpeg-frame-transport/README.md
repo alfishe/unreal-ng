@@ -219,3 +219,43 @@ record the same frames (84-85 distinct of 210), 4K H.264, `video/window/record/f
 - With a smaller picture, `nv12` scales it up in the writer (`QImage::scaled`, smooth, on the CPU, the path the Mac's
   own writer takes too) and loses to ffmpeg's scaler: there `picture` stays the right choice.
 
+## `transfer nv12` built in NV12 (2026-11-24)
+
+The frame of `transfer nv12` is now built in NV12 itself (`composeNv12` in the window recorder), no 4K B,G,R,A frame:
+
+- the background is written once per buffer, then only the picture's rectangle every frame; the keyboard is drawn
+  over the background and converted only when it changes;
+- a picture of its place's size is converted into it (`PackedToNv12`); a smaller one is converted at its own size
+  (`FrameScaler::PackedToYuv`, per-pixel Y, U, V) and scaled in its planes by `FrameScaler::PlaneScaler`: separable
+  bicubic, ffmpeg's kernel (Keys a = -0.6), Y to the place, U,V to half of it (a third of the samples of the 4K
+  B,G,R,A frame), 4 bands;
+- same frames are found by the picture and the keyboard (hundreds of KB), not a 4K memcmp;
+- the layout is made even in `nv12` (a pixel at most: NV12 colours 2x2 blocks). A picture larger than its place
+  (scaled down) keeps the old path (Qt's smooth scaling, `PackedToNv12` of the frame).
+
+Writer time per changed 4K frame (`old`: compose B,G,R,A + `PackedToNv12`; `new`: `composeNv12`), 7th Reality, the
+same 85 frames, h264, 4 interleaved rounds (a temporary diag build: `WRDIAG` per frame, `WR_NODIRECT` for the old
+path), median of the per-round medians:
+
+| Host | `picture_height` | old ms | new ms | new faster | wall of 200 stepped frames, old / new s |
+|:--|:--|--:|--:|:--|:--|
+| `.238` i7-11850H, VA-API, gcc | 0 (659x540 to 2636x2160) | 22.4 | 12.6 | 4/4 | 3.1-8.2 / 1.2-3.5 |
+| | 700 | 19.0 | 10.3 | 4/4 | 2.7-2.8 / 1.1-1.2 |
+| | 2160 | 17.2 | 11.1 | 4/4 | 2.3 / 1.3 |
+| `.20` M3 Ultra, VideoToolbox (via ffmpeg) | 700 | 10.2 | 8.5 | 4/4 | 1.35 / 1.0 |
+| | 0, 2160 | load 35 to 150 from other work: 3/4 and 4/4 rounds to new, numbers not usable | | | |
+
+The changed stages alone (`scratch` bench: fill + Qt smooth scale + drawImage + `PackedToNv12` in 4 bands vs
+`PackedToYuv` + `PlaneScaler` in 4 bands, RGB32 pictures as the window grabs, median of 20):
+
+| Case | `.40` 3975WX, MSVC: old / new ms | `.20` M3 Ultra (load 150): old / new ms |
+|:--|--:|--:|
+| 659x540 to 2636x2160 | 12.0 / 6.1 | 10.3-13.3 / 5.2-6.9 |
+| 854x700 at its own size | 5.5 / 0.4 | 2.2-3.9 / 0.5-1.2 |
+| 659x540 to 1708x1400 | 8.2 / 3.2 | 8.6-9.6 / 4.1-5.5 |
+| 352x288 to 2640x2160 | 25.8 / 5.4 | 10.0-16.0 / 6.4 |
+
+Quality, `.238`, old vs new path on the same frames: PSNR Y 41-44 dB, U,V 54-62 dB (bicubic instead of Qt's
+smooth scaling; nothing visible side by side); `picture_height 2160` gives the same bytes (PSNR inf). `.40` has no
+ffmpeg, so Windows was measured on the stages only.
+

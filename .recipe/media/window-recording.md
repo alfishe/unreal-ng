@@ -102,7 +102,8 @@ before the start: a delay changed while recording inserts silence (longer) or dr
   which, `native` for the Mac's own writer). Measured in POC 054: a 4K BGRA frame makes NVENC with ~20 % to spare
   and is too much for ffmpeg in front of Intel's encoder (21-44 fps); 4K NV12 gives NVENC 3.5x real time, Intel
   H.264 1.7x. Use `nv12` with `picture_height` at the frame's height (the CRT drawn at 4K): ffmpeg's CPU per frame
-  falls 4-6x. A smaller picture is scaled up in the writer on the CPU, slower than ffmpeg's scaler: keep `picture`.
+  falls 4-6x. A smaller picture is converted at its own size and scaled in NV12's planes in the writer (bicubic,
+  ffmpeg's kernel; the layout is made even, a pixel at most); `picture` still sends the fewest bytes and stays the lighter choice there.
 - **Frames** (`video/window/record/frames {frames}`): the machine must be paused (409 `not-paused`). Runs `frames` frames, each one drawn
   by the window and written before the next runs. No time limit on the emulator's side; an MCP client may have its
   own per-call timeout, so a few hundred frames per call keeps progress visible.

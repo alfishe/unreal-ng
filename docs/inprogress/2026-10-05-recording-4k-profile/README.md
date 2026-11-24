@@ -50,6 +50,10 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
 - ~~Window recorder: hand ffmpeg the frame at the target size as NV12~~ done 2026-11-23: `transfer` = `picture`
   (default) / `nv12` on every plane; worth it with the picture drawn at the frame's height (measurements in
   [POC 054](../../../tools/poc/054-ffmpeg-frame-transport/README.md#the-window-recorders-transfer-switch-2026-11-23)).
+- ~~`transfer nv12`: build the frame in NV12 (no 4K B,G,R,A compose and conversion)~~ done 2026-11-24: the picture
+  converted at its own size and scaled in its planes (`FrameScaler::PackedToYuv` + `PlaneScaler`, bicubic), the
+  writer 1.2-1.8x faster per changed frame on `.238` / `.20`, the stages 2-13x on `.40`
+  ([POC 054](../../../tools/poc/054-ffmpeg-frame-transport/README.md#transfer-nv12-built-in-nv12-2026-11-24)).
 - ~~SIMD for `PackedToNv12`; benchmark `FrameScaler` at 3840x2160 and decide on SIMD / threads~~ done 2026-11-20: NEON
   (arm64) and SSE2 (x86-64) row kernels for luma, per-pixel chroma and the 2x2 chroma blocks, byte-identical to the
   scalar formula (`PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth`). `core-benchmarks
