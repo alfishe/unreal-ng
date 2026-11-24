@@ -5,11 +5,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <utility>
 #include <vector>
 
+#include "_helpers/testtier.h"
 #include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/engine/ttdregion.h"
 
@@ -272,4 +274,181 @@ TEST(TTDPieceStore_Test, DecodeFromMovesAlongTheChainEitherWay)
     const TTDPieceId foreign = store.InternFirst(other.data());
     EXPECT_FALSE(store.DecodeFrom(ids[5], foreign, bytes.data(), damaged));
     EXPECT_FALSE(damaged);
+}
+
+namespace
+{
+/// A chain grown the way a capture grows it: the caller keeps the content of the chain's last anchor point from the
+/// first version stored after it, and hands it to Intern
+struct AnchoredChain
+{
+    TTDPieceStore& store;
+    std::vector<std::vector<uint8_t>> versions;
+    std::vector<TTDPieceId> ids;
+    TTDPieceId anchor = TTDPieceStore::kNone;
+    std::vector<uint8_t> anchorBytes = std::vector<uint8_t>(kTTDPieceSize);
+
+    AnchoredChain(TTDPieceStore& s, std::vector<uint8_t> first) : store(s)
+    {
+        ids.push_back(store.InternFirst(first.data()));
+        versions.push_back(std::move(first));
+    }
+    TTDPieceId Add(const std::vector<uint8_t>& next)
+    {
+        if (store.IsAnchorPoint(ids.back()) && anchor != ids.back())
+        {
+            anchor = ids.back();
+            anchorBytes = versions.back();
+        }
+        ids.push_back(store.Intern(ids.back(), versions.back().data(), next.data(), anchor, anchorBytes.data()));
+        versions.push_back(next);
+        return ids.back();
+    }
+};
+}  // namespace
+
+/// Every S-th version of a chain is a difference from the version S before it (its anchor), the others from the
+/// previous one: a decode of the chain's last versions applies (K - 1) / S + S - 1 differences, not K - 1 (a seek
+/// decodes every piece of memory through its chain; P1.S10 seek format). The K-th version is still stored whole
+TEST(TTDPieceStore_Test, AnchorPointsSkipTheVersionsBetween)
+{
+    TTDPieceStore::Params p;
+    p.chainLimit = 50;
+    p.skipStride = 7;
+    TTDPieceStore store(p);
+    AnchoredChain chain(store, Noise(3));
+    for (int i = 1; i <= 60; ++i)
+    {
+        auto next = chain.versions.back();
+        for (int k = 0; k < (i % 4 == 0 ? 500 : 2); ++k)   // XOR differences and byte ranges
+            next[(i * 131 + k * 7) % kTTDPieceSize] ^= static_cast<uint8_t>(1 + i + k);
+        const TTDPieceId id = chain.Add(next);
+        const int run = i % 50;   // the 50th version starts a chain again
+        ASSERT_EQ(store.RunOf(id), run) << "version " << i;
+        EXPECT_EQ(store.DepthOf(id), run / 7 + run % 7) << "version " << i;
+        if (run == 0)
+            EXPECT_EQ(store.EncodingOf(id), TTDPieceStore::Encoding::Full);
+        else
+            EXPECT_EQ(store.BaseOf(id), run % 7 == 0 ? chain.ids[i - 7] : chain.ids[i - 1]) << "version " << i;
+    }
+    EXPECT_EQ(store.GetWork().forcedFull, 1u);
+    for (size_t i = 0; i < chain.ids.size(); ++i)
+        EXPECT_EQ(Decoded(store, chain.ids[i]), chain.versions[i]) << "version " << i;
+    store.ResetWork();
+    Decoded(store, chain.ids[48]);
+    EXPECT_EQ(store.GetWork().linksDecoded, 12u) << "six anchors and six versions after the last, not 48";
+
+    // Along the chain: an anchor point and its anchor are neighbours; the version before an anchor point is not on
+    // its way (left to Decode)
+    bool damaged = false;
+    std::vector<uint8_t> bytes = chain.versions[7];
+    ASSERT_TRUE(store.DecodeFrom(chain.ids[14], chain.ids[7], bytes.data(), damaged));
+    EXPECT_EQ(bytes, chain.versions[14]);
+    ASSERT_TRUE(store.DecodeFrom(chain.ids[7], chain.ids[14], bytes.data(), damaged));
+    EXPECT_EQ(bytes, chain.versions[7]);
+    bytes = chain.versions[6];
+    EXPECT_FALSE(store.DecodeFrom(chain.ids[7], chain.ids[6], bytes.data(), damaged));
+    EXPECT_FALSE(damaged);
+    EXPECT_EQ(bytes, chain.versions[6]) << "untouched";
+
+    for (size_t i = chain.ids.size(); i-- > 0;)
+        store.Release(chain.ids[i]);
+    EXPECT_EQ(store.LiveVersions(), 0u) << "an anchor point holds its anchor like any difference its base";
+}
+
+/// An anchor the caller got wrong is not used: a version of another chain, or one that is not S versions back,
+/// leaves the new version a difference from the previous one, and it decodes to its content. A piece back at its
+/// anchor's content at an anchor point takes the anchor's version again (no empty difference is stored)
+TEST(TTDPieceStore_Test, AnAnchorThatIsNotTheChainsIsIgnored)
+{
+    TTDPieceStore::Params p;
+    p.skipStride = 4;
+    TTDPieceStore store(p);
+    const auto other = Noise(50);
+    const TTDPieceId foreign = store.InternFirst(other.data());   // an anchor point of its own chain (run 0)
+    std::vector<std::vector<uint8_t>> versions = {Noise(1)};
+    std::vector<TTDPieceId> ids = {store.InternFirst(versions[0].data())};
+    for (int i = 1; i <= 4; ++i)
+    {
+        auto next = versions.back();
+        next[i * 50] ^= 0x11;
+        ids.push_back(store.Intern(ids.back(), versions.back().data(), next.data(), foreign, other.data()));
+        versions.push_back(next);
+        EXPECT_EQ(store.BaseOf(ids.back()), ids[i - 1]) << "version " << i;
+        EXPECT_EQ(Decoded(store, ids.back()), versions.back()) << "version " << i;
+    }
+    EXPECT_EQ(store.DepthOf(ids[4]), 4u);
+
+    // Back to the anchor's content at the anchor point
+    TTDPieceStore same(p);
+    AnchoredChain chain(same, Noise(2));
+    for (int i = 1; i <= 3; ++i)
+    {
+        auto next = chain.versions.back();
+        next[i] ^= 0x40;
+        chain.Add(next);
+    }
+    const size_t live = same.LiveVersions();
+    const TTDPieceId back = chain.Add(chain.versions[0]);
+    EXPECT_EQ(back, chain.ids[0]);
+    EXPECT_EQ(same.RefCount(back), 3u) << "its own, the chain's first difference, the version again";
+    EXPECT_EQ(same.LiveVersions(), live);
+    EXPECT_EQ(Decoded(same, back), chain.versions[0]);
+    // The chain goes on from the anchor
+    auto next = chain.versions[0];
+    next[7] ^= 0x01;
+    const TTDPieceId after = chain.Add(next);
+    EXPECT_EQ(same.BaseOf(after), back);
+    EXPECT_EQ(same.RunOf(after), 1u);
+    EXPECT_EQ(Decoded(same, after), next);
+}
+
+/// Chains grown at random (a few bytes, a block, the whole piece, zeros, the anchor's content again), with the
+/// anchors a capture keeps: every version decodes to its content, no chain is longer than the bound the stride
+/// gives, and releasing every version newest first frees the store. The long tier grows 40 pieces through 3,000
+/// versions each (UNREAL_LONG_TESTS=1); the short one 6 pieces through 300 (a few milliseconds)
+TEST(TTDPieceStore_Test, RandomAnchoredChainsDecodeToTheirContent)
+{
+    TTDPieceStore::Params p;
+    p.chainLimit = 50;
+    p.skipStride = 7;
+    TTDPieceStore store(p);
+    const int pieces = TestTier::Pick<int>(6, 40);
+    const int versions = TestTier::Pick<int>(300, 3000);
+    uint32_t x = 12345;
+    auto next = [&x]() {
+        x = x * 1664525u + 1013904223u;
+        return x >> 8;
+    };
+    uint32_t deepest = 0;
+    for (int piece = 0; piece < pieces; ++piece)
+    {
+        AnchoredChain chain(store, Noise(100 + static_cast<uint32_t>(piece)));
+        for (int v = 1; v < versions; ++v)
+        {
+            std::vector<uint8_t> bytes = chain.versions.back();
+            const uint32_t kind = next() % 64;
+            if (kind == 0)
+                bytes.assign(kTTDPieceSize, 0);
+            else if (kind == 1)
+                bytes = Noise(next());
+            else if (kind < 4)
+                bytes = chain.anchorBytes;   // back to the anchor's content (zeros before the chain has one)
+            else if (kind < 16)
+                for (uint32_t k = 0, at = next() % 3000, n = 100 + next() % 900; k < n; ++k)
+                    bytes[at + k] = static_cast<uint8_t>(next());
+            else
+                for (uint32_t k = 0, n = 1 + next() % 6; k < n; ++k)
+                    bytes[next() % kTTDPieceSize] ^= static_cast<uint8_t>(1 + next() % 255);
+            const TTDPieceId id = chain.Add(bytes);
+            deepest = std::max<uint32_t>(deepest, store.DepthOf(id));
+        }
+        for (size_t i = 0; i < chain.ids.size(); i += (TestTier::Long() ? 1 : 3))
+            ASSERT_EQ(Decoded(store, chain.ids[i]), chain.versions[i]) << "piece " << piece << " version " << i;
+        for (size_t i = chain.ids.size(); i-- > 0;)
+            store.Release(chain.ids[i]);
+    }
+    EXPECT_LE(deepest, 49u / 7u + 6u) << "(K - 1) / S anchors and S - 1 versions after the last";
+    EXPECT_GT(deepest, 6u);
+    EXPECT_EQ(store.LiveVersions(), 0u);
 }

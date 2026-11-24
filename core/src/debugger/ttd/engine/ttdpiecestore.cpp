@@ -1,5 +1,6 @@
 #include "ttdpiecestore.h"
 
+#include <atomic>
 #include <cassert>
 #include <cstring>
 
@@ -12,6 +13,21 @@ namespace ttd
 namespace
 {
 constexpr uint32_t kPiece = kTTDPieceSize;
+std::atomic<uint16_t> g_defaultSkipStride{7};
+uint8_t RunByte(uint32_t run)
+{
+    return static_cast<uint8_t>(run < 255 ? run : 255);
+}
+}  // namespace
+
+uint16_t TTDPieceStore::DefaultSkipStride()
+{
+    return g_defaultSkipStride.load(std::memory_order_relaxed);
+}
+
+void TTDPieceStore::SetDefaultSkipStride(uint16_t stride)
+{
+    g_defaultSkipStride.store(stride, std::memory_order_relaxed);
 }
 
 TTDPieceId TTDPieceStore::Allocate()
@@ -70,6 +86,7 @@ TTDPieceId TTDPieceStore::Import(Encoding encoding, TTDPieceId base, uint16_t de
     v.encoding = encoding;
     v.crc32c = crc;
     v.depth = difference ? depth : 0;
+    v.run = RunByte(v.depth);   // not stored: at least the depth
     v.base = base;
     if (size)
         v.payload = _arena.Store(payload, static_cast<uint32_t>(size));
@@ -134,8 +151,8 @@ size_t TTDPieceStore::RangesSize(const uint8_t* diff)
     return size;
 }
 
-TTDPieceId TTDPieceStore::StoreRanges(TTDPieceId previous, uint32_t depth, const uint8_t* diff, size_t size,
-                                      uint32_t crc)
+TTDPieceId TTDPieceStore::StoreRanges(TTDPieceId previous, uint32_t depth, uint32_t run, const uint8_t* diff,
+                                      size_t size, uint32_t crc)
 {
     std::vector<uint8_t> payload;
     payload.reserve(size);
@@ -150,6 +167,7 @@ TTDPieceId TTDPieceStore::StoreRanges(TTDPieceId previous, uint32_t depth, const
     v.crc32c = crc;
     v.encoding = Encoding::Ranges;
     v.depth = static_cast<uint16_t>(depth);
+    v.run = RunByte(run);
     v.base = previous;
     v.payload = _arena.Store(payload.data(), static_cast<uint32_t>(payload.size()));
     AddRef(previous);   // a difference depends on its base
@@ -175,7 +193,8 @@ bool TTDPieceStore::ApplyRanges(const uint8_t* payload, size_t size, uint8_t* ou
     return true;
 }
 
-TTDPieceId TTDPieceStore::Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes)
+TTDPieceId TTDPieceStore::Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes,
+                                 TTDPieceId anchor, const uint8_t* anchorBytes)
 {
     if (previous == kNone)
         return InternFirst(bytes);
@@ -193,24 +212,49 @@ TTDPieceId TTDPieceStore::Intern(TTDPieceId previous, const uint8_t* previousByt
     if (codec::IsAllZero(bytes, kPiece))
         return StoreFull(bytes, crc);   // a Zero version
 
-    // The chain limit: a version that would reach depth K is stored Full
-    const uint32_t depth = uint32_t(_versions[previous].depth) + 1;
-    if (depth >= _params.chainLimit)
+    // The chain limit: the K-th version of a chain is stored Full
+    const uint32_t run = uint32_t(_versions[previous].run) + 1;
+    uint32_t depth = uint32_t(_versions[previous].depth) + 1;
+    if (depth >= _params.chainLimit || run >= _params.chainLimit)
     {
         _work.forcedFull++;
         return StoreFull(bytes, crc);
     }
 
+    // An anchor point (the S-th, 2S-th ... version): a difference from the anchor S versions back, so a decode
+    // skips the versions between. The anchor is checked to be that ancestor (the caller's id may be stale). A
+    // piece back at its anchor's content takes the anchor's version again: no empty difference is stored, and the
+    // chain goes on from the anchor (a value toggling with the stride's period)
+    if (_params.skipStride > 1 && run % _params.skipStride == 0 && anchor != kNone && anchorBytes != nullptr)
+    {
+        TTDPieceId ancestor = previous;
+        for (uint32_t k = 1; k < _params.skipStride && ancestor != anchor && IsDifference(_versions[ancestor].encoding); ++k)
+            ancestor = _versions[ancestor].base;
+        if (ancestor == anchor && uint32_t(_versions[anchor].run) + _params.skipStride == run)
+        {
+            uint8_t skip[kPiece];
+            codec::XorBuffers(bytes, anchorBytes, skip, kPiece);
+            if (codec::IsAllZero(skip, kPiece))
+            {
+                AddRef(anchor);
+                return anchor;
+            }
+            std::memcpy(diff, skip, kPiece);
+            previous = anchor;
+            depth = uint32_t(_versions[anchor].depth) + 1;
+        }
+    }
+
     // A few bytes changed: their runs as they are, nothing compressed
     const size_t rangesSize = RangesSize(diff);
     if (rangesSize <= _params.rangesLimit)
-        return StoreRanges(previous, depth, diff, rangesSize, crc);
+        return StoreRanges(previous, depth, run, diff, rangesSize, crc);
 
     // Encode once: the difference first; the full piece only when the
     // difference is larger than T, the smaller of the two kept
     std::vector<uint8_t> packedDiff = Compress(diff);
     if (rangesSize < packedDiff.size())
-        return StoreRanges(previous, depth, diff, rangesSize, crc);
+        return StoreRanges(previous, depth, run, diff, rangesSize, crc);
     if (packedDiff.size() > _params.fullThreshold)
     {
         std::vector<uint8_t> packedFull = Compress(bytes);
@@ -230,6 +274,7 @@ TTDPieceId TTDPieceStore::Intern(TTDPieceId previous, const uint8_t* previousByt
     v.crc32c = crc;
     v.encoding = Encoding::Xor;
     v.depth = static_cast<uint16_t>(depth);
+    v.run = RunByte(run);
     v.base = previous;
     v.payload = _arena.Store(packedDiff.data(), static_cast<uint32_t>(packedDiff.size()));
     AddRef(previous);   // a difference depends on its base

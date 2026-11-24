@@ -4,6 +4,7 @@
 #include "debugger/ttd/ttdperipheralregistry.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <iterator>
@@ -19,6 +20,9 @@ namespace
 {
 /// Bytes a time field's anchor takes at the end of its device's region
 constexpr size_t kTimeAnchorBytes = 24;
+
+/// TimeTravelEngine::SetBaselineReuse
+std::atomic<bool> g_baselineReuse{true};
 
 /// One past the last piece a region's map holds a version of
 uint32_t PiecesHeld(const std::vector<TTDPieceId>& map)
@@ -140,6 +144,8 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     EndSession();
     _regions = regions;
     _deltaBase.Reset(_regions.size());
+    _anchorBase.Reset(_regions.size());
+    _anchorId.assign(_regions.size(), {});
     _live.resize(_regions.size());
     _inMemory.resize(_regions.size());
     _sinceSnapshot.assign(_regions.size(), {});
@@ -435,6 +441,8 @@ void TimeTravelEngine::EndSession()
     _open = false;
     _regions = {};
     _deltaBase.Reset(0);
+    _anchorBase.Reset(0);
+    _anchorId = {};
     _line->changes.clear();
     _line->changes.shrink_to_fit();
     _live = {};
@@ -735,13 +743,24 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             {
                 // Whole, never a difference from the previous segment's version (stored before the base takes
                 // it: c.bytes may be the base's own copy, which a uniform piece gives up)
-                if (diffBaseline && c.piece <= 0xFFFF)
+                const TTDPieceId held = _live[r][c.piece];
+                const uint8_t* before = held != TTDPieceStore::kNone ? _deltaBase.Get(r, c.piece) : nullptr;
+                const bool same = before && (before == c.bytes || std::memcmp(before, c.bytes, kTTDPieceSize) == 0);
+                if (diffBaseline && c.piece <= 0xFFFF && !same)
+                    baselineDiff.push_back(r << 16 | c.piece);
+                // A piece that did not change and is stored whole already keeps its version: the segment's record
+                // of it takes one more reference (the versions outlive the segments that share them). Its content
+                // is not compressed again at every baseline, and a seek from one segment to another finds the
+                // version it has decoded (most of a game's memory, P1.S10 seek format)
+                TTDPieceId next = TTDPieceStore::kNone;
+                if (same && g_baselineReuse.load(std::memory_order_relaxed) &&
+                    !TTDPieceStore::IsDifference(_store->EncodingOf(held)))
                 {
-                    const uint8_t* before = _live[r][c.piece] != TTDPieceStore::kNone ? _deltaBase.Get(r, c.piece) : nullptr;
-                    if (!before || (before != c.bytes && std::memcmp(before, c.bytes, kTTDPieceSize) != 0))
-                        baselineDiff.push_back(r << 16 | c.piece);
+                    _store->AddRef(held);
+                    next = held;
                 }
-                const TTDPieceId next = _store->InternFirst(c.bytes);
+                else
+                    next = _store->InternFirst(c.bytes);
                 _deltaBase.Set(r, c.piece, c.bytes);
                 _inMemory[r][c.piece] = next;
                 NoteChange(r, c.piece, next);
@@ -756,8 +775,27 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                 _inMemory[r][c.piece] = previous;
                 continue;
             }
-            const TTDPieceId next = previous == TTDPieceStore::kNone ? _store->InternFirst(c.bytes)
-                                                                     : _store->Intern(previous, previousBytes, c.bytes);
+            // The chain's anchor (TTDPieceStore::Intern): the content of its last anchor point is kept from the
+            // first version stored after it, so a piece that never changes again costs no copy
+            TTDPieceId anchor = TTDPieceStore::kNone;
+            if (previous != TTDPieceStore::kNone)
+            {
+                // Per piece that changed, not per piece declared (a device region declares its largest size)
+                std::vector<TTDPieceId>& anchors = _anchorId[r];
+                if (anchors.size() <= c.piece)
+                    anchors.resize(size_t(c.piece) + 1, TTDPieceStore::kNone);
+                if (_store->IsAnchorPoint(previous) && anchors[c.piece] != previous)
+                {
+                    _lastWork.deltaBaseBytes += _anchorBase.Set(r, c.piece, previousBytes);
+                    anchors[c.piece] = previous;
+                }
+                anchor = anchors[c.piece];
+            }
+            const TTDPieceId next =
+                previous == TTDPieceStore::kNone
+                    ? _store->InternFirst(c.bytes)
+                    : _store->Intern(previous, previousBytes, c.bytes, anchor,
+                                     anchor != TTDPieceStore::kNone ? _anchorBase.Get(r, c.piece) : nullptr);
             _lastWork.deltaBaseBytes += _deltaBase.Set(r, c.piece, c.bytes);
             _inMemory[r][c.piece] = next;   // live memory holds this version's content now
             if (next == previous)
@@ -938,6 +976,11 @@ void TimeTravelEngine::BeginSegment(uint64_t frame)
         NewSegment(_line->cpBase + _line->checkpoints.size(), _line->changeBase + _line->changes.size(), frame));
 }
 
+void TimeTravelEngine::SetBaselineReuse(bool on)
+{
+    g_baselineReuse.store(on, std::memory_order_relaxed);
+}
+
 TTDSegmentInfo TimeTravelEngine::NewSegment(size_t first, size_t firstChange, uint64_t frame)
 {
     TTDSegmentInfo s;
@@ -1035,7 +1078,9 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
         error = "checkpoint " + std::to_string(index) + " is not held";
         return false;
     }
-    if (!EnsureResident(index))
+    // The capture head moves into the checkpoint's segment, which then stays in memory: all of it, not the stretch
+    // a seek read back
+    if (!EnsureWhole(index))
     {
         error = "checkpoint " + std::to_string(index) + "'s segment cannot be read back from its file";
         return false;
@@ -1071,9 +1116,6 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
         ForgetSegment(*_line, _line->segments.back());
         _line->segments.pop_back();
     }
-    // A segment read back up to a part holds the checkpoints kept (EnsureResident above): whole now
-    if (_line->segments.back().residentEnd != SIZE_MAX && _line->segments.back().residentEnd > index)
-        _line->segments.back().residentEnd = SIZE_MAX;
 
     // What the later checkpoints carried
     for (TTDMediaSlot& slot : _line->mediaSlots)
@@ -1101,13 +1143,17 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
 
 bool TimeTravelEngine::RebuildHeadFrom(size_t index, std::string& error)
 {
-    if (!EnsureResident(index))
+    // The head reads this segment from now on, so it stays in memory: all of it, not the stretch a seek read back
+    // (a segment the head reads cannot leave memory to be read again for another of its checkpoints)
+    if (!EnsureWhole(index))
     {
         error = "checkpoint " + std::to_string(index) + "'s segment cannot be read back from its file";
         return false;
     }
     _headLine = _lineId;
     _headFloor = index;
+    for (std::vector<TTDPieceId>& anchors : _anchorId)
+        std::fill(anchors.begin(), anchors.end(), TTDPieceStore::kNone);   // their content is not known here
     // Capture continues from the kept checkpoint: every piece's version and
     // content as it was there, the pieces changed since its region's last
     // full table, and that table
@@ -1624,7 +1670,7 @@ bool TimeTravelEngine::EvictSegment(uint32_t line, size_t segment, std::string& 
         --l.readBack;
     }
     seg.resident = false;
-    seg.residentEnd = SIZE_MAX;
+    seg.residentParts.clear();
     seg.readBackBytes = 0;
     ++l.evicted;
     ForgetMemory();   // an id live memory is known by may stand for other content from now on
@@ -1641,24 +1687,50 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
     }
     BranchLine& l = *_lines[line];
     TTDSegmentInfo& seg = l.segments[segment];
-    if (seg.resident)
+    if (seg.Whole())
         return true;
+    // A stretch joins the stretches in memory (their versions stay as they are: a query may hold them); the whole
+    // segment or a prefix replaces nothing, so the holder evicts first
+    if (seg.resident && !pieces.window)
+    {
+        error = "a part of the segment is in memory";
+        return false;
+    }
     const size_t segmentEnd = SegmentEnd(line, segment);
+    size_t begin = seg.firstCheckpoint;
     size_t end = segmentEnd;
+    if (pieces.window)
+    {
+        // A stretch: from the checkpoint whose piece table the file gave, which must hold a full table of every
+        // region (the later checkpoints' tables derive from it, and a restore's walk back ends there)
+        const int64_t at = l.frames.IndexOf(pieces.tableFrame);
+        if (at < 0 || size_t(at) < seg.firstCheckpoint || size_t(at) >= segmentEnd ||
+            !HoldsFullTables(l.checkpoints[size_t(at) - l.cpBase]))
+        {
+            error = "the file's piece table of frame " + std::to_string(pieces.tableFrame) +
+                    " is at no checkpoint with full tables";
+            return false;
+        }
+        begin = size_t(at);
+        prefix = true;
+    }
     if (prefix)
     {
-        // The checkpoints the pieces reach from the segment's start; the one needed among them
-        end = seg.firstCheckpoint;
-        while (end < segmentEnd && pieces.byFrame.count(l.checkpoints[end - l.cpBase].position.frame))
+        // The checkpoints the pieces reach from the first one (with the ones a stretch in memory holds already,
+        // which a stretch that joins them leaves out); the one needed among them
+        end = begin;
+        while (end < segmentEnd && ((pieces.window && seg.Holds(end)) ||
+                                    pieces.byFrame.count(l.checkpoints[end - l.cpBase].position.frame)))
             ++end;
-        if (need < seg.firstCheckpoint || need >= end)
+        if (need < begin || need >= end)
         {
             error = "the file's parts read do not reach checkpoint " + std::to_string(need);
             return false;
         }
     }
 
-    // Per checkpoint: the file's versions by (region, piece). Checked whole before anything changes
+    // Per checkpoint: the file's versions by (region, piece). Checked whole before anything changes. A checkpoint
+    // a stretch in memory holds already keeps its versions and tables (held)
     using Key = uint64_t;
     auto key = [](uint32_t region, uint32_t piece) { return (Key(region) << 32) | piece; };
     // Sorted (key, id) lists, not hash maps: the maps' inserts were a third of a read back (P1.S10 follow-up)
@@ -1668,18 +1740,38 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
                                          [](const std::pair<Key, TTDPieceId>& e, Key v) { return e.first < v; });
         return at != found.end() && at->first == k ? &at->second : nullptr;
     };
-    std::vector<Found> byCheckpoint(end - seg.firstCheckpoint);
+    std::vector<Found> byCheckpoint(end - begin);
+    std::vector<uint8_t> held(end - begin, 0);
     std::vector<uint8_t> hasTable(_regions.size(), 0);
-    for (size_t i = seg.firstCheckpoint; i < end; ++i)
+    for (const TTDImportedChange& c : pieces.table)
+        if (c.region >= _regions.size() || c.piece >= _regions[c.region].pieces || c.id == TTDPieceStore::kNone)
+        {
+            error = "the file's piece table names a piece the session has not";
+            return false;
+        }
+    if (pieces.window && pieces.table.empty() && !seg.Holds(begin))
+    {
+        error = "the stretch has no piece table and no checkpoint in memory to start from";
+        return false;
+    }
+    for (size_t i = begin; i < end; ++i)
     {
         const TTDEngineCheckpoint& cp = l.checkpoints[i - l.cpBase];
+        held[i - begin] = seg.Holds(i) ? 1 : 0;
+        if (held[i - begin])
+        {
+            for (const TTDEngineCheckpoint::RegionRefs& r : cp.regions)
+                if (r.snapshot)
+                    hasTable[r.region] = 1;
+            continue;
+        }
         const auto it = pieces.byFrame.find(cp.position.frame);
         if (it == pieces.byFrame.end())
         {
             error = "the file has no checkpoint of frame " + std::to_string(cp.position.frame);
             return false;
         }
-        Found& found = byCheckpoint[i - seg.firstCheckpoint];
+        Found& found = byCheckpoint[i - begin];
         found.reserve(it->second.size());
         for (const TTDImportedChange& c : it->second)
             found.emplace_back(key(c.region, c.piece), c.id);
@@ -1704,7 +1796,7 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
                             std::to_string(cp.position.frame);
                     return false;
                 }
-            if (r.evictedTable && i != seg.firstCheckpoint && !hasTable[r.region])
+            if (r.evictedTable && i != begin && !hasTable[r.region])
             {
                 error = "region " + std::to_string(r.region) + " has no full table at its segment's start";
                 return false;
@@ -1715,8 +1807,9 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
     }
 
     // The change records take the file's versions; the full tables are built as CloseRegion built them: the
-    // segment's first from every piece its first checkpoint holds (a baseline, or a branch's fork copy, stored
-    // whole in the file), each later one from the one before with the pieces changed since
+    // first from every piece its checkpoint holds (a segment's first: a baseline, or a branch's fork copy, stored
+    // whole in the file) or from the file's piece table (a stretch's first), each later one from the one before with
+    // the pieces changed since
     std::vector<TTDRefTables::Table*> last(_regions.size(), nullptr);
     std::vector<std::vector<TTDPieceId>> latest(_regions.size());
     std::vector<std::vector<uint32_t>> since(_regions.size());
@@ -1727,10 +1820,11 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
         used.push_back(id);
         return id;
     };
-    for (size_t i = seg.firstCheckpoint; i < end; ++i)
+    for (size_t i = begin; i < end; ++i)
     {
         TTDEngineCheckpoint& cp = l.checkpoints[i - l.cpBase];
-        const Found& found = byCheckpoint[i - seg.firstCheckpoint];
+        const Found& found = byCheckpoint[i - begin];
+        const bool keep = held[i - begin] != 0;
         for (TTDEngineCheckpoint::RegionRefs& r : cp.regions)
         {
             std::vector<TTDPieceId>& now = latest[r.region];
@@ -1743,7 +1837,8 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
             for (uint32_t k = 0; k < r.changeCount; ++k)
             {
                 PieceChange& c = l.changes[r.firstChange + k - l.changeBase];
-                c.id = take(*lookup(found, key(r.region, c.piece)));   // checked above
+                if (!keep)
+                    c.id = take(*lookup(found, key(r.region, c.piece)));   // checked above
                 if (!flag[c.piece])
                 {
                     flag[c.piece] = 1;
@@ -1751,14 +1846,22 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
                 }
                 now[c.piece] = c.id;
             }
-            if (!r.evictedTable)
-                continue;
             TTDRefTables::Table* table = nullptr;
-            if (!last[r.region])
+            if (keep)
+            {
+                // In memory already: its table, where it has one, is the one the next tables derive from
+                if (!r.snapshot)
+                    continue;
+                table = r.snapshot;
+            }
+            else if (!r.evictedTable)
+                continue;
+            else if (!last[r.region])
             {
                 table = _tables->Create(_regions[r.region].pieces, BlockPieces(_regions[r.region]));
-                const auto it = pieces.byFrame.find(cp.position.frame);
-                for (const TTDImportedChange& c : it->second)
+                const std::vector<TTDImportedChange>& all =
+                    pieces.window ? pieces.table : pieces.byFrame.find(cp.position.frame)->second;
+                for (const TTDImportedChange& c : all)
                     if (c.region == r.region && c.piece < _regions[r.region].pieces)
                         _tables->Set(table, c.piece, take(c.id));
             }
@@ -1781,13 +1884,35 @@ bool TimeTravelEngine::ReadBackSegment(uint32_t line, size_t segment, const TTDS
     uint64_t bytes = 0;
     for (const TTDPieceId id : used)
         bytes += _store->PayloadSize(id);
-    seg.resident = true;
-    seg.residentEnd = end < segmentEnd ? end : SIZE_MAX;
-    seg.readBack = true;
-    seg.readBackBytes = bytes;
+    if (!seg.resident)
+    {
+        seg.resident = true;
+        seg.readBack = true;
+        seg.readBackBytes = 0;
+        seg.residentParts.clear();
+        --l.evicted;
+        ++l.readBack;
+    }
+    seg.readBackBytes += bytes;
     seg.lastUse = ++_useClock;
-    --l.evicted;
-    ++l.readBack;
+    // The stretches in memory, ascending and apart; all of the segment: none listed
+    if (begin != seg.firstCheckpoint || end != segmentEnd || !seg.residentParts.empty())
+    {
+        std::vector<std::pair<size_t, size_t>>& parts = seg.residentParts;
+        parts.emplace_back(begin, end);
+        std::sort(parts.begin(), parts.end());
+        size_t out = 0;
+        for (size_t k = 1; k < parts.size(); ++k)
+        {
+            if (parts[k].first <= parts[out].second)
+                parts[out].second = std::max(parts[out].second, parts[k].second);
+            else
+                parts[++out] = parts[k];
+        }
+        parts.resize(out + 1);
+        if (parts.size() == 1 && parts[0].first == seg.firstCheckpoint && parts[0].second == segmentEnd)
+            parts.clear();
+    }
     return true;
 }
 
@@ -1805,6 +1930,66 @@ bool TimeTravelEngine::ReadBackSegmentFrom(uint32_t line, size_t segment, const 
     const bool ok = ReadBackSegment(line, segment, pieces, error, prefix, upTo);
     TTDSessionFile::ReleaseSegmentPieces(*_store, pieces);   // the segment holds its own references now
     return ok;
+}
+
+bool TimeTravelEngine::HoldsFullTables(const TTDEngineCheckpoint& cp) const
+{
+    size_t tables = 0;
+    for (const TTDEngineCheckpoint::RegionRefs& r : cp.regions)
+        tables += r.snapshot != nullptr || r.evictedTable;
+    return tables == _regions.size();
+}
+
+bool TimeTravelEngine::ReadBackSegmentWindow(uint32_t line, size_t segment, const ITTDByteSource& source,
+                                             std::string& error, size_t need)
+{
+    if (!HasLine(line) || segment >= _lines[line]->segments.size())
+    {
+        error = "no such segment";
+        return false;
+    }
+    const BranchLine& l = *_lines[line];
+    const TTDSegmentInfo& seg = l.segments[segment];
+    const size_t segmentEnd = SegmentEnd(line, segment);
+    if (need < seg.firstCheckpoint || need >= segmentEnd || need < l.cpBase)
+    {
+        error = "checkpoint " + std::to_string(need) + " is not of the segment";
+        return false;
+    }
+    if (seg.Holds(need))
+        return true;
+    // From the last checkpoint with full tables at or before the one needed, to the next one after it: the
+    // checkpoint after the one needed is inside (the next frame's restore, a seek check)
+    size_t begin = need;
+    while (begin > seg.firstCheckpoint && !HoldsFullTables(l.checkpoints[begin - l.cpBase]))
+        --begin;
+    size_t last = std::min(need + 1, segmentEnd - 1);
+    while (last + 1 < segmentEnd && last > begin && !HoldsFullTables(l.checkpoints[last - l.cpBase]))
+        ++last;
+    // What a stretch in memory holds of it already is not read again (a walk from one stretch into the next: its
+    // first checkpoint, with its table, is the last of the one before)
+    size_t readFrom = begin, readTo = last;
+    while (readFrom < need && seg.Holds(readFrom))
+        ++readFrom;
+    while (readTo > need && seg.Holds(readTo))
+        --readTo;
+    TTDSegmentPieces pieces;
+    if (!TTDSessionFile::ReadSegmentWindow(source, *_store, pieces, error, l.checkpoints[readFrom - l.cpBase].position.frame,
+                                           l.checkpoints[readTo - l.cpBase].position.frame, _windowScratch,
+                                           readFrom == begin))
+        return false;
+    pieces.tableFrame = l.checkpoints[begin - l.cpBase].position.frame;
+    const bool ok = ReadBackSegment(line, segment, pieces, error, true, need);
+    TTDSessionFile::ReleaseSegmentPieces(*_store, pieces);   // the segment holds its own references now
+    return ok;
+}
+
+bool TimeTravelEngine::EnsureWhole(size_t index)
+{
+    const size_t s = SegmentOf(_lineId, index);
+    if (s == SIZE_MAX || _line->segments[s].Whole())
+        return true;
+    return _segmentLoader && _segmentLoader(_lineId, s, SIZE_MAX) && _line->segments[s].Whole();
 }
 
 void TimeTravelEngine::SetSegmentReadBack(uint32_t line, size_t segment, bool readBack)
@@ -1874,7 +2059,7 @@ bool TimeTravelEngine::MakeResident(size_t index)
     if (s == SIZE_MAX)
         return true;
     TTDSegmentInfo& seg = _line->segments[s];
-    if (seg.resident && index < seg.residentEnd)
+    if (seg.Holds(index))
     {
         if (seg.readBack && seg.lastUse != _useClock)
         {
@@ -1883,11 +2068,9 @@ bool TimeTravelEngine::MakeResident(size_t index)
         }
         return true;
     }
-    // The loader reads the file into this segment (it may evict others of the cache, never this one). Past the part
-    // read so far: the whole segment
-    const size_t upTo = seg.resident ? SIZE_MAX : index;
-    return _segmentLoader && _segmentLoader(_lineId, s, upTo) && _line->segments[s].resident &&
-           index < _line->segments[s].residentEnd;
+    // The loader reads the file into this segment (it may evict others of the cache, never this one): the part
+    // holding the checkpoint, or more (the holder's policy)
+    return _segmentLoader && _segmentLoader(_lineId, s, index) && _line->segments[s].Holds(index);
 }
 
 /// endregion </Two tiers>
@@ -2145,7 +2328,9 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     h.pieceVersions = _store->VersionTableBytes();
     h.piecePayload = _store->PayloadBytes();
     h.arenaSlack = _store->ArenaBytes() - _store->PayloadBytes();
-    h.deltaBase = _deltaBase.HeapBytes();
+    h.deltaBase = _deltaBase.HeapBytes() + _anchorBase.HeapBytes();
+    for (const std::vector<TTDPieceId>& anchors : _anchorId)
+        h.deltaBase += anchors.capacity() * sizeof(TTDPieceId);
     h.referenceTables = _tables->HeapBytes() + _line->changes.capacity() * sizeof(PieceChange);
     for (size_t r = 0; r < _live.size(); ++r)
         h.referenceTables += _live[r].capacity() * sizeof(TTDPieceId) + _sinceSnapshot[r].capacity() * sizeof(uint32_t) +
@@ -2364,6 +2549,14 @@ TTDRestoreIssue TimeTravelEngine::DamageIssue(size_t index, uint32_t region, uin
     // same version, or a difference that depends on it (decoded once per version)
     std::vector<uint8_t> scratch(kTTDPieceSize);
     auto fails = [&](size_t i, uint32_t& lastId, bool& lastFails) {
+        // Only the checkpoints in memory: reading a neighbour's part of the segment back would replace the versions
+        // the restore that reports this is working with
+        if (_line->evicted != 0 || _line->readBack != 0)
+        {
+            const size_t s = SegmentOf(_lineId, i);
+            if (s != SIZE_MAX && !_line->segments[s].Holds(i))
+                return false;
+        }
         const uint32_t id = VersionAt(i, region, piece);
         if (id != lastId)
         {
@@ -2583,6 +2776,15 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
                            std::to_string(d.stateSize) + ")";
             result.Add(issue);
             continue;
+        }
+        std::string diverged;
+        if (e.withoutRegions && e.withoutRegions->TTDLoadDiverged(diverged))
+        {
+            TTDRestoreIssue replay = issue;
+            replay.kind = TTDRestoreIssueKind::ReplayDiverged;
+            replay.severity = TTDRestoreStatus::NotBitExact;
+            replay.detail = "computed again from its keyframe, it did not reach the recorded state: " + diverged;
+            result.Add(replay);
         }
         // Restored exactly; a replay from here may still differ when the firmware does
         const uint64_t live = e.device->TTDDescribe().firmwareFingerprint;

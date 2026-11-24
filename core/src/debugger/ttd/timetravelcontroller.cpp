@@ -1743,7 +1743,13 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
 
     // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
     // device whose state also carries the memory it offers as regions (General Sound)
-    // gives its state without that memory; the registry does not serialize it whole ---
+    // gives its state without that memory; the registry does not serialize it whole.
+    // A region source first learns whether this capture offers every piece (a rescan) ---
+    {
+        const bool rescan = _shadowRescan || ShadowSessionDue(_line->timeline.empty());
+        for (ITTDRegionSource* source : _peripherals.RegionSources())
+            source->TTDCaptureBegins(rescan);
+    }
     _peripherals.CaptureStates();
     _captureWork.deviceStateBytes += _peripherals.LastCaptureStateBytes();
 
@@ -1940,6 +1946,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
         _engine->ForgetMemory();
         (void)TakeWrittenSinceRestore();   // the marks so far are covered by forgetting: start counting here
     }
+    _replayIssues.clear();   // this restore's own, below
     CheckEngineCheckpoint(size_t(engineIndex), false);
     SetMediaToCheckpoint(size_t(engineIndex));
     const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore);
@@ -1949,6 +1956,14 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
         _engine->RestoreDevices(size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
     if (_engineMemoryKnown)
         (void)TakeWrittenSinceRestore();   // marks the restore itself made (a device loading its state) hold the checkpoint
+    // A device computed again on load that missed its recorded state (the VDAC4 ESP's replay) makes the position
+    // not bit-exact: the seek's check says so (the replay path's check takes them again)
+    for (const TTDRestoreIssue& issue : devices.issues)
+        if (issue.kind == TTDRestoreIssueKind::ReplayDiverged)
+        {
+            _replayIssues.push_back(issue);
+            _lastEngineCheck.Add(issue);
+        }
     if (!memory.Ok() || devices.status != TTDRestoreStatus::Exact)
         MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
@@ -1972,6 +1987,9 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
 
 TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
 {
+    // A device whose memory moved on without marks marks it now (the VDAC4 ESP between keyframes)
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDBeforeRestore();
     // A device that tracks writes its own way (MoonSound's wave memory) moves them into its trackers first
     for (ITTDRegionSource* source : _peripherals.RegionSources())
         source->TTDBeforeCapture();
@@ -3836,6 +3854,10 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
     // the boundary (TTDChipsetState::cpu_t_in_frame), not 0.
     // ------------------------------------------------------------------
     RestoreCheckpointForReplay(cp);
+    _perf.lastSeekRestoreNs = _perf.lastRestoreTotalNs();
+    _perf.lastSeekMemoryNs = _perf.lastRestoreMemoryNs;
+    _perf.lastSeekPiecesDecoded = _lastMemoryRestore.piecesDecoded;
+    _perf.lastSeekLinksDecoded = _lastMemoryRestore.linksDecoded;
 
     // The checkpoint restore leaves z80.t at this frame's overshoot (the
     // last instruction's spill past the boundary — a handful of T-states,
@@ -4695,7 +4717,7 @@ void TimeTravelController::EnforceDiskTier(uint64_t frames, uint64_t bytes)
         if (s.resident && s.readBack && (window.count(e.key) || engine.SegmentHeldByHead(e.key.first, e.key.second)))
         {
             // A window segment is whole: one read back in part is read again whole first
-            if (s.residentEnd != SIZE_MAX && !LoadSegmentFromFile(e.key.first, e.key.second, SIZE_MAX))
+            if (!s.Whole() && !LoadSegmentFromFile(e.key.first, e.key.second, SIZE_MAX))
                 continue;
             engine.SetSegmentReadBack(e.key.first, e.key.second, false);
         }
@@ -4731,20 +4753,18 @@ bool TimeTravelController::LoadSegmentFromFile(uint32_t line, size_t segment, si
     if (!segments || segment >= segments->size())
         return false;
     const TTDSegmentInfo& s = (*segments)[segment];
-    if (s.resident && (s.residentEnd == SIZE_MAX || upTo < s.residentEnd))
+    if (upTo == SIZE_MAX ? s.Whole() : s.Holds(upTo))
         return true;
-    if (s.resident)
+    struct ReadBackTimer
     {
-        // Read back up to a part: the whole file is read again in its place
-        std::string why;
-        if (!engine.EvictSegment(line, segment, why))
+        std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        uint64_t& sink;
+        ~ReadBackTimer()
         {
-            MLOGWARNING("TimeTravelController: segment %zu of branch %u cannot be read whole: %s", segment, line,
-                        why.c_str());
-            return false;
+            sink += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
         }
-        upTo = SIZE_MAX;
-    }
+    } readBackTimer{std::chrono::steady_clock::now(), _perf.readBackNs};
     const auto it = _segmentFiles.find({line, s.firstCheckpoint});
     std::string why = "its file is not known";
     bool ok = false;
@@ -4753,8 +4773,29 @@ bool TimeTravelController::LoadSegmentFromFile(uint32_t line, size_t segment, si
         TTDFileSource file(it->second);
         if (!file.Valid())
             why = it->second + ": " + file.Error();
+        // One checkpoint: through the file's seek index, the stretch between two full tables that holds it (a few
+        // reads of the parts it needs). It joins the stretches of the segment in memory, whose versions stay (a
+        // query may hold them). A file without the index (unfinished, joined) is read from its start, below
+        else if (upTo != SIZE_MAX && _segmentWindowReads && engine.ReadBackSegmentWindow(line, segment, file, why, upTo))
+        {
+            ok = true;
+            ++_readBackWindowLoads;
+        }
         else
         {
+            // The whole segment, or (no seek index) its start up to the checkpoint: in place of the part in memory,
+            // and whole when a part was there already (the second restore in it)
+            if (s.resident)
+            {
+                std::string held;
+                if (!engine.EvictSegment(line, segment, held))
+                {
+                    MLOGWARNING("TimeTravelController: segment %zu of branch %u cannot be read whole: %s", segment, line,
+                                held.c_str());
+                    return false;
+                }
+                upTo = SIZE_MAX;
+            }
             // The file in one read: the container's index checks every record header of every part, a read each
             // (hundreds a file, 7 % of a seek into it, P1.S10 seek tails). The buffer is kept for the next one
             TTDMemorySource source(std::move(_readBackFileBytes));
@@ -4809,14 +4850,14 @@ void TimeTravelController::TrimReadBackCache(std::pair<uint32_t, size_t> keep)
 bool TimeTravelController::ReadBackAll(std::string& error)
 {
     TimeTravelEngine& engine = *_engine;
-    if (engine.EvictedSegments() == 0)
+    // Nothing on disk only, and no segment in memory in part (a seek's read back)
+    if (engine.EvictedSegments() == 0 && engine.ReadBackSegments() == 0)
         return true;
     _readBackUnbounded = true;
     for (uint32_t line = 0; line < engine.LineIds(); ++line)
         if (const std::deque<TTDSegmentInfo>* segments = engine.LineSegments(line))
             for (size_t k = 0; k < segments->size(); ++k)
-                if (((*segments)[k].residentEnd != SIZE_MAX || !(*segments)[k].resident) &&
-                    !LoadSegmentFromFile(line, k, SIZE_MAX))
+                if (!(*segments)[k].Whole() && !LoadSegmentFromFile(line, k, SIZE_MAX))
                 {
                     error = "segment " + std::to_string(k) + " of branch " + std::to_string(line) +
                             " cannot be read back from its file";
@@ -5067,6 +5108,7 @@ bool TimeTravelController::StartLineFiles(TimeTravelEngine& engine)
         return false;
     TTDSessionSaveParams params = _shadowParams;
     params.fileLine = line;
+    params.seekIndex = _segmentSeekIndex;
     // After a pause the line's new file starts at the baseline after the resume: it takes the records between
     // the paused file's end and that baseline (before 2026-11-21 that frame was in no file)
     const ShadowJournalEnds ends = std::exchange(_shadowJournalEnds, {});
@@ -5259,6 +5301,8 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
 {
     _lastEngineCheck = _replayEngine->CheckConfiguration(
         index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
+    for (const TTDRestoreIssue& issue : _replayIssues)
+        _lastEngineCheck.Add(issue);
     if (!forReplay)
         return;
     // The media the restore could not set to their recorded versions (SetMediaToCheckpoint)
@@ -5307,6 +5351,7 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
     _replayEngine = engine;
     _inputStartFrame = UINT64_MAX;
     _lastEngineCheck = {};
+    _replayIssues.clear();
     _replayRomSignature = ComputeRomSignature();
     if (engine == _engine.get())
         return;   // the session's own engine is this machine's
@@ -5316,12 +5361,21 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
         MLOGWARNING("TimeTravelController::SetReplaySource — not bound to this machine: %s", unbound.c_str());
 }
 
+bool TimeTravelController::ShadowSessionDue(bool baseline) const
+{
+    if (!_shadowEngine)
+        return false;
+    const TimeTravelEngine& engine = *_shadowEngine;
+    const uint32_t pieces = static_cast<uint32_t>(_modelRamPages) * 4;
+    return baseline || !engine.IsSessionOpen() || engine.Regions().empty() || engine.Regions()[0].pieces != pieces;
+}
+
 bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
 {
     TimeTravelEngine& engine = *_shadowEngine;
     std::string error;
     const uint32_t pieces = static_cast<uint32_t>(_modelRamPages) * 4;
-    if (baseline || !engine.IsSessionOpen() || engine.Regions().empty() || engine.Regions()[0].pieces != pieces)
+    if (ShadowSessionDue(baseline))
     {
         TTDRegionDesc ram;
         ram.id = TTDRegionId::MachineRam;
@@ -5624,7 +5678,7 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
         const size_t cutSegment = _engine->SegmentOf(activeLine, keepEngine);
         if (cutSegment != SIZE_MAX)
         {
-            if (!_engine->EnsureResident(keepEngine))
+            if (!_engine->EnsureWhole(keepEngine))
                 MLOGWARNING("TimeTravelController::TruncateTimelineAfter — the cut's segment cannot be read back: "
                             "its file is written again without it");
             _engine->SetSegmentReadBack(activeLine, cutSegment, false);

@@ -103,8 +103,15 @@ void TTDVdac2Memory::TTDBeforeCapture() {}
 
 bool TTDVdac2Memory::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
-    if (_regionCount == 0)
-        return false;   // no chip: the blob stays as it is
+    // No chip: the blob stays as it is. A chip whose regions are not collected yet (the registry pairs a source
+    // before the session collects its regions) is still one: its memory goes to the regions, not the blob
+#ifdef ENABLE_VDAC2
+    const bool chip = _card.Chip() != nullptr;
+#else
+    const bool chip = false;
+#endif
+    if (!chip)
+        return false;
     state.resize(8);
     _card.TtdSaveMemoryHeader(state.data());
     return true;

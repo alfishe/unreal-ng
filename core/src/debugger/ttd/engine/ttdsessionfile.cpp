@@ -180,7 +180,13 @@ struct Range
 namespace
 {
 std::atomic<bool> g_branchReading{true};
+std::atomic<bool> g_rawPieceRecords{true};
 }  // namespace
+
+void TTDSessionWriter::SetRawPieceRecords(bool on)
+{
+    g_rawPieceRecords = on;
+}
 
 void TTDSessionFile::SetBranchReadingForTesting(bool on)
 {
@@ -194,7 +200,7 @@ bool TTDSessionFile::KnownStream(uint16_t id)
         return KnownStream(StreamOfChunkedTwin(id));
     if ((id >= kFrameStreamFirst && id <= kFrameStreamLast) || IsHolderStream(id))
         return true;
-    if (id == kBranchTable)
+    if (id == kBranchTable || id == kPieceTables)
         return true;
     if (const uint16_t trunk = TrunkOfTwin(id))
         return KnownStream(trunk);
@@ -276,6 +282,12 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
         }
         header.streams.push_back({h.id, 1, TTDStreamKind::Ancillary, h.name});
     }
+    // A recording folder's file: the piece tables its seek index points at (a saved file has neither)
+    if (params.fileLine != UINT32_MAX && params.seekIndex)
+        header.streams.push_back({kPieceTables, 1, TTDStreamKind::Ancillary, "piece-tables"});
+    _seekIndex = TTDSeekIndex{};
+    _seekIndex.line = params.fileLine != UINT32_MAX ? params.fileLine : 0;
+    _seekIndexWhole = true;
     // Branches: the table and the twins of every stream a branch writes (ancillary: an old reader loads the trunk)
     size_t liveLines = 0;
     for (uint32_t l = 0; l < e._lines.size(); ++l)
@@ -493,16 +505,52 @@ void TTDSessionWriter::Write(PartJob& job)
     };
     if (job.finalize)
     {
-        if (!_writer.Finalize())
+        // A folder file's seek index is the index extra; it names where the index starts (TTDSeekIndex)
+        const bool seekable = _seekIndexWhole && !_seekIndex.parts.empty() && _seekIndex.parts.size() == _writer.PartCount();
+        if (!_writer.Finalize(seekable ? _seekIndex.Encode(_sink->Size()) : std::vector<uint8_t>{}))
             ioFail();
         return;
     }
     for (const auto& [stream, bytes] : job.records)
-        if (!_writer.AddRecord(stream, bytes))
+    {
+        const uint64_t offset = _sink->Size();
+        // A folder file's piece record is stored as it is: its versions are compressed one by one already, and a
+        // read back takes the few it needs out of the record without decompressing the rest
+        const bool raw = job.seekable && g_rawPieceRecords.load(std::memory_order_relaxed) &&
+                         (stream == kPieces || TrunkOfTwin(stream) == kPieces);
+        if (!_writer.AddRecord(stream, bytes, !raw))
         {
             ioFail();
             return;
         }
+        if (!job.seekable)
+            continue;
+        // One record (a chunked payload is several: no seek index then; a piece record never is)
+        const uint64_t stored = _sink->Size() - offset - kRecordHeaderSize;
+        const uint16_t trunk = TrunkOfTwin(stream) != 0 ? TrunkOfTwin(stream) : stream;
+        const bool one = bytes.size() <= _writer.RecordLimit() && stored <= UINT32_MAX;
+        if (trunk == kPieces || trunk == kCheckpoints || trunk == kPieceTables)
+            _seekIndexWhole = _seekIndexWhole && one;
+        if (trunk == kPieces)
+        {
+            job.seek.piecesOffset = offset;
+            job.seek.piecesStored = static_cast<uint32_t>(stored);
+        }
+        else if (trunk == kCheckpoints)
+        {
+            job.seek.checkpointsOffset = offset;
+            job.seek.checkpointsStored = static_cast<uint32_t>(stored);
+        }
+        else if (trunk == kPieceTables)
+        {
+            job.seek.tablesOffset = offset;
+            job.seek.tablesStored = static_cast<uint32_t>(stored);
+        }
+    }
+    if (job.seekable)
+        _seekIndex.parts.push_back(std::move(job.seek));
+    else
+        _seekIndexWhole = false;
     if (!_writer.EndPart(job.end, true))
         ioFail();
 }
@@ -540,6 +588,29 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     std::set<uint32_t> dependencies;
     checkpoints.Varint(last - first);
     uint64_t previousFrame = 0;
+    // A folder file's piece tables and its part of the seek index: at each checkpoint holding a full table of
+    // every region, every piece's current version by its number in the file (0: none; else the number + 1)
+    const bool seekable = folderFile && _params.seekIndex && !_lineage;
+    const size_t itemsBefore = _itemPart.size();
+    TTDByteWriter tables;
+    std::vector<uint64_t> tableFrames;
+    auto pieceTable = [&](const TTDEngineCheckpoint& cp, size_t ordinal) {
+        if (!seekable || cp.regions.size() != e._regions.size())
+            return;
+        for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
+            if (!refs.snapshot)
+                return;
+        tables.Varint(ordinal);
+        tables.Varint(_liveItem.size());
+        for (uint32_t r = 0; r < _liveItem.size(); ++r)
+        {
+            tables.Varint(r);
+            tables.Varint(_liveItem[r].size());
+            for (const uint32_t item : _liveItem[r])
+                tables.Varint(item == kNoItem ? 0 : uint64_t(item) + 1);
+        }
+        tableFrames.push_back(cp.position.frame);
+    };
     for (size_t i = first; i < last; ++i)
     {
         const TTDEngineCheckpoint& cp = e.CpAt(i);
@@ -636,6 +707,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
                         if (!version(refs.region, p, id, true))
                             return false;
             }
+            pieceTable(cp, i - first);
             continue;
         }
         // A branch's fork copy in a saved file: its tables are its parent's at the fork, rebuilt on load
@@ -655,6 +727,9 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
                 if (!version(refs.region, e.ChangeAt(k).piece, e.ChangeAt(k).id, false))
                     return false;
         }
+        // A branch's fork copy without its changes names versions of its parent's file: no table of it
+        if (!noChanges)
+            pieceTable(cp, i - first);
     }
     // Every piece's current version at the part's end
     for (const std::vector<uint32_t>& region : _liveItem)
@@ -696,6 +771,21 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     }
     job.records.emplace_back(StreamOf(kPieces), std::move(pieces.bytes));
     job.records.emplace_back(StreamOf(kCheckpoints), std::move(checkpoints.bytes));
+    if (seekable)
+    {
+        job.seekable = true;
+        job.seek.firstItem = itemsBefore;
+        job.seek.items = static_cast<uint32_t>(_itemPart.size() - itemsBefore);
+        job.seek.firstFrame = head.position.frame;
+        if (!tableFrames.empty())
+        {
+            TTDByteWriter record;
+            record.Varint(tableFrames.size());
+            record.Bytes(tables.bytes.data(), tables.bytes.size());
+            job.records.emplace_back(StreamOf(kPieceTables), std::move(record.bytes));
+        }
+        job.seek.tableFrames = std::move(tableFrames);
+    }
 
     // Events up to the next part's start
     TTDMachineTime until = 0;
@@ -1883,6 +1973,17 @@ bool TTDSessionFile::ReadSegmentPieces(const ITTDByteSource& source, TTDPieceSto
 
 void TTDSessionFile::ReleaseSegmentPieces(TTDPieceStore& store, TTDSegmentPieces& pieces)
 {
+    if (pieces.window)
+    {
+        // A stretch: the references are the imports' (a version may be named by the table and by a checkpoint).
+        // Newest first: a version goes before the base it holds
+        for (size_t k = pieces.owned.size(); k-- > 0;)
+            store.Release(pieces.owned[k]);
+        pieces.owned.clear();
+        pieces.table.clear();
+        pieces.byFrame.clear();
+        return;
+    }
     for (const auto& [frame, changes] : pieces.byFrame)
         for (const TTDImportedChange& change : changes)
             store.Release(change.id);

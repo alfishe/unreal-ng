@@ -235,6 +235,12 @@ private slots:
     void handleStatusBarToggled(bool visible);
     void handleHudOverlayToggled(bool visible);
     void handleGpuAccelerationToggled(bool enabled);
+    /// View > Renderer / the automation's renderer: kept (View/Renderer), the GPU screen made anew when it draws
+    /// with another one
+    void handleRendererChanged(const QString& renderer);
+    /// View/Renderer into the screen's wish before the first screen is made (UNREAL_RENDERER, when set, wins)
+    void restoreRendererSetting();
+    void updateRendererMenu();
     /// The screen made anew on the GPU or the software one (the picture's settings carry over); `force`: also when it
     /// already runs there (the GPU changed under it)
     void rebuildScreen(bool gpu, bool force);

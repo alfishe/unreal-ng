@@ -1,12 +1,12 @@
 #pragma once
 
-#include <QOpenGLExtraFunctions>
-#include <QOpenGLShaderProgram>
-#include <QOpenGLVertexArrayObject>
 #include <QString>
 
 #include <cstdint>
+#include <memory>
 #include <vector>
+
+#include "gpu/gpudevice.h"
 
 #include "emulator/video/smoothlayers.h"
 #include "emulator/video/smoothmotion.h"
@@ -14,7 +14,8 @@
 class GpuPassTimes;
 
 /// @brief Smooth motion's heavy steps on the GPU (smoothmotion::Device): the blend, the motion field's passes and the
-/// composition as fragment passes over integer textures (GL 3.3 core, no compute: macOS stops at 4.1), the CPU
+/// composition as fragment passes over integer textures on the GPU layer (gpu/gpudevice.h: GL 3.3 core or Vulkan;
+/// no compute: macOS GL stops at 4.1), the CPU
 /// reference's steps to the bit. The search and the refinement run per block on the GPU; the votes between the passes
 /// (a few hundred blocks) are counted on the CPU from the field read back, with the reference's own code. The
 /// pictures come back into the caller's memory: the screen's CRT composition grades on the CPU.
@@ -28,18 +29,19 @@ class GpuPassTimes;
 /// stripes of at most kMaxReadsPerDraw texel reads, each flushed: no submission of a slow GPU nears a system's
 /// watchdog (Windows resets a GPU after ~2 s).
 ///
-/// Every call needs the context it was created in current. A step returns false (the engine runs it on the CPU) until
-/// Create() succeeded
+/// Every call on the device's thread (GL: its context current). A step returns false (the engine runs it on the CPU)
+/// until Create() succeeded
 class SmoothMotionGPU final : public smoothmotion::Device, private smoothmotion::LayerFlow::Evidence
 {
 public:
     ~SmoothMotionGPU() override;
 
-    /// Compile the programs, the context current. @return false with the reason in Log()
-    bool Create();
-    /// Delete the GL objects (the context they were made in current)
+    /// Compile the programs on `device` (it outlives this, or Destroy() comes first). @return false with the reason
+    /// in Log()
+    bool Create(gpu::Device* device);
+    /// Delete the programs and textures (before the device goes; GL: its context current)
     void Destroy();
-    bool IsCreated() const { return _gl != nullptr; }
+    bool IsCreated() const { return _device != nullptr; }
     const QString& Log() const { return _log; }
     /// The big textures back to 1 x 1 (smooth motion turned off); the next step allocates them again
     void ReleaseBuffers();
@@ -125,37 +127,35 @@ private:
     uint64_t* FrameId(Texture texture);
     bool Holds(Texture texture, const smoothmotion::Picture& picture);
     void UploadMask(const uint8_t* mask, int width, int height);
-    struct Format
-    {
-        unsigned internal, format, type;
-    };
-    static Format FormatOf(Texture texture);
+    static gpu::Format FormatOf(Texture texture);
+    int Width(Texture texture) const { return _textures[texture] ? _textures[texture]->Width() : 0; }
+    int Height(Texture texture) const { return _textures[texture] ? _textures[texture]->Height() : 0; }
     /// The texture at exactly width x height (allocated again when its size changes), `data` (may be null) uploaded
     void Allocate(Texture texture, int width, int height, const void* data);
     /// The texture at least width x height (it only grows), `data` (may be null) uploaded into its corner
     void Grow(Texture texture, int width, int height, const void* data);
     /// Draw `program` into `target` (width x height); the inputs bound by the caller. `readsPerFragment`: the most
     /// texel reads a fragment does, the draw cut into stripes by it
-    bool DrawInto(QOpenGLShaderProgram* program, Texture target, int width, int height, int readsPerFragment);
-    /// From the target DrawInto left bound
+    bool DrawInto(gpu::Program* program, Texture target, int width, int height, int readsPerFragment);
+    /// From the target DrawInto drew last
     bool ReadField(int blocksWide, int blocksHigh, std::vector<smoothmotion::MotionField::Block>& out);
     bool ReadPicture(int width, int height, uint32_t* out);
-    void BindTexture(int unit, Texture texture);
+    /// The sampler `name` of `program` reads `texture`
+    void BindTexture(gpu::Program* program, const char* name, Texture texture);
     /// The window sums of the bits of `source`'s tiles (masks, radii per channel) into `target`, row pass then column
     /// pass; with `flags` (the vectors' tiles) what each vector fits and may take besides
     bool WindowSums(Texture source, unsigned mask0, int radius0, unsigned mask1, int radius1, bool flags,
                     Texture target, int width, int height);
-    bool ReadInts(int width, int height, std::vector<int32_t>& out);
-    /// The frames, the vectors and the per-pixel evidence on units 0..7, the refresh's uniforms
-    void BindLayerFields(QOpenGLShaderProgram* program);
-    std::vector<QOpenGLShaderProgram*> Programs() const;
+    /// An RGBA32I texture's corner, four ints a texel
+    bool ReadInts(Texture texture, int width, int height, std::vector<int32_t>& out);
+    /// The frames, the vectors and the per-pixel evidence, the refresh's uniforms
+    void BindLayerFields(gpu::Program* program);
+    std::vector<std::unique_ptr<gpu::Program>*> Programs();
     /// The tiled textures for LayerFlow::kMaxVectors at the picture's size: allocated once per size
     bool AllocateLayers(int width, int height);
     bool ComposeLayersHere(const smoothmotion::Picture& p, const smoothmotion::Picture& a,
                            const smoothmotion::Picture& b, const smoothmotion::MotionField& prev,
                            const smoothmotion::MotionField& next, int w, uint32_t* out);
-    /// The GL errors left from before cleared (bounded: a lost context reports one for ever)
-    void ClearErrors();
     /// A stretch of GPU work begins / ends (the times' segments)
     void GpuBegin();
     void GpuEnd();
@@ -166,29 +166,27 @@ private:
     int Own(size_t block, int c, int s) override;
     bool Continues(size_t index, int vector) override;
 
-    QOpenGLExtraFunctions* _gl = nullptr;
-    QOpenGLShaderProgram* _blend = nullptr;
-    QOpenGLShaderProgram* _searchChunks = nullptr;
-    QOpenGLShaderProgram* _search = nullptr;
-    QOpenGLShaderProgram* _refine = nullptr;
-    QOpenGLShaderProgram* _compose = nullptr;
-    QOpenGLShaderProgram* _changed = nullptr;
-    QOpenGLShaderProgram* _rowSums = nullptr;
-    QOpenGLShaderProgram* _columnSums = nullptr;
-    QOpenGLShaderProgram* _fit = nullptr;
-    QOpenGLShaderProgram* _coverMasks = nullptr;
-    QOpenGLShaderProgram* _explained = nullptr;
-    QOpenGLShaderProgram* _rowCounts = nullptr;
-    QOpenGLShaderProgram* _counts = nullptr;
-    QOpenGLShaderProgram* _blockColours = nullptr;
-    QOpenGLShaderProgram* _top = nullptr;
-    QOpenGLShaderProgram* _own = nullptr;
-    QOpenGLShaderProgram* _continues = nullptr;
-    QOpenGLShaderProgram* _layers = nullptr;
-    QOpenGLVertexArrayObject _vao;
-    unsigned _framebuffer = 0;
-    unsigned _textures[TextureCount] = {};
-    int _sizes[TextureCount][2] = {};
+    gpu::Device* _device = nullptr;
+    std::unique_ptr<gpu::Program> _blend;
+    std::unique_ptr<gpu::Program> _searchChunks;
+    std::unique_ptr<gpu::Program> _search;
+    std::unique_ptr<gpu::Program> _refine;
+    std::unique_ptr<gpu::Program> _compose;
+    std::unique_ptr<gpu::Program> _changed;
+    std::unique_ptr<gpu::Program> _rowSums;
+    std::unique_ptr<gpu::Program> _columnSums;
+    std::unique_ptr<gpu::Program> _fit;
+    std::unique_ptr<gpu::Program> _coverMasks;
+    std::unique_ptr<gpu::Program> _explained;
+    std::unique_ptr<gpu::Program> _rowCounts;
+    std::unique_ptr<gpu::Program> _counts;
+    std::unique_ptr<gpu::Program> _blockColours;
+    std::unique_ptr<gpu::Program> _top;
+    std::unique_ptr<gpu::Program> _own;
+    std::unique_ptr<gpu::Program> _continues;
+    std::unique_ptr<gpu::Program> _layers;
+    std::unique_ptr<gpu::Texture> _textures[TextureCount];
+    Texture _lastTarget = Output;  // what DrawInto drew last: the Read* calls read it
     int _maxSize = 0;
     // LayerFlow's refresh: the vectors, the counts read back, the answers
     smoothmotion::LayerFlow::Layers _layerSet;
@@ -209,8 +207,6 @@ private:
     std::vector<uint8_t> _colourAt;
     bool _answered = true;  // false: a question's pass failed, the refresh goes to the CPU
     LayerCounts _layerCounts;
-    std::vector<uint32_t> _readBack;
-    bool _readBytes = true;  // the picture read as bytes; false once the GL refused (then as unsigned ints)
     std::vector<uint32_t> _frameCopies[3];
     uint64_t _frameIds[3] = {};
     bool _fieldsOnGpu = false;

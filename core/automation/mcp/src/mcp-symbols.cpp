@@ -359,7 +359,33 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
 
             if (action == "formats")
             {
-                ResolveAndForward(args, "GET", "/symbols/formats", nullptr, caller, "Symbol formats", done);
+                // The formats in the text too (an agent may see only content[]): one line each, id first
+                ResolveAndForward(args, "GET", "/symbols/formats", nullptr, caller, "Symbol formats", [done](ToolResult result) {
+                    if (result.isError)
+                    {
+                        done(std::move(result));
+                        return;
+                    }
+                    const Json::Value& formats = result.structured["formats"];
+                    std::ostringstream out;
+                    out << result.text << ": " << (formats.isArray() ? formats.size() : 0);
+                    if (formats.isArray())
+                    {
+                        for (const Json::Value& format : formats)
+                        {
+                            out << "\n" << format["id"].asString() << " · " << format["title"].asString();
+                            std::string extensions;
+                            for (const Json::Value& extension : format["extensions"])
+                                extensions += (extensions.empty() ? "" : " ") + extension.asString();
+                            if (!extensions.empty())
+                                out << " · " << extensions;
+                            if (format["pages"].asBool())
+                                out << " · pages";
+                        }
+                    }
+                    result.text = out.str();
+                    done(std::move(result));
+                });
                 return;
             }
 

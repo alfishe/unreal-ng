@@ -9,10 +9,6 @@
 #include <QEvent>
 #include <QWindow>
 #include <QOpenGLFunctions>
-#include <QOpenGLTexture>
-#include <QOpenGLBuffer>
-#include <QOpenGLVertexArrayObject>
-#include <QOpenGLShaderProgram>
 #include <QImage>
 #include <QSurfaceFormat>
 #include <functional>
@@ -20,6 +16,8 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <string>
+#include <vector>
 
 #include "emulator/video/displayrate.h"
 #include "emulator/video/pictureview.h"
@@ -32,6 +30,10 @@
 #include "framehistory.h"
 #include "framesource.h"
 #include "gpupasstimes.h"
+#include "gpu/gpudevice.h"
+#ifdef UNREAL_VULKAN
+#include <vulkan/vulkan.h>
+#endif
 #include "platform/presenterrecovery.h"
 #include "slangpresetrunner.h"
 #include "smoothmotiongpu.h"
@@ -66,6 +68,16 @@ public:
     /// Probes again: a session (remote desktop / console), display or adapter change may bring or take the GPU.
     /// probeGPUAcceleration answers the new probe from here on. @return the answer or the GPU's renderer changed
     static bool reprobeGPUAcceleration();
+    /// The renderers the GPU screen can draw with: "gl"; "vulkan" in a build with it on a hardware Vulkan 1.3 GPU
+    static std::vector<std::string> availableRenderers();
+    /// The build has the Vulkan renderer (UNREAL_VULKAN)
+    static bool vulkanBuilt();
+    /// The renderer asked for, "gl" / "vulkan" (UNREAL_RENDERER at start): a window made from now on takes it, GL
+    /// when Vulkan is not there. @return false for another name
+    static std::string wantedRenderer();
+    static bool setWantedRenderer(const std::string& name);
+    /// What this window draws with: "vulkan", or "gl" (asked for, or fallen back)
+    std::string activeRenderer() const { return _vulkan ? "vulkan" : "gl"; }
     /// The window's surface format: 3.3 core, double buffered, vsync
     static QSurfaceFormat surfaceFormat();
 
@@ -260,12 +272,20 @@ private:
     void setupVSync();
     bool compileCustomShader(const QString& source);  ///< the context current; empty: none
     bool applySlangPreset(const QString& name);       ///< the context current; empty: none
-    /// The viewport-filling quad with the bound program, the texture coordinates from (x1, y1) top left to (x2, y2)
-    void drawQuad(QOpenGLShaderProgram* program, float srcX1, float srcY1, float srcX2, float srcY2);
-    void drawComposedCrt(const QRect& picture);
-    void drawModelCrt(const QRect& picture);
-    void drawCustomCrt(const QRect& picture);
-    void drawSlangPreset(const QRect& picture, int glY);
+    /// `program` over `viewport` of `target` (GL rows), the texture coordinates from (x1, y1) top left to (x2, y2)
+    void drawQuad(gpu::Program& program, gpu::Texture& target, gpu::Rect viewport, float srcX1, float srcY1,
+                  float srcX2, float srcY2);
+    // The picture into `viewport` of `target` (GL rows: from the bottom)
+    void drawComposedCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport);
+    void drawModelCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport);
+    void drawCustomCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport);
+    void drawSlangPreset(const QRect& picture, gpu::Texture& target, gpu::Rect viewport);
+    /// Vulkan: the device on the window's surface (initializeGL). false: GL draws
+    bool createVulkanDevice();
+    /// Vulkan: the HUD and the overlay, painted into an image, blended over `target`
+    void drawHudOverTarget(gpu::Texture& target, int surfaceWidth, int surfaceHeight, qreal dpr);
+    /// The Vulkan renderer given up (`why`): GL from the next paint
+    void dropVulkan(const std::string& why);
 
     QRectF _devicePixelsRect;
     QImage* _devicePixels = nullptr;
@@ -277,11 +297,23 @@ private:
     uint64_t _uploadedSerial = 0;          ///< its serial in _texture (0: none, or a source without serials)
     int _idleRefreshes = 0;                ///< refreshes in a row with no new frame and none pending
 
+    bool _vulkan;  ///< the Vulkan renderer (UNREAL_RENDERER=vulkan): its device, its presenter; false again on a failure
     bool _native;  ///< false again when the platform's presenter cannot be made (Windows: no interop)
 #ifdef __linux__
     bool _glSwapChosen = false;  ///< the plain GL swap by choice (useGlSwap), not for a failure
 #endif
     std::unique_ptr<QOpenGLContext> _context;
+    /// The GPU layer the picture is drawn with (docs/inprogress/2026-11-19-vulkan-renderer): GL on _context. Declared
+    /// before everything it made, so it goes last
+    std::unique_ptr<gpu::Device> _gpu;
+#ifdef UNREAL_VULKAN
+    VkInstance _vkInstance = VK_NULL_HANDLE;  ///< the Vulkan renderer's: its device's, the window's surface on it
+    VkSurfaceKHR _vkSurface = VK_NULL_HANDLE;
+#endif
+    gpu::Texture* _frameTarget = nullptr;  ///< Vulkan: what paintGL draws into (the presenter's texture, an image's)
+    std::unique_ptr<gpu::Texture> _hudTexture;  ///< Vulkan: the HUD painted on the CPU, over the picture
+    std::unique_ptr<gpu::Program> _hudProgram;
+    QImage _hudImage;
     std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
     bool _glInitialized = false;
     QSize _glSize;                                ///< the surface size resizeGL saw, device pixels
@@ -297,6 +329,14 @@ private:
     bool _smoothAuto = false;                             ///< ScreenFrames::smooth is auto
     VideoSync _sync = VideoSync::Off;                     ///< its step in effect (Off while not auto)
     bool _syncVrr = false;                                ///< the presenter's VRR the display rate step last saw
+    bool _syncVrrPending = false;                         ///< ... and its VRR check still running
+    /// Does the sync timer watch the presenter: Auto picks its step by it, display_rate match its mode switch
+    /// ... and smooth motion set by hand whether the display beats with the machine (_smoothHelps)
+    bool syncWatched() const
+    {
+        return _smoothAuto || _displayRate == DisplayRate::Match || _smooth.GetMode() != smoothmotion::Mode::Off;
+    }
+    bool _smoothHelps = true;  ///< smooth motion set by hand has a beat to smooth (updateVideoSync)
     std::string _syncReason;                              ///< WindowPresentStats::syncReason
     QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
@@ -316,7 +356,7 @@ private:
     bool _latchWake = false;  ///< low-latency video under a display link: the timer's wake draws the latched frame
     int64_t _lastLinkTickNs = 0;                  ///< native way: when the display link last ticked
 
-    QOpenGLTexture* _texture = nullptr;
+    std::unique_ptr<gpu::Texture> _texture;  ///< the frame shown (RGBA8, its rows top first)
     std::atomic<bool> _textureNeedsUpdate{true};
 
     const QImage* _shownFrame = nullptr;  ///< the frame in _texture: _latchedFrame, _blendedFrame or _legacyFrame
@@ -325,13 +365,11 @@ private:
     uint64_t _gradedSerial = ~0ull;      ///< the upload _gradedTexture was graded from
 
     // CRT: the composition of CRTRenderer (the software screen's picture, bit for bit), or a custom shader
-    QOpenGLShaderProgram* _composeShader = nullptr;
-    QOpenGLShaderProgram* _customShader = nullptr;
-    QOpenGLTexture* _gradedTexture = nullptr;
-    QOpenGLTexture* _indexTexture = nullptr;
-    QOpenGLTexture* _factorTexture = nullptr;
-    QOpenGLVertexArrayObject _quadVao;
-    QOpenGLBuffer _quadBuffer{QOpenGLBuffer::VertexBuffer};
+    std::unique_ptr<gpu::Program> _composeShader;
+    std::unique_ptr<gpu::Program> _customShader;
+    std::unique_ptr<gpu::Texture> _gradedTexture;
+    std::unique_ptr<gpu::Texture> _indexTexture;
+    std::unique_ptr<gpu::Texture> _factorTexture;
     CRTRenderer _crtRenderer;
     // The shader models (crt-lottes, ...): CRTBeamModel's tables as integer textures, its kShader
     CRTBeamModel _crtModel;
@@ -364,6 +402,23 @@ private:
     bool _smoothChanged = false;  ///< and another one than before
     uint64_t _smoothDrained = 0;  ///< presents handed over before the last refresh left out (a late one: renderNative)
     uint32_t _smoothLag = 0;      ///< the lag (refreshes) of the run of late presents the last drain answered
+    /// feedSmooth after a Reset starts this many frames before the one due
+    static constexpr uint64_t kSmoothLookBehind = 4;
+    uint64_t _smoothBehind = 0;         ///< refreshes whose plan was behind the frame due: the frame shown as it is
+    uint64_t _smoothStarved = 0;        ///< frames due with no next frame fed yet (no picture between them)
+    uint64_t _smoothStarvedSerial = 0;  ///< ... the last one counted
+    bool _smoothWasActive = false;      ///< smoothActive at the last feed: on again starts it over
+    /// The interpolation's pictures came a refresh late too often (noteInterpolated): the cheap interpolation instead
+    /// (_smoothSteppedDown, SmoothMotion::SetLite), and if its pictures are late too, blended (_smoothTooSlow)
+    bool _smoothTooSlow = false;
+    bool _smoothSteppedDown = false;
+    SmoothGuard _smoothGuard;
+    void noteInterpolated(int64_t drawNs);
+    QMetaObject::Connection _screenRateChanged;  ///< the window's screen's refreshRateChanged (watchScreenRate)
+    void watchScreenRate();
+    /// The presenter goes (made anew, a fall back): its counters start from 0 again, so what was kept by them does too
+    void dropPresenter();
+    bool pictureNotPresented(int64_t now, bool failHook);
     int64_t _smoothRefreshNs = 0;  ///< native way on a refresh grid: the refresh drawn for (0: no grid)
     uint64_t _smoothPictures = 0;  ///< smooth motion's pictures presented: their numbers for the presenter's beat count
     int64_t _smoothPeriodNs = 0;

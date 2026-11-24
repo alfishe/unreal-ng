@@ -115,7 +115,8 @@ TEST_F(JobRegistry_Test, JobRunsAndEndsDoneWithItsResult)
     EXPECT_EQ(node["state"].s, "done");
     EXPECT_EQ(node["kind"].s, "test.gated");
     EXPECT_NE(info->Text().find("done"), std::string::npos) << info->Text();
-    EXPECT_GE(_notified.load(), 3) << "queued, running and ended each tell the readouts";
+    // The waiter wakes before the ended notification goes out: wait for the third instead of reading it at once
+    EXPECT_TRUE(TestWait::For([&] { return _notified.load() >= 3; })) << "queued, running and ended each tell the readouts";
 }
 
 TEST_F(JobRegistry_Test, OneLaneRunsInOrderLanesRunSideBySide)

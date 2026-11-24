@@ -113,6 +113,12 @@ public:
     /// @brief Get ffmpeg stderr diagnostics (available after Stop)
     std::string getDiagnostics() const { return _diagnostics; }
 
+    /// Whether this ffmpeg's nearest scaling (`flags=neighbor`) of a width x height source into a picture of
+    /// pictureWidth x pictureHeight takes FrameScaler's source pixel on both axes (then the fixed frame needs no
+    /// remap tables). Asked from ffmpeg once per sizes (scratch files in dir), cached
+    static bool NeighborIsFrameScaler(const std::string& ffmpeg, const std::string& dir, uint32_t width,
+                                      uint32_t height, uint32_t pictureWidth, uint32_t pictureHeight);
+
     /// endregion </FFmpeg-specific>
 
 private:
@@ -142,6 +148,7 @@ private:
         std::string pipePath;
         std::string xmapPath;
         std::string ymapPath;
+        bool neighbor = false;  ///< swscale's nearest scaling, no remap tables (NeighborIsFrameScaler)
         std::thread stderrThread;
         int exitCode = 0;
     };
@@ -161,6 +168,7 @@ private:
     EncoderConfig _config;
     std::string _container;
     std::string _videoEncoderName;
+    std::string _vaapiDevice;  ///< VA-API: the render node the trial encoded on (resolveVideoEncoder); empty otherwise
     uint32_t _segmentWidth = 0;
     uint32_t _segmentHeight = 0;
     std::vector<std::string> _segmentFiles;  ///< finished and current, in order

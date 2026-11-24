@@ -48,7 +48,9 @@ struct GpuPassMs
 /// presenter's on-screen timing over its last presents (ms) and smooth motion's counters since it started
 struct WindowPresentStats
 {
-    std::string presenter;  ///< "metal", "dxgi", "gl-timed" (present-at-time), "gl" (the window's own swap), "software"
+    /// "metal", "dxgi", "gl-timed" (present-at-time), "vulkan" (the Vulkan renderer's swapchain), "gl" (the window's
+    /// own swap), "software"
+    std::string presenter;
     bool fixedDisplay = true;  ///< a fixed refresh (min = max); false: VRR / ProMotion range
     bool vrr = false;          ///< frames presented each at its own time (c-vrr); false: on the refresh grid (b-vsync)
     /// Can the display under the window follow the frames: "yes", "no", "unknown" (Wayland: no client query; Windows:
@@ -119,6 +121,14 @@ struct WindowPresentStats
     uint64_t motionFields = 0;
     uint64_t onDevice = 0;
     uint64_t heldFlicker = 0;
+    uint64_t lite = 0;  ///< interpolated pictures the cheap interpolation drew (interpolate-lite, or the step down)
+    /// The interpolation's pictures came a refresh late too often on this machine: it stepped down, until the settings
+    /// are set again. `smooth` says what draws: interpolate-lite after the first step (smoothSteppedDown), blend
+    /// after the second (smoothTooSlow)
+    bool smoothTooSlow = false;
+    bool smoothSteppedDown = false;
+    uint64_t smoothBehind = 0;   ///< refreshes smooth motion was behind the frame due (the frame shown as it is)
+    uint64_t smoothStarved = 0;  ///< frames due with no next frame yet: the look-ahead was used up, the picture repeats
 };
 
 /// The screen's timing counters into a front end's present report
@@ -139,6 +149,11 @@ struct WindowDisplaySettings
     std::string backend;                   ///< "gpu" / "software"
     bool gpuAvailable = false;             ///< the host can draw with the GPU
     bool gpu = false;                      ///< GPU acceleration on
+    std::string renderer = "gl";           ///< View > Renderer as asked: "gl" / "vulkan" (the GPU screen draws with it)
+    std::vector<std::string> renderers;    ///< the renderers this host offers ("gl"; "vulkan": a build with it and a
+                                           ///< hardware Vulkan 1.3 GPU)
+    std::string rendererActive;            ///< what the GPU screen draws with now: "gl" / "vulkan" ("" = the software
+                                           ///< screen; "gl" under "vulkan": it fell back)
     bool crt = false;                      ///< CRT effects on (a profile other than "none" switches them on)
     std::string crtProfile;                ///< e.g. "none", "basic", "shader:<name>"
     std::vector<std::string> crtProfiles;  ///< every profile the window offers
@@ -181,6 +196,7 @@ struct WindowDisplaySettings
 struct WindowDisplayChange
 {
     std::optional<bool> gpu;
+    std::optional<std::string> renderer;
     std::optional<bool> crt;
     std::optional<std::string> crtProfile;
     std::optional<bool> blending;
@@ -209,7 +225,7 @@ struct WindowDisplayChange
 
     bool Empty() const
     {
-        return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
+        return !gpu && !renderer && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
                !smoothMotion && !effectsDevice && !presentPolicy && !displayRate && !lipSyncOffsetMs && !fullscreen && !view && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
                !osdKeyboard && !osdKeyboardPicture && !osdKeyboardStyle && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }
@@ -264,6 +280,10 @@ struct WindowRecordingRequest
     uint16_t frameWidth = 0;   ///< the file's frame; 0: the picture with the keyboard under it
     uint16_t frameHeight = 0;
     std::string layout = "below";  ///< the keyboard "below" the picture or "side" (right of it, for 16:9)
+    /// What ffmpeg gets: "picture" = the window's picture at its own size, ffmpeg scales and borders it (the default:
+    /// the fewest bytes); "nv12" = the file's frame composed here at its size and converted to NV12 (4:2:0), nothing
+    /// left for ffmpeg but the encoder: a GPU encoder's own input. The Mac's own writer takes neither
+    std::string transfer = "picture";
 };
 
 struct WindowRecordingStatus
@@ -285,6 +305,7 @@ struct WindowRecordingStatus
     double encoderReadyMs = 0;    ///< the encoder (the Mac's writer, or ffmpeg) was up
     double firstFrameMs = 0;      ///< the first picture was in the encoder
     double slowestFrameMs = 0;    ///< the longest one picture took in the writer (compose + hand over)
+    std::string transfer;       ///< "picture", "nv12" (what ffmpeg gets) or "native" (the Mac's writer, no ffmpeg)
     bool finalizing = false;    ///< stopped, the file is being finished in the background (recording is false)
     std::string error;          ///< why the last recording failed to finish ("" = it did not fail)
 };

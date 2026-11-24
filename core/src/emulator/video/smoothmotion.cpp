@@ -1,6 +1,9 @@
 #include "smoothmotion.h"
 
+#include <bit>
+
 #include "smoothlayers.h"
+#include "smoothlite.h"
 
 #include <algorithm>
 #include <atomic>
@@ -61,6 +64,8 @@ const char* ModeName(Mode mode)
             return "interpolate";
         case Mode::Auto:
             return "auto";
+        case Mode::InterpolateLite:
+            return "interpolate-lite";
         case Mode::Off:
             break;
     }
@@ -71,7 +76,7 @@ bool ParseMode(const char* text, Mode& mode)
 {
     if (!text)
         return false;
-    for (Mode m : {Mode::Off, Mode::Blend, Mode::Interpolate, Mode::Auto})
+    for (Mode m : {Mode::Off, Mode::Blend, Mode::Interpolate, Mode::Auto, Mode::InterpolateLite})
         if (SameName(text, ModeName(m)))
         {
             mode = m;
@@ -172,6 +177,27 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range, Thread
         const int x1 = std::min(x0 + kBlock, a.width);
         const int y1 = std::min(y0 + kBlock, a.height);
         int bad = 0;
+        // The block's two warped copies inside the pictures (every block but the ones near an edge): rows compared
+        // whole through their pointers, the count looked at once a row. It may pass the limit by more than one
+        // then; the callers ask only whether it did. (A clamped read per pixel was 30 % of an interpolated
+        // picture's time: 290 vectors by 64 pixels a block)
+        if (x0 + k.ax >= 0 && x0 + k.bx >= 0 && x1 + k.ax <= a.width && x1 + k.bx <= b.width && y0 + k.ay >= 0 &&
+            y0 + k.by >= 0 && y1 + k.ay <= a.height && y1 + k.by <= b.height)
+        {
+            const int n = x1 - x0;
+            for (int y = y0; y < y1; y++)
+            {
+                const uint32_t* const rowA = a.pixels + static_cast<size_t>(y + k.ay) * a.width + (x0 + k.ax);
+                const uint32_t* const rowB = b.pixels + static_cast<size_t>(y + k.by) * b.width + (x0 + k.bx);
+                int row = 0;
+                for (int x = 0; x < n; x++)
+                    row += rowA[x] != rowB[x];
+                bad += row;
+                if (bad > limit)
+                    return bad;
+            }
+            return bad;
+        }
         for (int y = y0; y < y1; y++)
             for (int x = x0; x < x1; x++)
                 if (a.At(x + k.ax, y + k.ay) != b.At(x + k.bx, y + k.by) && ++bad > limit)
@@ -391,6 +417,8 @@ SmoothMotion::~SmoothMotion() = default;
 
 ThreadPool* SmoothMotion::Pool()
 {
+    if (!_ownThreads)
+        return nullptr;
     if (!_pool)
     {
         // Half the cores, at most kMaxThreads with the caller (the window's thread): the rest stays the machine's.
@@ -431,6 +459,11 @@ void SmoothMotion::Reset()
     _periods.clear();
     _fields[0] = {};
     _fields[1] = {};
+    if (_lite)
+        _lite->Reset();
+    _movesNow.clear();
+    _movesBefore.clear();
+    _movesTwoAgo.clear();
 }
 
 void SmoothMotion::BuildMask()
@@ -549,6 +582,21 @@ void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z
     // Per block the verdict, split over the pool by block rows (each block writes only its own); then the held
     // blocks applied in order
     _flickerHeld.assign(_flickerChanged.size(), 0);
+    // MovesBy's answers of the last two calls: flicker repeats two frames apart, so a block whose surroundings in A
+    // and B are what they were in Y and Z (two calls ago: the pair y, z) has the answer it had then
+    std::swap(_movesTwoAgo, _movesBefore);
+    std::swap(_movesBefore, _movesNow);
+    _movesNow.assign(_flickerChanged.size(), -1);
+    const bool remembered = _movesTwoAgo.size() == _flickerChanged.size();
+    const auto sameAround = [&](const uint32_t* p, const uint32_t* q, int bx, int by) {
+        const int x0 = std::max(bx - block, 0), x1 = std::min(bx + 2 * block, _width);
+        const int y0 = std::max(by - block, 0), y1 = std::min(by + 2 * block, _height);
+        for (int py = y0; py < y1; py++)
+            if (std::memcmp(p + static_cast<size_t>(py) * _width + x0, q + static_cast<size_t>(py) * _width + x0,
+                            static_cast<size_t>(x1 - x0) * sizeof(uint32_t)) != 0)
+                return false;
+        return true;
+    };
     const auto rows = [&](int j0, int j1) {
         for (int bj = j0; bj < j1; bj++)
             for (int bi = 0; bi < blocksWide; bi++)
@@ -562,7 +610,14 @@ void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z
                 // look-alike of motion: dots a scroll's step apart, passing the block one a frame (Aleste's Y). Then
                 // the 3 x 3 blocks round it alternate as well, else it is motion: the row's ends and the letter's
                 // other dots round it do not
-                if (MovesBy(a.pixels.data(), b, bx, by, x1, y1, _flickerChanged[at]))
+                bool moves;
+                if (remembered && _movesTwoAgo[at] >= 0 && sameAround(a.pixels.data(), y.pixels.data(), bx, by) &&
+                    sameAround(b, z.pixels.data(), bx, by))
+                    moves = _movesTwoAgo[at] != 0;
+                else
+                    moves = MovesBy(a.pixels.data(), b, bx, by, x1, y1, _flickerChanged[at]);
+                _movesNow[at] = moves ? 1 : 0;
+                if (moves)
                 {
                     int changed = 0, alternating = 0;
                     for (int j = std::max(bj - 1, 0); j <= std::min(bj + 1, blocksHigh - 1); j++)
@@ -577,9 +632,12 @@ void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z
                 _flickerHeld[at] = 1;
             }
     };
+    ThreadPool* pool = nullptr;
     if (blocksHigh > 1 && std::count_if(_flickerChanged.begin(), _flickerChanged.end(), [](int c) { return c > 0; }) >
                               kFlickerParallelBlocks)
-        Pool()->ParallelFor(blocksHigh, std::min(blocksHigh, MotionField::kRowParts), rows);
+        pool = Pool();
+    if (pool)
+        pool->ParallelFor(blocksHigh, std::min(blocksHigh, MotionField::kRowParts), rows);
     else
         rows(0, blocksHigh);
     for (int bj = 0; bj < blocksHigh; bj++)
@@ -598,8 +656,133 @@ void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z
         }
 }
 
+namespace
+{
+/// MovesBy on bit masks, the same answer. The 24 x 24 pixels round the block (its reach each way) of both frames as
+/// planes of the colours' indices among the colours met there; per column shift the block's 8 columns of every row as
+/// a byte, so the block read at a shift (dx, dy) is 8 bytes from row 8 + dy: one word a plane. A pixel outside the
+/// frame explains nothing (the validity plane), as the pixel loop skips it.
+/// false: more than kLocalColours colours there, the pixel loop decides
+class BlockShifts
+{
+public:
+    static constexpr int kReach = MotionField::kBlock;
+    static constexpr int kSide = 3 * MotionField::kBlock;
+    static constexpr int kLocalColours = 16;
+    static constexpr int kPlanes = 4;
+
+    bool Build(const uint32_t* a, const uint32_t* b, int width, int height, int bx, int by)
+    {
+        uint32_t colours[kLocalColours];
+        int count = 0;
+        uint32_t rowsA[kPlanes][kSide] = {}, rowsB[kPlanes][kSide] = {}, valid[kSide] = {};
+        const auto indexOf = [&](uint32_t colour) {
+            for (int i = 0; i < count; i++)
+                if (colours[i] == colour)
+                    return i;
+            if (count == kLocalColours)
+                return -1;
+            colours[count] = colour;
+            return count++;
+        };
+        for (int r = 0; r < kSide; r++)
+        {
+            const int y = by - kReach + r;
+            if (y < 0 || y >= height)
+                continue;
+            uint32_t lastA = 0, lastB = 0;
+            int indexA = -1, indexB = -1;
+            for (int c = 0; c < kSide; c++)
+            {
+                const int x = bx - kReach + c;
+                if (x < 0 || x >= width)
+                    continue;
+                const size_t p = static_cast<size_t>(y) * width + x;
+                if (indexA < 0 || a[p] != lastA)
+                {
+                    lastA = a[p];
+                    if ((indexA = indexOf(lastA)) < 0)
+                        return false;
+                }
+                if (indexB < 0 || b[p] != lastB)
+                {
+                    lastB = b[p];
+                    if ((indexB = indexOf(lastB)) < 0)
+                        return false;
+                }
+                valid[r] |= 1u << c;
+                for (int plane = 0; plane < kPlanes; plane++)
+                {
+                    rowsA[plane][r] |= static_cast<uint32_t>((indexA >> plane) & 1) << c;
+                    rowsB[plane][r] |= static_cast<uint32_t>((indexB >> plane) & 1) << c;
+                }
+            }
+        }
+        _planes = 1;
+        while ((1 << _planes) < count)
+            _planes++;
+        for (int shift = 0; shift <= 2 * kReach; shift++)
+            for (int r = 0; r < kSide; r++)
+            {
+                _valid[shift][r] = static_cast<uint8_t>(valid[r] >> shift);
+                for (int plane = 0; plane < _planes; plane++)
+                {
+                    _a[plane][shift][r] = static_cast<uint8_t>(rowsA[plane][r] >> shift);
+                    _b[plane][shift][r] = static_cast<uint8_t>(rowsB[plane][r] >> shift);
+                }
+            }
+        // the block itself and its changed pixels
+        uint64_t differs = 0;
+        for (int plane = 0; plane < _planes; plane++)
+        {
+            _blockA[plane] = Word(_a[plane][kReach], kReach);
+            _blockB[plane] = Word(_b[plane][kReach], kReach);
+            differs |= _blockA[plane] ^ _blockB[plane];
+        }
+        _changed = differs & Word(_valid[kReach], kReach);
+        return true;
+    }
+
+    /// The changed pixels of the block the shift (dx, dy) explains both ways: b(p) = a(p - d) and a(p) = b(p + d)
+    int Explained(int dx, int dy) const
+    {
+        uint64_t both = _changed & Word(_valid[kReach - dx], kReach - dy) & Word(_valid[kReach + dx], kReach + dy);
+        for (int plane = 0; plane < _planes && both; plane++)
+            both &= ~(_blockB[plane] ^ Word(_a[plane][kReach - dx], kReach - dy)) &
+                    ~(_blockA[plane] ^ Word(_b[plane][kReach + dx], kReach + dy));
+        return std::popcount(both);
+    }
+
+private:
+    /// Eight rows from `row`, a byte each
+    static uint64_t Word(const uint8_t* rows, int row)
+    {
+        uint64_t word;
+        std::memcpy(&word, rows + row, sizeof(word));
+        return word;
+    }
+
+    int _planes = 1;
+    uint8_t _a[kPlanes][2 * kReach + 1][kSide];
+    uint8_t _b[kPlanes][2 * kReach + 1][kSide];
+    uint8_t _valid[2 * kReach + 1][kSide];
+    uint64_t _blockA[kPlanes], _blockB[kPlanes];
+    uint64_t _changed = 0;
+};
+}  // namespace
+
 bool SmoothMotion::MovesBy(const uint32_t* a, const uint32_t* b, int bx, int by, int x1, int y1, int changed) const
 {
+    // explained * kFlickerDenominator >= changed * kFlickerNumerator, in whole pixels
+    const int wanted = (changed * kFlickerNumerator + kFlickerDenominator - 1) / kFlickerDenominator;
+    if (BlockShifts shifts; shifts.Build(a, b, _width, _height, bx, by))
+    {
+        for (int dy = -BlockShifts::kReach; dy <= BlockShifts::kReach; dy++)
+            for (int dx = -BlockShifts::kReach; dx <= BlockShifts::kReach; dx++)
+                if ((dx != 0 || dy != 0) && shifts.Explained(dx, dy) >= wanted)
+                    return true;
+        return false;
+    }
     // The block's changed pixels once; per shift the count stops as soon as it is reached or out of reach
     constexpr int kPixels = MotionField::kBlock * MotionField::kBlock;
     int xs[kPixels], ys[kPixels];
@@ -678,7 +861,7 @@ SmoothMotion::Result SmoothMotion::Plan(int64_t tNs) const
     r.kind = Kind::Frame;
     r.serial = r.from = r.to = a.serial;
 
-    if (_mode == Mode::Interpolate && _hasGame)
+    if ((_mode == Mode::Interpolate || _mode == Mode::InterpolateLite) && _hasGame)
     {
         if (_game.mode == GameMode::Off)
             return r;
@@ -767,12 +950,24 @@ bool SmoothMotion::Draw(const Result& r, uint32_t* out)
             break;
         case Kind::Interpolate:
         {
-            // The frame before a for the still and steady checks (a itself when it is the first)
-            const Stored* p = a;
-            for (size_t i = 1; i < _frames.size(); i++)
-                if (&_frames[i] == a)
-                    p = &_frames[i - 1];
-            ComposeLayers(*p, *a, *b, r.weight, out);
+            bool drawn = false;
+            if (Lite())
+            {
+                if (!_lite)
+                    _lite = std::make_unique<LiteFlow>();
+                drawn = _lite->Compose(pa, pb, r.weight, out);
+                if (drawn)
+                    _stats.lite++;
+            }
+            if (!drawn)
+            {
+                // The frame before a for the still and steady checks (a itself when it is the first)
+                const Stored* p = a;
+                for (size_t i = 1; i < _frames.size(); i++)
+                    if (&_frames[i] == a)
+                        p = &_frames[i - 1];
+                ComposeLayers(*p, *a, *b, r.weight, out);
+            }
             // Flickering pixels: the frame due
             for (size_t q = 0; q < a->smooth.size(); q++)
                 if (!a->smooth[q])

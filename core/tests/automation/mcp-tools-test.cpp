@@ -3002,6 +3002,55 @@ TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels"));
 }
 
+// An agent may see only the text: sets and formats list their rows there
+TEST_F(McpTools_Test, ManageSymbols_SetsAndFormatsAreListedInTheText)
+{
+    Json::Value sets(Json::objectValue);
+    sets["cpu"] = "gs";
+    sets["labels"] = 412;
+    Json::Value set(Json::objectValue);
+    set["id"] = "bundle:gs:neogs";
+    set["title"] = "NeoGS firmware v1.11";
+    set["symbols"] = 412;
+    set["priority"] = 50;
+    set["enabled"] = true;
+    set["origin"]["kind"] = "bundle";
+    set["origin"]["where"] = "neogs.map";
+    sets["sets"].append(set);
+    set["id"] = "user";
+    set["title"] = "";
+    set["symbols"] = 2;
+    set["priority"] = 100;
+    set["enabled"] = false;
+    set["origin"] = Json::Value(Json::objectValue);
+    sets["sets"].append(set);
+    _caller->routes["GET /api/v1/emulator/emu-1/symbols/sets?cpu=gs"] = {200, sets};
+
+    Json::Value args;
+    args["action"] = "sets";
+    args["cpu"] = "gs";
+    mcp::ToolResult result = RunTool(*_registry, "manage_symbols", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("of cpu gs: 2, 412 labels"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("bundle:gs:neogs · NeoGS firmware v1.11 · 412 symbols · priority 50"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("2 symbols · priority 100 · disabled"), std::string::npos) << result.text;
+
+    Json::Value formats(Json::objectValue);
+    Json::Value format(Json::objectValue);
+    format["id"] = "sjasmplus-sld";
+    format["title"] = "sjasmplus SLD";
+    format["extensions"].append(".sld");
+    format["pages"] = true;
+    formats["formats"].append(format);
+    _caller->routes["GET /api/v1/emulator/emu-1/symbols/formats"] = {200, formats};
+    args = Json::Value(Json::objectValue);
+    args["action"] = "formats";
+    result = RunTool(*_registry, "manage_symbols", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("sjasmplus-sld · sjasmplus SLD · .sld · pages"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, ManageSymbols_SetsImportExport_MapToTheSymbolRoutes)
 {
     for (const char* route : {"GET /api/v1/emulator/emu-1/symbols/sets", "GET /api/v1/emulator/emu-1/symbols/formats",

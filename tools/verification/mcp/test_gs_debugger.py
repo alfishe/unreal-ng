@@ -213,6 +213,7 @@ def test_the_card_names_its_firmware(s):
     body = r.structured or {}
     expect(body.get('cpu') == 'gs' and profile['symbols'] in [x.get('id') for x in body.get('sets', [])],
            'the firmware symbols are the card CPU\'s set', body)
+    expect(profile['symbols'] in r.text and 'cpu gs' in r.text, 'and the text lists it', r.text)
     r = s.call('manage_symbols', {'action': 'sets'})
     expect(profile['symbols'] not in [x.get('id') for x in (r.structured or {}).get('sets', [])],
            'and not the main CPU\'s', r.structured)

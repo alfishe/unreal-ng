@@ -38,6 +38,7 @@
 #include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/engine/ttdreftable.h"
 #include "debugger/ttd/engine/ttdrestoreresult.h"
+#include "debugger/ttd/engine/ttdseekindex.h"
 #include "debugger/ttd/engine/ttdregion.h"
 #include "debugger/ttd/engine/ttdstreamregistry.h"
 #include "debugger/ttd/engine/ttdtime.h"
@@ -88,10 +89,24 @@ struct TTDSegmentInfo
     /// Its versions and full tables are in memory; false: evicted, its file in the recording folder holds them
     /// (EvictSegment), read back when a restore needs them (ReadBackSegment)
     bool resident = true;
-    /// Resident: the checkpoints from firstCheckpoint up to here have their versions and full tables (SIZE_MAX:
-    /// all of them). A restore reads back only the file's parts up to the one it needs and one more: on average
-    /// half the segment (P1.S10 seek tails); a restore past them reads the whole segment
-    size_t residentEnd = SIZE_MAX;
+    /// Resident in part: the stretches of its checkpoints that have their versions and the full tables a restore of
+    /// them needs, [first, end) each, ascending and apart; none listed: every checkpoint. A restore reads back the
+    /// stretch between two checkpoints with full tables that holds its checkpoint (ReadBackSegmentWindow, through
+    /// the file's seek index: P1.S10 seek format); another restore elsewhere in the segment adds its stretch, the
+    /// ones in memory keep their versions. A file without the index gives a prefix (ReadSegmentPieces up to a frame)
+    std::vector<std::pair<size_t, size_t>> residentParts;
+    /// Checkpoint @p index has its versions and the full tables a restore of it needs
+    bool Holds(size_t index) const
+    {
+        if (!resident || residentParts.empty())
+            return resident;
+        for (const std::pair<size_t, size_t>& part : residentParts)
+            if (index >= part.first && index < part.second)
+                return true;
+        return false;
+    }
+    /// Every checkpoint of the segment is in memory
+    bool Whole() const { return resident && residentParts.empty(); }
     bool readBack = false;           ///< in memory because a restore read it back (the read-back cache)
     uint64_t readBackBytes = 0;      ///< read back: the payload bytes it brought in
     mutable uint64_t lastUse = 0;    ///< read back: the engine's use clock at its last use (the cache's LRU order)
@@ -116,6 +131,13 @@ struct TTDImportedChange
 struct TTDSegmentPieces
 {
     std::map<uint64_t, std::vector<TTDImportedChange>> byFrame;
+    /// A stretch read through the file's seek index (TTDSessionFile::ReadSegmentWindow): every piece's version at
+    /// the checkpoint of tableFrame (its changes are in byFrame too), and the versions imported, each with one
+    /// reference; byFrame and table name them without holding any
+    bool window = false;
+    uint64_t tableFrame = 0;
+    std::vector<TTDImportedChange> table;
+    std::vector<uint32_t> owned;
 };
 
 struct TTDEngineCheckpoint
@@ -258,6 +280,10 @@ public:
     /// @p store: the piece store, shareable by several sessions (D22); a store
     /// of its own when null
     explicit TimeTravelEngine(std::shared_ptr<TTDPieceStore> store = nullptr);
+
+    /// A baseline keeps the version of a piece that did not change and is stored whole (the default); false stores
+    /// every piece anew at every baseline, as before 2026-11-23 (a measurement's other side). Every engine's
+    static void SetBaselineReuse(bool on);
 
     /// Full reference table every @p interval checkpoints; set before BeginSession
     void SetSnapshotInterval(uint32_t interval) { _snapshotInterval = interval ? interval : 1; }
@@ -592,13 +618,26 @@ public:
     /// before the eviction, holding the same content. The segment joins the read-back cache (readBack). Nothing
     /// changes when @p pieces does not match the segment (a frame or a piece missing)
     /// @p prefix: @p pieces may hold only the segment's first checkpoints (ReadSegmentPieces up to a frame): those
-    /// become resident (TTDSegmentInfo::residentEnd), checkpoint @p need among them
+    /// become resident (TTDSegmentInfo::residentParts), checkpoint @p need among them. A stretch
+    /// (TTDSegmentPieces::window) joins what the segment has in memory; the whole segment or a prefix needs it evicted
     bool ReadBackSegment(uint32_t line, size_t segment, const TTDSegmentPieces& pieces, std::string& error,
                          bool prefix = false, size_t need = 0);
     /// ReadBackSegment from the segment's file @p source (TTDSessionFile::ReadSegmentPieces)
     /// @p upTo: the checkpoint needed; the file is read up to the part after it (SIZE_MAX: whole)
     bool ReadBackSegmentFrom(uint32_t line, size_t segment, const ITTDByteSource& source, std::string& error,
                              size_t upTo = SIZE_MAX);
+    /// Bring back the stretch of a segment that holds checkpoint @p need, through the file's seek index
+    /// (TTDSessionFile::ReadSegmentWindow): from the last checkpoint with full tables at or before @p need to the
+    /// next one (the checkpoint after @p need among them: the next frame's restore, a seek check). Those become
+    /// resident (TTDSegmentInfo::residentParts); the stretches of the segment in memory already stay as they are.
+    /// False with the reason, nothing changed, when the file has no seek index or does not match
+    bool ReadBackSegmentWindow(uint32_t line, size_t segment, const ITTDByteSource& source, std::string& error,
+                               size_t need);
+    /// What the last ReadBackSegmentWindow read
+    const TTDSegmentWindowScratch::Work& LastWindowWork() const { return _windowScratch.work; }
+    /// Checkpoint @p index's segment of the line read now is in memory whole, read back whole when a part of it is
+    /// (the capture head moves there: a segment the head reads cannot leave memory to be read again)
+    bool EnsureWhole(size_t index);
     /// A read-back segment stays as a window segment (false) or joins the cache again (true)
     void SetSegmentReadBack(uint32_t line, size_t segment, bool readBack);
     /// Segments held on disk only, and their checkpoints, over all lines
@@ -826,6 +865,9 @@ private:
         std::vector<std::unique_ptr<uint8_t[]>> chunks;   ///< the slots' bytes, kChunkPieces each
     };
     DecodedMemory _decodedMemory;
+    TTDSegmentWindowScratch _windowScratch;   ///< ReadBackSegmentWindow's buffers
+    /// Every region has a full table at @p cp, in memory or evicted with its segment
+    bool HoldsFullTables(const TTDEngineCheckpoint& cp) const;
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
@@ -861,6 +903,11 @@ private:
     /// Per region: its latest contents, the base each new difference is
     /// computed against (sparse: a uniform piece keeps only its value)
     TTDDeltaBase _deltaBase;
+    /// Per region and piece: the chain's last anchor point (TTDPieceStore::IsAnchorPoint) that had a version stored
+    /// after it, and that anchor's content, the base of the chain's next anchor point. kNone: not known (a head
+    /// rebuilt from a checkpoint), versions build on the previous one until the chain's next anchor point
+    TTDDeltaBase _anchorBase;
+    std::vector<std::vector<TTDPieceId>> _anchorId;
     TTDPayloadStore _payloads;
     TTDStreamRegistry _streams;
     std::vector<uint32_t> _offeredByRegion;   ///< the last capture's pieces, by region

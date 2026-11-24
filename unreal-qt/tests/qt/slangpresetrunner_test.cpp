@@ -24,6 +24,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "widgets/crtrenderer.h"
+#include "gpu/gldevice.h"
 #include "widgets/slangpresetrunner.h"
 
 namespace
@@ -135,13 +136,15 @@ TEST(SlangPresetRunner_Test, EveryPresetShowsThePicture)
     QOpenGLExtraFunctions* gl = context.gl();
     const QImage frame = MakeFrame();
     const GLuint source = Upload(gl, frame);
+    auto device = gpu::GlDevice::Create();
+    auto sourceTexture = device->WrapTexture(source, frame.width(), frame.height());
     const double plain = Mean(frame);
     for (const QString& key : presets)
     {
         SlangPresetRunner runner;
-        ASSERT_TRUE(runner.load(PresetDir(key))) << key.toStdString() << ": " << runner.error().toStdString();
+        ASSERT_TRUE(runner.load(PresetDir(key), device.get())) << key.toStdString() << ": " << runner.error().toStdString();
         for (int i = 0; i < 3; ++i)
-            runner.render(source, frame.rect(), QSize(704, 576));
+            runner.render(*sourceTexture, frame.rect(), QSize(704, 576));
         const QImage out = runner.outputImage();
         EXPECT_EQ(gl->glGetError(), static_cast<GLenum>(GL_NO_ERROR)) << key.toStdString();
         ASSERT_EQ(out.size(), QSize(704, 576)) << key.toStdString();
@@ -167,12 +170,14 @@ TEST(SlangPresetRunner_Test, MatchesLibrashader)
     const char* frameEnv = std::getenv("UNREAL_CRT_FRAME");
     const int frames = frameEnv ? std::atoi(frameEnv) : 60;
     QOpenGLExtraFunctions* gl = context.gl();
+    auto device = gpu::GlDevice::Create();
     const QDir root(QString::fromUtf8(reference));
     for (const QString& file : QDir(root.filePath(QStringLiteral("src"))).entryList({QStringLiteral("*.png")}))
     {
         const QString frameName = file.chopped(4);
         const QImage frame(root.filePath(QStringLiteral("src/") + file));
         const GLuint source = Upload(gl, frame);
+        auto sourceTexture = device->WrapTexture(source, frame.width(), frame.height());
         for (const QString& key : Presets())
         {
             const QImage expected = QImage(root.filePath(QStringLiteral("out/%1/%2.png").arg(frameName, key)))
@@ -180,9 +185,9 @@ TEST(SlangPresetRunner_Test, MatchesLibrashader)
             if (expected.isNull())
                 continue;
             SlangPresetRunner runner;
-            ASSERT_TRUE(runner.load(PresetDir(key))) << runner.error().toStdString();
+            ASSERT_TRUE(runner.load(PresetDir(key), device.get())) << runner.error().toStdString();
             for (int i = 0; i <= frames; ++i)
-                runner.render(source, frame.rect(), expected.size());
+                runner.render(*sourceTexture, frame.rect(), expected.size());
             const QImage out = runner.outputImage();
             runner.release();
             if (output)

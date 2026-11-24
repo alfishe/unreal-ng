@@ -53,7 +53,12 @@ c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/transport.cpp ../core
 ../tools/poc/054-ffmpeg-frame-transport/e2e.sh ./poc054 SRC.rgba 3       # 4K libx264 end to end, SRC = 352x288 RGBA frames
 c++ -std=c++20 -O2 ../tools/poc/054-ffmpeg-frame-transport/fsdump.cpp ../core/recording/src/common/framescaler.cpp -o fsdump
 python3 ../tools/poc/054-ffmpeg-frame-transport/remap.py SRC.rgba         # remap tables against FrameScaler, 4:4:4 bytes
+../tools/poc/054-ffmpeg-frame-transport/winrec.sh ./poc054 SRC.bgra 662x542 3   # window recorder: FIFO / stdin / unix
+../tools/poc/054-ffmpeg-frame-transport/intel.sh ./poc054 SRC.bgra /dev/dri/renderD128 3   # Linux, Intel VA-API / QSV
 ```
+
+Windows (x64 Native Tools prompt): build `transport_win.cpp` as its header says into `scratch\tw.exe`, put a
+352x288 BGRA `src.bgra` beside it, set `FFMPEG` to ffmpeg.exe and run `win.cmd 3` from there.
 
 ## Answer
 
@@ -105,7 +110,7 @@ When the bytes cannot shrink (the window recorder sends the window's picture), t
   reads 64 KB per `read` (strace: 10k reads of 65536 for 20 frames); a 1 MB pipe changes nothing, nor does glibc's
   mmap threshold (33 MB packets above 32 MB). ffmpeg has no shared-memory input; an in-process libavcodec would be
   the only copy-free way and a new build dependency on every platform.
-- Windows: not measured (no ffmpeg on the Windows host).
+- Windows and the GPU encoders: below.
 
 ## Next steps
 
@@ -113,5 +118,144 @@ When the bytes cannot shrink (the window recorder sends the window's picture), t
    factors with `neighbor` + `pad`, others with the `remap` tables, `area` 4:2:0 at the target size given
    explicitly; one segment per picture size, joined with the sound at the end. Results in
    `docs/inprogress/2026-10-05-recording-4k-profile/README.md`.
-2. VA-API through ffmpeg: the same, the picture uploaded small (`hwupload` before the scaling, `scale_vaapi`).
-3. Window recorder on macOS: a unix socket instead of stdin if its window-size frames stay the limit.
+2. ~~VA-API through ffmpeg: the picture uploaded small, `scale_vaapi`~~ dropped 2026-11-23: no nearest mode, the
+   pixels blur and the colour drifts (PSNR 15 dB). VA-API takes the CPU graph's 4:2:0 picture and pads on the GPU
+   (recording-4k-profile README).
+3. ~~Window recorder on macOS: a unix socket instead of stdin~~ not needed (measured 2026-11-23, below).
+
+## Window recorder: stdin against a unix socket (macOS, 2026-11-23)
+
+The window recorder hands ffmpeg the window's picture through its standard input (QProcess: an anonymous pipe, not
+a FIFO). The largest it sends is the CRT drawn at a profile's height: 1320x1080 BGRA (5.7 MB) for 1080p, 2640x2160
+(22.8 MB) for 4K. `winrec.sh`: 19 real window grabs scaled to those sizes, M1 Ultra at load 9-33, frames per second
+over 3-4 interleaved rounds:
+
+| Output | 1320x1080 stdin | 1320x1080 unix | 2640x2160 FIFO | 2640x2160 stdin | 2640x2160 unix |
+|:--|--:|--:|--:|--:|--:|
+| ingest (`-c copy`) | 242-526 | 384-927 | 22-50 | 58-131 | 115-283 |
+| `h264_videotoolbox` | 67-365 | 149-384 | | 45-95 | 53-98 |
+| `libx264` 4:4:4 ultrafast | 171-358 | 278-575 | | 41-102 | 63-171 |
+
+- On macOS an anonymous pipe moves 2.6x what a FIFO does (1.3-3.0 GB/s against 0.5-1.1 GB/s, same rounds): the
+  FIFO numbers above are not the window recorder's.
+- At the 1080p CRT size the pipe has 5-10x headroom over 50 fps. At the 4K CRT size it has about 2x idle, near 1x
+  under load, where the encoders are the limit as well: VideoToolbox through ffmpeg takes ~95 fps with either
+  transport, and x264 4:4:4 on real CRT frames does ~42 fps at 1080p (recipe `window-recording.md`), about a quarter
+  of that at 4K. The default engine on the Mac (`native`, AVAssetWriter) does not use ffmpeg at all.
+- A socket would gain only for a 4K CRT recording with `engine: ffmpeg` on a loaded Mac, where the encoder stays far
+  below real time anyway. Not worth a second transport (and a Windows path).
+- Live recording of a drawn window was not measured: the offscreen platform does not redraw the window (19 of 210
+  frames changed), and visible windows are not opened on this Mac without the owner.
+
+## 4K into the GPU encoders: Windows NVENC, Linux Intel (2026-11-23)
+
+Can a 4K frame reach ffmpeg and its GPU encoder at 50 fps? `transport_win.cpp` + `win.cmd` on Windows (a named pipe
+as `FFmpegPipeEncoder`'s `NamedPipe` with 64 KB or 1 MB buffers, a pipe as stdin as QProcess hands it with 1 MB or
+16 MB, TCP loopback), `intel.sh` on Linux (FIFO, FIFO 1 MB, stdin, unix socket). Moving pictures (testsrc2 352x288
+scaled by FrameScaler; NV12 a fixed pattern), 3 interleaved rounds, frames per second min-max.
+
+Windows, Threadripper PRO 3975WX + RTX 4090, idle (NVENC `-preset p1 -tune ll -rc constqp -qp 18`):
+
+| Frame, output | npipe 64 KB | npipe 1 MB | stdin 1 MB | stdin 16 MB | TCP |
+|:--|--:|--:|--:|--:|--:|
+| 4K BGRA, ingest | 80-85 | 65-86 | 61-84 | 80-84 | 27-59 |
+| 4K BGRA, h264_nvenc (BGRA into NVENC) | 60-62 | 61-63 | 59-62 | 62-63 | 37-39 |
+| 4K BGRA, h264_nvenc, `-pix_fmt yuv420p` (CPU) | 61-64 | 60-63 | 60-63 | 60-63 | 29-41 |
+| 4K BGRA, hevc_nvenc | 60-64 | 60-64 | 60-62 | 60-64 | 24-39 |
+| 4K BGRA, h264_nvenc 4:4:4 | 56-59 | 58-60 | 57-60 | 57-60 | 19-38 |
+| 4K NV12, ingest | 286-318 | 286-289 | 255-294 | 255-280 | 129-181 |
+| 4K NV12, h264_nvenc | 180-185 | 185-191 | 180-190 | 178-187 | 94-112 |
+| 4K NV12, hevc_nvenc | 186-193 | 192-193 | 187-193 | 187-190 | 108-128 |
+| 2640x2160 BGRA (4K CRT window), h264_nvenc | 11-82 | 27-84 | 67-84 | 72-83 | 31-58 |
+
+Linux, i7-11850H Tiger Lake (Iris Xe), load 13-18 (`-vf format=nv12,hwupload -c:v h264_vaapi -qp 18`;
+`h264_qsv -pix_fmt nv12 -global_quality 18`):
+
+| Frame, output | FIFO | FIFO 1 MB | stdin | unix |
+|:--|--:|--:|--:|--:|
+| 4K BGRA, ingest | 39-60 | 42-60 | 41-59 | 44-110 |
+| 4K BGRA, h264_vaapi | 27-44 | 24-43 | 25-43 | 25-64 |
+| 4K BGRA, hevc_vaapi | 26-30 | 26-28 | 22-28 | 21-29 |
+| 4K BGRA, h264_qsv | 30-42 | 23-43 | 21-42 | 29-59 |
+| 4K NV12, ingest | 129-246 | 152-275 | 124-224 | 212-360 |
+| 4K NV12, h264_vaapi | 86-94 | 85-90 | 85-92 | 77-94 |
+| 4K NV12, hevc_vaapi | 51-56 | 49-55 | 52-55 | 52-56 |
+| 4K NV12, h264_qsv | 82-84 | 82-83 | 82-82 | 81-82 |
+| 2640x2160 BGRA, h264_vaapi | 52-68 | 66-74 | 52-70 | 42-88 |
+
+- **The pixel format decides, not the transport.** 4K BGRA (33 MB) makes 50 fps on Windows with ~20 % to spare
+  (NVENC 56-64 fps through every pipe; ffmpeg's handling of 33 MB per frame is the limit, NVENC alone takes NV12
+  at 180-190) and not at all on the Intel laptop (21-44 fps: ffmpeg's single-threaded BGRA -> NV12 of 8.3 M pixels
+  plus the upload). 4K NV12 (12.4 MB) gives NVENC 3.5x real time and Intel H.264 1.7x; Intel HEVC at 4K is the
+  encoder's own limit (~55 fps) in any format.
+- Pipe buffers (64 KB .. 16 MB) change nothing on Windows; TCP loopback is the slowest there (half the pipes). On
+  Linux a unix socket helps the BGRA ingest only, never enough for 4K BGRA into VA-API.
+- So a producer that must hand ffmpeg a 4K frame should send NV12 (`FrameScaler::ScaleIntoNv12` /
+  `PackedToNv12` exist) and keep the named pipe / FIFO / stdin. Today neither recorder ships a 4K BGRA frame: the
+  fixed profiles send the source picture (ffmpeg builds the frame), the window recorder the window's picture (at
+  most 2640x2160 with the CRT at 4K: 67-84 fps into NVENC through stdin, 52-70 into VA-API).
+- Intel on Windows (QSV) not measured: neither Windows host has an Intel GPU enabled (an RTX 4090 alone on both).
+
+## The window recorder's `transfer` switch (2026-11-23)
+
+Following the answer above, the window recorder got `transfer` (all planes; default `picture`, today's behaviour):
+`nv12` composes the frame at the file's size in the writer, converts it with `FrameScaler::PackedToNv12` (now taking
+B,G,R,A as well, the same bytes; 4 bands: 1.2 ms per 4K frame on an M1 Ultra, 1.8 ms on a 3975WX, single-threaded
+RGBA path unchanged in an interleaved A/B on both) and sends NV12 in the Matroska stream (`V_UNCOMPRESSED`,
+ColourSpace `NV12`); ffmpeg only encodes (`-pix_fmt nv12` to NVENC / QSV / AMF and VideoToolbox, `hwupload` alone
+to VA-API, `yuv420p` to x264 / x265; ProRes refused: 4:2:0).
+
+Live, `.238` under xvfb (i7-11850H, T1200 + Iris Xe), 7th Reality demo reloaded before every file so both modes
+record the same frames (84-85 distinct of 210), 4K H.264, `video/window/record/frames 200`, 3 interleaved rounds:
+
+| Picture, encoder | `picture`: wall s, ffmpeg CPU ms / frame | `nv12`: wall s, ffmpeg CPU ms / frame |
+|:--|--:|--:|
+| `picture_height 2160` (CRT at 4K), h264_nvenc | 3.00-3.25, 24-25 | 2.50-2.87, 4.3-4.4 |
+| `picture_height 2160`, h264_vaapi | 2.96-2.99, 24-25 | 2.57-2.88, 5.6-5.9 |
+| window size picture (1080 screen), h264_nvenc | 1.14-1.21, 11-12 | 2.99-4.19, 3.9-4.0 |
+| window size picture, h264_vaapi | 0.91-1.01, 7.5-8.0 | 3.47-3.92, 4.5-5.6 |
+
+- With the picture already at the frame's height (the 4K CRT) `nv12` is faster and takes ffmpeg's CPU down 4-6x.
+- With a smaller picture, `nv12` scales it up in the writer (`QImage::scaled`, smooth, on the CPU, the path the Mac's
+  own writer takes too) and loses to ffmpeg's scaler: there `picture` stays the right choice.
+
+## `transfer nv12` built in NV12 (2026-11-24)
+
+The frame of `transfer nv12` is now built in NV12 itself (`composeNv12` in the window recorder), no 4K B,G,R,A frame:
+
+- the background is written once per buffer, then only the picture's rectangle every frame; the keyboard is drawn
+  over the background and converted only when it changes;
+- a picture of its place's size is converted into it (`PackedToNv12`); a smaller one is converted at its own size
+  (`FrameScaler::PackedToYuv`, per-pixel Y, U, V) and scaled in its planes by `FrameScaler::PlaneScaler`: separable
+  bicubic, ffmpeg's kernel (Keys a = -0.6), Y to the place, U,V to half of it (a third of the samples of the 4K
+  B,G,R,A frame), 4 bands;
+- same frames are found by the picture and the keyboard (hundreds of KB), not a 4K memcmp;
+- the layout is made even in `nv12` (a pixel at most: NV12 colours 2x2 blocks). A picture larger than its place
+  (scaled down) keeps the old path (Qt's smooth scaling, `PackedToNv12` of the frame).
+
+Writer time per changed 4K frame (`old`: compose B,G,R,A + `PackedToNv12`; `new`: `composeNv12`), 7th Reality, the
+same 85 frames, h264, 4 interleaved rounds (a temporary diag build: `WRDIAG` per frame, `WR_NODIRECT` for the old
+path), median of the per-round medians:
+
+| Host | `picture_height` | old ms | new ms | new faster | wall of 200 stepped frames, old / new s |
+|:--|:--|--:|--:|:--|:--|
+| `.238` i7-11850H, VA-API, gcc | 0 (659x540 to 2636x2160) | 22.4 | 12.6 | 4/4 | 3.1-8.2 / 1.2-3.5 |
+| | 700 | 19.0 | 10.3 | 4/4 | 2.7-2.8 / 1.1-1.2 |
+| | 2160 | 17.2 | 11.1 | 4/4 | 2.3 / 1.3 |
+| `.20` M3 Ultra, VideoToolbox (via ffmpeg) | 700 | 10.2 | 8.5 | 4/4 | 1.35 / 1.0 |
+| | 0, 2160 | load 35 to 150 from other work: 3/4 and 4/4 rounds to new, numbers not usable | | | |
+
+The changed stages alone (`scratch` bench: fill + Qt smooth scale + drawImage + `PackedToNv12` in 4 bands vs
+`PackedToYuv` + `PlaneScaler` in 4 bands, RGB32 pictures as the window grabs, median of 20):
+
+| Case | `.40` 3975WX, MSVC: old / new ms | `.20` M3 Ultra (load 150): old / new ms |
+|:--|--:|--:|
+| 659x540 to 2636x2160 | 12.0 / 6.1 | 10.3-13.3 / 5.2-6.9 |
+| 854x700 at its own size | 5.5 / 0.4 | 2.2-3.9 / 0.5-1.2 |
+| 659x540 to 1708x1400 | 8.2 / 3.2 | 8.6-9.6 / 4.1-5.5 |
+| 352x288 to 2640x2160 | 25.8 / 5.4 | 10.0-16.0 / 6.4 |
+
+Quality, `.238`, old vs new path on the same frames: PSNR Y 41-44 dB, U,V 54-62 dB (bicubic instead of Qt's
+smooth scaling; nothing visible side by side); `picture_height 2160` gives the same bytes (PSNR inf). `.40` has no
+ffmpeg, so Windows was measured on the stages only.
+

@@ -1,5 +1,7 @@
 #include "ttdportjournal.h"
 
+#include "debugger/ttd/engine/ttdwriteindex.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -51,12 +53,38 @@ constexpr uint32_t kMaxCompressedBlock =
 
 }  // namespace
 
+namespace
+{
+constexpr size_t kSerializedBlockHeader = 4 + 8 + 4 + 4;
+}
+
+void TTDPortJournal::CountBlock(const Block& b, bool add)
+{
+    const size_t heap = b.compressed.capacity() + b.summary.runStart.capacity() * sizeof(uint32_t) +
+                        b.summary.runTallies.capacity() * sizeof(uint32_t) + b.summary.tallies.capacity() * sizeof(PortTally);
+    const size_t slack = b.compressed.capacity() - b.compressed.size();
+    const size_t serialized = b.compressed.size() + kSerializedBlockHeader;
+    if (add)
+    {
+        _blocksHeap += heap;
+        _blocksSlack += slack;
+        _blocksSerialized += serialized;
+    }
+    else
+    {
+        _blocksHeap -= heap;
+        _blocksSlack -= slack;
+        _blocksSerialized -= serialized;
+    }
+}
+
 void TTDPortJournal::Clear()
 {
     _mode = Mode::Off;
     _cursor = 0;
     _blocks.clear();
     _blocks.shrink_to_fit();
+    _blocksHeap = _blocksSlack = _blocksSerialized = 0;
     _droppedBlocks = 0;
     _sealedRecords = 0;
     _open.clear();
@@ -335,6 +363,7 @@ void TTDPortJournal::SealOpenBlock()
 {
     _blocks.push_back(MakeBlock(_open));
     _blocks.back().summary = Summarize(_open);
+    CountBlock(_blocks.back(), true);
     _sealedRecords += _open.size();
     _open.clear();
     ++_openEdits;
@@ -353,6 +382,8 @@ void TTDPortJournal::TruncateTo(uint64_t count)
         std::vector<TTDPortRecord> kept;
         if (keep > 0 && DecodeBlock(block, _cache))
             kept.assign(_cache.records.begin(), _cache.records.begin() + static_cast<std::ptrdiff_t>(keep));
+        for (size_t k = static_cast<size_t>(block - _droppedBlocks); k < _blocks.size(); ++k)
+            CountBlock(_blocks[k], false);
         _blocks.resize(static_cast<size_t>(block - _droppedBlocks));
         _sealedRecords = block * kBlockRecords;
         _open = std::move(kept);
@@ -376,6 +407,8 @@ void TTDPortJournal::DropBefore(uint64_t index)
         ++drop;
     if (drop == 0)
         return;
+    for (size_t k = 0; k < drop; ++k)
+        CountBlock(_blocks[k], false);
     _blocks.erase(_blocks.begin(), _blocks.begin() + static_cast<std::ptrdiff_t>(drop));
     _droppedBlocks += drop;
     _cache = ReadCache{};
@@ -385,28 +418,32 @@ void TTDPortJournal::DropBefore(uint64_t index)
 
 size_t TTDPortJournal::HeapBytes() const
 {
-    size_t bytes = (_open.capacity() + _cache.records.capacity()) * sizeof(TTDPortRecord) +
-                   _blocks.capacity() * sizeof(Block);
-    for (const Block& b : _blocks)
-        bytes += b.compressed.capacity() + b.summary.runStart.capacity() * sizeof(uint32_t) +
-                 b.summary.runTallies.capacity() * sizeof(uint32_t) + b.summary.tallies.capacity() * sizeof(PortTally);
-    return bytes;
+    if (TTDWriteIndex::WalkBlocksForMeasurement())
+    {
+        size_t heap = 0, slack = 0, serialized = 0;
+        for (const Block& b : _blocks)
+            heap += b.compressed.capacity() + b.summary.runStart.capacity() * sizeof(uint32_t) +
+                    b.summary.runTallies.capacity() * sizeof(uint32_t) + b.summary.tallies.capacity() * sizeof(PortTally);
+        for (const Block& b : _blocks)
+            slack += b.compressed.capacity() - b.compressed.size();
+        for (const Block& b : _blocks)
+            serialized += b.compressed.size() + kSerializedBlockHeader;
+        if (heap != _blocksHeap || slack != _blocksSlack || serialized != _blocksSerialized)
+            return SIZE_MAX;   // a sum went wrong: a measurement run shows it at once
+    }
+    return (_open.capacity() + _cache.records.capacity()) * sizeof(TTDPortRecord) + _blocks.capacity() * sizeof(Block) +
+           _blocksHeap;
 }
 
 size_t TTDPortJournal::CompressedSlackBytes() const
 {
-    size_t bytes = 0;
-    for (const Block& b : _blocks)
-        bytes += b.compressed.capacity() - b.compressed.size();
-    return bytes;
+    return _blocksSlack;
 }
 
 size_t TTDPortJournal::SerializedBytes() const
 {
-    constexpr size_t kBlockHeader = 4 + 8 + 4 + 4;
-    size_t bytes = 16;  // count, block_records, block_count
-    for (const Block& b : _blocks)
-        bytes += b.compressed.size() + kBlockHeader;
+    constexpr size_t kBlockHeader = kSerializedBlockHeader;
+    size_t bytes = 16 + _blocksSerialized;  // count, block_records, block_count; the sealed blocks
     if (!_open.empty())
     {
         if (_openBytesEdits != _openEdits || _openBytesRecords != _open.size())
@@ -550,6 +587,7 @@ bool TTDPortJournal::Deserialize(std::istream& in, uint32_t checkpointCount, std
         {
             _sealedRecords += b.records;
             b.summary = Summarize(decoded);
+            CountBlock(b, true);
             _blocks.push_back(std::move(b));
         }
     }

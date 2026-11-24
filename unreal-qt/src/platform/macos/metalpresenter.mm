@@ -1,5 +1,7 @@
 #include "metalpresenter.h"
 
+#include "platform/vrrprobe.h"
+
 #define GL_SILENCE_DEPRECATION
 
 #import <AppKit/AppKit.h>
@@ -111,6 +113,64 @@ struct Feedback
     std::atomic<bool> visible{true};
     std::atomic<int64_t> shortestRefreshNs{0};  // the screen's refresh interval range (0: unknown)
     std::atomic<int64_t> longestRefreshNs{0};
+    std::atomic<bool> fullScreen{false};
+
+    // Does the display follow the frames (vrrprobe.h)? A refresh range says it can: ProMotion reports one and puts
+    // the frames on its 120 Hz grid all the same (frame presenter README, section 9). So the steps between the screen
+    // times of timed frames are judged against the frames' own: VRR until they are seen on a grid
+    static constexpr size_t kStepWindow = 120;
+    static constexpr uint32_t kJudgeEvery = 60;
+    std::vector<double> screenSteps;  // ms, statsMutex
+    std::vector<double> askedSteps;   // ms, statsMutex
+    int64_t lastTimedAtNs = 0;        // statsMutex
+    int64_t lastTimedScreenNs = 0;    // statsMutex
+    uint32_t sinceJudged = 0;         // statsMutex
+    vrrprobe::Probe probe;            // statsMutex
+    std::atomic<bool> probeReset{true};  // the next judgement starts the probe anew (a new screen, range, policy)
+    std::atomic<bool> follows{true};     // probe.Engaged()
+    std::string vrrNote;                 // statsMutex
+
+    /// A timed frame on screen (statsMutex held)
+    void JudgeVrr(int64_t atNs, int64_t screenNs, int64_t refreshNs)
+    {
+        if (probeReset.exchange(false))
+        {
+            probe.Reset(true);
+            follows = true;
+            screenSteps.clear();
+            askedSteps.clear();
+            lastTimedAtNs = lastTimedScreenNs = 0;
+            sinceJudged = 0;
+            vrrNote.clear();
+        }
+        if (lastTimedAtNs > 0 && atNs > lastTimedAtNs && screenNs > lastTimedScreenNs)
+        {
+            screenSteps.push_back(static_cast<double>(screenNs - lastTimedScreenNs) / 1e6);
+            askedSteps.push_back(static_cast<double>(atNs - lastTimedAtNs) / 1e6);
+            if (screenSteps.size() > kStepWindow)
+            {
+                screenSteps.erase(screenSteps.begin());
+                askedSteps.erase(askedSteps.begin());
+            }
+        }
+        lastTimedAtNs = atNs;
+        lastTimedScreenNs = screenNs;
+        if (++sinceJudged < kJudgeEvery || screenSteps.size() < kJudgeEvery || refreshNs <= 0)
+            return;
+        sinceJudged = 0;
+        const double lo = presentstats::Percentile(screenSteps, 0.10);
+        const double step = presentstats::Percentile(screenSteps, 0.50);
+        const double hi = presentstats::Percentile(screenSteps, 0.90);
+        const double asked = presentstats::Percentile(askedSteps, 0.50);
+        if (!probe.Feed(vrrprobe::JudgeSteps(lo, step, hi, asked, static_cast<double>(refreshNs) / 1e6)))
+            return;
+        follows = probe.Engaged();
+        char note[160] = "";
+        if (!probe.Engaged())
+            std::snprintf(note, sizeof note, "no VRR: frames every %.2f ms stay on screen %.2f to %.2f ms (a grid)",
+                          asked, lo, hi);
+        vrrNote = note;
+    }
 };
 
 /// GUI thread: the window's occlusion and its screen's refresh range into `fb`
@@ -120,10 +180,14 @@ void CacheWindowState(NSView* view, Feedback& fb)
     fb.visible.store(window && (window.occlusionState & NSWindowOcclusionStateVisible) != 0,
                      std::memory_order_relaxed);
     NSScreen* screen = window.screen ?: [NSScreen mainScreen];
-    fb.shortestRefreshNs.store(screen.minimumRefreshInterval > 0 ? SecondsToNs(screen.minimumRefreshInterval) : 0,
-                               std::memory_order_relaxed);
-    fb.longestRefreshNs.store(screen.maximumRefreshInterval > 0 ? SecondsToNs(screen.maximumRefreshInterval) : 0,
-                              std::memory_order_relaxed);
+    const int64_t shortest = screen.minimumRefreshInterval > 0 ? SecondsToNs(screen.minimumRefreshInterval) : 0;
+    const int64_t longest = screen.maximumRefreshInterval > 0 ? SecondsToNs(screen.maximumRefreshInterval) : 0;
+    const bool fullScreen = window && (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    // Another screen, another range, full screen entered or left (adaptive sync is full screen's): judged anew
+    if (fb.shortestRefreshNs.exchange(shortest, std::memory_order_relaxed) != shortest ||
+        fb.longestRefreshNs.exchange(longest, std::memory_order_relaxed) != longest ||
+        fb.fullScreen.exchange(fullScreen, std::memory_order_relaxed) != fullScreen)
+        fb.probeReset = true;
 }
 
 /// The pipeline that turns the IOSurface over into the drawable: the library compiles from source, once per process
@@ -589,8 +653,15 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
           }
           fb->shown.fetch_add(1, std::memory_order_relaxed);
           fb->lastPresentedNs.store(screenNs, std::memory_order_relaxed);
-          // The lead from the frame's own time: a window that handed it over late was late too
-          fb->lead.Shown(screenNs - (atNs > 0 ? atNs : asked), number, asked - now);
+          if (atNs > 0)
+          {
+              std::lock_guard<std::mutex> lock(fb->statsMutex);
+              fb->JudgeVrr(atNs, screenNs, refreshNs);
+          }
+          // The lead from the frame's own time: a window that handed it over late was late too. A present at once
+          // has no time of its own to be late against (PresentLead)
+          if (atNs > 0)
+              fb->lead.Shown(screenNs - atNs, number, asked - now);
           std::lock_guard<std::mutex> lock(fb->statsMutex);
           fb->errors.Add(static_cast<double>(screenNs - asked) / 1e6);
           fb->beat.Shown(traced.picture, traced.targetNs, screenNs, refreshNs);
@@ -605,6 +676,11 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
     std::lock_guard<std::mutex> lock(fb->statsMutex);
     fb->gpuWaits.Add(waitMs);
     fb->drawableWaits.Add(static_cast<double>(drawableWaitNs) / 1e6);
+}
+
+uint64_t MetalPresenter::LatePresents() const
+{
+    return _impl->fb->lead.Late();
 }
 
 uint64_t MetalPresenter::Presented() const
@@ -644,7 +720,9 @@ bool MetalPresenter::IsVisible() const
 
 void MetalPresenter::SetPolicy(PresentPolicy policy)
 {
-    _impl->policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
+    if (static_cast<PresentPolicy>(_impl->policy.exchange(static_cast<uint8_t>(policy), std::memory_order_relaxed)) !=
+        policy)
+        _impl->fb->probeReset = true;
     _impl->UpdateLink();
 }
 
@@ -701,10 +779,11 @@ bool MetalPresenter::Vrr() const
     const auto policy = static_cast<PresentPolicy>(_impl->policy.load(std::memory_order_relaxed));
     if (policy != PresentPolicy::Auto)
         return policy == PresentPolicy::Vrr;
-    // A refresh range (ProMotion, adaptive sync) shows each present at its time
+    // A refresh range (adaptive sync) can show each present at its time; whether it does is seen on the screen
+    // (Feedback::JudgeVrr: ProMotion keeps its grid)
     const int64_t shortest = _impl->fb->shortestRefreshNs.load(std::memory_order_relaxed);
     const int64_t longest = _impl->fb->longestRefreshNs.load(std::memory_order_relaxed);
-    return shortest > 0 && longest - shortest > shortest / 100;
+    return shortest > 0 && longest - shortest > shortest / 100 && _impl->fb->follows.load(std::memory_order_relaxed);
 }
 
 bool MetalPresenter::RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const
@@ -748,6 +827,12 @@ MetalPresenter::Stats MetalPresenter::GetStats() const
     s.maxRefreshHz = shortest > 0 ? 1e9 / static_cast<double>(shortest) : 0.0;
     s.minRefreshHz = longest > 0 ? 1e9 / static_cast<double>(longest) : 0.0;
     s.vrr = Vrr();
+    if (shortest > 0 && longest - shortest > shortest / 100 && !fb.follows.load(std::memory_order_relaxed))
+    {
+        std::lock_guard<std::mutex> lock(fb.statsMutex);
+        s.vrrSupport = "no";
+        s.vrrReason = fb.vrrNote;
+    }
     return s;
 }
 

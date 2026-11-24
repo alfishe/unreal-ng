@@ -95,6 +95,7 @@ private:
     std::shared_ptr<Writer> _writer;
     std::string _lastError;
     QString _ffmpeg;
+    std::string _transfer;  ///< what ffmpeg gets: "picture", "nv12", or "native" (the Mac's writer)
     WindowRecordingRequest _request;
     std::string _keyboardId;
     std::string _restoreKeyboard;  ///< the window's own picture, shown again after another machine's was recorded

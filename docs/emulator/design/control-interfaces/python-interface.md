@@ -2166,10 +2166,12 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
                                      #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
 emu.window_display()                 # GUI window display settings: {'backend' ('gpu' / 'software'), 'gpu_available',
-                                     #   'gpu', 'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
+                                     #   'gpu', 'renderer' ('gl' / 'vulkan'), 'renderers' (offered),
+                                     #   'renderer_active' (what draws: 'gl' / 'vulkan', '' software),
+                                     #   'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
                                      #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
                                      #   'exponential'), 'blending_decay' (0.1..0.9), 'smooth_motion' ('off' /
-                                     #   'blend' / 'interpolate' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
+                                     #   'blend' / 'interpolate' / 'interpolate-lite' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
                                      #   'present_policy' ('auto' / 'vrr' / 'vsync'), 'display_rate' ('keep' /
                                      #   'match'), 'lip_sync_offset_ms'
                                      #   (-200..200), 'present' {'presenter', 'vrr', 'vrr_support': {'state', 'reason'}, 'sync': {'mode', 'reason'}, 'clock', 'timing': {'delay_clamped', 'max_delay_ms', 'clamped_frames', 'early', 'carried', 'cuts', 'carry_ms'}, 'late', 'beat': {'frames', 'off'}, 'lead_ms', 'error_ms', 'sound_offset_ms': {'p50', 'p99'}, 'gpu_wait_ms', 'gpu_ms': {'smooth', 'smooth_cpu', 'picture': {'p50', 'max', 'longest', 'measured'}}, 'smooth': {'mode',
@@ -2180,7 +2182,8 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   'osd_keyboard_style', 'osd_keyboard_styles',
                                      #   'next_layers', 'next_layers_mode', 'next_layers_shown'}; headless
                                      #   {'ok': False, 'error', 'kind': 'no-window'}
-emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=, blending=, fullscreen=,
+emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, renderer= ('vulkan': one of
+                                     #   renderers; re-creates the GPU screen), crt=, blending=, fullscreen=,
                                      #   toolbar=, status_bar=, hud=, osd_keyboard=, next_layers= (bool),
                                      #   crt_profile= (one of crt_profiles: none, basic, ...,
                                      #   shader:<name> (a preset or a custom shader) with the GPU; other
@@ -2204,10 +2207,11 @@ emu.window_record('/abs/demo.mp4', keyboard='default', codec='h264')  # record t
                                      #   keyboard= ('default', a picture id, False), codec= ('prores', 'h264'),
                                      #   audio= (bool), fps= (1..100, audio=False only), scale= (1..4),
                                      #   hardware, fit, picture_height= (0..4320: the CRT drawn at that height), width= / height= (the frame), layout=
-                                     #   ('below', 'side'). Returns {'recording', 'path', 'keyboard', 'frames', 'width',
+                                     #   ('below', 'side'), transfer= ('picture', 'nv12': what ffmpeg gets). Returns
+                                     #   {'recording', 'path', 'keyboard', 'frames', 'width',
                                      #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples', 'frames_pending', and the timings in ms since
                                      #   the start: 'writer_start_ms', 'encoder_ready_ms', 'first_frame_ms',
-                                     #   'slowest_frame_ms'} or {'ok': False, ...}
+                                     #   'slowest_frame_ms', 'transfer'} or {'ok': False, ...}
 emu.window_record_frames(100)        # a paused machine runs 100 frames, every one recorded; the status with 'ran'
 emu.window_record_stop()             # finish the file (waits for ffmpeg, muxes the sound in); its last status
 emu.window_record_status()           # the recording's status; headless {'ok': False, 'error', 'kind': 'no-window'}

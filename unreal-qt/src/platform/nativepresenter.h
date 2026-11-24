@@ -9,6 +9,11 @@
 
 #include "emulator/video/presentpolicy.h"
 
+namespace gpu
+{
+class Texture;
+}
+
 /// A native presenter (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, sections 4.1 and 6.2): the
 /// GL renderer draws each picture into a texture shared with the platform's API, and the presenter shows it on the
 /// window at the frame's audio time. On a VRR display every frame is on screen for its own period; on a fixed one it
@@ -31,7 +36,7 @@ public:
         uint64_t presented = 0;  ///< presents since the start
         uint64_t shown = 0;      ///< reached the screen
         uint64_t dropped = 0;    ///< never on screen (replaced, or the system dropped it)
-        uint64_t late = 0;       ///< shown more than a refresh after the time asked for (a refresh late)
+        uint64_t late = 0;       ///< shown more than a refresh after the time asked for (a refresh late; at once: none)
         double leadMs = 0.0;     ///< the lead in effect (LeadNs at the last refresh period asked)
         uint32_t window = 0;     ///< presents the percentiles cover
         double errorP50 = 0.0;   ///< screen time minus the time asked for
@@ -54,6 +59,9 @@ public:
         /// say; the window derives it from the refresh range)
         std::string vrrSupport;
         std::string vrrReason;
+        /// Policy auto: the presenter is still measuring whether the display follows the frames (vrrprobe.h). The
+        /// window holds what a wrong guess would make it undo (a display mode switch) until it knows
+        bool vrrPending = false;
     };
 
     /// Where a present came from (steady clock, ns; 0 = unknown): UNREAL_PRESENT_TRACE's columns, and the picture and
@@ -80,9 +88,20 @@ public:
     /// The GL context current: a framebuffer of `width` x `height` device pixels to draw the next picture into,
     /// bound as GL_FRAMEBUFFER. @return its name, 0 on failure
     virtual unsigned BeginFrame(int width, int height) = 0;
+    /// A presenter of the GPU layer's (Vulkan, gpu/vulkanpresenter.h): the texture of `width` x `height` device pixels
+    /// to draw the next picture into with its device, GL rows. nullptr: a GL presenter (BeginFrame), or a failure
+    virtual gpu::Texture* BeginTexture(int width, int height)
+    {
+        (void)width;
+        (void)height;
+        return nullptr;
+    }
     /// The picture drawn: shown at `atNs` (steady clock; at once when it is 0 or past). GL rows count from the bottom,
     /// the presenter turns them over
     virtual void PresentFrame(int64_t atNs, const TraceInfo& trace) = 0;
+    /// The last PresentFrame did not hand its picture on (Vulkan: no swapchain image came, the present thread holds
+    /// them all): the window counts it as a picture not presented (PresenterRecovery)
+    virtual bool PresentFailed() const { return false; }
 
     /// [VIDEO] PresentPolicy, from any thread; the next present follows it
     virtual void SetPolicy(PresentPolicy policy) = 0;
@@ -118,6 +137,8 @@ public:
     /// refresh comes without one (smooth motion leaves one out). A presenter that replaces the present still waiting
     /// (DXGI Present(1)) has no such queue: 0
     virtual uint64_t Presented() const { return 0; }
+    /// Presents shown a refresh late so far (Stats::late, without the statistics' locks: asked every picture)
+    virtual uint64_t LatePresents() const { return 0; }
     virtual uint64_t LastLatePresent() const { return 0; }
     virtual uint32_t LastLateLag() const { return 0; }
     virtual uint64_t LastOnTimePresent() const { return 0; }

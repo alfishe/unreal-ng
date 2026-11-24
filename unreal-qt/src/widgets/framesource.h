@@ -46,7 +46,8 @@ inline void FillSmoothStats(const smoothmotion::SmoothMotion& smooth, bool activ
 {
     const smoothmotion::SmoothMotion::Stats& s = smooth.GetStats();
     out.smooth = smoothmotion::ModeName(active ? smooth.GetMode() : smoothmotion::Mode::Off);
-    out.smoothDevice = active ? (onGpu ? "gpu" : "cpu") : "";
+    // the cheap interpolation is the CPU's, whatever device the effects have
+    out.smoothDevice = active ? (onGpu && !smooth.Lite() ? "gpu" : "cpu") : "";
     out.game = active && smooth.HasGame();
     out.frames = s.frames;
     out.pictures = s.pictures;
@@ -56,6 +57,19 @@ inline void FillSmoothStats(const smoothmotion::SmoothMotion& smooth, bool activ
     out.motionFields = s.estimates;
     out.onDevice = s.onDevice;
     out.heldFlicker = s.heldFlicker;
+    out.lite = s.lite;
+}
+
+/// The step down's part: the flags, and `smooth` as what draws
+inline void FillSmoothStep(bool steppedDown, bool tooSlow, WindowPresentStats& out)
+{
+    out.smoothTooSlow = tooSlow;
+    out.smoothSteppedDown = steppedDown;
+    const bool interpolating = out.smooth == "interpolate" || out.smooth == "interpolate-lite";
+    if (tooSlow && interpolating && !out.game)
+        out.smooth = "blend";
+    else if (steppedDown && out.smooth == "interpolate")
+        out.smooth = "interpolate-lite";
 }
 
 #endif  // FRAMESOURCE_H
