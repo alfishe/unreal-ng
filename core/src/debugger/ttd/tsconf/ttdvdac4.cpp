@@ -2,6 +2,7 @@
 
 #include "ttdvdac4.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "emulator/platforms/tsconf/vdac4/esp/espapphost.h"
@@ -52,36 +53,62 @@ uint32_t SizedLength(const uint8_t* src)
 }
 
 /// Memory with its zero runs dropped: (u32 zeros, u32 literal bytes, bytes)... up to `size`
+uint64_t Word(const uint8_t* at)
+{
+    uint64_t w;
+    std::memcpy(&w, at, sizeof(w));
+    return w;
+}
+
+/// Runs of zeros and literals; a literal run ends where 32 zero bytes in a row begin (shorter zero gaps stay in
+/// it). Scanned by 8-byte words: a run of 32 zeros holds at least three whole aligned words
 void PutSparse(Vdac4EspStateWriter& w, const std::vector<uint8_t>& memory)
 {
+    const uint8_t* m = memory.data();
     const size_t size = memory.size();
+    auto zeroEnd = [&](size_t k) {
+        while (k < size && (k & 7) != 0 && m[k] == 0)
+            ++k;
+        while (k + 8 <= size && Word(m + k) == 0)
+            k += 8;
+        while (k < size && m[k] == 0)
+            ++k;
+        return k;
+    };
     size_t i = 0;
     while (i < size)
     {
-        size_t zeros = 0;
-        while (i + zeros < size && memory[i + zeros] == 0)
-            ++zeros;
-        size_t literal = 0;
-        // A literal run ends at 32 zero bytes in a row (shorter zero gaps stay in it)
-        size_t gap = 0;
-        size_t j = i + zeros;
-        while (j < size && gap < 32)
+        const size_t start = zeroEnd(i);  // m[start] is not zero (or the end)
+        size_t end = size;                // where the literal ends
+        size_t k = (start + 8) & ~size_t(7);
+        while (k + 8 <= size)
         {
-            gap = memory[j] == 0 ? gap + 1 : 0;
-            ++j;
+            if (Word(m + k) != 0)
+            {
+                k += 8;
+                continue;
+            }
+            size_t runStart = k;
+            while (runStart > start && m[runStart - 1] == 0)
+                --runStart;
+            const size_t runEnd = zeroEnd(k);
+            if (runEnd - runStart >= 32)
+            {
+                end = runStart;
+                break;
+            }
+            k = (runEnd + 7) & ~size_t(7);
         }
-        literal = j - (i + zeros) - (gap >= 32 ? gap : 0);
-        w.U32(static_cast<uint32_t>(zeros));
-        w.U32(static_cast<uint32_t>(literal));
-        w.Bytes(memory.data() + i + zeros, literal);
-        i += zeros + literal;
+        w.U32(static_cast<uint32_t>(start - i));
+        w.U32(static_cast<uint32_t>(end - start));
+        w.Bytes(m + start, end - start);
+        i = end;
     }
 }
 
-bool GetSparse(Vdac4EspStateReader& r, std::vector<uint8_t>& memory)
+/// PutSparse's runs into `memory` (`size` bytes). `write` false only checks that they fill it exactly
+bool GetSparse(Vdac4EspStateReader& r, uint8_t* memory, size_t size, bool write)
 {
-    const size_t size = memory.size();
-    std::vector<uint8_t> rebuilt(size, 0);
     size_t i = 0;
     while (i < size && r.Ok())
     {
@@ -89,14 +116,16 @@ bool GetSparse(Vdac4EspStateReader& r, std::vector<uint8_t>& memory)
         const uint32_t literal = r.U32();
         if (!r.Ok() || zeros > size - i || literal > size - i - zeros)
             return false;
+        if (write)
+            std::memset(memory + i, 0, zeros);
         i += zeros;
-        r.Bytes(rebuilt.data() + i, literal);
+        if (write)
+            r.Bytes(memory + i, literal);
+        else
+            r.Skip(literal);
         i += literal;
     }
-    if (!r.Ok())
-        return false;
-    memory.swap(rebuilt);
-    return true;
+    return r.Ok() && i == size;
 }
 
 constexpr uint32_t kEspMagic = 0x45344456;      // "VD4E"
@@ -308,15 +337,18 @@ void TTDVdac4EspCpu::TTDLoadState(const uint8_t* src)
         return;
     vdac4::EspAppHost& host = _board.Runtime().Host();
     vdac4::EspMemory& memory = host.Memory();
-    std::vector<uint8_t> psram(memory.PsramBytes().size()), sram(memory.SramBytes().size()),
-        rom(memory.RomBytes().size());
-    if (!GetSparse(r, psram) || !GetSparse(r, sram) || !GetSparse(r, rom) || !r.AtEnd())
+    std::vector<uint8_t>* parts[] = {&memory.PsramBytes(), &memory.SramBytes(), &memory.RomBytes()};
+    // A check first (the memory stays as it is if the state does not fit), then straight into the buffers the
+    // CPU maps: no copy of 9 MB to allocate and clear on every live-state restore of a seek
+    Vdac4EspStateReader check = r;
+    for (std::vector<uint8_t>* part : parts)
+        if (!GetSparse(check, part->data(), part->size(), false))
+            return;
+    if (!check.AtEnd())
         return;
     _board.Runtime().DropJobs();
-    // In place: the CPU maps these buffers
-    std::memcpy(memory.PsramBytes().data(), psram.data(), psram.size());
-    std::memcpy(memory.SramBytes().data(), sram.data(), sram.size());
-    std::memcpy(memory.RomBytes().data(), rom.data(), rom.size());
+    for (std::vector<uint8_t>* part : parts)
+        (void)GetSparse(r, part->data(), part->size(), true);
     host.LoadState(state.data(), state.size());
     // The memory moved without marks, the journal does not start from it: the next capture is a keyframe
     _keyDue = true;
@@ -346,6 +378,7 @@ TTDDeviceDescriptor TTDVdac4EspCpu::TTDDescribe() const
 void TTDVdac4EspCpu::TTDRecordingStarted()
 {
     _keyDue = true;
+    _points.clear();  // another session's memory: let it go
 }
 
 void TTDVdac4EspCpu::TTDRecordingStopped()
@@ -387,6 +420,8 @@ void TTDVdac4EspCpu::TTDCaptureBegins(bool rescan)
     vdac4::EspAppHost& host = runtime.Host();
     runtime.WaitIdle();  // a frame end flushed it already; a capture never sees a job running
     ++_sinceKey;
+    // A journal over its limit keys this capture, so the blob carries it no more: whatever one frame sent (an
+    // APP_START's ELF of megabytes), the blob stays the host state and at most kJournalLimit of journal
     const bool key = rescan || _keyDue || _keyState.empty() || host.Journal() != vdac4::EspAppHost::JournalMode::Record ||
                      _sinceKey >= kKeyframeFrames || host.JournalBytes().size() > kJournalLimit;
     if (key)
@@ -400,10 +435,13 @@ void TTDVdac4EspCpu::TTDCaptureBegins(bool rescan)
         if (_armed && !rescan)
             MarkAllMemory();
         _hashNow = Hash64(_keyState.data(), _keyState.size());
+        _journalLast = _journalPrev = 0;
     }
     else
     {
-        (void)host.JournalBytes();  // the read run in progress closed: the blob holds every input so far
+        // the read run in progress closed: the blob holds every input so far
+        _journalPrev = _journalLast;
+        _journalLast = host.JournalBytes().size();
         _hashNow = HostHash();
     }
 }
@@ -420,8 +458,8 @@ void TTDVdac4EspCpu::TTDBeforeRestore()
 
 size_t TTDVdac4EspCpu::TTDStateWithoutRegionsLimit() const
 {
-    // The keyframe's host state, a journal a little over its limit (the capture that passes it keys the next),
-    // the framing
+    // The keyframe's host state (tens of KB), a journal of at most kJournalLimit (a capture that finds more keys
+    // itself, TTDCaptureBegins), the framing
     return kCpuMaxEngineBlob;
 }
 
@@ -433,11 +471,22 @@ bool TTDVdac4EspCpu::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
     w.Blob(_keyState);
     w.Blob(_board.Runtime().Host().JournalData());
     w.U64(_hashNow);
+    w.U64(_journalPrev);
+    return true;
+}
+
+bool TTDVdac4EspCpu::TTDLoadDiverged(std::string& detail)
+{
+    if (_loadDivergence.empty())
+        return false;
+    detail.swap(_loadDivergence);
+    _loadDivergence.clear();
     return true;
 }
 
 bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
 {
+    _loadDivergence.clear();
     Vdac4EspStateReader r(state, size);
     if (r.U32() != kCpuKeyMagic)
         return false;
@@ -445,34 +494,111 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
     r.Blob(key, kCpuMaxState);
     r.Blob(journal, kCpuMaxState);
     const uint64_t hash = r.U64();
+    const uint64_t prev = r.AtEnd() ? 0 : r.U64();
     if (!r.Ok() || !r.AtEnd())
         return false;
     if (key.empty())
         return true;  // nothing recorded yet (the registry's probe)
 
-    // The engine restored the keyframe's memory; the keyframe's state, then the ESP again up to this frame
+    // The engine restored the keyframe's memory; the keyframe's state, then the ESP again up to this frame. A
+    // replay point on the way (the same keyframe, a journal this one begins with) saves the start of that run
     vdac4::EspXtensaRuntime& runtime = _board.Runtime();
     vdac4::EspAppHost& host = runtime.Host();
     runtime.DropJobs();
     ++_stats.restores;
-    if (!host.LoadState(key.data(), key.size()))
+    const uint64_t keyHash = Hash64(key.data(), key.size());
+    size_t from = 0;
+    if (const ReplayPoint* point = FindReplayPoint(keyHash, journal))
+    {
+        vdac4::EspMemory& memory = host.Memory();
+        // In place: the CPU maps these buffers
+        std::copy(point->psram.begin(), point->psram.end(), memory.PsramBytes().begin());
+        std::copy(point->sram.begin(), point->sram.end(), memory.SramBytes().begin());
+        std::copy(point->rom.begin(), point->rom.end(), memory.RomBytes().begin());
+        if (host.LoadState(point->state.data(), point->state.size()))
+        {
+            host.SetJournalReadMap(point->reads);
+            from = point->journal.size();
+            ++_stats.replayPointHits;
+        }
+        else
+            _points.clear();  // cannot happen (its own save): start over from the keyframe
+    }
+    if (from == 0 && !host.LoadState(key.data(), key.size()))
     {
         ++_stats.divergences;
         _stats.lastDivergence = "keyframe state does not load";
         return false;
     }
     std::string error;
-    const bool replayed = host.JournalReplay(journal.data(), journal.size(), error);
-    _stats.replayedBytes += journal.size();
+    bool replayed = true;
+    if (prev > from && prev < journal.size())
+    {
+        replayed = host.JournalReplay(journal.data(), journal.size(), from, prev, error);
+        if (replayed)
+            KeepReplayPoint(keyHash, journal.data(), prev);
+        from = prev;
+    }
+    const bool atPoint = from == journal.size();
+    if (replayed)
+        replayed = host.JournalReplay(journal.data(), journal.size(), from, journal.size(), error);
+    else
+        host.JournalBegin();  // stopped inside: the journal starts here (the next capture keys anyway)
+    _stats.replayedBytes += journal.size() - std::min(journal.size(), from);
     if (!replayed || HostHash() != hash)
     {
         ++_stats.divergences;
         _stats.lastDivergence = !replayed ? error : "replay ended at another host state";
+        _loadDivergence = _stats.lastDivergence;
     }
+    else if (!atPoint)
+        KeepReplayPoint(keyHash, journal.data(), journal.size());
     _keyState.swap(key);
+    _journalLast = journal.size();
+    _journalPrev = prev;
     // The next capture is a rescan (the engine's after every restore): a keyframe
     _keyDue = true;
     return true;
+}
+
+TTDVdac4EspCpu::ReplayPoint* TTDVdac4EspCpu::FindReplayPoint(uint64_t keyHash, const std::vector<uint8_t>& journal)
+{
+    ReplayPoint* best = nullptr;
+    for (ReplayPoint& p : _points)
+        if (p.keyHash == keyHash && p.journal.size() <= journal.size() &&
+            (!best || p.journal.size() > best->journal.size()) &&
+            std::equal(p.journal.begin(), p.journal.end(), journal.begin()))
+            best = &p;
+    if (best)
+        best->used = ++_pointClock;
+    return best;
+}
+
+void TTDVdac4EspCpu::KeepReplayPoint(uint64_t keyHash, const uint8_t* journal, size_t size)
+{
+    ReplayPoint* slot = nullptr;
+    for (ReplayPoint& p : _points)
+        if (p.keyHash == keyHash && p.journal.size() == size && std::equal(journal, journal + size, p.journal.begin()))
+        {
+            p.used = ++_pointClock;  // the same point again: it holds this already
+            return;
+        }
+    _points.reserve(kReplayPoints);
+    if (_points.size() < kReplayPoints)
+        slot = &_points.emplace_back();
+    if (!slot)
+        slot = &*std::min_element(_points.begin(), _points.end(),
+                                  [](const ReplayPoint& a, const ReplayPoint& b) { return a.used < b.used; });
+    vdac4::EspAppHost& host = _board.Runtime().Host();
+    slot->keyHash = keyHash;
+    slot->journal.assign(journal, journal + size);
+    host.SaveState(slot->state);
+    slot->reads = host.JournalReadMap();
+    vdac4::EspMemory& memory = host.Memory();
+    slot->psram.assign(memory.PsramBytes().begin(), memory.PsramBytes().end());
+    slot->sram.assign(memory.SramBytes().begin(), memory.SramBytes().end());
+    slot->rom.assign(memory.RomBytes().begin(), memory.RomBytes().end());
+    slot->used = ++_pointClock;
 }
 
 /// endregion </Vdac4EspCpu>

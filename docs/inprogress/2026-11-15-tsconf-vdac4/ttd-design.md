@@ -97,8 +97,22 @@ carries a hash of the host state (not its memory) at the frame end; the restore 
 3. `vdac4-esp-cpu` loads the host state of k, drops the JIT's code, replays the journal to f, checks the hash, and
    keeps the journal as the live one (recording continues from f).
 
-The cost of a seek: the ESP's work from k to f, at most K frames (about 2.5 ms of host time per DOOM frame on the M3
+The cost of a seek: the ESP's work from k to f, at most K frames (about 1 ms of host time per DOOM frame on the M3
 Ultra), plus decoding the ESP pieces.
+
+A replay that does not reach the recorded host state (or does not fit its journal) makes the position not
+bit-exact: the engine asks the source after the load (`ITTDRegionSource::TTDLoadDiverged`) and the seek's check
+reports `replay_diverged` (`not_bit_exact`, `GET /ttd/position` `check`). The hash covers the host state, not the
+ESP memory: a memory difference that leaves the host state alike is not seen.
+
+### 6.2 Replay points
+
+A seek restores its frame f, then its picture restores the frame before (`ComposeDisplay`): two replays from the same
+keyframe. The per-frame blob also carries the journal's length at the capture before, so a replay to f stops there
+once and keeps a **replay point** (the host state, the read map, the ESP memory, the journal so far), then runs on to
+f and keeps another. A restore whose keyframe is the same and whose journal begins with a point's goes on from the
+longest such point: the picture's restore costs a copy of 9 MB, a step forward replays one frame. Three points are
+kept (27 MB, least recently used out), only after a restore.
 
 ### 6.1 What a restore must not do
 
@@ -141,14 +155,14 @@ Found on the live check, fixed with the devices:
 | What | Value |
 |---|---|
 | Recording off | 1.94-1.96 ms per frame; the base commit 1.95-1.99 (4 interleaved rounds of 600 frames, `run_frames`) |
-| Recording on | 2.82-2.85 ms per frame; the base commit 2.28-2.33 (it records no VDAC4 device, an incomplete history) |
+| Recording on | 2.80-2.85 ms per frame; the base commit 2.28-2.33 (it records no VDAC4 device, an incomplete history) |
 | History | 18.7 KB per frame over 600 frames, 27 KB over 300 (one baseline of 8.7 MB included); the base 1.6 KB |
 | of it the FT812's RAM_G (300 frames) | 12.8 KB per frame (DOOM's frames go through it) |
 | of it the ESP memory (300 frames) | 7.4 KB per frame (one baseline of 8.7 MB plus a keyframe every 50 frames) |
 | of it `vdac4-esp-cpu` (host state, journal) | 0.5 KB per frame; the journal grows about 115 bytes per frame |
 | Host state at a keyframe | 26-27 KB |
-| Seek | 45-95 ms (the restore, the ESP re-run up to 49 frames, the picture) |
-| Seeks checked | 55 of 55: ESP PSRAM + SRAM equal to the memory at that moment of the recording, seeks back, forward, to the end, on grids of 13, 25, 37 frames, recordings of 100-600 frames |
+| Seek | median 36-37 ms, 12-99 ms (280 seeks over a recording of 200 frames); 56 ms before the replay points |
+| Seeks checked | 55 of 55, again after the replay points: ESP PSRAM + SRAM equal to the memory at that moment of the recording, seeks back, forward, to the end, on grids of 13, 25, 37 frames, recordings of 100-600 frames |
 
 Before the fixes of §6.1 and §7 the same recording stored 57.8 KB per frame at 5.5 ms per frame, and only seeks to
 a keyframe were right.
@@ -158,8 +172,13 @@ Check: `scratch/wt-vdac4-ttd/scratch/ttd/espseek2.py <unreal-qt> [port]` (record
 
 ## 10. Open
 
-- A divergence of the ESP's replay is counted (`TTDVdac4EspCpu::Stats`) but reported nowhere: the seek says
-  `exact`. It needs a path to the restore result.
-- A blob over the limit (a frame whose journal passes 4 MB) is dropped as before: that frame's ESP is not restored.
+- A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame (about
+  1 ms per frame).
+- The blob's limit (4 MB) holds: a journal over 256 KB keys the capture that finds it, so the blob carries the host
+  state and at most 256 KB of journal whatever one frame sent (an `APP_START` with its ELF). Only a host state over
+  3.7 MB would pass it.
+- The rest of a seek: the replay to f itself (on average 25 frames), the ESP pieces the engine decodes on every
+  restore (all marked, `TTDBeforeRestore`) even when a replay point overwrites them, the FT812's full save in the
+  picture's live snapshot.
 - Resources of the firmware (`_resources`) stay in the `vdac4-esp` blob, stored per frame while held.
 - K = 50 is not tuned: K = 100 halves the ESP memory's share and doubles the worst seek's re-run.

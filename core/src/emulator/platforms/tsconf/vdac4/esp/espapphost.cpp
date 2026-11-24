@@ -2215,16 +2215,23 @@ int EspAppHost::JournalResult(const std::function<int()>& live)
 
 bool EspAppHost::JournalReplay(const uint8_t* data, size_t size, std::string& error)
 {
+    return JournalReplay(data, size, 0, size, error);
+}
+
+bool EspAppHost::JournalReplay(const uint8_t* data, size_t size, size_t from, size_t to, std::string& error)
+{
     JournalState& j = _journal;
+    to = std::min(to, size);
     j.mode = JournalMode::Replay;
     j.bytes.assign(data, data + size);
-    j.lastRead.clear();
+    if (from == 0)
+        j.lastRead.clear();
     j.sameRun = 0;
-    j.position = 0;
+    j.position = std::min(from, to);
     j.diverged = false;
     j.error.clear();
     std::vector<uint8_t> blob;
-    while (!j.diverged && j.position < j.bytes.size())
+    while (!j.diverged && j.position < to)
     {
         const uint8_t token = j.bytes[j.position++];
         switch (token)
@@ -2295,8 +2302,15 @@ bool EspAppHost::JournalReplay(const uint8_t* data, size_t size, std::string& er
     }
     if (!j.diverged && j.sameRun != 0)
         JournalDiverged("read run not used up");
+    if (!j.diverged && j.position != to)
+        JournalDiverged("a host call ran past the boundary");
     const bool ok = !j.diverged;
     error = j.error;
+    if (ok && to < size)
+    {
+        j.position = to;
+        return true;  // stopped at the boundary: still a replay
+    }
     // Record on from here: the journal is what was replayed
     j.mode = JournalMode::Record;
     j.sameRun = 0;

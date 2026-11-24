@@ -12,6 +12,7 @@
 ///     again up to the frame on that journal, then checks the host state's hash.
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -98,6 +99,7 @@ public:
     bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
     size_t TTDStateWithoutRegionsLimit() const override;
+    bool TTDLoadDiverged(std::string& detail) override;
     /// endregion
 
     /// Diagnostics (tests, the design's measurements)
@@ -108,12 +110,30 @@ public:
         uint64_t replayedBytes = 0;
         uint64_t divergences = 0;  ///< a replay that did not fit its journal or ended at another state
         std::string lastDivergence;
+        uint64_t replayPointHits = 0;  ///< restores that went on from a replay point, not the keyframe
     };
+    /// Replay points kept (each the ESP's whole memory, about 9 MB)
+    static constexpr size_t kReplayPoints = 3;
     const Stats& GetStats() const { return _stats; }
 
 private:
     void MarkAllMemory();
     uint64_t HostHash() const;
+
+    /// The ESP as a replay left it at a capture boundary: a restore whose keyframe is the same and whose journal
+    /// begins with this one goes on from here (a seek's picture restores the frame before the seek's: once per
+    /// seek, not twice; a step forward replays one frame)
+    struct ReplayPoint
+    {
+        uint64_t keyHash = 0;
+        std::vector<uint8_t> journal;  ///< the journal replayed up to here
+        std::vector<uint8_t> state;    ///< the host's state
+        std::map<uint32_t, uint32_t> reads;
+        std::vector<uint8_t> psram, sram, rom;
+        uint64_t used = 0;
+    };
+    ReplayPoint* FindReplayPoint(uint64_t keyHash, const std::vector<uint8_t>& journal);
+    void KeepReplayPoint(uint64_t keyHash, const uint8_t* journal, size_t size);
 
     Vdac4Board& _board;
     TTDRegionTracker _trackers[3];
@@ -122,8 +142,13 @@ private:
     uint32_t _sinceKey = 0;          ///< captures since the keyframe
     bool _keyDue = true;
     uint64_t _hashNow = 0;           ///< the host state's hash at this capture
+    uint64_t _journalLast = 0;       ///< the journal's length at this capture
+    uint64_t _journalPrev = 0;       ///< and at the capture before (0: the keyframe), a replay point on restore
+    std::vector<ReplayPoint> _points;
+    uint64_t _pointClock = 0;
     mutable std::vector<uint8_t> _scratch;
     Stats _stats;
+    std::string _loadDivergence;  ///< the last load's divergence, until the engine takes it (empty: none)
 };
 
 }  // namespace ttd
