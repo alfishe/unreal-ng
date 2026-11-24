@@ -331,9 +331,10 @@ void BoardPane::Rebuild(const std::vector<StateNode>& boards)
     };
     auto addActions = [this](QWidget* parent, QVBoxLayout* into, const StateNode& board) {
         const std::vector<StateNode>& actions = Items(board, "actions");
-        if (actions.empty())
-            return;
         const QString id = Str(board, "id");
+        const bool owned = std::any_of(_uiActions.begin(), _uiActions.end(), [&](const UiAction& a) { return a.board == id; });
+        if (actions.empty() && !owned)
+            return;
         QHBoxLayout* row = new QHBoxLayout();
         for (const StateNode& action : actions)
         {
@@ -360,6 +361,18 @@ void BoardPane::Rebuild(const std::vector<StateNode>& boards)
             }
             else
                 connect(button, &QToolButton::clicked, this, [this, id, name]() { emit actionRequested(id, name, QString()); });
+            _actions[id + '/' + name] = button;
+            row->addWidget(button);
+        }
+        for (const UiAction& action : _uiActions)
+        {
+            if (action.board != id)
+                continue;
+            QToolButton* button = new QToolButton(parent);
+            button->setText(action.title);
+            button->setToolTip(action.tooltip);
+            const QString name = action.id;
+            connect(button, &QToolButton::clicked, this, [this, id, name]() { emit uiActionRequested(id, name); });
             _actions[id + '/' + name] = button;
             row->addWidget(button);
         }
@@ -542,6 +555,12 @@ void BoardPane::addExtra(QWidget* widget)
     QVBoxLayout* contentLayout = static_cast<QVBoxLayout*>(_content->layout());
     widget->setParent(_content);
     contentLayout->insertWidget(contentLayout->count() - 1, widget);  // above the closing stretch
+}
+
+void BoardPane::addUiAction(const QString& board, const QString& id, const QString& title, const QString& tooltip)
+{
+    _uiActions.push_back({board, id, title, tooltip});
+    _signature.clear();  // the next refresh builds the action rows again
 }
 
 void BoardPane::SetStatus(const QString& text)

@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -22,10 +23,12 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/state/devicestate.h"
 
 namespace
 {
@@ -207,6 +210,61 @@ TEST_P(NeoGSZxDma_Test, HostReadsABlockOfCardRam)
     EXPECT_EQ(r.cardAddress, kCardBase + n + 1) << "every fetch moved the address";
     EXPECT_EQ(r.lateStarts, 0u);
     EXPECT_EQ(_card->zxDma().waitTStates(), 0u) << "LDIR at 3.5 MHz never waits";
+
+    // The main CPU's banner (gui-card-debugger S4): where its reads come from and the byte the next one returns,
+    // peeked - reading it twice moves nothing
+    char expected[128];
+    std::snprintf(expected, sizeof(expected),
+                  "ZX-DMA active: reads at #0000-#3FFF return card RAM @#%06X; next byte #%02X", kCardBase + n + 1,
+                  static_cast<unsigned>(static_cast<uint8_t>(n * 7 + 3)));
+    EXPECT_EQ(DeviceState::ZxDmaBanner(_ctx), expected);
+    StateNode gs = DeviceState::Gs(_ctx);
+    StateNode& zx = gs["neogs"]["dma"]["zx"];
+    EXPECT_EQ(zx["banner"].s, expected);
+    EXPECT_EQ(zx["window_start"].i, 0x0000);
+    EXPECT_EQ(zx["window_end"].i, 0x3FFF);
+    EXPECT_EQ(zx["card_address"].i, kCardBase + n + 1);
+    EXPECT_EQ(zx["next_byte"].i, static_cast<uint8_t>(n * 7 + 3));
+    EXPECT_TRUE(zx["rom_paged"].b);
+    EXPECT_EQ(_card->zxDma().bytesRead(), n + 1u) << "the banner consumed no byte";
+    EXPECT_EQ(_card->dma().address(NeoGSDma::ZX), kCardBase + n + 1);
+}
+
+// A host access that finds the previous byte pending waits (/WAIT), and the main CPU's position inside the
+// instruction says so (gui-card-debugger S3): LD (#0000),HL writes twice 3 T apart, the card at 10-12 MHz grants
+// the first byte 5 clocks after it, 1 T past the second write's /WAIT sample
+TEST_P(NeoGSZxDma_Test, AWriteWaitShowsInTheMainPosition)
+{
+    bootCard(false);
+    idleFrame();
+    ASSERT_EQ(_card->zxDma().mode(), NeoGSZxDma::Mode::Divert);
+    hostWrite(kHostCode, {0x21, 0x34, 0x12,   // LD HL,#1234
+                          0x22, 0x00, 0x00,   // LD (#0000),HL
+                          0x18, 0xFE});       // JR $
+    _z80->pc = kHostCode;
+    _z80->iff1 = _z80->iff2 = 0;
+    _z80->Z80Step(true);
+    const uint64_t before = _card->zxDma().waitTStates();
+    _z80->Z80Step(true);
+    const uint64_t wait = _card->zxDma().waitTStates() - before;
+    ASSERT_GT(wait, 0u) << "the second write waits for the first one's grant";
+    EXPECT_EQ(_card->zxDma().bytesWritten(), 2u);
+    if (!GetParam())
+        return;  // the instruction's start (and its waits) are kept by the debug work only
+
+    EXPECT_EQ(_z80->InstructionWaitT(), wait) << "the instruction's own waits";
+    const MainPosition main = _emulator->MainPositionAt(DebugCpuId::GS);
+    ASSERT_TRUE(main.known);
+    EXPECT_EQ(main.pc, kHostCode + 3);
+    EXPECT_EQ(main.waitT, wait);
+    EXPECT_EQ(main.tInInstruction, 16u + wait) << "LD (nn),HL: 16 T plus the wait";
+    const std::string text = execution::MainPositionText(main);
+    EXPECT_NE(text.find(" + " + std::to_string(wait) + " T wait"), std::string::npos) << text;
+    EXPECT_EQ(execution::MainPositionNode(main)["wait_t"].i, static_cast<int64_t>(wait));
+    EXPECT_FALSE(main.contended) << "the wait is not contention: " << text;
+
+    _z80->Z80Step(true);  // JR $: a new instruction, no wait in it
+    EXPECT_EQ(_z80->InstructionWaitT(), 0u);
 }
 
 TEST_P(NeoGSZxDma_Test, HostWritesABlockIntoCardRamNotIntoRom)
@@ -267,6 +325,7 @@ TEST_P(NeoGSZxDma_Test, LeavingPathsRemoveTheOverlay)
 
     _card->resetCard(); // host #33 reset: FPGA registers, the run bit clears
     EXPECT_EQ(_ctx->pMemory->GetBusOverlay(), nullptr);
+    EXPECT_EQ(DeviceState::ZxDmaBanner(_ctx), "") << "off: no banner";
     EXPECT_EQ(_z80->MemIf, GetParam() ? _z80->DbgMemIf : _z80->FastMemIf);
 
     bootCard(false);
@@ -294,6 +353,7 @@ TEST_P(NeoGSZxDma_Test, WatchWindowClosesAndTheOverlayGoes)
     idleFrame();
     ASSERT_EQ(_card->zxDma().mode(), NeoGSZxDma::Mode::Watch);
     ASSERT_NE(_ctx->pMemory->GetBusOverlay(), nullptr);
+    EXPECT_EQ(DeviceState::ZxDmaBanner(_ctx).rfind("ZX-DMA watching: ", 0), 0u) << DeviceState::ZxDmaBanner(_ctx);
     const uint32_t frames = _card->zxDma().watchFrames();
     for (uint32_t i = 0; i + 1 < frames; i++)
         frame();
@@ -303,6 +363,7 @@ TEST_P(NeoGSZxDma_Test, WatchWindowClosesAndTheOverlayGoes)
     EXPECT_EQ(_card->zxDma().mode(), NeoGSZxDma::Mode::Off);
     EXPECT_EQ(_ctx->pMemory->GetBusOverlay(), nullptr);
     EXPECT_EQ(_z80->MemIf, GetParam() ? _z80->DbgMemIf : _z80->FastMemIf);
+    EXPECT_EQ(DeviceState::ZxDmaBanner(_ctx), "");
 }
 
 INSTANTIATE_TEST_SUITE_P(Modes, NeoGSZxDma_Test, ::testing::Values(false, true),

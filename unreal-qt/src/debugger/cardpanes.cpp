@@ -1,18 +1,26 @@
 #include "cardpanes.h"
 
+#include <QLabel>
 #include <QObject>
+#include <QTimer>
+#include <QWidget>
 
 #include <cstring>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "debugger/boardpane.h"
+#include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "debugger/disassembler/z80mcycles.h"
 #include "debugger/gslwpane.h"
 #include "debugger/reportpane.h"
 #include "debugger/zxdmatraceview.h"
 #include "debugger/targets/debugcpuid.h"
 #include "emulator/execution/runcontrol.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -171,8 +179,11 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
     // B3.3: three cards, side by side when wide; each with its counters from the statistics block
     BoardPane* media = new BoardPane({{"neogs_sd", "sd", {}}, {"neogs_mp3", "mp3", {}}, {"neogs_flash", "flash", {}}},
                                      BoardPane::Blocks::Cards, parent);
+    // N8: the SD card's slot in the media panel (its owner): the window opens it on uiActionRequested
+    media->addUiAction(QStringLiteral("neogs_sd"), QString::fromLatin1(kOpenMediaPanel), QObject::tr("Open media panel"),
+                       QObject::tr("The media panel on slot %1: insert, eject, save, protect, create").arg(QString::fromLatin1(kSdSlot)));
     panes.push_back({QObject::tr("NeoGS SD · MP3 · Flash"),
-                     QObject::tr("The NeoGS SD card (slot sd.ngs: Insert, Eject), the MP3 decoder, the flash chip (Save flash)"),
+                     QObject::tr("The NeoGS SD card (slot sd.ngs: Insert, Eject, Open media panel), the MP3 decoder, the flash chip (Save flash)"),
                      nullptr, media, Card::NeoGS, nullptr});
 
     ReportPane* stats =
@@ -194,7 +205,7 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
     return panes;
 }
 
-QString StripText(EmulatorContext* context, const Emulator::DebugStop& stop, DebugCpuId front)
+QString StripText(EmulatorContext* context, const Emulator::DebugStop& stop, DebugCpuId front, bool withMainPosition)
 {
     const Target target = Front(context, front);
     if (target == Target::None)
@@ -209,10 +220,165 @@ QString StripText(EmulatorContext* context, const Emulator::DebugStop& stop, Deb
     if (cardStop)
     {
         line += QStringLiteral(" · paused by the card (%1)").arg(QString::fromLatin1(DebugCpuName(stop.breakpoint.cpu)));
-        if (stop.breakpoint.main.known)
+        if (withMainPosition && stop.breakpoint.main.known)
             line += QStringLiteral(" · ") + QString::fromStdString(execution::MainPositionText(stop.breakpoint.main));
     }
     return line;
+}
+
+namespace
+{
+/// The main CPU's instruction at `pc` as the disassembler reads it ("LD A,(HL)"); empty without a disassembler
+QString MainInstruction(EmulatorContext* context, uint16_t pc)
+{
+    Memory* memory = context ? context->pMemory : nullptr;
+    DebugManager* debugManager = context ? context->pDebugManager : nullptr;
+    Z80Disassembler* disassembler = debugManager ? debugManager->GetDisassembler().get() : nullptr;
+    if (!memory || !disassembler)
+        return QString();
+    std::vector<uint8_t> bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    for (size_t i = 0; i < bytes.size(); i++)
+        bytes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(pc + i));  // the memory map: no device read
+    try
+    {
+        return QString::fromStdString(disassembler->disassembleSingleCommand(bytes, pc)).trimmed();
+    }
+    catch (const std::exception&)
+    {
+        return QString();
+    }
+}
+}  // namespace
+
+QString MainPositionStrip(EmulatorContext* context, const Emulator::DebugStop& stop)
+{
+    const bool cardStop = (stop.reason == Emulator::DebugStop::Reason::Breakpoint ||
+                           (stop.reason == Emulator::DebugStop::Reason::Step && stop.breakpoint.step)) &&
+                          stop.breakpoint.cpu != DebugCpuId::Main;
+    if (!cardStop || !stop.breakpoint.main.known)
+        return QString();
+    return MainPositionStrip(context, stop.breakpoint.main);
+}
+
+QString MainPositionStrip(EmulatorContext* context, const MainPosition& main)
+{
+    const QString gap = QStringLiteral("%1 T past the card").arg(main.gapT);
+    if (main.frameEnd)
+        return QStringLiteral("main between frames · ") + gap;
+    QString line = QStringLiteral("in #%1").arg(QString::number(main.pc, 16).toUpper().rightJustified(4, QLatin1Char('0')));
+    if (const QString instruction = MainInstruction(context, main.pc); !instruction.isEmpty())
+        line += QLatin1Char(' ') + instruction;
+    if (main.onBoundary)
+        line += QStringLiteral(" (finished)");
+    const QString wait = main.waitT ? QStringLiteral(" + %1 T wait").arg(main.waitT) : QString();
+    if (main.timed)
+    {
+        QString total = QString::number(main.totalT);
+        if (main.totalTAlt)
+            total += QLatin1Char('/') + QString::number(main.totalTAlt);
+        line += QStringLiteral(" · T %1 of %2").arg(main.elapsedT).arg(total) + wait;
+        if (main.contended)
+            line += QStringLiteral(" contended");
+        if (main.busCycle >= 0 && main.busCycle < main.cycles.count)
+            line += QStringLiteral(" · ") +
+                    QString::fromLatin1(Z80MCycleDecoder::Description(main.cycles.cycles[main.busCycle].kind));
+    }
+    else
+        line += wait;
+    return line + QStringLiteral(" · ") + gap;
+}
+
+QString ZxDmaBanner(EmulatorContext* context)
+{
+    return QString::fromStdString(DeviceState::ZxDmaBanner(context));
+}
+
+bool ZxDmaDivertsReads(EmulatorContext* context)
+{
+    GeneralSoundCard* card = context && context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
+    NeoGSStateInfo state;
+    if (!card || !card->neogsState(state) || !state.zxOverlayInstalled || std::strcmp(state.zxMode, "divert") != 0)
+        return false;
+    return context->pMemory && context->pMemory->IsBank0ROM();
+}
+
+namespace
+{
+void Show(QLabel* label, const QString& text)
+{
+    if (!label)
+        return;
+    label->setText(text);
+    label->setVisible(!text.isEmpty());
+}
+}  // namespace
+
+bool FillLiveLines(const Lines& lines, EmulatorContext* context, DebugCpuId front)
+{
+    static Emulator::DebugStop none;
+    return FillLines(lines, context, none, front, true);
+}
+
+bool FillLines(const Lines& lines, EmulatorContext* context, const Emulator::DebugStop& stop, DebugCpuId front, bool live)
+{
+    static Emulator::DebugStop none;  // named: g++ 14 crashes on a temporary of it (z80mcycles.h)
+    const Emulator::DebugStop& at = live ? none : stop;
+    const bool main = context && front == DebugCpuId::Main;
+    // S3 above the main registers while they are in front; then the card line leaves the position out (one view, once)
+    const QString position = main ? MainPositionStrip(context, at) : QString();
+    Show(lines.mainPosition, position);
+    Show(lines.card, context ? StripText(context, at, front, position.isEmpty()) : QString());
+    // S4: the main CPU's views only (a card's tab shows the card's memory)
+    const QString banner = main ? ZxDmaBanner(context) : QString();
+    const bool diverts = !banner.isEmpty() && ZxDmaDivertsReads(context);
+    Show(lines.memoryBanner, banner);
+    Show(lines.disasmBanner, diverts ? banner + QObject::tr(" · marked rows #0000-#3FFF: the CPU's bytes come from the card "
+                                                            "at run time, the rows show the host ROM")
+                                     : banner);
+    return diverts;
+}
+
+LiveLine::LiveLine(QWidget* window, std::function<std::shared_ptr<Emulator>()> emulator,
+                   std::function<void(EmulatorContext*)> read, int intervalMs)
+    : QObject(window), _window(window), _emulator(std::move(emulator)), _read(std::move(read))
+{
+    _timer = new QTimer(this);
+    _timer->setInterval(intervalMs);
+    connect(_timer, &QTimer::timeout, this, &LiveLine::tick);
+}
+
+void LiveLine::update()
+{
+    if (_window && _window->isVisible())
+        _timer->start();
+    else
+        _timer->stop();
+}
+
+bool LiveLine::active() const
+{
+    return _timer->isActive();
+}
+
+void LiveLine::tick()
+{
+    if (!_window || !_window->isVisible())
+    {
+        _timer->stop();
+        return;
+    }
+    const std::shared_ptr<Emulator> emulator = _emulator ? _emulator() : nullptr;
+    // A paused machine: its stop's refresh fills the line; automation stepping on its own thread: its end refreshes
+    if (!emulator || emulator->IsPaused() || !emulator->IsRunning() || emulator->IsDirectStepping())
+        return;
+    Emulator::ContextLease lease = emulator->LeaseContext();
+    if (!lease)
+        return;
+    EmulatorContext* context = lease.get();
+    if (!Fitted(context))
+        return;
+    _reads++;
+    _read(context);
 }
 
 namespace

@@ -357,6 +357,7 @@ struct MainPosition
     bool frameEnd = false;        ///< the stop came in the frame-end catch-up: main is between frames, not inside `pc`
     uint16_t pc = 0;              ///< main's instruction (its M1 address): the one the card's moment falls in
     uint32_t tInInstruction = 0;  ///< T of that instruction main has run
+    uint32_t waitT = 0;           ///< of those, device /WAIT (ZX-DMA: gui-card-debugger S3), while the start is known
     int32_t gapT = 0;             ///< main's time minus the card's, in main T
 
     /// Instruction progress (gs-debugger design §5.4), known while main runs the instruction-start debug work
@@ -366,8 +367,8 @@ struct MainPosition
     uint32_t elapsedT = 0;    ///< T into `pc` at the card's moment
     uint8_t totalT = 0;       ///< `pc`'s T, uncontended (the way taken when it is known)
     uint8_t totalTAlt = 0;    ///< a conditional not decided yet: the other way's T (0: none)
-    bool contended = false;   ///< main spent more T on `pc` than the table's (contention, an interrupt's acknowledge
-                              ///< after it): the bus cycle is the uncontended one at `elapsedT`
+    bool contended = false;   ///< main spent more T on `pc` than the table's and its `waitT` (contention, an
+                              ///< interrupt's acknowledge after it): the bus cycle is the uncontended one at `elapsedT`
     int8_t busCycle = -1;     ///< the machine cycle under way in `cycles` (-1: past the instruction's cycles)
     Z80MCycleList cycles;     ///< `pc`'s machine cycles (Z80MCycleDecoder), the way `totalT` counts
 };

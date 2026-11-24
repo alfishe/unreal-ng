@@ -22,20 +22,22 @@ namespace execution
 
 std::string MainPositionText(const MainPosition& main)
 {
-    char text[160];
+    char text[192];
     const std::string gap = std::to_string(main.gapT) + " T past the card";
     if (main.frameEnd)
         return "main between frames; " + gap;
+    // Device /WAIT main got in the instruction (ZX-DMA, gui-card-debugger S3): "+ 3 T wait"
+    const std::string wait = main.waitT ? " + " + std::to_string(main.waitT) + " T wait" : std::string();
     if (!main.timed)
     {
-        std::snprintf(text, sizeof(text), "main #%04X; %s", main.pc, gap.c_str());
+        std::snprintf(text, sizeof(text), "main #%04X%s; %s", main.pc, wait.c_str(), gap.c_str());
         return text;
     }
     std::string total = std::to_string(main.totalT);
     if (main.totalTAlt)
         total += "/" + std::to_string(main.totalTAlt);
-    std::snprintf(text, sizeof(text), "main #%04X%s: T %u of %s%s%s%s; %s", main.pc,
-                  main.onBoundary ? " (finished)" : "", main.elapsedT, total.c_str(),
+    std::snprintf(text, sizeof(text), "main #%04X%s: T %u of %s%s%s%s%s; %s", main.pc,
+                  main.onBoundary ? " (finished)" : "", main.elapsedT, total.c_str(), wait.c_str(),
                   main.contended ? " contended" : "", main.busCycle >= 0 ? ", " : "",
                   main.busCycle >= 0 ? Z80MCycleDecoder::Description(main.cycles.cycles[main.busCycle].kind) : "",
                   gap.c_str());
@@ -48,6 +50,7 @@ StateNode MainPositionNode(const MainPosition& main)
     node["text"] = MainPositionText(main);
     node["pc"] = static_cast<int>(main.pc);
     node["t_in_instruction"] = static_cast<int>(main.tInInstruction);
+    node["wait_t"] = static_cast<int>(main.waitT);
     node["gap_t"] = static_cast<int>(main.gapT);
     node["frame_end"] = main.frameEnd;
     node["on_boundary"] = main.onBoundary;

@@ -82,6 +82,7 @@
 #include "dialogs/debugger/memoryview.h"
 #include "dialogs/debugger/nextviews.h"
 #include "dialogs/debugger/pagedmemory.h"
+#include "dialogs/debugger/registersview.h"
 #include "dialogs/debugger/sideviews.h"
 
 namespace {
@@ -902,6 +903,21 @@ bool zxdma_make_bytes(ecatshim::Emulator * m, ecatshim::CPU * cpu, ecatshim::CPU
     return ok && copied && restored;
 }
 
+// The ZX-DMA banners in sight (gui-card-debugger S4): over the main CPU's listing and over its dump
+int banners_shown(QWidget * window)
+{
+    int n = 0;
+    for (QLabel * l : window->findChildren<QLabel *>("zxdma_banner")) n += l->isVisibleTo(window) && !l->text().isEmpty() ? 1 : 0;
+    return n;
+}
+
+// The main CPU's listing
+DisasmView * main_listing(QWidget * window, ecatshim::CPU * cpu)
+{
+    QTabWidget * cpu_tabs = tabs_with(window, QString::fromStdString(cpu->name + " :"));
+    return cpu_tabs ? cpu_tabs->widget(0)->findChild<DisasmView *>() : nullptr;
+}
+
 // The NeoGS DMA tab's ZX-DMA trace (gui-card-debugger B3.2): its toggle only with a NeoGS; expanded, the header and
 // the empty table; Start, bytes moved, the rows (read, consecutive card addresses, the LDIR's PC), a second read adds
 // nothing (since), the double-click hooks (Host PC to the main listing, the card address to the pages tab); Stop,
@@ -937,6 +953,9 @@ void zxdma_trace_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
     uint64_t seq = 0;
     QTableWidget * t = trace->table();
     unsigned int base = 0;
+    QString divert_banner;
+    int divert_shown = 0;
+    bool divert_marked = false;
     const bool made = zxdma_make_bytes(
         m, cpu, gs, base,
         [&]() {
@@ -949,10 +968,35 @@ void zxdma_trace_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
             rows = t->rowCount();
             seq = trace->last_seq();
             trace->button("stop")->click();
+            // S4: the host parked with the module diverting: the banner over the main listing and dump (at the stop)
+            auto * dw = dynamic_cast<DebuggerWindow *>(window);
+            DisasmView * code = main_listing(window, cpu);
+            wait_for([&]() { return dw != nullptr && !dw->zxdma_banner_text().isEmpty() && banners_shown(window) == 2; }, 3000);
+            divert_banner = dw ? dw->zxdma_banner_text() : QString();
+            divert_shown = banners_shown(window);
+            divert_marked = code != nullptr && code->runtime_bytes(0x0000) && code->runtime_bytes(0x3FFF) &&
+                            !code->runtime_bytes(0x4000) && code->runtime_note().contains("card at run time");
         });
     check(capturing.startsWith("capturing") && capturing.contains("0 bytes kept"), "zx-dma trace: Start: capturing, empty");
     printf("  (header: %s)\n", capturing.section('\n', 0, 0).toUtf8().constData());
     check(made, "zx-dma trace: the host moved bytes through the window");
+    {
+        char card_ram[64];
+        std::snprintf(card_ram, sizeof(card_ram), "return card RAM @#%06X", base + 17);
+        check(divert_banner.startsWith("ZX-DMA active: reads at #0000-#3FFF return card RAM @#") && divert_banner.contains("; next byte #") &&
+                  divert_shown == 2,
+              "zx-dma banner: in Divert over the main listing and dump");
+        printf("  (banner: %s; the module started at #%06X, %s)\n", divert_banner.toUtf8().constData(), base,
+               divert_banner.contains(card_ram) ? "the banner names the cell after the 17 bytes" : "17 bytes read");
+        check(divert_marked, "zx-dma banner: #0000-#3FFF marked as card bytes at run time");
+        auto * dw = dynamic_cast<DebuggerWindow *>(window);
+        DisasmView * code = main_listing(window, cpu);
+        // The module stopped: gone at the next stop
+        wait_for([&]() { return dw != nullptr && dw->zxdma_banner_text().isEmpty() && banners_shown(window) == 0; }, 3000);
+        check(dw != nullptr && dw->zxdma_banner_text().isEmpty() && banners_shown(window) == 0 && code != nullptr &&
+                  !code->runtime_bytes(0x0000),
+              "zx-dma banner: gone with the module stopped");
+    }
     printf("  (%d rows; %s)\n", rows, QString(trace->header()->text()).replace('\n', " / ").toUtf8().constData());
     bool consecutive = rows == 17;
     for (int r = 0; consecutive && r < rows; r++) {
@@ -1316,6 +1360,10 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
                       "card tabs: hardware is the NeoGS board (GSCFG0, clock and its switches, PG0-PG3, SSTAT, DAC levels, 8 channels)");
                 check(views[3]->fields()->findItems("Mailbox counters", Qt::MatchExactly).size() == 1,
                       "card tabs: hardware has the mailbox counters");
+                const QString mpagex = in_group(views[3], "Paging", "MPAGEX"), expag = in_group(views[3], "Paging", "extended paging");
+                check(mpagex.startsWith("#") && !expag.isEmpty(), "card tabs: Paging has MPAGEX and extended paging");
+                printf("  (Paging: MPAG %s, MPAGEX %s, extended paging %s)\n", in_group(views[3], "Paging", "MPAG").toUtf8().constData(),
+                       mpagex.toUtf8().constData(), expag.toUtf8().constData());
                 printf("  (NeoGS board: GSCFG0 %s; clock %s, %s switches; SSTAT %s; SCTRL %s)\n", gscfg0.toUtf8().constData(),
                        clock.toUtf8().constData(), switches.toUtf8().constData(), sstat.toUtf8().constData(),
                        field(views[3], "SCTRL").toUtf8().constData());
@@ -1375,6 +1423,14 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
             check(!refused.ok && !refused.message.empty(), "card tabs: a board action reaches the core and its refusal comes back");
         }
         if (card && neogs_views.size() == 2) zxdma_trace_check(m, window, cpu, gs, neogs_views[0], neogs, check);
+        if (card && !neogs) {
+            // S4: a card without ZX-DMA has no banner, nothing marked
+            auto * dw = dynamic_cast<DebuggerWindow *>(window);
+            DisasmView * code = main_listing(window, cpu);
+            check(m->zxdma_banner().text.empty() && dw != nullptr && dw->zxdma_banner_text().isEmpty() &&
+                      banners_shown(window) == 0 && code != nullptr && !code->runtime_bytes(0x0000),
+                  "zx-dma banner: none without a NeoGS");
+        }
     }
 
     // Event breakpoints (gs-debugger P5.3): the card's side on the card CPU, the host's side on the main CPU, added
@@ -1484,6 +1540,26 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
             wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
             wait_for([]() { return false; }, 600);  // the step's stop event, past one long poll
             check(main_front && reg(gs, "R") != gr && cw->current_cpu() == cpu, "step other: main in front, the card stepped");
+            {
+                // P5.2: the card CPU's register pane has its cycle in the frame and the change since the value shown
+                // before (the card run to cycle 2000, then this step); main's has none
+                QTabWidget * cpu_tabs = tabs_with(window, QString::fromStdString(cpu->name + " :"));
+                RegistersView * main_regs = cpu_tabs ? cpu_tabs->widget(0)->findChild<RegistersView *>() : nullptr;
+                RegistersView * card_regs = cpu_tabs && cpu_tabs->count() > 1 ? cpu_tabs->widget(1)->findChild<RegistersView *>() : nullptr;
+                ecatshim::CPU::CardCycle now;
+                const bool clock = gs->card_cycle(now);
+                const QString text = card_regs ? card_regs->cycle_text() : QString();
+                check(clock && text.startsWith(QString("c%1 ").arg(now.frame_cycle)) && text.contains(QChar(0x0394)) &&
+                          main_regs != nullptr && main_regs->cycle_text().isEmpty(),
+                      "card registers: T is the card cycle and its delta");
+                printf("    (card T: %s; frame cycle %lld, since the start %lld)\n", text.toUtf8().constData(),
+                       (long long)now.frame_cycle, (long long)now.total);
+                // S3: the card's stop says where the main CPU stands inside its instruction (+ N T wait under ZX-DMA)
+                const QString main_at = QString::fromStdString(m->debug_stop_main_text());
+                check(main_at.startsWith("main ") && cw->state_text().contains(main_at), "card stop: the main CPU's position in the state");
+                printf("    (state: %s%s)\n", cw->state_text().toUtf8().constData(),
+                       main_at.contains(" T wait") ? "" : "; no ZX-DMA wait in this instruction");
+            }
             // Ctrl+2: the card in front; Step other steps main, the card stays in front
             by2->trigger();
             QApplication::processEvents();
@@ -1497,6 +1573,22 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
             by1->trigger();
             QApplication::processEvents();
             check(cw->current_cpu() == cpu, "Ctrl+1: the main CPU in front again");
+
+            // The card line follows the running machine (throttled: Emulator::live_card_ms), with no pause
+            m->debug_run(true);
+            const QString running = QString("Running ") + QChar(0x00B7) + " ";
+            QString first, second;
+            wait_for([&]() {
+                const QString s = cw->state_text();
+                if (!s.startsWith(running) || !s.contains(" cycle ")) return false;
+                if (first.isEmpty()) first = s;
+                else if (s != first) second = s;
+                return !second.isEmpty();
+            }, 4000);
+            check(!first.isEmpty() && !second.isEmpty() && m->debug_paused() == false, "card line: followed while the machine runs");
+            printf("    (running: %s; then %s)\n", first.toUtf8().constData(), second.toUtf8().constData());
+            m->debug_pause();
+            wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
         }
     }
 

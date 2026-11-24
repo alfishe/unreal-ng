@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <set>
@@ -896,6 +897,20 @@ public:
     }
     std::vector<CpuRegister> get_register_values() override { return z80_registers(regs()); }
     std::vector<std::pair<std::string, std::string>> get_flags() override { return z80_flags(regs().f); }
+    // The card's clock (GeneralSoundCard::cardCycles): its cycle in the ZX frame and since it started, read as the
+    // registers are
+    bool card_cycle(CardCycle &out) override
+    {
+        GSCardTarget * t = target();
+        const GeneralSoundCard * card = t ? t->Card() : nullptr;
+        if (card == nullptr || card->cardCpuClockHz() == 0) return false;
+        out.frame_cycle = card->cardCycles(card->cardFrameTime());
+        out.total = card->cardCycles(card->cardTime());
+        EmulatorContext * ctx = m_emu->GetContext();
+        out.frame = ctx ? ctx->emulatorState.frame_counter : 0;
+        out.clock_hz = card->cardCpuClockHz();
+        return true;
+    }
     void set_context_value(const std::string &n, unsigned int v) override { set_card_register(n, v); }
     bool set_flag(const std::string &n, bool value) override
     {
@@ -1330,6 +1345,24 @@ private:
         if (context == nullptr) return {false, "No machine"};
         const DebugBoardReply reply = DebugBoards::Action(context, board, action, arg);
         return {reply.status == 200, reply.text};
+    }
+
+    // The ZX-DMA banner in process: DeviceState::ZxDmaBanner where the machine stands still (the module peeked)
+    ZxDmaBanner zxdma_banner() override
+    {
+        ZxDmaBanner out;
+        if (m_cards.empty()) return out;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&out, emu]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = ctx != nullptr && ctx->pSoundManager != nullptr ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            NeoGSStateInfo ngs;
+            if (gs == nullptr || !gs->neogsState(ngs)) return;
+            const int rom = ctx->pMemory != nullptr ? (ctx->pMemory->IsBank0ROM() ? 1 : 0) : -1;
+            out.text = DeviceState::ZxDmaBanner(ngs, rom);
+            out.card_bytes = !out.text.empty() && ngs.zxOverlayInstalled && std::strcmp(ngs.zxMode, "divert") == 0 && rom != 0;
+        });
+        return out;
     }
 
     // The ZX-DMA trace in process: DeviceState::GsZxDmaTrace where the machine stands still (the report peeks)

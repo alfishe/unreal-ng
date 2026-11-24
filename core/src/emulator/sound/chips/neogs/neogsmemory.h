@@ -13,7 +13,9 @@
 /// whose bits 6:1 are 0 (RAM pages 0, 1, 128, 129) in any window.
 ///
 /// MPAG (#00): normal PG2 = {d6..d0,0}, PG3 = {d6..d0,1}; EXPAG PG2 = {d6..d0,d7}.
-/// MPAGEX (#10), EXPAG only: PG3 = {d6..d0,d7}.
+/// MPAGEX (#10), EXPAG only: PG3 = {d6..d0,d7}. The board keeps no copy of either
+/// byte (they go straight into PG2 / PG3, ports.v); the shadows here are for the
+/// debugger: MPAG's every write, MPAGEX's writes that took effect (EXPAG on).
 ///
 /// Reads and writes go through window pointers rebuilt on every page or mode
 /// change (the classic card's scheme); flash windows fall back to the chip
@@ -49,6 +51,9 @@ public:
     void writePage(int window, uint8_t value);
     uint8_t page(int window) const { return _pg[window & 3]; }
     uint8_t lastMpag() const { return _mpag; }
+    /// The last MPAGEX (#10) write made while EXPAG was on (a write in normal paging changes nothing); 0 after power-on
+    uint8_t lastMpagEx() const { return _mpagex; }
+    bool extendedPaging() const { return (_cfg & CFG_EXPAG) != 0; }
 
     /// GSCFG0 (only NOROM, RAMRO and EXPAG matter to the memory map)
     void setConfig(uint8_t gscfg0);
@@ -114,7 +119,7 @@ public:
     void setRamTracker(ttd::TTDRegionTracker* tracker) { _ramTracker = tracker; }
 
     // Raw register access for TTD
-    void setPagesRaw(const uint8_t pages[4], uint8_t mpag, uint8_t cfg);
+    void setPagesRaw(const uint8_t pages[4], uint8_t mpag, uint8_t mpagex, uint8_t cfg);
 
 private:
     uint8_t readFlash(int window, uint16_t addr, int64_t now);
@@ -127,6 +132,7 @@ private:
 
     uint8_t _pg[4] = {0, 3, 0, 2};
     uint8_t _mpag = 0;
+    uint8_t _mpagex = 0;
     uint8_t _cfg = 0x30;
 
     const uint8_t* _readPtr[4] = {};

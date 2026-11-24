@@ -9,6 +9,7 @@ class EmulatorContext;
 struct BusEventQuery;
 struct BusFindingQuery;
 class GeneralSoundCard;
+struct NeoGSStateInfo;
 class SoundChip_AY8910;
 class SoundManager;
 class Ym2203Chip;
@@ -85,6 +86,16 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
 /// The one line a debugger shows for the card (gs-debugger A6 S1, A4): "GS Z80 12 MHz · PC #0C32 · cycle 119,985 ·
 /// MPAG #03 · Symbols: GS v1.05a", from a GeneralSoundReport (its `strip`)
 std::string GeneralSoundStrip(const StateNode& report);
+/// The ZX-DMA banner for the main CPU's memory view and disassembly (neogs-zxdma-design.md §6.2, gui-card-debugger
+/// S4), the `gs` report's `neogs.dma.zx.banner`. While the module diverts: "ZX-DMA active: reads at #0000-#3FFF
+/// return card RAM @#012345; next byte #A7" (RAM paged there: "ZX-DMA active: RAM paged at #0000-#3FFF, reads return
+/// host RAM; writes also go to card RAM @#012345"); while it watches: "ZX-DMA watching: the module is selected, not
+/// started; reads at #0000-#3FFF return host memory (card RAM @#012345 once it starts)"; off, no NeoGS, or a ZX-bus
+/// without host memory cycles: empty. Peeked: no DMA byte consumed. `romPaged`: the host's ROM at #0000 (1), RAM (0),
+/// unknown (-1, worded as ROM)
+std::string ZxDmaBanner(const NeoGSStateInfo& s, int romPaged);
+/// The same for the machine's GS-slot card
+std::string ZxDmaBanner(EmulatorContext* context);
 
 /// ZX-MultiSound (ZX-MultiSound tdd-integration.md §5; built beside the card, slots/cards/multisound/
 /// multisounddevicestate.cpp): `MultiSound()` the fitted card - its slot and options (DIP functions, gsRam, ctrlMask),

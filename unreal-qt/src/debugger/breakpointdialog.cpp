@@ -153,8 +153,8 @@ BreakpointDialog::BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* 
 
 BreakpointDialog::~BreakpointDialog()
 {
-    // Unsubscribe from breakpoint change notifications
-    QMutexLocker locker(&m_mutex);
+    // Unsubscribe from breakpoint change notifications. Not under m_mutex: RemoveObserverById waits for a callback in
+    // flight, and that callback takes m_mutex (a notification arriving while the dialog closes deadlocked both)
     if (m_breakpointObserverId != 0)
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();

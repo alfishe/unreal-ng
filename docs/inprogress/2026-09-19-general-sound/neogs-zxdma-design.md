@@ -849,6 +849,23 @@ becomes an overlay mode instead:
 | Memory breakpoints in the window | Fire as today (address based). The access tracker records the host's normal byte; the ZX-DMA trace (§6.4) records the card byte. |
 | Instruction progress (§5.4 there) | Counts ZX-DMA waits like contention: `contentionAccumulated` gains the waits, and the progress line says "wait". |
 
+As built (2026-11-23, core; the debuggers' UI follows):
+
+- **Banner.** The `gs` report's `neogs.dma.zx` carries `window_start` / `window_end` (`#0000` / `#3FFF`),
+  `card_address` (the module's address: the cell the next fetch reads, or the one in flight), `next_byte` (what the
+  next diverted read returns: a pending read's cell, else the latch; `NeoGSZxDma::nextReadByte()`, a peek),
+  `rom_paged` (the host's ROM at `#0000`: only then do reads come from the card) and `banner`:
+  "ZX-DMA active: reads at #0000-#3FFF return card RAM @#012345; next byte #A7" while diverting with ROM paged;
+  "ZX-DMA active: RAM paged at #0000-#3FFF, reads return host RAM; writes also go to card RAM @#012345" with RAM
+  paged; "ZX-DMA watching: the module is selected, not started; reads at #0000-#3FFF return host memory (card RAM
+  @#012345 once it starts)" in Watch; empty when Off, on a ZX-bus without memory cycles, or without NeoGS. In process:
+  `DeviceState::ZxDmaBanner(context)` / `ZxDmaBanner(NeoGSStateInfo, romPaged)` (`emulator/state/devicestate.h`).
+- **Wait.** No `contentionAccumulated` exists; the waits are counted apart: `Z80::AddWaitStates` / `AddWaitTicks` add
+  to `Z80::instrWaitTicks`, zeroed with `instrStartT` by the instruction-start debug work (nothing new on the plain
+  path; the wait path is already the overlay's slow path). `MainPosition::waitT` (`InstructionWaitT()`, T rounded up),
+  `wait_t` in `MainPositionNode`, and the text: `main #8003 (finished): T 17 of 16 + 1 T wait, memory write; ...`.
+  `contended` leaves the wait out. Known only where the instruction's start is (debug mode, exec taps, tight mode).
+
 ### 6.3 NeoGS card target (requirement N4)
 
 - **DMA panel**, per module (ZX, SD, MP3):

@@ -541,6 +541,7 @@ public:
     bool enable_event_breakpoint(unsigned int id, bool on) override;
     void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
     std::vector<ecatshim::AddressWindow> get_windows() override;
+    bool card_cycle(CardCycle &out) override;
 
     // The card's RAM and ROM (flash on the NeoGS) as paged memories, when the machine lists them
     void set_ram(ecatshim::AddressableDevice * ram) { m_ram = ram; }
@@ -792,6 +793,36 @@ public:
         if (status != 200) return {false, r.value("message").toString().toStdString()};
         return {true, board + " " + action + ": " + r.value("status").toString().toStdString()};
     }
+
+    // A card's `gs` report (gs: GET state/audio/gs; ms: the gs part of GET state/audio/multisound), once per snapshot
+    // of the machine; not given, the last one read stays
+    QJsonObject card_report(const QString &cpu)
+    {
+        CardReport &c = m_card_reports[cpu];
+        const uint64_t gen = snap().generation;
+        if (c.generation != gen && m_online.load()) {
+            c.generation = gen;
+            int status = 0;
+            const bool ms = cpu == "ms";
+            const QJsonObject o = m_http.json("GET", m_base + (ms ? "/state/audio/multisound" : "/state/audio/gs"), QJsonObject(), &status);
+            if (status == 200) c.report = ms ? o.value("gs").toObject() : o;
+        }
+        return c.report;
+    }
+    // The ZX-DMA banner: the `gs` report's neogs.dma.zx (no NeoGS: no such part, no banner)
+    ZxDmaBanner zxdma_banner() override
+    {
+        ZxDmaBanner out;
+        if (card("gs") == nullptr) return out;
+        const QJsonObject zx = card_report("gs").value("neogs").toObject().value("dma").toObject().value("zx").toObject();
+        out.text = zx.value("banner").toString().toStdString();
+        out.card_bytes = !out.text.empty() && zx.value("mode").toString() == "divert" && zx.value("rom_paged").toBool(true);
+        out.window_start = (unsigned int)zx.value("window_start").toInt(0x0000);
+        out.window_end = (unsigned int)zx.value("window_end").toInt(0x3FFF);
+        return out;
+    }
+    // Plain GETs, a second apart: the card's line and the banner of a running machine
+    unsigned int live_card_ms() const override { return 1000; }
 
     // The ZX-DMA trace: GET state/audio/gs/zxdma?last=&since=
     ZxDmaTrace read_zxdma_trace(size_t last, uint64_t since) override
@@ -1297,6 +1328,11 @@ private:
     ecatshim::DeviceManager m_dm;
     std::shared_ptr<RemoteZ80> m_cpu;
     std::shared_ptr<RemoteMapper> m_mapper;
+    struct CardReport {
+        uint64_t generation = ~0ull;
+        QJsonObject report;
+    };
+    std::map<QString, CardReport> m_card_reports;
 
     Snapshot m_snap;
     QElapsedTimer m_age;
@@ -1861,6 +1897,19 @@ bool RemoteCardZ80::poke_mem(unsigned int a, unsigned int v)
                      &status);
     m_m->changed();
     return status == 200;
+}
+
+// The card's clock: the `gs` report's cpu.frame_cycle (its cycles since it started are not there: the change is
+// taken within one frame)
+bool RemoteCardZ80::card_cycle(CardCycle &out)
+{
+    const QJsonObject cpu = m_m->card_report(m_cpu).value("cpu").toObject();
+    if (!cpu.contains("frame_cycle")) return false;
+    out.frame_cycle = (int64_t)cpu.value("frame_cycle").toDouble();
+    out.total = -1;
+    out.frame = m_m->snap().frame;
+    out.clock_hz = (unsigned int)cpu.value("clock_hz").toDouble();
+    return true;
 }
 
 std::vector<CpuRegister> RemoteCardZ80::get_register_values()

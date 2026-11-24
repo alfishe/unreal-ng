@@ -108,6 +108,11 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         if (BoardPane* board = pane.board)
             connect(board, &BoardPane::actionRequested, this,
                     [this, board](const QString& id, const QString& action, const QString& arg) { runBoardAction(board, id, action, arg); });
+        if (BoardPane* board = pane.board)
+            connect(board, &BoardPane::uiActionRequested, this, [this](const QString&, const QString& id) {
+                if (id == QLatin1String(CardPanes::kOpenMediaPanel))
+                    emit mediaPanelRequested(QString::fromLatin1(CardPanes::kSdSlot));
+            });
         if (ZxDmaTraceView* trace = pane.trace)
             connectZxDmaTrace(trace);
         _cardPanes.push_back(pane);
@@ -388,6 +393,35 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _cardStrip->setStyleSheet("QLabel { border-left: 4px solid #E0A020; padding: 2px 6px; }");
     _cardStrip->setVisible(false);
     ui->verticalLayout_2->insertWidget(3, _cardStrip);
+    _liveLine = new CardPanes::LiveLine(
+        this, [this]() { return _emulator; },
+        // Running: the labels only (no stop to name); the disassembly's marks follow at the stop, as its rows do (a
+        // running machine's memory map moves under a reader)
+        [this](EmulatorContext* context) { CardPanes::FillLiveLines(cardLines(), context, currentCpu()); });
+
+    // S3 on top of the main registers, S4 over the main memory view and disassembly: thin lines in their groups
+    _mainPositionStrip = new QLabel(ui->registersGroup);
+    _mainPositionStrip->setObjectName("debuggerMainPositionStrip");
+    _mainPositionStrip->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _mainPositionStrip->setWordWrap(true);
+    _mainPositionStrip->setToolTip(tr("Where the main CPU stands in its instruction at the card's stop: T of its total, "
+                                      "device wait (ZX-DMA), the bus cycle under way, the gap to the card"));
+    _mainPositionStrip->setStyleSheet("QLabel { border-left: 4px solid #E0A020; padding: 1px 4px; }");
+    _mainPositionStrip->setVisible(false);
+    ui->registersGroupLayout->insertWidget(0, _mainPositionStrip);
+    const auto banner = [](QWidget* parent, const char* name) {
+        auto* label = new QLabel(parent);
+        label->setObjectName(name);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        label->setWordWrap(true);
+        label->setStyleSheet("QLabel { background: #FFF1C2; color: #202020; border-left: 4px solid #E0A020; padding: 1px 4px; }");
+        label->setVisible(false);
+        return label;
+    };
+    _zxDmaMemoryBanner = banner(ui->memoryGroup, "debuggerZxDmaMemoryBanner");
+    ui->memoryGroupLayout->insertWidget(0, _zxDmaMemoryBanner);
+    _zxDmaDisasmBanner = banner(ui->disasmGroup, "debuggerZxDmaDisasmBanner");
+    ui->disasmGroupLayout->insertWidget(0, _zxDmaDisasmBanner);
 
     // The processor tabs (debuggercpu.h): the main CPU and each sound card CPU fitted, above the panes they retarget;
     // hidden with the main CPU alone
@@ -406,6 +440,10 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         // The card panes follow the card CPU in front (the GS slot's card or the MultiSound's)
         updateSidePane();
         refreshNextPanes(_emulator && !_emulator->IsPaused());
+        // The S3 strip and the ZX-DMA banner belong to the main CPU's views; the card line names the card in front
+        if (_emulator && _emulator->IsPaused() && !_emulator->IsDirectStepping())
+            if (const Emulator::ContextLease lease = _emulator->LeaseContext())
+                updateCardStrip();
         emit cpuChanged(cpu);
     });
 
@@ -799,6 +837,8 @@ void DebuggerWindow::showEvent(QShowEvent* event)
     if (_cpuTabs)
         _cpuTabs->setActive(true);  // a card in front follows the main CPU's steps again
     updateSidePane();
+    if (_liveLine)
+        _liveLine->update();  // the card line live while the machine runs
     emit visibilityChanged(true);
 }
 
@@ -810,6 +850,8 @@ void DebuggerWindow::hideEvent(QHideEvent* event)
     if (_cpuTabs)
         _cpuTabs->setActive(false);  // nor does a card it showed
     _nextPanesTimer->stop();  // nor do the Next panes
+    if (_liveLine)
+        _liveLine->update();  // nor does the card line
     emit visibilityChanged(false);
 }
 
@@ -1558,6 +1600,8 @@ void DebuggerWindow::clearStopBanner()
         _stopBanner->setVisible(false);
     if (_cardStrip)
         _cardStrip->setVisible(false);
+    if (_mainPositionStrip)
+        _mainPositionStrip->setVisible(false);
 }
 
 // Called by a stop's refresh (updateState holds the context lease)
@@ -1565,9 +1609,15 @@ void DebuggerWindow::updateCardStrip()
 {
     if (!_cardStrip)
         return;
-    const QString text = _emulator ? CardPanes::StripText(_emulator->GetContext(), _emulator->LastStop(), currentCpu()) : QString();  // lifetime-ok: under updateState's lease
-    _cardStrip->setText(text);
-    _cardStrip->setVisible(!text.isEmpty());
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: under the caller's lease
+    Emulator::DebugStop stop;  // named: g++ 14 crashes on a temporary of it (z80mcycles.h)
+    if (_emulator)
+        stop = _emulator->LastStop();
+    if (CardPanes::FillLines(cardLines(), context, stop, currentCpu(), false))
+        ui->disassemblerWidget->setRunTimeRange(0x0000, 0x3FFF,
+                                                tr("ZX-DMA Divert: at run time the CPU reads card RAM here, not the host ROM shown"));
+    else
+        ui->disassemblerWidget->clearRunTimeRange();
 }
 
 void DebuggerWindow::onStopBannerLink(const QString& link)

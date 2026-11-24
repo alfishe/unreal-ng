@@ -96,6 +96,8 @@ public:
     bool step_other();
     //The state label's text
     QString state_text() const;
+    //The ZX-DMA banner shown over the main CPU's listing and dump (gui-card-debugger S4), empty when none
+    QString zxdma_banner_text() const;
     //The time travel group of the toolbar (not in ecat): the self-check drives it
     TtdControls * ttd() { return m_ttd; }
 
@@ -118,6 +120,7 @@ protected:
 private:
     struct CpuPane {
         CPU * cpu;
+        QLabel * banner;    //The ZX-DMA banner over the main CPU's listing (S4), null on a card's
         BankStrip * banks;
         DisasmView * code;
         RegistersView * regs;
@@ -199,6 +202,13 @@ private:
     //gs part's), empty without a card
     QString m_card_strip;
     QString read_card_strip() const;
+    //The NeoGS ZX-DMA banner (S4) over the main CPU's listing and dump, its run-time bytes marked in the listing:
+    //read at the stops and, while the machine runs, with the card line
+    QString m_zxdma_banner;
+    void refresh_banner();
+    //While the machine runs: the card line and the banner, every Emulator::live_card_ms
+    qint64 m_card_live_ms = -1;
+    void follow_card_live();
     //The card the card tabs follow: "gs", "ms", "" none; "?" before the first look
     std::string m_card_source = "?";
     void update_cursor();

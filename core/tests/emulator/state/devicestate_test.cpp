@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -20,6 +21,7 @@
 #include "emulator/io/fdc/upd765.h"
 #include "emulator/ports/models/portdecoder_p2666.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/memory/memory.h"
@@ -689,6 +691,57 @@ TEST(DeviceStateGs_Test, TheStripSaysTheCardInOneLine)
     lw["implementation"] = "lightweight";
     lw["page"] = 0;
     EXPECT_EQ(DeviceState::GeneralSoundStrip(lw), "GS lightweight player · MPAG #00");
+
+    // NeoGS extended paging (GSCFG0.EXPAG): MPAG sets window 2, MPAGEX window 3 - both named, only while it is on
+    StateNode ngs = StateNode::Object();
+    ngs["implementation"] = "ngs";
+    ngs["page"] = 3;
+    StateNode neogs = StateNode::Object();
+    neogs["mpagex"] = 5;
+    neogs["extended_paging"] = false;
+    ngs["neogs"] = neogs;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(ngs), "NeoGS · MPAG #03");
+    ngs["neogs"]["extended_paging"] = true;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(ngs), "NeoGS · MPAG #03 · MPAGEX #05");
+}
+
+// The NeoGS part names MPAGEX (gs-debugger P5.5) and the strip carries it while extended paging is on
+TEST(DeviceStateGs_Test, NeoGsReportNamesMpagEx)
+{
+    SoundCardScope cards(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    StateNode gs = DeviceState::Gs(context);
+    ASSERT_NE(gs.find("neogs"), nullptr);
+    EXPECT_FALSE(gs["neogs"]["extended_paging"].b);
+    EXPECT_EQ(gs["strip"].s.find("MPAGEX"), std::string::npos) << gs["strip"].s;
+
+    card->memory().setConfig(0x01 | NeoGSMemory::CFG_EXPAG);
+    card->memory().writeMpag(0x03);
+    card->memory().writeMpagEx(0x05);
+    gs = DeviceState::Gs(context);
+    EXPECT_TRUE(gs["neogs"]["extended_paging"].b);
+    EXPECT_EQ(gs["neogs"]["mpag"].i, 0x03);
+    EXPECT_EQ(gs["neogs"]["mpagex"].i, 0x05);
+    EXPECT_NE(gs["strip"].s.find(" · MPAG #03 · MPAGEX #05"), std::string::npos) << gs["strip"].s;
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// The classic card has no ZX-DMA: no `neogs` part, no banner (gui-card-debugger S4)
+TEST(DeviceStateGs_Test, TheClassicCardHasNoZxDmaBanner)
+{
+    SoundCardScope cards(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    const StateNode gs = DeviceState::Gs(context);
+    EXPECT_EQ(gs.find("neogs"), nullptr);
+    EXPECT_EQ(DeviceState::ZxDmaBanner(context), "");
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 TEST(DeviceStateCovox_Test, PentagonSoundDriveSharesTwoPortsWithBeta128)

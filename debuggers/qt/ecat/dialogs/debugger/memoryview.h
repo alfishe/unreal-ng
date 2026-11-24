@@ -48,6 +48,10 @@ struct MemorySource {
 };
 
 MemorySource memory_of_cpu(CPU * cpu);
+
+//Not in ecat (gui-card-debugger S4): a thin line of text over a view (the ZX-DMA banner), hidden while empty
+QLabel * create_banner(QWidget * parent);
+void set_banner_text(QLabel * banner, const QString &text);
 MemorySource memory_of_device(AddressableDevice * d);
 
 //Sixteen bytes a line, as bytes or as words, in hex or octal, with the
@@ -164,10 +168,14 @@ public:
     void mark_stop();
     //Only seen: no file is loaded into the memory
     void set_read_only(bool on);
+    //The line over the dump (the ZX-DMA banner): hidden while empty
+    void set_banner(const QString &text);
+    QLabel * banner() const { return m_banner; }
 
 private:
     Emulator * e;
     MemoryView * m_view;
+    QLabel * m_banner = nullptr;
     BankStrip * m_banks;
     QLineEdit * m_address;
     QToolButton * m_base_button;
@@ -209,6 +217,9 @@ public:
     //The page of a paged memory that holds @p offset, in the pages tab, at that byte; false: no such page there
     bool show_memory_offset(Memory * memory, unsigned int offset);
     void set_read_only(bool on);
+    //The line over the processor's dump (the ZX-DMA banner over the main CPU's): hidden while empty
+    void set_banner(CPU * cpu, const QString &text);
+    MemoryPanel * panel_of(CPU * cpu) const;
 
 signals:
     //A value was changed in one of the dumps

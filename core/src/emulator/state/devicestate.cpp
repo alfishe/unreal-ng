@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 
 #include "emulator/corestate.h"
@@ -813,6 +814,13 @@ std::string GeneralSoundStrip(const StateNode& report)
     {
         std::snprintf(hex, sizeof(hex), "#%02X", static_cast<unsigned>(value));
         line += std::string(" · MPAG ") + hex;
+        // NeoGS extended paging: MPAG sets window 2, MPAGEX window 3
+        const StateNode* expag = report.find("neogs") ? report.find("neogs")->find("extended_paging") : nullptr;
+        if (expag && expag->b && number({"neogs", "mpagex"}, value))
+        {
+            std::snprintf(hex, sizeof(hex), "#%02X", static_cast<unsigned>(value));
+            line += std::string(" · MPAGEX ") + hex;
+        }
     }
     if (report.find("firmware_profile"))
     {
@@ -831,6 +839,47 @@ std::string GeneralSoundStrip(const StateNode& report)
         line += " · playing pos " + std::to_string(position) + " row " + std::to_string(row);
     }
     return line;
+}
+
+std::string ZxDmaBanner(const NeoGSStateInfo& s, int romPaged)
+{
+    char text[200];
+    if (!s.zxOverlayInstalled)
+        return std::string();  // Off, or a ZX-bus without host memory cycles: the host's reads are its own
+    const unsigned address = s.dmaAddress[0] & 0x1FFFFF;
+    if (std::strcmp(s.zxMode, "divert") == 0)
+    {
+        if (romPaged == 0)
+            std::snprintf(text, sizeof(text),
+                          "ZX-DMA active: RAM paged at #0000-#3FFF, reads return host RAM; writes also go to card RAM "
+                          "@#%06X",
+                          address);
+        else
+            std::snprintf(text, sizeof(text),
+                          "ZX-DMA active: reads at #0000-#3FFF return card RAM @#%06X; next byte #%02X", address,
+                          static_cast<unsigned>(s.zxNextByte));
+        return text;
+    }
+    if (std::strcmp(s.zxMode, "watch") == 0)
+    {
+        std::snprintf(text, sizeof(text),
+                      "ZX-DMA watching: the module is selected, not started; reads at #0000-#3FFF return host memory "
+                      "(card RAM @#%06X once it starts)",
+                      address);
+        return text;
+    }
+    return std::string();
+}
+
+std::string ZxDmaBanner(EmulatorContext* context)
+{
+    SoundManager* sm = context ? context->pSoundManager : nullptr;
+    GeneralSoundCard* gs = sm ? sm->getGeneralSound() : nullptr;
+    NeoGSStateInfo ngs;
+    if (!gs || !gs->neogsState(ngs))
+        return std::string();
+    const int romPaged = context->pMemory ? (context->pMemory->IsBank0ROM() ? 1 : 0) : -1;
+    return ZxDmaBanner(ngs, romPaged);
 }
 
 StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, bool ramWindow)
@@ -928,7 +977,7 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
         ret["interpreter"] = lw->interpreterState();
         ret["player"] = lw->playerState();
     }
-    ret["strip"] = GeneralSoundStrip(ret);
+    ret["strip"] = std::string();  // its place in the report; the line itself after the NeoGS part (MPAGEX)
 
     NeoGSStateInfo ngs;
     if (gs->neogsState(ngs))
@@ -947,6 +996,9 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
         if (ngs.gscfg0 & 0x80) flags.push("inv7b");
         n["gscfg0_flags"] = flags;
         n["clock_hz"] = ngs.clockHz;
+        n["mpag"] = int(ngs.mpag);
+        n["mpagex"] = int(ngs.mpagex);
+        n["extended_paging"] = ngs.extendedPaging;
         StateNode windows = StateNode::Array();
         for (int w = 0; w < 4; w++)
         {
@@ -1005,6 +1057,18 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
             zx["note"] = "no host memory cycles on this ZX-bus (the Sprinter's ISA ZX-bus adapter passes I/O only): "
                          "the module never sees a host access, the overlay is never installed";
         zx["read_latch"] = int(ngs.zxReadLatch);
+        // The main CPU's view (neogs-zxdma-design.md §6.2, gui-card-debugger S4): the window, where its reads come
+        // from, the byte the next read returns and the debugger's one-liner; peeked, no DMA byte consumed
+        zx["window_start"] = 0x0000;
+        zx["window_end"] = 0x3FFF;
+        zx["card_address"] = ngs.dmaAddress[0] & 0x1FFFFF;
+        zx["next_byte"] = int(ngs.zxNextByte);
+        const int romPaged = sm && sm->getContext() && sm->getContext()->pMemory
+                                 ? (sm->getContext()->pMemory->IsBank0ROM() ? 1 : 0)
+                                 : -1;
+        if (romPaged >= 0)
+            zx["rom_paged"] = romPaged == 1;
+        zx["banner"] = ZxDmaBanner(ngs, romPaged);
         zx["pending"] = ngs.zxPending;
         zx["pending_address"] = ngs.zxPendingAddress;
         zx["bytes_read"] = ngs.zxBytesRead;
@@ -1019,6 +1083,7 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
         n["dma"] = dma;
         ret["neogs"] = n;
     }
+    ret["strip"] = GeneralSoundStrip(ret);
 
     // The card CPU's window #4000-#7FFF, where GS-compatible firmwares keep
     // their runtime variables (NUMPG #4080 .. MTSTAT #4151). Side-effect-free

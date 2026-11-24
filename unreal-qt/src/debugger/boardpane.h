@@ -61,6 +61,9 @@ public:
     /// A widget of the owner's under the boards (the DMA pane's ZX-DMA trace): shown while the boards are; it refreshes
     /// on refreshed()
     void addExtra(QWidget* widget);
+    /// A button of the owner's at the end of board `board`'s action row (the SD card's Open media panel, N8): a click
+    /// emits uiActionRequested; no board action runs. actionButton(board, id) finds it
+    void addUiAction(const QString& board, const QString& id, const QString& title, const QString& tooltip);
 
     /// Build the boards on `context` and show them; `live`: the machine runs (no change marks)
     void refresh(EmulatorContext* context, bool live);
@@ -91,6 +94,8 @@ public:
 signals:
     /// The user asked for a board action (a button; Insert: the chosen path): the owner calls runAction under its lease
     void actionRequested(const QString& board, const QString& action, const QString& arg);
+    /// One of the owner's buttons (addUiAction) was clicked
+    void uiActionRequested(const QString& board, const QString& id);
     /// A refresh drew the boards on `context` (still under the caller's lease): the extra widgets refresh with it
     void refreshed(EmulatorContext* context, bool live);
 
@@ -130,6 +135,11 @@ private:
     std::map<QString, Shown> _shown;             ///< by "board/control"
     std::map<QString, QStringList> _groups;      ///< the group titles by board
     std::map<QString, QToolButton*> _actions;    ///< by "board/action"
+    struct UiAction
+    {
+        QString board, id, title, tooltip;
+    };
+    std::vector<UiAction> _uiActions;            ///< addUiAction's, in order
     std::map<QString, QString> _lastStop;
     std::map<QString, bool> _marked;
 };

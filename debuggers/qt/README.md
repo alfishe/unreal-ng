@@ -69,6 +69,16 @@ a line over each tab names the card, and the state's card line reads `MultiSound
 a MultiSound's GS both, the tabs follow the card CPU's tab in front; with the main CPU in front, the first card CPU (the
 same card the card runs act on); with one of them, that one.
 
+**The main CPU with a card** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A6 S1-S4; gs-debugger P5.2, P5.5):
+
+| Where | What |
+|-------|------|
+| State label | the card line (`GS Z80 12 MHz · PC #0C32 · cycle 119,985 · MPAG #03 · Symbols: GS v1.05a`) at every stop and, while the machine runs, `Running · <card line>` read again every 250 ms in process and every second over the WebAPI (a plain `GET state/audio/gs`; nothing pauses); after a card's stop also where the main CPU stands inside its instruction (`main #8003: T 17 of 16 + 1 T wait, memory write; ...`, the wait a device's /WAIT such as ZX-DMA) |
+| Card CPU's registers | row `T`: the card's cycle in the ZX frame and the change since the value shown before, `c119985 Δ12` (`CPU::card_cycle`: in process `GeneralSoundCard::cardCycles`; over the WebAPI the `gs` report's `cpu.frame_cycle`, the change then taken within one frame) |
+| Main CPU's listing and dump | the ZX-DMA banner, a line over each while the NeoGS's ZX module is on (`ZX-DMA active: reads at #0000-#3FFF return card RAM @#012345; next byte #A7`, the RAM-paged and Watch wordings too); in Divert with the ROM paged the listing's rows `#0000-#3FFF` have their bytes in amber, `card bytes at run time` on the first and the top row, the reason in the tooltip. `Emulator::zxdma_banner` (in process `DeviceState::ZxDmaBanner` at a coherent moment; over the WebAPI the `gs` report's `neogs.dma.zx`), read at the stops and with the card line |
+| GS hardware (NeoGS) | the board's Paging group has `MPAGEX` and `extended paging` (the header `MPAG=#03 MPAGEX=#05` while EXPAG is on) |
+
 ## Breakpoints
 
 The Breakpoints tab lists every processor's breakpoints, a row each with its CPU (`main`, `gs`, `ms`): the

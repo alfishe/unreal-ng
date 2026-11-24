@@ -3377,6 +3377,7 @@ MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
     if (position.frameEnd || !(z80->isDebugMode || z80->execTapHold || z80->cardTight) || z80->t < z80->instrStartT)
         return position;
     position.tInInstruction = z80->t - z80->instrStartT;
+    position.waitT = std::min(z80->InstructionWaitT(), position.tInInstruction);
     position.onBoundary = _context->pDebugManager->CatchingUp();
     FillInstructionProgress(position);
     return position;
@@ -3412,7 +3413,7 @@ void Emulator::FillInstructionProgress(MainPosition& position) const
     position.elapsedT = static_cast<uint32_t>(elapsed);
     position.totalT = way->total;
     position.cycles = *way;
-    position.contended = position.onBoundary && position.tInInstruction > way->total;
+    position.contended = position.onBoundary && position.tInInstruction - position.waitT > way->total;
     const Z80MCyclePosition at = Z80MCycleDecoder::Locate(*way, position.elapsedT);
     if (at.inside)
         position.busCycle = static_cast<int8_t>(at.index);

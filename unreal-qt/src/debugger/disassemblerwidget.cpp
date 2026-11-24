@@ -39,6 +39,7 @@ namespace
 // Row backgrounds: the cursor row under PC and breakpoints; the hover line over all of them
 const QColor kCursorBackground(80, 140, 255, 60);
 const QColor kPcBackground(255, 255, 0, 100);
+const QColor kRunTimeMargin(224, 160, 32);  ///< the card's colour (the card line's border): bytes from the card at run time
 const QColor kBreakpointBackground(255, 0, 0, 100);
 const QColor kHoverBackground(0, 0, 0, 16);
 // Column colours
@@ -225,6 +226,8 @@ void DisassemblyView::paintEvent(QPaintEvent*)
         }
         if (static_cast<int>(i) == m_hoverLine)
             painter.fillRect(row, kHoverBackground);
+        if (line.runTime)
+            painter.fillRect(QRect(0, y, std::max(3, cw / 3), lh), kRunTimeMargin);
 
         if (line.kind == DisassemblyLine::Kind::Label)
         {
@@ -736,6 +739,25 @@ void DisassemblerWidget::setByteScroll(bool on)
         toggleScrollMode();
 }
 
+void DisassemblerWidget::setRunTimeRange(uint16_t first, uint16_t last, const QString& note)
+{
+    const bool none = first > last;
+    if (none && !hasRunTimeRange())
+        return;
+    if (first == m_runTimeFirst && last == m_runTimeLast && note == m_runTimeNote)
+        return;
+    m_runTimeFirst = first;
+    m_runTimeLast = last;
+    m_runTimeNote = note;
+    if (!m_isShuttingDown && hasRows())
+        layoutLines();
+}
+
+const std::vector<DisassemblyLine>& DisassemblerWidget::shownLines() const
+{
+    return m_view->lines();
+}
+
 void DisassemblerWidget::onLineClicked(int line)
 {
     if (m_isShuttingDown || line < 0 || line >= static_cast<int>(m_view->lines().size()))
@@ -1124,6 +1146,9 @@ void DisassemblerWidget::layoutLines()
                 }
             line.pc = row.address == registers->pc;
             line.cursor = m_cursorAddress == row.address;
+            line.runTime = m_cpu == DebugCpuId::Main && row.address >= m_runTimeFirst && row.address <= m_runTimeLast;
+            if (line.runTime)
+                line.tip += QStringLiteral("\n") + m_runTimeNote;
 
             if (std::shared_ptr<Label> label = labelManager ? labelManager->GetLabelByZ80Address(row.address) : nullptr)
                 line.label = QString::fromStdString(label->name) + QLatin1Char(':');

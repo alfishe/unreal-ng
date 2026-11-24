@@ -4,6 +4,9 @@
 // board replacing the Hardware pane, DMA, SD · MP3 · Flash. On the lightweight player (A10) its interpreter and player
 // panes; with a ZX-MultiSound the panes over its General Sound (CPU `ms`).
 
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QLabel>
 #include <QProgressBar>
 #include <QTableView>
 #include <QTableWidget>
@@ -22,6 +25,7 @@
 #include "debugger/boards/debugboards.h"
 #include "debugger/cardpanes.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80mcycles.h"
 #include "debugger/gslwpane.h"
 #include "debugger/history/historycontrol.h"
 #include "debugger/reportpane.h"
@@ -30,6 +34,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/ports/portdecoder.h"
@@ -39,6 +44,8 @@
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
+#include "media/mediapanelwindow.h"
+#include "_helpers/testwaithelper.h"
 
 namespace
 {
@@ -697,4 +704,225 @@ TEST_F(CardPanes_Test, TheMultiSoundsGsFillsThePanes)
         ASSERT_NE(slotLine, nullptr);
         EXPECT_TRUE(slotLine->text(1).startsWith("GS Z80 12 MHz")) << slotLine->text(1).toStdString();
     }
+}
+
+namespace
+{
+/// The `gs` report's `neogs.dma.zx` member `key` (an int; -1 when absent)
+int64_t ZxDma(EmulatorContext* context, const char* key)
+{
+    const StateNode gs = DeviceState::Gs(context);
+    const StateNode* neogs = gs.find("neogs");
+    const StateNode* dma = neogs ? neogs->find("dma") : nullptr;
+    const StateNode* zx = dma ? dma->find("zx") : nullptr;
+    const StateNode* value = zx ? zx->find(key) : nullptr;
+    return value && value->kind == StateNode::Kind::Int ? value->i : -1;
+}
+
+/// Qt events for up to `timeout` until `done` (the live line's timer runs on them)
+template <typename Predicate>
+bool PumpUntil(Predicate done, int timeoutMs = 1000)
+{
+    QElapsedTimer clock;
+    clock.start();
+    while (!done())
+    {
+        if (clock.elapsed() > timeoutMs)
+            return false;
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+    }
+    return true;
+}
+}  // namespace
+
+/// S4 (gui-card-debugger.md A6): the ZX-DMA banner over the main memory view and disassembly is the core's text while
+/// the module diverts the reads (the disassembly's rows marked: ROM paged), hidden while it is off and on a card's tab;
+/// reading it consumes no DMA byte
+TEST_F(CardPanes_Test, TheZxDmaBannerShowsWhileTheModuleDiverts)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(_context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    QLabel strip(&_parent), position(&_parent), memory(&_parent), disasm(&_parent);
+    const CardPanes::Lines lines{&strip, &position, &memory, &disasm};
+    Emulator::DebugStop stop;
+
+    // Off: no banner, the card line alone
+    EXPECT_TRUE(CardPanes::ZxDmaBanner(_context).isEmpty());
+    EXPECT_FALSE(CardPanes::FillLines(lines, _context, stop, DebugCpuId::Main, false));
+    EXPECT_FALSE(memory.isVisibleTo(&_parent));
+    EXPECT_FALSE(disasm.isVisibleTo(&_parent));
+    EXPECT_FALSE(position.isVisibleTo(&_parent)) << "no card stop";
+    EXPECT_TRUE(strip.isVisibleTo(&_parent)) << "the card line";
+
+    StartZxDma(*_emulator, _context, card);
+    ASSERT_EQ(card->zxDma().mode(), NeoGSZxDma::Mode::Divert);
+    const QString core = QString::fromStdString(DeviceState::ZxDmaBanner(_context));
+    ASSERT_TRUE(core.startsWith("ZX-DMA active: reads at #0000-#3FFF return card RAM @#")) << core.toStdString();
+    const int64_t readsBefore = ZxDma(_context, "bytes_read");
+    const int64_t nextBefore = ZxDma(_context, "next_byte");
+
+    EXPECT_TRUE(CardPanes::FillLines(lines, _context, stop, DebugCpuId::Main, false)) << "Divert, ROM paged: the rows marked";
+    EXPECT_TRUE(memory.isVisibleTo(&_parent));
+    EXPECT_EQ(memory.text(), core);
+    EXPECT_TRUE(disasm.isVisibleTo(&_parent));
+    EXPECT_TRUE(disasm.text().startsWith(core)) << disasm.text().toStdString();
+    EXPECT_TRUE(disasm.text().contains("come from the card at run time")) << disasm.text().toStdString();
+    EXPECT_TRUE(strip.text().contains("ZX-DMA divert")) << strip.text().toStdString();
+    EXPECT_EQ(ZxDma(_context, "bytes_read"), readsBefore) << "a peek: no DMA byte consumed";
+    EXPECT_EQ(ZxDma(_context, "next_byte"), nextBefore);
+
+    // Live (the machine runs): the same banner
+    CardPanes::FillLiveLines(lines, _context, DebugCpuId::Main);
+    EXPECT_EQ(memory.text(), core);
+
+    // The card's tab in front: its memory shows, not the main CPU's
+    EXPECT_FALSE(CardPanes::FillLines(lines, _context, stop, DebugCpuId::GS, false));
+    EXPECT_FALSE(memory.isVisibleTo(&_parent));
+    EXPECT_FALSE(disasm.isVisibleTo(&_parent));
+}
+
+/// S3 (gui-card-debugger.md A6): at a card's stop the strip on top of the main registers names the main CPU's
+/// instruction, its T of the total with the ZX-DMA wait and the bus cycle; the card line then leaves the position out,
+/// and keeps it with the card's tab in front (one view, once)
+TEST_F(CardPanes_Test, TheMainStripShowsTheWaitOfTheInstruction)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    _context->pCore->GetZ80()->DirectWrite(0x8000, 0x7E);  // LD A,(HL)
+
+    Emulator::DebugStop stop;
+    stop.reason = Emulator::DebugStop::Reason::Breakpoint;
+    stop.breakpoint.hit = true;
+    stop.breakpoint.cpu = DebugCpuId::GS;
+    MainPosition& main = stop.breakpoint.main;
+    main.known = true;
+    main.pc = 0x8000;
+    main.tInInstruction = 9;
+    main.waitT = 3;
+    main.gapT = 2;
+    main.timed = true;
+    main.elapsedT = 6;
+    main.totalT = 7;
+    main.cycles.count = 2;
+    main.cycles.total = 7;
+    main.cycles.cycles[0] = {Z80BusCycle::OpcodeFetch, 4};
+    main.cycles.cycles[1] = {Z80BusCycle::MemoryRead, 3};
+    main.busCycle = 1;
+
+    const QString text = CardPanes::MainPositionStrip(_context, stop);
+    EXPECT_TRUE(text.startsWith("in #8000 ")) << text.toStdString();
+    EXPECT_TRUE(text.contains("LD A,(HL)", Qt::CaseInsensitive)) << text.toStdString();
+    EXPECT_TRUE(text.contains(" · T 6 of 7 + 3 T wait · memory read · 2 T past the card")) << text.toStdString();
+
+    QLabel strip(&_parent), position(&_parent);
+    const CardPanes::Lines lines{&strip, &position, nullptr, nullptr};
+    CardPanes::FillLines(lines, _context, stop, DebugCpuId::Main, false);
+    EXPECT_TRUE(position.isVisibleTo(&_parent));
+    EXPECT_EQ(position.text(), text);
+    EXPECT_TRUE(strip.text().contains("paused by the card (gs)")) << strip.text().toStdString();
+    EXPECT_FALSE(strip.text().contains("main #8000")) << "not twice: " << strip.text().toStdString();
+
+    // The card's tab in front: no main registers, the card line carries the position (MainPositionText)
+    CardPanes::FillLines(lines, _context, stop, DebugCpuId::GS, false);
+    EXPECT_FALSE(position.isVisibleTo(&_parent));
+    EXPECT_TRUE(strip.text().contains("main #8000: T 6 of 7 + 3 T wait")) << strip.text().toStdString();
+
+    // Running: no stop, no position
+    CardPanes::FillLiveLines(lines, _context, DebugCpuId::Main);
+    EXPECT_FALSE(position.isVisibleTo(&_parent));
+    EXPECT_FALSE(strip.text().contains("paused")) << strip.text().toStdString();
+
+    // A main stop, or a card's without the position: no strip
+    Emulator::DebugStop mainStop;
+    mainStop.reason = Emulator::DebugStop::Reason::Breakpoint;
+    mainStop.breakpoint.main = main;
+    EXPECT_TRUE(CardPanes::MainPositionStrip(_context, mainStop).isEmpty());
+    stop.breakpoint.main.known = false;
+    EXPECT_TRUE(CardPanes::MainPositionStrip(_context, stop).isEmpty());
+}
+
+/// The card line while the machine runs (P5.2 left): the live line reads it under a lease at its interval while the
+/// window is shown and the machine runs; none while paused or hidden
+TEST_F(CardPanes_Test, TheCardLineIsLiveWhileTheMachineRuns)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    QWidget window;
+    QLabel strip(&window);
+    QStringList seen;
+    CardPanes::LiveLine live(
+        &window, [this]() { return _emulator; },
+        [&](EmulatorContext* context) {
+            CardPanes::FillLiveLines({&strip, nullptr, nullptr, nullptr}, context, DebugCpuId::Main);
+            seen << strip.text();
+        },
+        20);
+    live.update();
+    EXPECT_FALSE(live.active()) << "hidden";
+    window.show();
+    live.update();
+    EXPECT_TRUE(live.active());
+
+    // Not started: nothing read
+    QElapsedTimer idle;
+    idle.start();
+    PumpUntil([&] { return idle.elapsed() >= 60; });
+    EXPECT_EQ(live.reads(), 0);
+
+    _emulator->EnableTurboMode();
+    _emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return _context->emulatorState.frame_counter > 2; }));
+    // Two reads that differ (the card's cycle moves on)
+    EXPECT_TRUE(PumpUntil([&] { return seen.size() >= 2 && seen.back() != seen.front(); })) << seen.join(" | ").toStdString();
+    EXPECT_TRUE(strip.isVisibleTo(&window));
+    EXPECT_TRUE(strip.text().contains("PC #")) << strip.text().toStdString();
+
+    // Paused: the stop's refresh fills it, the live line reads nothing
+    _emulator->Pause();
+    ASSERT_TRUE(TestWait::For([&] { return _emulator->IsEmulationParked(); }));
+    const int reads = live.reads();
+    QElapsedTimer paused;
+    paused.start();
+    PumpUntil([&] { return paused.elapsed() >= 60; });
+    EXPECT_EQ(live.reads(), reads);
+
+    window.hide();
+    live.update();
+    EXPECT_FALSE(live.active()) << "hidden: no timer";
+    _emulator->Stop();
+}
+
+/// N8: the SD card's "Open media panel" asks the owner (no board action runs); the media panel selects slot sd.ngs
+TEST_F(CardPanes_Test, TheSdCardOpensTheMediaPanelOnItsSlot)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    BoardPane* media = panes[6].board;
+    ASSERT_NE(media, nullptr);
+    media->refresh(_context, false);
+    QToolButton* open = media->actionButton("neogs_sd", QString::fromLatin1(CardPanes::kOpenMediaPanel));
+    ASSERT_NE(open, nullptr);
+    EXPECT_EQ(open->text(), "Open media panel");
+    EXPECT_NE(media->actionButton("neogs_sd", "eject"), nullptr) << "beside the board's own actions";
+    QStringList asked;
+    QObject::connect(media, &BoardPane::uiActionRequested, media,
+                     [&](const QString& board, const QString& id) { asked << board + '/' + id; });
+    QStringList ran;
+    QObject::connect(media, &BoardPane::actionRequested, media,
+                     [&](const QString& board, const QString& id, const QString&) { ran << board + '/' + id; });
+    open->click();
+    EXPECT_EQ(asked, QStringList{"neogs_sd/open_media_panel"});
+    EXPECT_TRUE(ran.isEmpty());
+    media->refresh(_context, false);
+    EXPECT_NE(media->actionButton("neogs_sd", QString::fromLatin1(CardPanes::kOpenMediaPanel)), nullptr) << "kept";
+
+    EmulatorBinding binding;
+    binding.bind(_emulator);
+    {
+        MediaPanelWindow window;
+        window.setBinding(&binding);
+        EXPECT_TRUE(window.focusSlot(CardPanes::kSdSlot));
+        EXPECT_EQ(window.selectedSlot(), CardPanes::kSdSlot);
+        EXPECT_FALSE(window.focusSlot("no.such"));
+    }
+    binding.unbind();
 }

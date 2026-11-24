@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QGraphicsColorizeEffect>
 #include <QHeaderView>
 #include <QIcon>
@@ -78,11 +79,13 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         CpuPane p;
         p.cpu = cpu;
         p.split = new QSplitter(Qt::Horizontal, m_cpu_tabs);
-        //The listing under the windows of its space
+        //The listing under the windows of its space; the main CPU's under the ZX-DMA banner while there is one
         QWidget * left = new QWidget(p.split);
         QVBoxLayout * ll = new QVBoxLayout(left);
         ll->setContentsMargins(0, 0, 0, 0);
         ll->setSpacing(1);
+        p.banner = m_panes.empty() ? create_banner(left) : nullptr;
+        if (p.banner != nullptr) ll->addWidget(p.banner);
         p.banks = new BankStrip([cpu]() { return cpu->get_windows(); }, view_base(cpu), left);
         p.banks->set_pc([cpu]() { return cpu->get_pc(); });
         p.banks->set_cpu(cpu);
@@ -263,6 +266,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     //The stop before the window: taken (the tab its caller asked for stays)
     if (e->loaded) m_stop_serial = e->debug_stop_serial();
     refresh_all(true);
+    refresh_banner();
     mark_all();
     if (e->loaded) m_ttd->poll(true);
     show_state();
@@ -754,6 +758,7 @@ bool DebuggerWindow::card_run_to(const QString &until, uint64_t value, Emulator:
     if (m_paused) {
         refresh_all(true);
         m_card_strip = read_card_strip();
+        refresh_banner();
     }
     show_state();
     if (answer != nullptr) *answer = a;
@@ -987,6 +992,8 @@ void DebuggerWindow::show_state()
         if (!m_run_message.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_run_message;
     } else {
         text = tr("Running");
+        //The card's line followed while it runs (follow_card_live)
+        if (!m_card_strip.isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_card_strip;
     }
     //Where the machine is in time: "History: frame 12 of 40, replaying" (forward actions replay)
     if (m_ttd != nullptr && !m_ttd->moment().isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_ttd->moment();
@@ -1019,9 +1026,45 @@ void DebuggerWindow::on_debug_event()
         }
         refresh_all(true);
         m_card_strip = read_card_strip();
+        refresh_banner();
         if (CpuPane * p = pane()) p->code->setFocus();
     }
     show_state();
+}
+
+void DebuggerWindow::refresh_banner()
+{
+    //Only with a card CPU (a NeoGS is one): no read of the machine for nothing
+    Emulator::ZxDmaBanner b;
+    if (e->loaded && m_panes.size() > 1 && e->debug_online()) b = e->zxdma_banner();
+    m_zxdma_banner = QString::fromStdString(b.text);
+    if (m_panes.empty()) return;
+    CpuPane &main = m_panes.front();
+    set_banner_text(main.banner, m_zxdma_banner);
+    m_memory_tabs->set_banner(main.cpu, m_zxdma_banner);
+    auto hex4 = [](unsigned int v) { return QString("#%1").arg(v & 0xFFFF, 4, 16, QChar('0')).toUpper(); };
+    if (b.card_bytes)
+        main.code->set_runtime_bytes(b.window_start, b.window_end,
+                                     tr("Bytes come from the card at run time: the NeoGS's ZX-DMA diverts the main CPU's "
+                                        "reads of %1-%2 to card RAM (the listing shows the ROM)")
+                                         .arg(hex4(b.window_start), hex4(b.window_end)));
+    else
+        main.code->set_runtime_bytes(1, 0, QString());
+}
+
+QString DebuggerWindow::zxdma_banner_text() const
+{
+    return m_zxdma_banner;
+}
+
+void DebuggerWindow::follow_card_live()
+{
+    if (m_card_source.empty() || m_card_source == "?") return;
+    const qint64 ms = QDateTime::currentMSecsSinceEpoch();
+    if (m_card_live_ms >= 0 && ms - m_card_live_ms < (qint64)e->live_card_ms()) return;
+    m_card_live_ms = ms;
+    m_card_strip = read_card_strip();
+    refresh_banner();
 }
 
 QString DebuggerWindow::read_card_strip() const
@@ -1067,10 +1110,16 @@ void DebuggerWindow::on_timer()
     const bool paused = e->debug_paused() && !e->debug_stepping();
     if (paused != m_paused) {
         m_paused = paused;
-        if (paused) refresh_all(true);
+        if (paused) {
+            refresh_all(true);
+            m_card_strip = read_card_strip();
+            refresh_banner();
+        }
+        m_card_live_ms = -1;
     } else if (!paused && isVisible() && !isMinimized()) {
         //Following a running machine is for the eyes: not while minimized
         refresh_all(false);
+        follow_card_live();
         //The devices and the history cost a read of the machine each: once a second, the one in sight
         QWidget * side = m_side_tabs->currentWidget();
         NextReportView * next = next_view_in_sight();
@@ -1100,6 +1149,8 @@ bool DebuggerWindow::follow_online()
         m_serial = e->debug_serial();
         m_paused = e->debug_paused() && !e->debug_stepping();
         refresh_all(true);
+        m_card_strip = read_card_strip();
+        refresh_banner();
     }
     show_state();
     return true;

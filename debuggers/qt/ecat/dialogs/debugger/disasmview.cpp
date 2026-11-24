@@ -174,8 +174,26 @@ void DisasmView::contextMenuEvent(QContextMenuEvent *event)
     exec_address_menu(this, event->globalPos(), AddressTarget{cpu, l.address, QString()}, &own);
 }
 
+void DisasmView::set_runtime_bytes(unsigned int from, unsigned int to, const QString &note)
+{
+    if (from == m_runtime_from && to == m_runtime_to && note == m_runtime_note) return;
+    m_runtime_from = from;
+    m_runtime_to = to;
+    m_runtime_note = note;
+    repaint_changed();
+}
+
 bool DisasmView::viewportEvent(QEvent *event)
 {
+    if (event->type() == QEvent::ToolTip && !m_runtime_note.isEmpty()) {
+        const QHelpEvent * h = static_cast<QHelpEvent*>(event);
+        const int i = row_at(h->pos().y());
+        if (i >= 0 && i < (int)m_buf->size() && runtime_bytes(m_buf->at(i).address) &&
+            !(m_label_chars && h->pos().x() >= x_label() && h->pos().x() < x_text() && !m_buf->at(i).d.label.empty())) {
+            QToolTip::showText(h->globalPos(), m_runtime_note, viewport());
+            return true;
+        }
+    }
     if (event->type() == QEvent::ToolTip && m_label_chars) {
         const QHelpEvent * h = static_cast<QHelpEvent*>(event);
         const int i = row_at(h->pos().y());
@@ -504,7 +522,8 @@ QString DisasmView::row_key(int row, unsigned int pc) const
     const int cursor = (i == m_cursor) ? (hasFocus() ? 2 : 1) : 0;
     return QString::number(l.address) + ' ' + bytes_text(l) + ' ' + QString::fromStdString(l.d.text) + ' '
            + QString::fromStdString(l.d.label) + ' ' + QString::number(m_label_chars) + ' ' + QString::number(l.d.valid ? 1 : 0) + QString::number(l.d.flow) + QString::number(l.address == pc ? 1 : 0)
-           + QString::number(cpu->has_breakpoint(l.address) ? 1 : 0) + QString::number(cursor) + window_start(i);
+           + QString::number(cpu->has_breakpoint(l.address) ? 1 : 0) + QString::number(cursor) + window_start(i)
+           + (runtime_bytes(l.address) ? QString(" rt") + QString::number(row == 0 ? 1 : 0) : QString());
 }
 
 QString DisasmView::arrows_key(const std::vector<DisasmBuffer::Arrow> &arrows, int pc_row) const
@@ -644,7 +663,9 @@ void DisasmView::paintEvent(QPaintEvent *event)
         const bool sel = (i == m_cursor);
         p.setPen(sel ? c.selection_text : (cpu->has_breakpoint(l.address) ? c.breakpoint : c.address));
         p.drawText(x_address(), y + base_y, format_address(l.address));
-        p.setPen(sel ? c.selection_text : c.dim);
+        //Bytes that come from elsewhere at run time (ZX-DMA): the ones shown (the ROM's) are not what the CPU reads
+        const bool runtime = runtime_bytes(l.address);
+        p.setPen(sel ? c.selection_text : (runtime ? c.jump : c.dim));
         p.drawText(x_bytes(), y + base_y, bytes_text(l));
         if (m_label_chars && !l.d.label.empty()) {
             const QColor lc = sel ? c.selection_text : c.reg_name;
@@ -677,7 +698,10 @@ void DisasmView::paintEvent(QPaintEvent *event)
 
         //A window of the paged space starts here: a line over the row and its
         //page at the right
-        const QString start = window_start(i);
+        QString start = window_start(i);
+        //The run-time bytes said on their first row and on the top one
+        if (runtime && (r == 0 || !start.isEmpty() || l.address == m_runtime_from))
+            start = start.isEmpty() ? tr("card bytes at run time") : start + QString(" ") + QChar(0x00B7) + " " + tr("card bytes at run time");
         if (!start.isEmpty()) {
             p.setPen(c.dim);
             p.drawLine(x_marks(), y, w, y);

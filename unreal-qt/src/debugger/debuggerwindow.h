@@ -224,6 +224,9 @@ signals:
     /// The time travel group's "Show in the TTD panel": MainWindow opens the panel with its Branches row
     void showInTtdPanelRequested();
 
+    /// The NeoGS SD card pane's "Open media panel" (N8): MainWindow shows the media panel on `slot` (`sd.ngs`)
+    void mediaPanelRequested(const QString& slot);
+
     /// The memory view shows another page or its follow mode changed (its cursor: QHexView::positionChanged)
     void memoryViewChanged();
 
@@ -239,6 +242,9 @@ public:
     /// region <For the tests>
     QTabWidget* sideTabs() const { return _sideTabs; }
     QLabel* cardStrip() const { return _cardStrip; }
+    QLabel* mainPositionStrip() const { return _mainPositionStrip; }
+    QLabel* zxDmaMemoryBanner() const { return _zxDmaMemoryBanner; }
+    QLabel* zxDmaDisasmBanner() const { return _zxDmaDisasmBanner; }
     const std::vector<class ReportPane*>& nextPanes() const { return _nextPanes; }
     const std::vector<CardPanes::Pane>& cardPanes() const { return _cardPanes; }
     /// endregion
@@ -341,6 +347,16 @@ private:
     // stands in its instruction. Shown at a stop while a card is fitted
     QLabel* _cardStrip = nullptr;
     void updateCardStrip();
+    // The inside-an-instruction strip on top of the main registers (A6 S3): where the main CPU stands in its instruction
+    // at a card's stop (the card line leaves it out while this shows it)
+    QLabel* _mainPositionStrip = nullptr;
+    // The ZX-DMA banner over the main CPU's memory view and disassembly (A6 S4) while the NeoGS module diverts or
+    // watches the reads at #0000-#3FFF; in Divert with the ROM paged the disassembly's rows there are marked
+    QLabel* _zxDmaMemoryBanner = nullptr;
+    QLabel* _zxDmaDisasmBanner = nullptr;
+    CardPanes::Lines cardLines() const { return {_cardStrip, _mainPositionStrip, _zxDmaMemoryBanner, _zxDmaDisasmBanner}; }
+    // The card line and the banner while the machine runs (4 Hz, while the window is shown)
+    CardPanes::LiveLine* _liveLine = nullptr;
     uint16_t _stopBreakpointId = BRK_INVALID;
     DebugCpuId _stopBreakpointCpu = DebugCpuId::Main;  // whose breakpoint the stop line names (its manager)
     uint64_t _breakpointObserver = 0;  // NC_EXECUTION_BREAKPOINT, filtered by the machine's id

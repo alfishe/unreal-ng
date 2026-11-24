@@ -295,7 +295,7 @@ what an agent reads):
   (`/state/audio/gs/firmware`: objects, dispatch, unknown commands, the profile stack), Hardware (the `gs` report:
   MPAG, mailbox, channels, NeoGS registers), Stats (`/state/audio/gs/stats`). New device catalog entries `gs-commands`,
   `gs-firmware`, `gs-stats` (eCat reads a pane by its catalog entry, in process or over the WebAPI).
-- [ ] **P5.2 Whose pause and where the other CPU is (A6 S1-S3, A4).** The card strip / inside-an-instruction strip
+- [x] **P5.2 Whose pause and where the other CPU is (A6 S1-S3, A4).** The card strip / inside-an-instruction strip
   (MainPositionNode: the main instruction, elapsed / total T, the bus cycle), the paused-by line naming the CPU, the
   card cycle and Δ in the card's registers, the profile line (`Symbols: GS v1.05a`).
   - [x] 2026-11-22: the `gs` report's `strip` and `cpu.clock_hz` / `cpu.frame_cycle` (DeviceState::GeneralSoundStrip,
@@ -304,8 +304,12 @@ what an agent reads):
     MainPositionText after a card's stop (CardPanes::StripText). eCat: the same line in the state label.
   - [x] 2026-11-22: embedded, the card CPU's T field is its cycle in the frame and Δ since the value shown before
     (`c119985 Δ12`, GeneralSoundCard::cardCycles).
-  - [ ] Left: the S3 strip on top of the main registers (now in the card line), eCat's Δ (its register pane has no
-    T at all), a live card line while the machine runs.
+  - [x] 2026-11-23: the S3 strip over the main registers (embedded: "in #8000 LD A,(HL) · T 6 of 7 + 3 T wait ·
+    memory read", the card line then drops the position; eCat: the state label), eCat's card `T` row `c2015 Δ13`
+    (remote: Δ within one host frame, the report has no running card total), a live card line while running
+    (embedded 4 Hz, eCat 4 Hz in process / 1 Hz remote; side-effect-free reads, nothing parks). Tests
+    `CardPanes_Test.TheMainStripShowsTheWaitOfTheInstruction`, `.TheCardLineIsLiveWhileTheMachineRuns`, eCat
+    `--self-check`.
 - [x] **P5.3 Breakpoints (A4 B1-B4, A6 S5).** The event kinds (INT, NMI, card reset, page switch) and the protocol
   kinds on the card side and the host side in both editors; card breakpoints listed with a CPU column.
   Done 2026-11-22. Embedded: the editor's Event kind (grouped Card / Protocol, card side / Protocol, host side /
@@ -366,9 +370,25 @@ what an agent reads):
   the NeoGS DMA pane / tab in both debuggers (Start / Stop / Clear, rows appended by `since`, double-click to the
   host PC's disassembly / the card memory). Tests `GSZxDmaTrace_Test.*`, `NeoGSZxDma.TheTrace*`,
   `CardPanes_Test.TheDmaPaneTracesTheZxDmaBytes`, eCat `--self-check` (17 real bytes, in process and `--connect`).
-  Left: MPAGEX (no field anywhere), "Open media panel" (N8); the trace restarted from outside (CLI / REST) past the
-  panes' cursor before their next refresh loses that session's first rows; the ZX-DMA banner (S4) and the wait in
-  the instruction progress (S3) are not checked; the LW panes do not mark
+  Core data for MPAGEX, the banner (S4) and the wait (S3) (2026-11-23, uncommitted): `NeoGSMemory::lastMpagEx()`
+  (the last #10 write that took effect, TTD fixed byte 66, a layout 4 blob from before reads 0), NeoGSStateInfo
+  `mpagex` / `extendedPaging`, the `gs` report's `neogs.mpag` / `mpagex` / `extended_paging`, the `neogs` board's
+  Paging group (`mpagex`, `extended_paging`, header `MPAG=#03 MPAGEX=#05` while EXPAG), the strip `MPAG #03 · MPAGEX
+  #05` while EXPAG; `neogs.dma.zx` `window_start`, `window_end`, `card_address`, `next_byte`, `rom_paged`, `banner`
+  ("ZX-DMA active: reads at #0000-#3FFF return card RAM @#012345; next byte #A7"), in process
+  `DeviceState::ZxDmaBanner(context)`; `Z80::instrWaitTicks` / `InstructionWaitT()`, MainPosition `waitT`, the text
+  `... T 17 of 16 + 1 T wait, ...` and `wait_t` in MainPositionNode. Tests `NeoGSMemory.MpagExShadow*`,
+  `SoundChip_NeoGS_Ttd.TheMpagExShadowTravelsInTheBlob`, `DeviceStateGs_Test.NeoGsReportNamesMpagEx` /
+  `TheClassicCardHasNoZxDmaBanner`, `DebugBoards_Test.TheNeoGSPagingGroupNamesMpagEx`,
+  `Modes/NeoGSZxDma_Test.HostReadsABlockOfCardRam` (banner), `.AWriteWaitShowsInTheMainPosition`. The two
+  debuggers' UI (2026-11-23): the banner over the main CPU's memory view and disassembly (Divert / Watch), the rows
+  #0000-#3FFF marked "card bytes at run time" in Divert with the ROM paged (embedded and eCat, in process and
+  remote); "Open media panel" on the SD card opens the media panel on slot `sd.ngs` (embedded; eCat has no media
+  panel). Tests `CardPanes_Test.TheZxDmaBannerShowsWhileTheModuleDiverts`, `.TheSdCardOpensTheMediaPanelOnItsSlot`,
+  eCat `--self-check`.
+  Left: the trace restarted from outside (CLI / REST) past the
+  panes' cursor before their next refresh loses that session's first rows; a live "+ N T wait" after a card's stop not produced in
+  eCat's self-check (the field only); the disassembly's run-time marks refresh at stops only; the LW panes do not mark
   the values changed since the last stop; the card strip follows a CPU-tab switch only at the next stop; LW checked
   live only idle (an upload and a module in the Qt test); gs + ms together not run; the LW FX upload counter is not
   in the TTD state.

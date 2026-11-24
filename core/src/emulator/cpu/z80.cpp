@@ -273,6 +273,7 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
         if (cpu.cardTight)
             _context->pDebugManager->CatchUpCards();
         cpu.instrStartT = cpu.t;
+        cpu.instrWaitTicks = 0;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         if (skipBreakpoints)
         {

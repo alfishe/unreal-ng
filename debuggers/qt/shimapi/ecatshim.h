@@ -219,6 +219,17 @@ public:
 
     // Not in ecat: the windows of the address space in order, empty when it is not paged
     virtual std::vector<AddressWindow> get_windows() { return {}; }
+
+    // Not in ecat: a sound card CPU's own clock (gs-debugger A4, P5.2; the `gs` report's cpu.frame_cycle): its cycle
+    // in the ZX frame `frame`, and its cycles since the card started when known (-1: not known, the change is then
+    // taken within one frame). False: no such clock (the main CPU, a card without a CPU clock)
+    struct CardCycle {
+        int64_t frame_cycle = -1;
+        int64_t total = -1;
+        uint64_t frame = 0;
+        unsigned int clock_hz = 0;
+    };
+    virtual bool card_cycle(CardCycle &out) { (void)out; return false; }
 };
 
 struct DeviceEntry {
@@ -423,6 +434,21 @@ public:
         (void)action;
         return {false, "This machine has no ZX-DMA trace"};
     }
+
+    // The NeoGS ZX-DMA banner (not in ecat; gui-card-debugger S4, neogs-zxdma-design §6.2) for the main CPU's
+    // listing and dump: the core's DeviceState::ZxDmaBanner (over the WebAPI the `gs` report's neogs.dma.zx.banner),
+    // empty while the module is off or without a NeoGS. card_bytes: the module diverts with the ROM paged, the main
+    // CPU's reads of window_start..window_end return card RAM at run time
+    struct ZxDmaBanner {
+        std::string text;
+        bool card_bytes = false;
+        unsigned int window_start = 0x0000;
+        unsigned int window_end = 0x3FFF;
+    };
+    virtual ZxDmaBanner zxdma_banner() { return ZxDmaBanner(); }
+    // How often the views read the card's line (and the banner) while the machine runs (not in ecat): a read of the
+    // card where the machine stands still in this process, a plain GET over the WebAPI; never a pause
+    virtual unsigned int live_card_ms() const { return 250; }
 
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)

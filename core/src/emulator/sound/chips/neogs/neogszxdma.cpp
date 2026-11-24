@@ -141,6 +141,13 @@ void NeoGSZxDma::complete()
     _pendingDone = kNever;
 }
 
+uint8_t NeoGSZxDma::nextReadByte() const
+{
+    if (_pending == Pending::Read)
+        return _mem.ram()[_pendingAddress % _mem.ramSize()];
+    return _readLatch;
+}
+
 bool NeoGSZxDma::syncForAccess(int64_t& accessEnd)
 {
     // Everything the card did before this access has happened: CST on or

@@ -864,6 +864,15 @@ if (TESTS)
         # The lightweight player's inspector panes: interpreter, player (gs-debugger TODO P5.5, A10)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.h"
+        # The NeoGS SD card pane's "Open media panel" (gs-debugger N8): the media panel focused on the card's slot
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/flattendialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/flattendialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/mediapanelmodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/mediapanelmodel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/flattenchoice.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/flattenchoice.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)

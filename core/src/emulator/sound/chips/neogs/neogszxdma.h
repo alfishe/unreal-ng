@@ -113,6 +113,9 @@ public:
     Mode mode() const { return _mode; }
     bool installed() const { return _installed; }
     uint8_t readLatch() const { return _readLatch; }
+    /// The byte the next diverted host read returns, peeked (nothing consumed): a pending read completes into the
+    /// latch first, so its cell; otherwise the latch (a pending write leaves the latch as it is)
+    uint8_t nextReadByte() const;
     Pending pending() const { return _pending; }
     uint32_t pendingAddress() const { return _pendingAddress; }
     uint64_t bytesRead() const { return _bytesRead; }

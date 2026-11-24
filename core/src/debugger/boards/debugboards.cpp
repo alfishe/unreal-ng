@@ -254,7 +254,7 @@ DebugBoardBuilder NeoGsBoard(const GeneralSoundCard& gs, const NeoGSStateInfo& s
     DebugBoardBuilder b("neogs", "NeoGS card hardware", gs.deviceDescription(), "gs");
     b.Column().Group("Config", "GSCFG0=" + Hex(s.gscfg0, 2))
         .Bits("gscfg0", "GSCFG0", s.gscfg0, Gscfg0Names(), "NOROM: RAM mode; clock: bits 5:4");
-    b.Group("Paging", "MPAG=" + Hex(s.mpag, 2));
+    b.Group("Paging", s.extendedPaging ? "MPAG=" + Hex(s.mpag, 2) + " MPAGEX=" + Hex(s.mpagex, 2) : "MPAG=" + Hex(s.mpag, 2));
     for (int w = 0; w < 4; w++)
     {
         const std::string window = std::to_string(w);
@@ -262,6 +262,10 @@ DebugBoardBuilder NeoGsBoard(const GeneralSoundCard& gs, const NeoGSStateInfo& s
             .Bool("window_flash[" + window + "]", "window " + window + " flash", s.windowFlash[w]);
     }
     b.Hex8("mpag", "MPAG", s.mpag, "the last MPAG (#00) write");
+    b.Hex8("mpagex", "MPAGEX", s.mpagex,
+           s.extendedPaging ? "the last MPAGEX (#10) write; extended paging on: MPAG sets window 2, MPAGEX window 3"
+                            : "extended paging off (GSCFG0.EXPAG): MPAG sets windows 2 and 3, MPAGEX writes are ignored");
+    b.Bool("extended_paging", "extended paging", s.extendedPaging, "GSCFG0 bit 3 (EXPAG)");
     b.Group("Clock").Dec("clock_hz", "clock", s.clockHz, "Hz: 10 / 12 / 20 / 24 MHz from GSCFG0 bits 5:4");
     ChannelsGroup(b, gs);
     const char* audioMode = (s.gscfg0 & 0x04) ? "8ch" : (s.gscfg0 & 0x40) ? "pan4ch" : "4ch";
@@ -312,7 +316,8 @@ DebugBoardBuilder NeoGsDmaBoard(const GeneralSoundCard& gs, const NeoGSStateInfo
         .Enum("zx.watch_setting", "watch", s.zxWatchSetting, {"selected", "always"})
         .Dec("zx.watch_frames", "watch frames", s.zxWatchFrames)
         .Dec("zx.watch_frames_left", "frames left", s.zxWatchFramesLeft, "-1: the window is closed")
-        .Hex8("zx.read_latch", "read latch", s.zxReadLatch, "the byte the next host read gets")
+        .Hex8("zx.read_latch", "read latch", s.zxReadLatch, "the byte the last fetch latched")
+        .Hex8("zx.next_byte", "next byte", s.zxNextByte, "the byte the next host read gets (a fetch in flight: its cell)")
         .Enum("zx.pending", "pending", s.zxPending, {"none", "read", "write"})
         .Hex21("zx.pending_address", "pending address", s.zxPendingAddress)
         .Counter("zx.bytes_read", "bytes read", s.zxBytesRead)

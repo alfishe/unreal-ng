@@ -146,6 +146,8 @@ struct NeoGSStateInfo
     uint8_t pages[4] = {};
     bool windowFlash[4] = {};
     uint8_t mpag = 0;
+    uint8_t mpagex = 0;               // the last MPAGEX (#10) write that took effect (extended paging on)
+    bool extendedPaging = false;      // GSCFG0.EXPAG: MPAG sets PG2 only, MPAGEX sets PG3
     bool ledOn = false;
     bool readyForCommands = false;
     // Output: the DAC's level now, before the line output's coupling (dacLevel)
@@ -194,7 +196,8 @@ struct NeoGSStateInfo
     const char* zxMode = "off";       // off | watch | divert
     bool zxOverlayInstalled = false;
     bool zxHostMemoryBus = true;      // the card's ZX-bus carries the host's memory cycles (false: the Sprinter's ISA adapter)
-    uint8_t zxReadLatch = 0;          // the byte the next host read gets
+    uint8_t zxReadLatch = 0;          // the latch now (the byte fetched by the last completed read)
+    uint8_t zxNextByte = 0;           // the byte the next diverted host read returns (a pending read's cell, else the latch)
     const char* zxPending = "none";   // none | read | write
     uint32_t zxPendingAddress = 0;
     uint64_t zxBytesRead = 0;
