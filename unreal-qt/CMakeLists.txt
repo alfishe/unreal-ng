@@ -694,6 +694,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/remotecontrolrow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/remotecontrolrow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/inkcentre.h"
+        # Tab bars that scroll, an arrow at each end (the Embedded debugger's side tabs)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/tabscrollarrows_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tabscrollarrows.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tabscrollarrows.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.h"
         # Companion clients in the GUI: the pairing prompt, the Companions dialog (companion client design)

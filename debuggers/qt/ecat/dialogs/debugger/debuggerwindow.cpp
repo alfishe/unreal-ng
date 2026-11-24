@@ -46,6 +46,7 @@
 #include "disasmview.h"
 #include "memoryview.h"
 #include "registersview.h"
+#include "tabscrollarrows.h"
 #include "sideviews.h"
 #include "ttdcontrols.h"
 #include "dialogs/numfmt.h"
@@ -264,14 +265,14 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
 
     restore_layout();
     //The macOS style draws tabs at one fixed height whatever the font: Fusion sizes them to their text, so they grow
-    //with the scale; names are not cut, the bar scrolls when they do not fit
+    //with the scale; names are not cut, the bar scrolls when they do not fit, an arrow at each end, and the wheel over
+    //a bar switches its tabs
     static QStyle * tab_style = QStyleFactory::create("Fusion");
     if (tab_style != nullptr)
         for (QTabWidget * t : findChildren<QTabWidget*>()) {
             t->setStyle(tab_style);
-            t->tabBar()->setStyle(tab_style);
-            t->tabBar()->setElideMode(Qt::ElideNone);
-            t->tabBar()->setUsesScrollButtons(true);
+            UseEndScrollArrows(t->tabBar(), "Fusion");
+            UseWheelToSwitchTabs(t->tabBar());
         }
     set_zoom(QString::fromStdString(e->read_setup("Debugger", "zoom", "1")).toDouble());
     qApp->installEventFilter(this);

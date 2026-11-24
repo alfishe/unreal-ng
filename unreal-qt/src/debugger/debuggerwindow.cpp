@@ -63,6 +63,7 @@
 #include "emulator/readoutschanged.h"
 #include "debugger/targets/cpuview.h"
 #include "widgets/speedcontrolwidget.h"
+#include "widgets/tabscrollarrows.h"
 #include "ui_debuggerwindow.h"
 
 /// region <Constructor / destructors>
@@ -94,6 +95,11 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _sideTabs = new QTabWidget(_sideGroup);
     _sideTabs->setObjectName("debuggerSideTabs");
     _sideTabs->setDocumentMode(true);
+    // The macOS style turns scroll buttons off: the bar's minimum width is then every tab together, and each card
+    // tab widened the window. Names stay whole; the bar scrolls when they do not fit, an arrow at each end; the wheel
+    // over the bar switches tabs
+    UseEndScrollArrows(_sideTabs->tabBar());
+    UseWheelToSwitchTabs(_sideTabs->tabBar());
     _pcHistoryPane = new PcHistoryPane(_emulator, _sideTabs);
     _sideTabs->addTab(_pcHistoryPane, "PC history");
     for (const NextPanes::Pane& pane : NextPanes::Create(_sideTabs))
