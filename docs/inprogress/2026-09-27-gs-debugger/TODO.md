@@ -442,6 +442,29 @@ what an agent reads):
     rounds, cpu time, base c5e98c931): off within noise (GS playing -1.1 %, NeoGS playing -0.4 %, idle 0 %); on, GS
     playing x1.9 (251 -> 475 us a frame), NeoGS playing x1.7, GS idle 1.3 -> 3.2 us
     (`BM_*Frame_*_Profiled`).
+  - Analysis tabs, core data (A5.2a Coverage / Heat map; requirements §4.13 X8, X10, X11; 2026-11-24, branch
+    `gs-an-cdl`, uncommitted; the tabs themselves not built): `core/src/emulator/sound/chips/gs/gscardanalysis.{h,cpp}`
+    (the model: a CDL byte per physical byte of the flash / ROM and the RAM, flags exec / operand / read / write /
+    jump / sub / dac / written, OR-merged until reset; a heat map of 16-byte cells, channels fetch / read / write /
+    dac / sd_dma / zx_dma, +32 a touch, integer decay per frame (default 8, lazy); never-written RAM reads with
+    their PC, up to 1024 rows), `gsanalysisreport.{h,cpp}` (the reports `gs-coverage` / `gs-heatmap` and
+    `ms-gs-*` in the device catalog; coverage counts and ranges per page, the `gs-firmware` dispatch handlers
+    executed; the heat map grid in base64 / hex, the ranges each channel touched in the last N frames). Classic GS,
+    MultiSound's GS (`cpu=ms`), NeoGS; the LW GS answers "not available". Planes: CLI `gs analysis|coverage|heatmap`,
+    Lua `gs_analysis` / `gs_coverage` / `gs_heatmap`, Python the same, MCP tool `gs_analysis` (actions status / on
+    / off / reset / release / coverage / heatmap), REST `GET /state/audio/gs/{analysis,coverage,heatmap}` +
+    `POST /control/audio/gs/analysis` (debug scope; WebSocket through the REST calls). Off by default and free off:
+    on binds separate analysis memory-bus callbacks at the card's next run (one atomic compare a run), the plain
+    callbacks unchanged; bounded memory allocated on `on` (NeoGS 4760 KB), freed on `release`; reads never park.
+    A/B (M3, load 110-175, 8 interleaved rounds vs the `gs-firmware` build at the same commit): off GS 270 vs 266
+    us/frame, NeoGS 531 vs 522 (inside the ±5 % round spread); on GS 557-633 (x2.3), NeoGS 1242-1374 (x2.6).
+    Tests `GSCardAnalysis_Test.*`, `GSAnalysisReport_Test.*`, `MultiSoundGsAnalysis_Test.*`, `McpGsAnalysis_Test.*`,
+    benchmarks `BM_*Frame_Playing_Analysis`, live `tools/verification/mcp/test_gs_analysis.py`.
+    Left: break on first new code and the never-written breakpoint kind (X8 / X11 breakpoints); the heat under-counts
+    an idle sleep (only its head cell); the written stamps start clear at `on` (reset the card for a clean
+    never-written list); TTD replay marks like a live run; `pokeCardMemory` writes are not stamped; interrupt entries
+    are marked jump, not sub; a `JR $` self-loop is not marked jump; the catalog's mcp field names the tool, not
+    an aspect.
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

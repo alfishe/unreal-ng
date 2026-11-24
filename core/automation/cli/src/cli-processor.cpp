@@ -817,6 +817,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  gs zxdma [last] [--since <seq>] - NeoGS ZX-DMA trace: the bytes the host moved (while gsporttrace captures)" << NEWLINE;
     oss << "  gs profile [start|stop|clear] [--cpu gs|ms] [--routines N] - card CPU profiler: ISR budget, command cost, routines, activity" << NEWLINE;
     oss << "  gs events [--cpu gs|ms] [--first N] [--count N] [--rows N] - last frame per card interrupt period: ISR bars, host / DAC / port events" << NEWLINE;
+    oss << "  gs analysis [status|on|off|reset|release] [--cpu gs|ms] [--decay N]" << NEWLINE;
+    oss << "                                - card CPU coverage / heat map switch (off by default, no cost off)" << NEWLINE;
+    oss << "  gs coverage [--space rom|ram] [--page N] [--ranges N] [--raw] [--cpu gs|ms]" << NEWLINE;
+    oss << "                                - code / data log per physical page, handlers run, never-written reads" << NEWLINE;
+    oss << "  gs heatmap [--channels ..] [--recent dac] [--frames N] [--format none|hex|base64] [--cpu gs|ms]" << NEWLINE;
+    oss << "                                - card RAM heat map: fetch, read, write, dac, sd_dma, zx_dma" << NEWLINE;
     oss << NEWLINE;
     oss << "Emulator Settings:" << NEWLINE;
     oss << "  setting, setting list        - List all emulator settings and their values" << NEWLINE;

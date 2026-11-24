@@ -384,6 +384,8 @@ private:
         recordExecIdle(head, iterations);
         if (_runProfile) [[unlikely]]
             _profiler.Idle(start, _runner.now());
+        if (_analysis) [[unlikely]]
+            analysisIdle(head);
     }
     bool sleepQuietEventsBefore(int64_t end);
 
@@ -404,6 +406,13 @@ private:
     static uint8_t gsPortReadMultiSound(Z80CPU* cpu, uint16_t port, void* userData);
     static void gsPortWriteMultiSound(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
     static uint8_t gsIntRead(Z80CPU* cpu, void* userData);
+    // The same with the card analysis told (gscardanalysis.h; bound only while it is on): the access done, then marked
+    static uint8_t gsMemReadAnalysis(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
+    static void gsMemWriteAnalysis(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
+    void analysisRead(Z80CPU* cpu, uint16_t addr, uint8_t value, int m1State);
+    void analysisWrite(uint16_t addr);
+    void analysisIdle(uint16_t head);
+    void bindAnalysisBus() override { bindBus(); }
     // The same with the debug hooks told (setDebugHooks): the access done, then reported
     static uint8_t gsMemReadDebug(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
     static void gsMemWriteDebug(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
@@ -457,6 +466,7 @@ private:
     void runTo(int64_t targetGsCycles)
     {
         syncExecHistory();
+        syncAnalysis();
         // A debugger's hooks: the debug loop; the execution history: the record loop (tests a run, never per
         // instruction)
         if (_debugHooks) [[unlikely]]

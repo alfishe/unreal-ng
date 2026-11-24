@@ -151,6 +151,17 @@ read `audio_gs_events` (`gs_events_first` / `gs_events_count` pick period rows):
 `.../state/audio/gs/events`, `POST .../control/audio/gs {"action":"profile_start"}`; CLI `gs profile start`,
 `gs profile`, `gs events`; Lua / Python `gs_profile`, `gs_profile_control`, `gs_events`.
 
+Card CPU coverage and heat map (classic GS, NeoGS, the MultiSound's GS with `"cpu":"ms"`; not the lightweight GS):
+`gs_analysis {"action":"on"}` (off by default and free while off; binds at the card's next run), run the machine, then
+`gs_analysis {"action":"coverage"}` - per physical page of ROM / flash and RAM the instruction starts, operands, reads,
+writes, jump and CALL targets, DAC fetches, with ranges; the firmware's command handlers that ran; the reads of RAM
+never written since the card reset with their PC (`"space":"ram","page":N` for one page and its CALL entries).
+`gs_analysis {"action":"heatmap","recent":"dac","frames":50}`: what the DAC played in the last 50 frames as RAM ranges,
+and per channel (fetch, read, write, dac, sd_dma, zx_dma) how much of RAM is hot. `reset` clears, `off` keeps the data,
+`release` frees it. WebAPI `GET .../state/audio/gs/coverage|heatmap`, `POST .../control/audio/gs/analysis`, CLI
+`gs analysis|coverage|heatmap`, Lua / Python `gs_analysis`, `gs_coverage`, `gs_heatmap`. Never-written reads before the
+first card reset after `on` are false alarms (the stamps start clear): `gs reset_card` first for a clean list.
+
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on
 activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`

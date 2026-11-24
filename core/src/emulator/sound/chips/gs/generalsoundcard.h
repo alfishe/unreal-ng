@@ -20,7 +20,10 @@
 /// shared code (gsmailbox.h).
 
 #include <algorithm>
+#include <atomic>
 #include <iterator>
+#include <memory>
+#include <mutex>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +40,7 @@
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
 #include "emulator/sound/chips/gs/gsdebughooks.h"
 #include "emulator/sound/chips/gs/gscardprofiler.h"
+#include "emulator/sound/chips/gs/gscardanalysis.h"
 #include "debugger/history/exechistory.h"
 #include "3rdparty/unreal-z80/z80cpu.h"     // Z80CpuRegisters
 
@@ -713,6 +717,33 @@ protected:
             _commandLog->Frame();
     }
 
+public:
+    /// region <Card CPU analysis (gscardanalysis.h: coverage / CDL, heat map, never-written reads)>
+    /// Any thread. `on` creates the analysis on first use (sized by cardPageCount; `frameSource` the host frame
+    /// counter) and asks the card to bind its analysis bus at its next run; `off` asks it to unbind and keeps the
+    /// data; `release` unbinds and drops it. False (with `error`) on a card without a CPU
+    bool setAnalysisOn(bool on, const uint64_t* frameSource, std::string* error = nullptr);
+    bool releaseAnalysis();
+    /// Any thread: the analysis (nullptr: none), and whether it is switched on (bound from the card's next run)
+    std::shared_ptr<GSCardAnalysis> analysis() const;
+    bool analysisOn() const { return _analysisWanted.load(std::memory_order_relaxed); }
+    /// The analysis bus is bound now (the machine thread's view; a reader may see it one run late)
+    bool analysisBound() const { return _analysisBound.load(std::memory_order_relaxed); }
+    /// endregion </Card CPU analysis>
+
+protected:
+    /// Before a card run: an analysis switched on or off since the last run binds or unbinds the card's analysis
+    /// bus. One load and a compare a run, never per access
+    void syncAnalysis()
+    {
+        if (_analysisRequest.load(std::memory_order_acquire) != _analysisSeen) [[unlikely]]
+            applyAnalysisRequest();
+    }
+    /// The card binds its memory bus for `_analysis` (plain, analysis or debug callbacks); cards with a CPU
+    virtual void bindAnalysisBus() {}
+    /// Machine thread: the analysis the bus callbacks mark (nullptr: off, the plain callbacks are bound)
+    GSCardAnalysis* _analysis = nullptr;
+
 protected:
     /// Before a card run (the card on a boundary): the execution history switched on or off since the last run puts
     /// its recorder in or takes it out. One load and a compare a run, never per instruction
@@ -821,4 +852,14 @@ private:
     IGSDebugHooks* _debuggerHooks = nullptr;
     bool _execBound = false;
     ExecRecorder _execRecorder{ *this };
+
+    // The card CPU analysis: owned under the mutex (readers take a reference), held by the machine thread while bound
+    void applyAnalysisRequest();
+    mutable std::mutex _analysisMutex;
+    std::shared_ptr<GSCardAnalysis> _analysisOwned;
+    std::shared_ptr<GSCardAnalysis> _analysisHeld;
+    std::atomic<bool> _analysisWanted{false};
+    std::atomic<bool> _analysisBound{false};
+    std::atomic<uint32_t> _analysisRequest{0};
+    uint32_t _analysisSeen = 0;
 };

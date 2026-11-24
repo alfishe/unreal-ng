@@ -620,6 +620,10 @@ GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + bot
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
 GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, page, DAC channels, card CPU, "neogs" block (404 without a card; ?ram=1 adds the #4000-#7FFF window)
 GET  /api/v1/emulator/{id}/state/audio/gs/zxdma?last=N&since=S  NeoGS ZX-DMA trace: a row a byte the host moved (seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped), last_seq, text; recorded while the GS port trace captures (404 without a NeoGS)
+GET  /api/v1/emulator/{id}/state/audio/gs/analysis?cpu=gs|ms  The card CPU analysis state: enabled, recording (bound), memory_bytes, cell_bytes, decay, card_resets, text (404 without a card or on the lightweight GS)
+GET  /api/v1/emulator/{id}/state/audio/gs/coverage?cpu=&space=rom|ram&page=&ranges=&raw=1  Code / data log per physical page (exec, operand, read, write, jump, sub, dac, written), the firmware's handlers executed, the reads of never-written RAM with PC, text
+GET  /api/v1/emulator/{id}/state/audio/gs/heatmap?cpu=&channels=&recent=&frames=&cells=&format=base64|hex|none  RAM heat map per channel (fetch, read, write, dac, sd_dma, zx_dma) and the ranges touched in the last N frames, text
+POST /api/v1/emulator/{id}/control/audio/gs/analysis  {"action": "status|on|off|reset|release", "cpu": "gs|ms", "decay": 0-255}: the switch (off by default, free while off); 400 bad action or not available, 404 no card
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes

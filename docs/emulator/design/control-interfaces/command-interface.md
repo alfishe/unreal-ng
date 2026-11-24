@@ -764,6 +764,38 @@ their WebSocket `call`), `POST /control/audio/gs` `{action: profile_start | prof
 ([gs-debugger design §8A.3](../../../inprogress/2026-09-27-gs-debugger/design.md)). The cost: while it is on the card
 runs its record loop (a call per instruction, about the execution history's price); off, one test per card run.
 
+`gs analysis [status|on|off|reset|release] [--cpu gs|ms] [--decay N]`, `gs coverage ...` and `gs heatmap ...` are the
+card CPU analysis of the GS slot's card (`--cpu gs`, the default) or the ZX-MultiSound's GS (`--cpu ms`): classic GS,
+the MultiSound's GS and NeoGS; the lightweight GS has no card CPU ("not available"). It is off by default and costs the
+card CPU nothing while off: `on` allocates the arrays (about 3 MB on a 512 KB NeoGS) and the card installs its marking
+bus callbacks at its next run; `off` stops marking and keeps the data; `reset` clears it; `release` frees it; `--decay`
+sets the heat lost per frame (0-255, default 8).
+
+- `gs coverage [--space rom|ram] [--page N] [--ranges N] [--raw]`: the code / data log, a flag byte per physical byte of
+  the ROM (the flash on NeoGS) and of each 16 KB RAM page, OR-merged over every session since `on` or `reset`: exec 1
+  (an instruction start), operand 2, read 4, write 8 (the CPU, or a DMA master writing RAM), jump 16 (a jump or
+  interrupt target), sub 32 (a CALL / RST target), dac 64 (read by the DAC fetch, #6000-#7FFF), written 128 (RAM
+  written since the last card reset). Per space the totals and the pages with a mark (counts, code / data / DAC ranges as
+  page offsets); `--page` one page with its CALL / RST entries (`--raw`: its 16,384 flags as base64). Then the command
+  handlers of the firmware profile's dispatch table that ran (`handlers.executed` / `not_executed`), and the reads of
+  RAM never written since the card reset (`never_written.rows`: address, page, offset, PC, frame, read or fetch; 1,024
+  kept, `dropped` counts the rest; each byte once per card reset).
+- `gs heatmap [--channels <list>] [--recent <list>] [--frames N] [--cells N] [--format none|hex|base64]`: the card RAM in
+  cells (16 bytes up to 1 MB, at most 65,536 cells), a heat byte per cell and channel - `fetch`, `read`, `write` (the
+  card CPU), `dac`, `sd_dma` (NeoGS SD writes and MP3 reads), `zx_dma` (the host through the NeoGS ZX-DMA window). An
+  access adds 32 (saturating at 255), each host frame takes the decay off. `recent`: the RAM ranges a channel touched in
+  the last N frames (default `dac`, 50 frames: the samples playing), trimmed to the bytes the code / data log marks. The
+  grid (`data` base64, or `rows` hex) is merged by maximum to at most `--cells` cells; the CLI text gives the counts and
+  the ranges (`--format hex` adds the rows).
+
+Every plane: WebAPI `GET /state/audio/gs/analysis|coverage|heatmap` (the options as query parameters) and
+`POST /control/audio/gs/analysis {action, cpu, decay}` (and their WebSocket `call`); MCP tool `gs_analysis`
+(`action` status / on / off / reset / release / coverage / heatmap, the same options); Lua `gs_analysis(action,
+{cpu, decay})`, `gs_coverage({...})`, `gs_heatmap({...})`; Python `gs_analysis(action, cpu, decay)`,
+`gs_coverage(cpu, space, page, ranges, raw)`, `gs_heatmap(cpu, channels, recent, frames, cells, format)`; the device
+catalog's `gs-coverage`, `gs-heatmap`, `ms-gs-coverage`, `ms-gs-heatmap`
+([gs-debugger TODO P5.6](../../../inprogress/2026-09-27-gs-debugger/TODO.md)).
+
 #### 3.1 Memory Commands
 
 The `memory` command provides unified access to emulator memory with two addressing modes:
