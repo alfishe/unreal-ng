@@ -24,7 +24,7 @@ the core's classes of the same names would clash.
 
 ## Card tabs
 
-With a sound card fitted the side tabs add GS log, GS protocol, GS firmware, GS hardware and GS stats (the catalog
+With a sound card fitted the side tabs add GS log, GS protocol, GS monitor, GS firmware, GS hardware and GS stats (the catalog
 reports `gs-commands`, `gs`, `gs-firmware`, `gs-stats`; a line over each names the card read). On a NeoGS ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
 B3; gs-debugger TODO P5.5) the NeoGS tabs show the core's device boards, the same data as unreal-qt's Embedded
 debugger (`DebugBoards::Read`, `Emulator::read_board` in the shim; over the WebAPI `GET /debug/boards/{board}`), with
@@ -39,6 +39,23 @@ the `gs_stats` board's counters:
 The last two come only with a NeoGS. Insert image..., Insert folder..., Eject and Save flash are the boards' actions
 (`Emulator::board_action`; over the WebAPI `POST /debug/boards/{board}/actions/{action} {arg}`). A machine whose
 boards cannot be read falls back on the `gs` report's `neogs` part. On a GS, GS hardware is the report as it is.
+
+**The GS monitor** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A5.3, C10; gs-debugger P5.6): a card tab after GS protocol, with every card that carries a General Sound (GS, NeoGS,
+the lightweight player, the MultiSound's GS), to watch next to the game while it plays. Top to bottom: the protocol
+strip (`#2A Set module master volume: not taken yet, then reply 1 of 1 due` / `status #01 (cmd) · mailbox: command
+#2A, data #3F, to host #FF · last send #2C -> #01 (done)`) with the machine's **Pause** / **Continue** (the toolbar's
+F12 / F9); the error tile, the command log's anomalies and the firmware's unknown commands counted since its
+**Clear** (which resets the tab's counters only), the last anomaly's text and frame, tinted while not zero; the
+command log's newest records (Frame, T, Kind, Command, Name, Text; anomalies tinted), following the tail: scrolled up
+it stops, **Follow** resumes. The history read has no since cursor: each read takes the newest 200 records and
+appends the ones after the last row shown (matched by frame, T, card cycle, kind and text; more than 200 between two
+reads are counted as not read). With the command log off the tab says so, and **Turn on** sets history
+`<slot>.commands` mode ring. Read once at every stop and, only while the tab is in sight and the machine runs, every
+250 ms in process (`Emulator::read_gs_monitor` where the machine stands still) and every second over the WebAPI
+(plain GETs of `state/audio/gs` or `state/audio/multisound`, `history/<device>?last=200`,
+`state/audio/gs/firmware?object=unknown_commands`); nothing pauses. Turn on is `Emulator::gs_command_log` (over the
+WebAPI `POST history/<device>/config {mode}`).
 
 **The ZX-DMA trace** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md) B3.2;
 gs-debugger N6): the DMA tab's **Trace ▸** expands, in place, a table of the bytes the Spectrum moved through the

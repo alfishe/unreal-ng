@@ -15,6 +15,7 @@
 class BoardPane;
 class EmulatorContext;
 class GsLwPane;
+class GsMonitorPane;
 class QLabel;
 class QTimer;
 class QWidget;
@@ -65,6 +66,7 @@ struct Pane
     Card card = Card::Any;
     GsLwPane* inspector = nullptr;  ///< a lightweight player's pane
     ZxDmaTraceView* trace = nullptr;  ///< the board pane's ZX-DMA trace (the NeoGS DMA pane's)
+    GsMonitorPane* monitor = nullptr;  ///< the protocol monitor (P5.6, A5.3), else one of the above
     QWidget* widget() const;
 };
 
@@ -73,7 +75,8 @@ struct Pane
 inline constexpr const char* kOpenMediaPanel = "open_media_panel";
 inline constexpr const char* kSdSlot = "sd.ngs";
 
-/// The panes, children of `parent`, in tab order: GS log, GS protocol, GS firmware, GS hardware, NeoGS hardware,
+/// The panes, children of `parent`, in tab order: GS log, GS protocol, GS monitor (the protocol monitor: the strip, the
+/// error tile, the log following its tail, Pause / Continue; P5.6), GS firmware, GS hardware, NeoGS hardware,
 /// NeoGS DMA, NeoGS SD · MP3 · Flash, GS stats, GS interpreter, GS player. `follow`: the CPU tab in front the card-neutral
 /// panes follow (null: the main CPU's, i.e. the GS slot's card, else the MultiSound's)
 std::vector<Pane> Create(QWidget* parent, Follow follow = {});

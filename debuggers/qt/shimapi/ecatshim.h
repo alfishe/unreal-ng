@@ -450,6 +450,59 @@ public:
     // card where the machine stands still in this process, a plain GET over the WebAPI; never a pause
     virtual unsigned int live_card_ms() const { return 250; }
 
+    // The GS protocol monitor (not in ecat; gui-card-debugger A5.3, gs-debugger P5.6): one read of a card's conversation
+    // with the host for the GS monitor tab. `card` "gs" (the General Sound or NeoGS) or "ms" (the MultiSound's GS).
+    // In process where the machine stands still (the `gs` report or the `multisound` report's gs part, the command log
+    // history `<slot>.commands` read with `last`, the firmware's unknown commands); over the WebAPI plain GETs
+    // (state/audio/gs or state/audio/multisound, history/<device>?last=N, state/audio/gs/firmware?object=
+    // unknown_commands). The history read has no since cursor: the newest `last` records, oldest first
+    struct GsMonitorRow {
+        int64_t frame = 0;
+        int64_t t = 0;
+        int64_t card_cycle = 0;
+        int command = -1;
+        std::string kind, name, text;
+        std::string anomaly;      // kind "anomaly": its name ("data_overwritten")
+    };
+    struct GsMonitor {
+        bool ok = false;          // read (false: message why)
+        std::string message;
+        // The card's protocol (the gs report): the decoder's line, the status register and its bits, the mailbox
+        bool protocol_on = false;            // the command log decodes (protocol.on)
+        std::string protocol_text;           // protocol.text ("#2C Set current module: not taken yet")
+        int status = -1;                     // the status register (-1: not read)
+        bool command_pending = false, data_pending = false;
+        int command_from_host = -1, data_from_host = -1, data_to_host = -1;
+        bool has_last_send = false;          // the debugger's last send (last_send)
+        int last_send_command = -1;
+        std::string last_send_name, last_send_state;
+        std::vector<int> last_send_replies;
+        // The command log (the history)
+        std::string log_device;              // "zxbus.1.commands"; empty: the card has none
+        std::string log_mode;                // off, ring, capture
+        uint64_t written = 0, kept = 0, dropped = 0;
+        std::vector<GsMonitorRow> rows;      // the newest records, oldest first
+        // The firmware's unknown commands (only with a firmware profile and the log on)
+        bool unknown_present = false;
+        uint64_t unknown_total = 0;          // every count summed
+        std::vector<std::pair<int, uint64_t>> unknown;  // command, count
+    };
+    virtual GsMonitor read_gs_monitor(const std::string &card, size_t last)
+    {
+        (void)card;
+        (void)last;
+        GsMonitor m;
+        m.message = "This machine has no GS monitor";
+        return m;
+    }
+    // The command log of `card` on (history <device> config mode ring): the tab's Turn on (an explicit user action)
+    virtual BoardAnswer gs_command_log(const std::string &card, bool on)
+    {
+        (void)card;
+        (void)on;
+        return {false, "This machine has no GS command log"};
+    }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {

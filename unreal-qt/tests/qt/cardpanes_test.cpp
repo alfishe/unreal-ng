@@ -8,6 +8,8 @@
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QProgressBar>
+#include <QPushButton>
+#include <QScrollBar>
 #include <QTableView>
 #include <QTableWidget>
 #include <QToolButton>
@@ -27,6 +29,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80mcycles.h"
 #include "debugger/gslwpane.h"
+#include "debugger/gsmonitorpane.h"
 #include "debugger/history/historycontrol.h"
 #include "debugger/reportpane.h"
 #include "debugger/targets/gscardtarget.h"
@@ -40,6 +43,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gshostdriver.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
@@ -83,10 +87,10 @@ protected:
 TEST_F(CardPanes_Test, PanesInTabOrder)
 {
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    ASSERT_EQ(panes.size(), 10u);
-    const char* titles[] = {"GS log",    "GS protocol", "GS firmware",           "GS hardware", "NeoGS hardware",
+    ASSERT_EQ(panes.size(), 11u);
+    const char* titles[] = {"GS log",    "GS protocol", "GS monitor", "GS firmware",           "GS hardware", "NeoGS hardware",
                             "NeoGS DMA", "NeoGS SD · MP3 · Flash", "GS stats", "GS interpreter", "GS player"};
-    const CardPanes::Card cards[] = {CardPanes::Card::Any,   CardPanes::Card::Any,   CardPanes::Card::Any,
+    const CardPanes::Card cards[] = {CardPanes::Card::Any,   CardPanes::Card::Any,   CardPanes::Card::Any, CardPanes::Card::Any,
                                      CardPanes::Card::NotNeoGS, CardPanes::Card::NeoGS, CardPanes::Card::NeoGS,
                                      CardPanes::Card::NeoGS, CardPanes::Card::Any, CardPanes::Card::Lightweight,
                                      CardPanes::Card::Lightweight};
@@ -97,6 +101,7 @@ TEST_F(CardPanes_Test, PanesInTabOrder)
         EXPECT_EQ(panes[i].card, cards[i]) << titles[i];
         EXPECT_EQ(panes[i].board != nullptr, panes[i].card == CardPanes::Card::NeoGS) << titles[i];
         EXPECT_EQ(panes[i].inspector != nullptr, panes[i].card == CardPanes::Card::Lightweight) << titles[i];
+        EXPECT_EQ(panes[i].monitor != nullptr, i == 2) << titles[i];
         EXPECT_FALSE(panes[i].tooltip.isEmpty());
     }
 }
@@ -109,7 +114,7 @@ TEST_F(CardPanes_Test, AFittedCardFillsThePanes)
     EXPECT_TRUE(CardPanes::Fitted(_context));
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
 
-    ReportPane* hardware = panes[3].pane;
+    ReportPane* hardware = panes[4].pane;
     hardware->refresh(_context, false);
     EXPECT_TRUE(hardware->status().isEmpty()) << hardware->status().toStdString();
     ASSERT_NE(hardware->table(), nullptr);
@@ -184,6 +189,12 @@ TEST_F(CardPanes_Test, WithoutTheCardEachSaysWhy)
             EXPECT_FALSE(pane.inspector->status().isEmpty()) << pane.title.toStdString();
             continue;
         }
+        if (pane.monitor)
+        {
+            pane.monitor->refresh(_context, false);
+            EXPECT_FALSE(pane.monitor->status().isEmpty()) << pane.title.toStdString();
+            continue;
+        }
         pane.pane->refresh(_context, false);
         EXPECT_FALSE(pane.pane->status().isEmpty()) << pane.title.toStdString();
         if (pane.pane->table())
@@ -224,7 +235,7 @@ TEST_F(CardPanes_Test, TheNeoGSBoardShowsTheReport)
 {
     ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    BoardPane* board = panes[4].board;
+    BoardPane* board = panes[5].board;
     ASSERT_NE(board, nullptr);
     board->refresh(_context, false);
     EXPECT_TRUE(board->status().isEmpty()) << board->status().toStdString();
@@ -255,7 +266,7 @@ TEST_F(CardPanes_Test, TheNeoGSBoardShowsTheReport)
     EXPECT_FALSE(board->valueText("neogs", "flash_title").isEmpty());
 
     // The GS stats pane carries the NeoGS counters (B2 stats tiles)
-    ReportPane* stats = panes[7].pane;
+    ReportPane* stats = panes[8].pane;
     stats->refresh(_context, false);
     QTreeWidget* fields = stats->fields();
     EXPECT_FALSE(fields->findItems("dma", Qt::MatchExactly, 0).isEmpty());
@@ -267,7 +278,7 @@ TEST_F(CardPanes_Test, TheDmaPaneShowsTheModules)
 {
     ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    BoardPane* dma = panes[5].board;
+    BoardPane* dma = panes[6].board;
     ASSERT_NE(dma, nullptr);
     dma->refresh(_context, false);
     EXPECT_TRUE(dma->status().isEmpty()) << dma->status().toStdString();
@@ -351,12 +362,12 @@ TEST_F(CardPanes_Test, TheDmaPaneTracesTheZxDmaBytes)
     auto* card = dynamic_cast<SoundChip_NeoGS*>(_context->pSoundManager->getGeneralSound());
     ASSERT_NE(card, nullptr);
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    BoardPane* dma = panes[5].board;
-    ZxDmaTraceView* trace = panes[5].trace;
+    BoardPane* dma = panes[6].board;
+    ZxDmaTraceView* trace = panes[6].trace;
     ASSERT_NE(dma, nullptr);
     ASSERT_NE(trace, nullptr);
     for (const CardPanes::Pane& pane : panes)
-        if (&pane != &panes[5])
+        if (&pane != &panes[6])
             EXPECT_EQ(pane.trace, nullptr) << pane.title.toStdString();
 
     StartZxDma(*_emulator, _context, card);
@@ -477,13 +488,13 @@ TEST_F(CardPanes_Test, NoZxDmaTraceWithoutANeoGS)
     if (CardPanes::NeoGSFitted(_context))
         GTEST_SKIP() << "the config fits a NeoGS in the classic slot";
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    BoardPane* dma = panes[5].board;
-    ZxDmaTraceView* trace = panes[5].trace;
+    BoardPane* dma = panes[6].board;
+    ZxDmaTraceView* trace = panes[6].trace;
     ASSERT_NE(trace, nullptr);
     dma->refresh(_context, false);
     EXPECT_FALSE(dma->status().isEmpty());
     EXPECT_FALSE(trace->toggle()->isVisibleTo(dma)) << "no board, no trace";
-    EXPECT_FALSE(CardPanes::Shown(panes[5].card, _context)) << "the DMA tab itself is hidden";
+    EXPECT_FALSE(CardPanes::Shown(panes[6].card, _context)) << "the DMA tab itself is hidden";
     trace->toggle()->click();
     trace->refresh(_context, false);
     EXPECT_EQ(trace->rowCount(), 0);
@@ -497,7 +508,7 @@ TEST_F(CardPanes_Test, TheMediaPaneShowsThreeCards)
 {
     ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    BoardPane* media = panes[6].board;
+    BoardPane* media = panes[7].board;
     ASSERT_NE(media, nullptr);
     media->resize(1200, 600);
     media->refresh(_context, false);
@@ -572,7 +583,7 @@ TEST_F(CardPanes_Test, TheLightweightPanesOnlyWithTheLightweightPlayer)
 
     // The firmware objects answer from the player's mirror
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    ReportPane* firmware = panes[2].pane;
+    ReportPane* firmware = panes[3].pane;
     firmware->refresh(_context, false);
     EXPECT_TRUE(firmware->status().isEmpty()) << firmware->status().toStdString();
     ASSERT_NE(firmware->table(), nullptr);
@@ -596,8 +607,8 @@ TEST_F(CardPanes_Test, TheInterpreterShowsAnUploadAndThePlayerItsModule)
     GeneralSoundCard* card = _context->pSoundManager->getGeneralSound();
     ASSERT_NE(card, nullptr);
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    GsLwPane* interpreter = panes[8].inspector;
-    GsLwPane* player = panes[9].inspector;
+    GsLwPane* interpreter = panes[9].inspector;
+    GsLwPane* player = panes[10].inspector;
     ASSERT_NE(interpreter, nullptr);
     ASSERT_NE(player, nullptr);
 
@@ -661,7 +672,7 @@ TEST_F(CardPanes_Test, TheMultiSoundsGsFillsThePanes)
 
     const CardPanes::Follow follow = std::make_shared<DebugCpuId>(DebugCpuId::MultiSoundGS);
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent, follow);
-    ReportPane* hardware = panes[3].pane;
+    ReportPane* hardware = panes[4].pane;
     hardware->refresh(_context, false);
     ASSERT_TRUE(hardware->status().isEmpty()) << hardware->status().toStdString();
     QTreeWidgetItem* line = Field(hardware->fields(), "strip");
@@ -675,14 +686,14 @@ TEST_F(CardPanes_Test, TheMultiSoundsGsFillsThePanes)
     EXPECT_TRUE(protocol->status().isEmpty()) << protocol->status().toStdString();
     EXPECT_NE(Field(protocol->fields(), "protocol"), nullptr);
 
-    ReportPane* firmware = panes[2].pane;
+    ReportPane* firmware = panes[3].pane;
     firmware->refresh(_context, false);
     ASSERT_TRUE(firmware->status().isEmpty()) << firmware->status().toStdString();
     QTreeWidgetItem* cpu = Field(firmware->fields(), "cpu");
     ASSERT_NE(cpu, nullptr);
     EXPECT_EQ(cpu->text(1), "ms");
 
-    ReportPane* stats = panes[7].pane;
+    ReportPane* stats = panes[8].pane;
     stats->refresh(_context, false);
     EXPECT_TRUE(stats->status().isEmpty()) << stats->status().toStdString();
     EXPECT_NE(Field(stats->fields(), "implementation"), nullptr);
@@ -896,7 +907,7 @@ TEST_F(CardPanes_Test, TheSdCardOpensTheMediaPanelOnItsSlot)
 {
     ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    BoardPane* media = panes[6].board;
+    BoardPane* media = panes[7].board;
     ASSERT_NE(media, nullptr);
     media->refresh(_context, false);
     QToolButton* open = media->actionButton("neogs_sd", QString::fromLatin1(CardPanes::kOpenMediaPanel));
@@ -925,4 +936,158 @@ TEST_F(CardPanes_Test, TheSdCardOpensTheMediaPanelOnItsSlot)
         EXPECT_FALSE(window.focusSlot("no.such"));
     }
     binding.unbind();
+}
+
+/// P5.6 (gui-card-debugger.md A5.3): the GS monitor tab. The command log off: it says so and Turn on asks the owner, who
+/// turns the history to ring; the host's data then command show as rows, the strip says the card has not taken it yet
+TEST_F(CardPanes_Test, TheMonitorTurnsTheLogOnAndShowsTheConversation)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsMonitorPane* monitor = panes[2].monitor;
+    ASSERT_NE(monitor, nullptr);
+    EXPECT_EQ(panes[2].title, "GS monitor");
+    EXPECT_TRUE(CardPanes::Shown(panes[2].card, _context));
+
+    monitor->refresh(_context, false);
+    EXPECT_TRUE(monitor->status().isEmpty()) << monitor->status().toStdString();
+    ASSERT_TRUE(monitor->logOff()) << "off by default: zero cost";
+    EXPECT_TRUE(monitor->turnOnButton()->isVisibleTo(monitor));
+    EXPECT_TRUE(monitor->stripText().contains("command log is off")) << monitor->stripText().toStdString();
+    int asked = 0;
+    QObject::connect(monitor, &GsMonitorPane::turnOnRequested, monitor, [&]() { asked++; });
+    monitor->turnOnButton()->click();
+    EXPECT_EQ(asked, 1) << "the owner turns it on under its lease";
+    QString error;
+    ASSERT_TRUE(monitor->turnOn(_context, &error)) << error.toStdString();
+    monitor->refresh(_context, false);
+    EXPECT_FALSE(monitor->logOff());
+    EXPECT_FALSE(monitor->turnOnButton()->isVisibleTo(monitor));
+    EXPECT_EQ(monitor->table()->rowCount(), 0);
+
+    _context->pPortDecoder->DecodePortOut(0x00B3, 0x00, 0);  // data
+    _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);  // #23: Get the RAM's page count
+    monitor->refresh(_context, false);
+    ASSERT_GE(monitor->table()->rowCount(), 2) << "the data and the command";
+    bool command = false;
+    for (int row = 0; row < monitor->table()->rowCount(); row++)
+        command = command || monitor->table()->item(row, 3)->text() == "#23";
+    EXPECT_TRUE(command) << "the command in hex";
+    const QString strip = monitor->stripText();
+    EXPECT_TRUE(strip.contains("not taken yet")) << strip.toStdString();
+    EXPECT_TRUE(strip.contains("status #")) << strip.toStdString();
+    // #23 takes no data: the byte before it is the log's anomaly, counted in the tile
+    EXPECT_TRUE(monitor->tileTinted());
+    EXPECT_TRUE(monitor->tileText().startsWith("1 anomalies")) << monitor->tileText().toStdString();
+    EXPECT_TRUE(monitor->tileText().contains("data_before_command")) << monitor->tileText().toStdString();
+
+    // Read again: nothing appended twice
+    const int rows = monitor->table()->rowCount();
+    monitor->refresh(_context, false);
+    EXPECT_EQ(monitor->table()->rowCount(), rows);
+
+    // Pause / Continue: the window's actions, by the machine's state
+    int pauses = 0, continues = 0;
+    QObject::connect(monitor, &GsMonitorPane::pauseRequested, monitor, [&]() { pauses++; });
+    QObject::connect(monitor, &GsMonitorPane::continueRequested, monitor, [&]() { continues++; });
+    EXPECT_EQ(monitor->runButton()->text(), "Continue");
+    monitor->runButton()->click();
+    monitor->refresh(_context, true);
+    EXPECT_EQ(monitor->runButton()->text(), "Pause");
+    monitor->runButton()->click();
+    EXPECT_EQ(continues, 1);
+    EXPECT_EQ(pauses, 1);
+}
+
+/// The error tile counts the anomalies since its Clear, names the last one with its frame and is tinted; Clear zeroes it
+TEST_F(CardPanes_Test, TheMonitorTileCountsAnomaliesUntilClear)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    GsMonitorPane monitor;
+    ASSERT_TRUE(monitor.turnOn(_context));
+    // Two commands while the card (not running) has not taken the first: the second overwrites it
+    _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    monitor.refresh(_context, false);
+    ASSERT_EQ(monitor.anomalies(), 1) << monitor.tileText().toStdString();
+    EXPECT_TRUE(monitor.tileTinted());
+    EXPECT_TRUE(monitor.tileText().startsWith("1 anomalies")) << monitor.tileText().toStdString();
+    EXPECT_TRUE(monitor.tileText().contains("command_overwritten") || monitor.tileText().contains("overwr"))
+        << monitor.tileText().toStdString();
+    EXPECT_TRUE(monitor.tileText().contains("(frame ")) << monitor.tileText().toStdString();
+    bool tinted = false;
+    for (int row = 0; row < monitor.table()->rowCount(); row++)
+        if (monitor.table()->item(row, 2)->text() == "anomaly")
+            tinted = monitor.table()->item(row, 0)->background().style() != Qt::NoBrush;
+    EXPECT_TRUE(tinted) << "the anomaly's row";
+
+    monitor.clearButton()->click();
+    EXPECT_EQ(monitor.anomalies(), 0);
+    EXPECT_FALSE(monitor.tileTinted());
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.anomalies(), 0) << "read again: the same anomaly is not counted twice";
+    EXPECT_GE(monitor.table()->rowCount(), 3) << "Clear keeps the log";
+
+    _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.anomalies(), 1) << "a new one counts";
+}
+
+/// The log follows its tail while the machine runs (the debugger's sends, rows appended at each refresh); scrolling up
+/// stops following, Follow resumes it
+TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    QWidget window;
+    GsMonitorPane* monitor = new GsMonitorPane({}, &window);
+    window.resize(420, 260);
+    monitor->resize(420, 260);
+    window.show();
+    ASSERT_TRUE(monitor->turnOn(_context));
+    _emulator->EnableTurboMode();
+    _emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return _context->emulatorState.frame_counter > 2; }));
+
+    const auto refresh = [&]() {
+        Emulator::ContextLease lease = _emulator->LeaseContext();
+        ASSERT_TRUE(lease);
+        monitor->refresh(lease.get(), true);
+    };
+    QScrollBar* bar = monitor->table()->verticalScrollBar();
+    // Sends until the log is taller than its view, the view at its end
+    QElapsedTimer clock;
+    clock.start();
+    while ((monitor->table()->rowCount() < 40 || bar->maximum() == 0) && clock.elapsed() < 900)
+    {
+        GSSendRequest send;
+        send.command = 0x23;
+        GSSend(_context, send, 0);
+        PumpUntil([] { return false; }, 10);  // the frames run the send
+        refresh();
+    }
+    ASSERT_GT(bar->maximum(), 0) << monitor->table()->rowCount() << " rows";
+    EXPECT_TRUE(monitor->following());
+    EXPECT_EQ(bar->value(), bar->maximum()) << "at the tail";
+
+    // Scrolled up: rows still come, the view stays
+    bar->setValue(0);
+    EXPECT_FALSE(monitor->following());
+    EXPECT_FALSE(monitor->followButton()->isChecked());
+    const int rows = monitor->table()->rowCount();
+    clock.restart();
+    while (monitor->table()->rowCount() == rows && clock.elapsed() < 500)
+    {
+        GSSendRequest send;
+        send.command = 0x23;
+        GSSend(_context, send, 0);
+        PumpUntil([] { return false; }, 10);  // the frames run the send
+        refresh();
+    }
+    EXPECT_GT(monitor->table()->rowCount(), rows) << "rows appended while running";
+    EXPECT_EQ(bar->value(), 0) << "not following: the view stays";
+
+    monitor->followButton()->click();
+    EXPECT_TRUE(monitor->following());
+    EXPECT_EQ(bar->value(), bar->maximum());
+    _emulator->Stop();
 }

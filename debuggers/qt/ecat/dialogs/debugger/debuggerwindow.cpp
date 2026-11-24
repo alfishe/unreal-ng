@@ -4,6 +4,7 @@
 // Description: The debugger window
 
 #include "debuggerwindow.h"
+#include "gsmonitor.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -155,6 +156,13 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     for (const NextTab &t : m_next_tabs) m_side_tabs->setTabVisible(m_side_tabs->addTab(t.view, t.title), false);
     m_card_tabs = CreateCardTabs(e, m_side_tabs);
     for (const NextTab &t : m_card_tabs) m_side_tabs->setTabVisible(m_side_tabs->addTab(t.view, t.title), false);
+    //The GS monitor right after GS protocol (the second card tab)
+    m_gs_monitor = new GsMonitorView(e, m_side_tabs);
+    m_gs_monitor->set_machine_actions(m_pause, m_run);
+    {
+        const int after = m_card_tabs.size() > 1 ? m_side_tabs->indexOf(m_card_tabs[1].view) + 1 : m_side_tabs->count();
+        m_side_tabs->setTabVisible(m_side_tabs->insertTab(after, m_gs_monitor, tr("GS monitor")), false);
+    }
     update_next_tabs();
     m_split_bottom->setStretchFactor(0, 2);
     m_split_bottom->setStretchFactor(1, 1);
@@ -901,6 +909,12 @@ void DebuggerWindow::update_next_tabs()
         CardTabsFollow(m_card_tabs, source);
         m_card_strip = read_card_strip();
     }
+    if (m_gs_monitor != nullptr) {
+        const bool card_there = !m_card_tabs.empty() && m_card_tabs.front().view->present();
+        m_gs_monitor->set_card(card_there ? m_card_source : std::string(),
+                               m_card_tabs.empty() ? QString() : m_card_tabs.front().view->caption()->text());
+        m_side_tabs->setTabVisible(m_side_tabs->indexOf(m_gs_monitor), card_there);
+    }
     for (const std::vector<NextTab> *group : {&m_next_tabs, &m_card_tabs}) {
         const bool present = !group->empty() && group->front().view->present();
         std::map<std::string, bool> needed;
@@ -936,6 +950,7 @@ void DebuggerWindow::refresh_side()
     if (side == m_devices) m_devices->refresh();
     update_next_tabs();
     if (NextReportView * v = next_view_in_sight()) v->refresh();
+    if (m_gs_monitor != nullptr && side == m_gs_monitor) m_gs_monitor->refresh();
 }
 
 void DebuggerWindow::refresh_all(bool stopped)

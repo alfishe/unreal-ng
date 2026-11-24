@@ -31,6 +31,7 @@ class HistoryView;
 class DevicesView;
 class AddressRouter;
 class TtdControls;
+class GsMonitorView;
 
 //One window for the whole machine. Each processor has a tab with its listing,
 //registers and flags; below are the memory dumps (each processor's address
@@ -100,6 +101,8 @@ public:
     QString zxdma_banner_text() const;
     //The time travel group of the toolbar (not in ecat): the self-check drives it
     TtdControls * ttd() { return m_ttd; }
+    //The GS monitor tab (gs-debugger P5.6), among the card tabs
+    GsMonitorView * gs_monitor() const { return m_gs_monitor; }
 
 signals:
     //The views were read again: after a stop, and while the machine runs
@@ -142,6 +145,8 @@ private:
     std::vector<NextTab> m_next_tabs;
     //a General Sound card's (or the MultiSound's GS), a NeoGS's and the LW player's own too (gs-debugger P5.1, P5.5)
     std::vector<NextTab> m_card_tabs;
+    //The GS monitor (gui-card-debugger A5.3): after GS protocol, shown with the card tabs, following their card
+    GsMonitorView * m_gs_monitor = nullptr;
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
     QLabel * m_state;

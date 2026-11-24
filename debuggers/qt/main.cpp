@@ -46,6 +46,7 @@
 #include <QTimer>
 #include <QTableWidget>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolBar>
@@ -78,6 +79,7 @@
 #include "dialogs/debugger/debuggerwindow.h"
 #include "dialogs/debugger/debugstyle.h"
 #include "dialogs/debugger/disasmview.h"
+#include "dialogs/debugger/gsmonitor.h"
 #include "dialogs/debugger/ttdcontrols.h"
 #include "dialogs/debugger/memoryview.h"
 #include "dialogs/debugger/nextviews.h"
@@ -1043,6 +1045,134 @@ void zxdma_trace_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
     trace->set_expanded(false);
 }
 
+// The GS monitor tab (gui-card-debugger A5.3, gs-debugger P5.6): there with every GS-carrying card; the command log
+// off says so and Turn on starts it; the host's data then command give rows and "not taken yet" in the strip; an
+// anomaly counts in the tile and Clear zeroes it; the log grows while the machine runs (the tab's own live read)
+void gs_monitor_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * cpu, const std::function<void(bool, const char *)> &check)
+{
+    auto * dw = dynamic_cast<DebuggerWindow *>(window);
+    QTabWidget * side = tabs_with(window, "Devices");
+    GsMonitorView * mon = dw != nullptr ? dw->gs_monitor() : nullptr;
+    check(mon != nullptr && side != nullptr && side->indexOf(mon) >= 0 && side->tabText(side->indexOf(mon)) == "GS monitor",
+          "gs monitor: the tab is among the card tabs");
+    if (mon == nullptr || side == nullptr) return;
+    QWidget * protocol = nullptr;
+    for (int i = 0; i < side->count(); i++)
+        if (side->tabText(i) == "GS protocol") protocol = side->widget(i);
+    NextReportView * log_view = nullptr;
+    for (int i = 0; i < side->count(); i++)
+        if (side->tabText(i) == "GS log") log_view = qobject_cast<NextReportView *>(side->widget(i));
+    const bool card = log_view != nullptr && log_view->present();
+    check(side->isTabVisible(side->indexOf(mon)) == card && (protocol == nullptr || side->indexOf(mon) == side->indexOf(protocol) + 1),
+          card ? "gs monitor: shown with the card, after GS protocol" : "gs monitor: hidden without a card");
+    if (!card) return;
+    ecatshim::CPU * front = dw->card_cpu();
+    const std::string which = CardTabsCard(m, front != nullptr ? front->name : std::string());
+    const ecatshim::Emulator::GsMonitor before = m->read_gs_monitor(which, 1);
+    check(before.ok && !before.log_device.empty(), "gs monitor: the card's command log found");
+    if (!before.ok || before.log_device.empty()) {
+        printf("  (%s)\n", before.message.c_str());
+        return;
+    }
+    QWidget * was = side->currentWidget();
+    side->setCurrentWidget(mon);
+
+    // Off: said, with Turn on; Turn on starts it (ring)
+    m->gs_command_log(which, false);
+    mon->refresh();
+    check(mon->off_panel()->isVisibleTo(mon) && mon->turn_on_button()->isVisibleTo(mon) && mon->strip()->text().contains("off"),
+          "gs monitor: the log off is said, with Turn on");
+    mon->turn_on_button()->click();
+    const ecatshim::Emulator::GsMonitor on = m->read_gs_monitor(which, 1);
+    check(on.log_mode == "ring" && !mon->off_panel()->isVisibleTo(mon), "gs monitor: Turn on: the log records (ring)");
+
+    // The host's program at #8000, put back afterwards
+    std::vector<std::pair<unsigned int, unsigned int>> host_bytes;
+    for (unsigned int i = 0; i < 0x20; i++) host_bytes.emplace_back(0x8000 + i, cpu->peek_mem(0x8000 + i));
+    const std::vector<std::string> names = {"PC", "AF", "BC", "DE", "HL", "IFF1", "IFF2"};
+    std::map<std::string, unsigned int> host_regs;
+    for (const std::string &n : names) host_regs[n] = reg(cpu, n);
+    auto run_program = [m, cpu](const std::vector<uint8_t> &bytes) {
+        for (size_t i = 0; i < bytes.size(); i++) cpu->poke_mem(0x8000 + (unsigned int)i, bytes[i]);
+        cpu->set_context_value("PC", 0x8000);
+        m->debug_run_to(cpu, 0x8000 + (unsigned int)bytes.size() - 2);  // the JR $ at the end
+        return wait_for([m, cpu, &bytes]() {
+            return m->debug_paused() && !m->debug_stepping() && reg(cpu, "PC") == 0x8000 + bytes.size() - 2;
+        }, 3000);
+    };
+    auto command_rows = [mon](const QString &command) {
+        int n = 0;
+        QTableWidget * t = mon->table();
+        for (int r = 0; r < t->rowCount(); r++)
+            if (t->item(r, GsMonitorView::ColCommand) && t->item(r, GsMonitorView::ColCommand)->text() == command) n++;
+        return n;
+    };
+
+    // DI : LD BC,#00B3 : LD A,#3F : OUT (C),A : LD C,#BB : LD A,#2A : OUT (C),A : JR $
+    const bool sent = run_program({0xF3, 0x01, 0xB3, 0x00, 0x3E, 0x3F, 0xED, 0x79, 0x0E, 0xBB, 0x3E, 0x2A, 0xED, 0x79, 0x18, 0xFE});
+    mon->refresh();
+    const int rows = mon->table()->rowCount();
+    check(sent && rows >= 2 && command_rows("#2A") >= 1, "gs monitor: data #3F, command #2A: rows in the log");
+    check(mon->strip()->text().contains("not taken yet") && mon->strip()->text().contains("status #"),
+          "gs monitor: the strip says the command is not taken yet");
+    printf("  (strip: %s)\n", QString(mon->strip()->text()).replace('\n', " / ").toUtf8().constData());
+
+    // A data byte before a command that takes none, a command written over the one not taken, then a reply read
+    // before it is there: anomalies (the lightweight player takes every byte at once: only the first)
+    mon->clear_button()->click();
+    check(mon->anomalies() == 0 && !mon->tile()->parentWidget()->property("errors").toBool() && mon->tile()->text().startsWith("No anomalies"),
+          "gs monitor: the tile clear");
+    // DI : LD BC,#00B3 : LD A,#55 : OUT (C),A : LD C,#BB : LD A,#01 : OUT (C),A : OUT (C),A : LD C,#B3 : IN A,(C) : JR $
+    const bool faulted = run_program({0xF3, 0x01, 0xB3, 0x00, 0x3E, 0x55, 0xED, 0x79, 0x0E, 0xBB, 0x3E, 0x01, 0xED, 0x79,
+                                      0xED, 0x79, 0x0E, 0xB3, 0xED, 0x78, 0x18, 0xFE});
+    mon->refresh();
+    const QString tile = mon->tile()->text();
+    check(faulted && mon->anomalies() >= 1 && mon->tile()->parentWidget()->property("errors").toBool() &&
+              tile.contains("anomal") && tile.contains("last: ") && tile.contains("(frame "),
+          "gs monitor: an anomaly counts in the tile, tinted, its text and frame");
+    printf("  (tile: %s)\n", QString(tile).replace('\n', " / ").toUtf8().constData());
+    mon->clear_button()->click();
+    check(mon->anomalies() == 0 && mon->tile()->text().startsWith("No anomalies") &&
+              !mon->tile()->parentWidget()->property("errors").toBool() && mon->table()->rowCount() > 0,
+          "gs monitor: Clear zeroes the counters, the log stays");
+
+    // The log while running: a command every two frames, read by the tab's own timer
+    // DI : LD BC,#00BB : LD A,#01 : L: OUT (C),A : LD D,40 : W: DJNZ W : DEC D : JR NZ,W : JR L
+    const uint8_t loop[] = {0xF3, 0x01, 0xBB, 0x00, 0x3E, 0x01, 0xED, 0x79, 0x16, 0x28, 0x10, 0xFE, 0x15, 0x20, 0xFB, 0x18, 0xF5};
+    for (size_t i = 0; i < sizeof(loop); i++) cpu->poke_mem(0x8000 + (unsigned int)i, loop[i]);
+    cpu->set_context_value("PC", 0x8000);
+    mon->follow();
+    const int at_run = mon->table()->rowCount();
+    m->debug_run(true);
+    const bool grew = wait_for([&]() { return mon->table()->rowCount() >= std::min(at_run + 6, GsMonitorView::kMaxRows); }, 6000);
+    const int while_running = mon->table()->rowCount();
+    // Scrolling up stops following; Follow resumes
+    QScrollBar * bar = mon->table()->verticalScrollBar();
+    bar->setValue(0);
+    const bool stopped_following = bar->maximum() == 0 || (!mon->following() && mon->follow_button()->isEnabled());
+    mon->follow_button()->click();
+    const bool following = mon->following() && !mon->follow_button()->isEnabled();
+    m->debug_pause();
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    check(grew, "gs monitor: the log grows while the machine runs");
+    check(stopped_following && following, "gs monitor: scrolled up stops following, Follow resumes");
+    printf("  (rows: %d at the run, %d while running; %s)\n", at_run, while_running, mon->findChild<QLabel *>("gsmonitor:logline")
+                                                                                         ->text().toUtf8().constData());
+    // The toolbar's actions follow the stop at the window's next tick
+    check(wait_for([mon]() { return mon->machine_button()->text() == "Continue" && mon->machine_button()->isEnabled(); }, 2000),
+          "gs monitor: Continue while paused");
+
+    // Put back: the host's bytes and registers, the log as it was
+    m->debug_run(true);
+    m->debug_pause();
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    for (const auto &b : host_bytes) cpu->poke_mem(b.first, b.second);
+    for (const std::string &n : names)
+        if (host_regs[n] != ~0u) cpu->set_context_value(n, host_regs[n]);
+    if (before.log_mode != "ring") m->gs_command_log(which, false);
+    side->setCurrentWidget(was);
+}
+
 int self_check(ecatshim::Emulator * m, QWidget * window)
 {
     int failed = 0;
@@ -1432,6 +1562,8 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
                   "zx-dma banner: none without a NeoGS");
         }
     }
+
+    gs_monitor_check(m, window, cpu, check);
 
     // Event breakpoints (gs-debugger P5.3): the card's side on the card CPU, the host's side on the main CPU, added
     // through the shim, listed with their CPU (in the breakpoint list too), switched off, removed

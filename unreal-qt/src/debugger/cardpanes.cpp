@@ -15,6 +15,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/disassembler/z80mcycles.h"
 #include "debugger/gslwpane.h"
+#include "debugger/gsmonitorpane.h"
 #include "debugger/reportpane.h"
 #include "debugger/zxdmatraceview.h"
 #include "debugger/targets/debugcpuid.h"
@@ -139,6 +140,14 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
     panes.push_back({QObject::tr("GS protocol"),
                      QObject::tr("Where the host's conversation with the card is: the decoder's state, the last send, the mailbox"),
                      protocol, nullptr, Card::Any, nullptr});
+
+    // P5.6 (gui-card-debugger.md A5.3, C10): the protocol monitor, watched next to the game while it plays
+    Pane monitor{QObject::tr("GS monitor"),
+                 QObject::tr("The protocol monitor: where the conversation is, the anomalies and unknown commands since Clear, "
+                             "the command log following its tail, Pause / Continue"),
+                 nullptr, nullptr, Card::Any, nullptr};
+    monitor.monitor = new GsMonitorPane(follow, parent);
+    panes.push_back(monitor);
 
     ReportPane* firmware = new ReportPane([follow](EmulatorContext* c) { return CatalogedOf(c, follow, "gs-firmware"); }, "window_variables",
                                           {"name", "at", "size", "value", "meaning"}, parent);
@@ -463,6 +472,8 @@ QWidget* Pane::widget() const
         return pane;
     if (board)
         return board;
+    if (monitor)
+        return monitor;
     return inspector;
 }
 }  // namespace CardPanes

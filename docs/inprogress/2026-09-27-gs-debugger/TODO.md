@@ -394,6 +394,17 @@ what an agent reads):
   in the TTD state.
 - [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
   console, the protocol monitor, the analysis tabs (A5.2a).
+  - Protocol monitor prototype, embedded debugger (2026-11-23; owner decision: a card side tab "GS monitor", not a
+    floating window): `unreal-qt/src/debugger/gsmonitorpane.h`, after "GS protocol" in `CardPanes::Create`, every card
+    (`Card::Any`, the MultiSound's GS through the follow). The strip (the `gs` report's protocol, status, mailbox, last
+    send), the error tile (anomalies of the command log and `gs-firmware` `unknown_commands` since its Clear, the last
+    anomaly with its frame, tinted), the log (`history read`, newest 200, appended after the last row shown, anomalies
+    tinted, Follow / scroll up), Pause / Continue (the window's actions); log off: Turn on (history `<slot>.commands`
+    mode ring). Live through the card panes' timer (200 ms) while the tab is in front of a shown window. Tests
+    `CardPanes_Test.TheMonitor*`. eCat: `debuggers/qt/ecat/dialogs/debugger/gsmonitor.h`, the same tab after "GS
+    protocol" in both adapters (shim `read_gs_monitor`, `gs_command_log`; remote plain GETs), 4 Hz in process, 1 Hz
+    remote; self-check `gs monitor:` on every card, in process and --connect. Left: the log row actions (A5.4); rows lost when more than 200 records arrive
+    between two refreshes (the history read has no since cursor).
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

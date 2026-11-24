@@ -32,6 +32,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/history/exechistory.h"
+#include "debugger/history/historycontrol.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
 #include "debugger/search/memorysearch.h"
@@ -50,8 +51,12 @@
 #include "emulator/memory/rom.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/notifications.h"
+#include "emulator/slots/card.h"
 #include "emulator/slots/slotcontrol.h"
+#include "emulator/slots/slotmanager.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gscommandlog.h"
 #include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicecatalog.h"
@@ -1449,6 +1454,131 @@ private:
             a = {true, action == "start" ? "port trace started" : action == "stop" ? "port trace stopped" : "port trace cleared"};
         });
         return a;
+    }
+
+    // The card a GS monitor reads: the GS slot's General Sound ("gs") or the ZX-MultiSound's ("ms"); null when none
+    static GeneralSoundCard * monitor_card(EmulatorContext * ctx, const std::string &card)
+    {
+        if (ctx == nullptr) return nullptr;
+        if (card == "ms") {
+            if (ctx->pSlotManager == nullptr) return nullptr;
+            for (const std::unique_ptr<ICard> &c : ctx->pSlotManager->Cards())
+                if (GeneralSoundCard * gs = c->DebugGeneralSound()) return gs;
+            return nullptr;
+        }
+        return ctx->pSoundManager != nullptr ? ctx->pSoundManager->getGeneralSound() : nullptr;
+    }
+
+    // The GS monitor in process: the card's report, its command log's newest records and the firmware's unknown
+    // commands, all read where the machine stands still (one coherent moment)
+    GsMonitor read_gs_monitor(const std::string &card, size_t last) override
+    {
+        GsMonitor out;
+        StateNode report, log, unknown;
+        bool found = false;
+        ::Emulator * emu = m_emu.get();
+        at_coherent_moment(emu, [&]() {
+            EmulatorContext * ctx = emu->GetContext();
+            GeneralSoundCard * gs = monitor_card(ctx, card);
+            if (gs == nullptr) return;
+            found = true;
+            report = card == "ms" ? DeviceState::GeneralSoundReport(*gs, nullptr) : DeviceState::Gs(ctx);
+            const GSCommandLog * commands = gs->commandLog();
+            if (commands == nullptr) return;
+            out.log_device = commands->History().Device();
+            HistoryRequest request;
+            request.verb = "read";
+            request.device = out.log_device;
+            request.last = last;
+            const HistoryReply reply = HistoryControl::Execute(ctx, request);
+            if (reply.httpStatus == 200) log = reply.body;
+            if (!commands->On()) return;
+            GSFirmwareObjectsQuery query;
+            query.object = "unknown_commands";
+            query.cpu = card;
+            const GSFirmwareObjectsReply firmware = GSFirmwareObjectsRead(ctx, query);
+            if (firmware.status == 200) unknown = firmware.body;
+        });
+        if (!found) {
+            out.message = card == "ms" ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted";
+            return out;
+        }
+        out.ok = true;
+        auto str = [](const StateNode &o, const char * key) {
+            const StateNode * v = o.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::String ? v->s : std::string();
+        };
+        auto truth = [](const StateNode &o, const char * key) {
+            const StateNode * v = o.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::Bool && v->b;
+        };
+        auto num = [](const StateNode &o, const char * key, int64_t def = 0) -> int64_t {
+            const StateNode * v = o.find(key);
+            return v != nullptr && v->kind == StateNode::Kind::Int ? v->i : def;
+        };
+        if (const StateNode * protocol = report.find("protocol")) {
+            out.protocol_on = truth(*protocol, "on");
+            out.protocol_text = str(*protocol, "text");
+        }
+        out.status = (int)num(report, "status", -1);
+        out.command_pending = truth(report, "command_pending");
+        out.data_pending = truth(report, "data_pending");
+        out.command_from_host = (int)num(report, "command_from_host", -1);
+        out.data_from_host = (int)num(report, "data_from_host", -1);
+        out.data_to_host = (int)num(report, "data_to_host", -1);
+        if (const StateNode * send = report.find("last_send"); send != nullptr && send->kind == StateNode::Kind::Object) {
+            out.has_last_send = true;
+            out.last_send_command = (int)num(*send, "command", -1);
+            out.last_send_name = str(*send, "name");
+            out.last_send_state = str(*send, "state");
+            if (const StateNode * replies = send->find("replies"))
+                for (const StateNode &r : replies->items) out.last_send_replies.push_back(r.kind == StateNode::Kind::Int ? (int)r.i : 0);
+        }
+        out.log_mode = str(log, "mode");
+        out.written = (uint64_t)num(log, "written");
+        out.kept = (uint64_t)num(log, "kept");
+        out.dropped = (uint64_t)num(log, "dropped");
+        if (const StateNode * records = log.find("records"))
+            for (const StateNode &r : records->items) {
+                GsMonitorRow row;
+                row.frame = num(r, "frame");
+                row.t = num(r, "t");
+                row.card_cycle = num(r, "card_cycle");
+                row.command = (int)num(r, "command", -1);
+                row.kind = str(r, "kind");
+                row.name = str(r, "name");
+                row.text = str(r, "text");
+                row.anomaly = str(r, "anomaly");
+                out.rows.push_back(std::move(row));
+            }
+        if (const StateNode * list = unknown.find("unknown_commands")) {
+            out.unknown_present = true;
+            for (const StateNode &u : list->items) {
+                const uint64_t count = (uint64_t)num(u, "count");
+                out.unknown.emplace_back((int)num(u, "command"), count);
+                out.unknown_total += count;
+            }
+        }
+        return out;
+    }
+    // The command log on or off in process: the history verb config (mode ring / off)
+    BoardAnswer gs_command_log(const std::string &card, bool on) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        GeneralSoundCard * gs = monitor_card(ctx, card);
+        const GSCommandLog * commands = gs != nullptr ? gs->commandLog() : nullptr;
+        if (commands == nullptr) return {false, "This card has no command log"};
+        HistoryRequest request;
+        request.verb = "config";
+        request.device = commands->History().Device();
+        request.mode = on ? "ring" : "off";
+        const HistoryReply reply = HistoryControl::Execute(ctx, request);
+        if (reply.httpStatus != 200) {
+            const StateNode * error = reply.body.find("error");
+            return {false, error != nullptr && error->kind == StateNode::Kind::String ? error->s : std::string("refused")};
+        }
+        return {true, "command log " + request.device + (on ? ": ring" : ": off")};
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads

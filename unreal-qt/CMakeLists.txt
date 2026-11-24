@@ -864,6 +864,9 @@ if (TESTS)
         # The lightweight player's inspector panes: interpreter, player (gs-debugger TODO P5.5, A10)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.h"
+        # The protocol monitor tab: strip, error tile, the log following its tail (gs-debugger TODO P5.6, A5.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsmonitorpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsmonitorpane.h"
         # The NeoGS SD card pane's "Open media panel" (gs-debugger N8): the media panel focused on the card's slot
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.h"

@@ -893,6 +893,119 @@ public:
         return {true, "port trace " + action + ": " + r.value("status").toString().toStdString()};
     }
 
+    // The command log history of a card (`zxbus.1.commands`, the MultiSound's `zxbus.1.gs.commands`): the device the
+    // catalog's command log entry routes to (history/<device>?last=N), "" without one
+    QString command_log_device(const std::string &card)
+    {
+        const QString id = card == "ms" ? "ms-gs-commands" : "gs-commands";
+        for (const QJsonValue &v : catalog().value("reports").toArray()) {
+            const QJsonObject r = v.toObject();
+            if (r.value("id").toString() != id) continue;
+            QString route = r.value("route").toString();
+            if (!route.startsWith("history/")) return QString();
+            route = route.mid(QString("history/").size());
+            return route.left(route.indexOf('?') < 0 ? route.size() : route.indexOf('?'));
+        }
+        return QString();
+    }
+    // The GS monitor over the WebAPI: plain GETs, nothing pauses (the card's report, the command log history, the
+    // firmware's unknown commands)
+    GsMonitor read_gs_monitor(const std::string &card, size_t last) override
+    {
+        GsMonitor out;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        const bool ms = card == "ms";
+        int status = 0;
+        QJsonObject report = m_http.json("GET", m_base + (ms ? "/state/audio/multisound" : "/state/audio/gs"), QJsonObject(), &status);
+        if (status != 200) {
+            out.message = status == 0 ? std::string("No answer from the emulator") : report.value("message").toString().toStdString();
+            return out;
+        }
+        if (ms) report = report.value("gs").toObject();
+        if (report.isEmpty() || (report.contains("available") && !report.value("available").toBool())) {
+            out.message = ms ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted";
+            return out;
+        }
+        out.ok = true;
+        auto str = [](const QJsonObject &o, const char * key) { return o.value(key).toString().toStdString(); };
+        auto num = [](const QJsonObject &o, const char * key, int64_t def = 0) {
+            return o.value(key).isDouble() ? (int64_t)o.value(key).toDouble() : def;
+        };
+        const QJsonObject protocol = report.value("protocol").toObject();
+        out.protocol_on = protocol.value("on").toBool();
+        out.protocol_text = str(protocol, "text");
+        out.status = (int)num(report, "status", -1);
+        out.command_pending = report.value("command_pending").toBool();
+        out.data_pending = report.value("data_pending").toBool();
+        out.command_from_host = (int)num(report, "command_from_host", -1);
+        out.data_from_host = (int)num(report, "data_from_host", -1);
+        out.data_to_host = (int)num(report, "data_to_host", -1);
+        if (report.value("last_send").isObject()) {
+            const QJsonObject send = report.value("last_send").toObject();
+            out.has_last_send = true;
+            out.last_send_command = (int)num(send, "command", -1);
+            out.last_send_name = str(send, "name");
+            out.last_send_state = str(send, "state");
+            for (const QJsonValue &r : send.value("replies").toArray()) out.last_send_replies.push_back(r.toInt());
+        }
+        const QString device = command_log_device(card);
+        out.log_device = device.toStdString();
+        if (device.isEmpty()) return out;
+        const QJsonObject log = m_http.json("GET", m_base + "/history/" + device + QString("?last=%1").arg((qulonglong)last),
+                                            QJsonObject(), &status);
+        if (status != 200) return out;
+        out.log_mode = str(log, "mode");
+        out.written = (uint64_t)num(log, "written");
+        out.kept = (uint64_t)num(log, "kept");
+        out.dropped = (uint64_t)num(log, "dropped");
+        for (const QJsonValue &v : log.value("records").toArray()) {
+            const QJsonObject r = v.toObject();
+            GsMonitorRow row;
+            row.frame = num(r, "frame");
+            row.t = num(r, "t");
+            row.card_cycle = num(r, "card_cycle");
+            row.command = (int)num(r, "command", -1);
+            row.kind = str(r, "kind");
+            row.name = str(r, "name");
+            row.text = str(r, "text");
+            row.anomaly = str(r, "anomaly");
+            out.rows.push_back(std::move(row));
+        }
+        if (out.log_mode == "off") return out;
+        const QJsonObject firmware = m_http.json("GET", m_base + "/state/audio/gs/firmware?object=unknown_commands" +
+                                                            QString(ms ? "&cpu=ms" : ""), QJsonObject(), &status);
+        if (status == 200 && firmware.value("unknown_commands").isArray()) {
+            out.unknown_present = true;
+            for (const QJsonValue &v : firmware.value("unknown_commands").toArray()) {
+                const uint64_t count = (uint64_t)num(v.toObject(), "count");
+                out.unknown.emplace_back((int)num(v.toObject(), "command"), count);
+                out.unknown_total += count;
+            }
+        }
+        return out;
+    }
+    // The command log on or off: POST history/<device>/config {mode}
+    BoardAnswer gs_command_log(const std::string &card, bool on) override
+    {
+        if (!m_online.load()) return {false, "The emulator is not connected"};
+        const QString device = command_log_device(card);
+        if (device.isEmpty()) return {false, "This card has no command log"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/history/" + device + "/config",
+                                          QJsonObject{{"mode", on ? "ring" : "off"}}, &status);
+        if (status == 0) return {false, "No answer from the emulator"};
+        if (status != 200) return {false, (r.value("error").toString() + r.value("message").toString()).toStdString()};
+        {
+            // The History tab's sources read again at their next look
+            std::lock_guard<std::mutex> lock(m_catalog_mutex);
+            m_histories_age.invalidate();
+        }
+        return {true, "command log " + device.toStdString() + (on ? ": ring" : ": off")};
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }

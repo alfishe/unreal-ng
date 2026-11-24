@@ -332,6 +332,8 @@ private:
     /// The NeoGS DMA pane's ZX-DMA trace: its capture buttons under the lease, a row's host PC to the main CPU's
     /// disassembly, its card address to the card CPU's memory view (when a window maps the page)
     void connectZxDmaTrace(class ZxDmaTraceView* trace);
+    /// The GS monitor tab: its Pause / Continue to the window's, its Turn on under the lease
+    void connectGsMonitor(class GsMonitorPane* monitor);
     /// The Next tabs on a Next only, the card tabs with a GS card; the PC history records while in front, the live
     /// refresh while a report tab is
     void updateSidePane();
