@@ -171,6 +171,9 @@ TEST(WindowRecording_Test, WordsMakeARequest)
     error.clear();
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "codec", "H265", error));
     EXPECT_EQ(request.codec, "h265");
+    EXPECT_EQ(request.transfer, "picture") << "the window's picture to ffmpeg by default";
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "transfer", "NV12", error));
+    EXPECT_EQ(request.transfer, "nv12");
 
     // The keyboard: on = the window's, off / none = the picture only; audio none = off
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "keyboard", "on", error));
@@ -210,6 +213,13 @@ TEST(WindowRecording_Test, StartRefusesRangesBeforeTheWindowIsAsked)
     r.scale = 5;
     refused(r, "scale");
     r = Valid();
+    r.codec = "h264";
+    r.transfer = "rgba";
+    refused(r, "transfer");
+    r = Valid();  // prores
+    r.transfer = "nv12";
+    refused(r, "4:2:0");
+    r = Valid();
     r.pictureHeight = 5000;
     refused(r, "picture_height");
     r = Valid();
@@ -225,6 +235,10 @@ TEST(WindowRecording_Test, StartRefusesRangesBeforeTheWindowIsAsked)
     r.audio = false;
     r.fps = 25;
     EXPECT_TRUE(WindowRecording::Start("id", r).Ok()) << "a picture rate of its own without sound";
+    r = Valid();
+    r.codec = "h265";
+    r.transfer = "nv12";
+    EXPECT_TRUE(WindowRecording::Start("id", r).Ok()) << "NV12 frames for an H.26x file";
 }
 
 TEST(WindowRecording_Test, StartReportAndStop)

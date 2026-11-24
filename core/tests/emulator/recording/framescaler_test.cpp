@@ -321,6 +321,31 @@ TEST(FrameScaler_Test, PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth)
     }
 }
 
+TEST(FrameScaler_Test, PackedToNv12_BgraGivesTheBytesOfTheSameColoursInRgba)
+{
+    // The window recorder composes B,G,R,A frames (QImage ARGB32): the same picture with red and blue swapped must
+    // give the same planes, on the vector rows and the scalar tail alike
+    for (uint32_t w = 2; w <= 70; w += 2)
+    {
+        const uint32_t h = 4;
+        std::vector<uint32_t> rgba = TestPicture(w, h);
+        const uint32_t extremes[] = {0xFF000000u, 0xFFFFFFFFu, 0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u, 0xFFFFFF00u};
+        for (uint32_t i = 0; i < w && i < 6; i++)
+            rgba[i] = extremes[i];
+        std::vector<uint32_t> bgra(rgba.size());
+        for (size_t i = 0; i < rgba.size(); i++)
+            bgra[i] = (rgba[i] & 0xFF00FF00u) | ((rgba[i] & 0xFFu) << 16) | ((rgba[i] >> 16) & 0xFFu);
+        const size_t stride = static_cast<size_t>(w) * 4;
+        std::vector<uint8_t> y0(static_cast<size_t>(w) * h), uv0(static_cast<size_t>(w) * h / 2);
+        std::vector<uint8_t> y1(y0.size(), 0x77), uv1(uv0.size(), 0x77);
+        FrameScaler::PackedToNv12(reinterpret_cast<const uint8_t*>(rgba.data()), stride, w, h, y0.data(), w, uv0.data(), w);
+        FrameScaler::PackedToNv12(reinterpret_cast<const uint8_t*>(bgra.data()), stride, w, h, y1.data(), w, uv1.data(), w,
+                                  true);
+        ASSERT_EQ(y0, y1) << "width " << w;
+        ASSERT_EQ(uv0, uv1) << "width " << w;
+    }
+}
+
 TEST(FrameScaler_Test, ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte)
 {
     struct Case

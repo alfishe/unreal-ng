@@ -230,6 +230,9 @@
             schema["properties"]["fps"]["type"] = "number";
             schema["properties"]["audio"]["type"] = "boolean";
             schema["properties"]["sample_rate"]["type"] = "integer";
+            schema["properties"]["transfer"]["type"] = "string";
+            schema["properties"]["transfer"]["description"] =
+                "What ffmpeg gets: picture or nv12; native = the Mac's own writer (no ffmpeg)";
             schema["properties"]["audio_samples"]["type"] = "integer";
             schema["properties"]["audio_samples"]["description"] = "Sample pairs in the sound track so far";
             op["responses"]["404"]["description"] = "Emulator not found";
@@ -272,6 +275,9 @@
         field("width", "integer", "The file's frame width (with height); left out = picture + keyboard");
         field("height", "integer", "The file's frame height (with width)");
         field("layout", "string", "below (default) or side: where the keyboard goes in a given frame");
+        field("transfer", "string",
+              "ffmpeg only: picture (default: the window's picture at its own size, ffmpeg scales and borders it) or "
+              "nv12 (the frame at the file's size in NV12, 4:2:0, the GPU encoder's own input; not with prores)");
         statusRef(start, "Recording status");
         start["responses"]["400"]["description"] = "{error, kind: bad-parameter}: a value out of range";
 

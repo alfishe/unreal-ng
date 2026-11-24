@@ -600,6 +600,14 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         schema["properties"]["layout"]["enum"].append(layout);
     schema["properties"]["layout"]["description"] =
         "window_record_start: the keyboard below the picture (default) or right of it (side, with width / height)";
+    schema["properties"]["transfer"]["type"] = "string";
+    schema["properties"]["transfer"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* transfer : {"picture", "nv12"})
+        schema["properties"]["transfer"]["enum"].append(transfer);
+    schema["properties"]["transfer"]["description"] =
+        "window_record_start, ffmpeg only: picture (default: the window's picture at its own size, ffmpeg scales and "
+        "borders it) or nv12 (the whole frame at the file's size in NV12, 4:2:0: the GPU encoder's own input; not "
+        "with prores)";
     schema["required"].append("action");
 
     registry.Register(
@@ -1345,7 +1353,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                     }
                     body["path"] = path;
                     for (const char* field : {"keyboard", "codec", "hardware", "engine", "fit", "fps", "scale", "picture_height", "width", "height",
-                                        "layout"})
+                                        "layout", "transfer"})
                         if (args.isMember(field))
                             body[field] = args[field];
                     // The sound track is on unless switched off ("audio": false / "none" / "off")

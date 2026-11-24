@@ -95,7 +95,14 @@ before the start: a delay changed while recording inserts silence (longer) or dr
   with `fit` the picture and the keyboard fit the frame together: below, the keyboard as wide as the picture;
   beside, half the width at least),
   `engine` (`native`, the default: hardware H.26x and ProRes by the Mac's own writer; `ffmpeg`: always ffmpeg, its
-  ProRes or, with `hardware`, its GPU encoder; the GUI's MKV is ffmpeg's too).
+  ProRes or, with `hardware`, its GPU encoder; the GUI's MKV is ffmpeg's too),
+  `transfer` (what ffmpeg gets: `picture`, the default, the window's picture at its own size, ffmpeg scales it to
+  the frame and adds the border, the fewest bytes; `nv12`, the frame composed at the file's size and converted to
+  NV12 here, ffmpeg only encodes: what a GPU encoder takes as it is. 4:2:0, so not with `prores`; the status says
+  which, `native` for the Mac's own writer). Measured in POC 054: a 4K BGRA frame makes NVENC with ~20 % to spare
+  and is too much for ffmpeg in front of Intel's encoder (21-44 fps); 4K NV12 gives NVENC 3.5x real time, Intel
+  H.264 1.7x. Use `nv12` with `picture_height` at the frame's height (the CRT drawn at 4K): ffmpeg's CPU per frame
+  falls 4-6x. A smaller picture is scaled up in the writer on the CPU, slower than ffmpeg's scaler: keep `picture`.
 - **Frames** (`video/window/record/frames {frames}`): the machine must be paused (409 `not-paused`). Runs `frames` frames, each one drawn
   by the window and written before the next runs. No time limit on the emulator's side; an MCP client may have its
   own per-call timeout, so a few hundred frames per call keeps progress visible.

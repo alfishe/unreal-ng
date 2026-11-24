@@ -195,3 +195,27 @@ Linux, i7-11850H Tiger Lake (Iris Xe), load 13-18 (`-vf format=nv12,hwupload -c:
   fixed profiles send the source picture (ffmpeg builds the frame), the window recorder the window's picture (at
   most 2640x2160 with the CRT at 4K: 67-84 fps into NVENC through stdin, 52-70 into VA-API).
 - Intel on Windows (QSV) not measured: neither Windows host has an Intel GPU enabled (an RTX 4090 alone on both).
+
+## The window recorder's `transfer` switch (2026-11-23)
+
+Following the answer above, the window recorder got `transfer` (all planes; default `picture`, today's behaviour):
+`nv12` composes the frame at the file's size in the writer, converts it with `FrameScaler::PackedToNv12` (now taking
+B,G,R,A as well, the same bytes; 4 bands: 1.2 ms per 4K frame on an M1 Ultra, 1.8 ms on a 3975WX, single-threaded
+RGBA path unchanged in an interleaved A/B on both) and sends NV12 in the Matroska stream (`V_UNCOMPRESSED`,
+ColourSpace `NV12`); ffmpeg only encodes (`-pix_fmt nv12` to NVENC / QSV / AMF and VideoToolbox, `hwupload` alone
+to VA-API, `yuv420p` to x264 / x265; ProRes refused: 4:2:0).
+
+Live, `.238` under xvfb (i7-11850H, T1200 + Iris Xe), 7th Reality demo reloaded before every file so both modes
+record the same frames (84-85 distinct of 210), 4K H.264, `video/window/record/frames 200`, 3 interleaved rounds:
+
+| Picture, encoder | `picture`: wall s, ffmpeg CPU ms / frame | `nv12`: wall s, ffmpeg CPU ms / frame |
+|:--|--:|--:|
+| `picture_height 2160` (CRT at 4K), h264_nvenc | 3.00-3.25, 24-25 | 2.50-2.87, 4.3-4.4 |
+| `picture_height 2160`, h264_vaapi | 2.96-2.99, 24-25 | 2.57-2.88, 5.6-5.9 |
+| window size picture (1080 screen), h264_nvenc | 1.14-1.21, 11-12 | 2.99-4.19, 3.9-4.0 |
+| window size picture, h264_vaapi | 0.91-1.01, 7.5-8.0 | 3.47-3.92, 4.5-5.6 |
+
+- With the picture already at the frame's height (the 4K CRT) `nv12` is faster and takes ffmpeg's CPU down 4-6x.
+- With a smaller picture, `nv12` scales it up in the writer (`QImage::scaled`, smooth, on the CPU, the path the Mac's
+  own writer takes too) and loses to ffmpeg's scaler: there `picture` stays the right choice.
+

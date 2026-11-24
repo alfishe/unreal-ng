@@ -43,6 +43,11 @@ std::string Validate(const WindowRecordingRequest& request)
         return "codec takes prores, h264 or h265";
     if (request.layout != "below" && request.layout != "side")
         return "layout takes below or side";
+    if (request.transfer != "picture" && request.transfer != "nv12")
+        return "transfer takes picture or nv12";
+    // NV12 is 4:2:0: ProRes 4444 is there for the full colour
+    if (request.transfer == "nv12" && request.codec == "prores")
+        return "transfer nv12 is 4:2:0: use h264 or h265 (prores keeps the full colour)";
     if (request.pictureHeight < 0 || request.pictureHeight > kMaxPictureHeight)
         return "picture_height takes 0.." + std::to_string(kMaxPictureHeight);
     if (request.scale < kMinScale || request.scale > kMaxScale)
@@ -85,8 +90,8 @@ bool ApplyWord(WindowRecordingRequest& request, const std::string& key, const st
         else
             request.keyboard = WindowDisplay::Lower(value) == "none" ? std::string() : value;
     }
-    else if (key == "codec" || key == "layout")
-        (key == "codec" ? request.codec : request.layout) = WindowDisplay::Lower(value);
+    else if (key == "codec" || key == "layout" || key == "transfer")
+        (key == "codec" ? request.codec : key == "layout" ? request.layout : request.transfer) = WindowDisplay::Lower(value);
     else if (key == "engine")
     {
         // native = the Mac's own writer for hardware H.26x and ProRes (the default), ffmpeg = always ffmpeg (its
@@ -235,6 +240,7 @@ StateNode Report(const WindowRecordingStatus& s)
     node["encoder_ready_ms"] = s.encoderReadyMs;
     node["first_frame_ms"] = s.firstFrameMs;
     node["slowest_frame_ms"] = s.slowestFrameMs;
+    node["transfer"] = s.transfer;
     return node;
 }
 
@@ -256,6 +262,8 @@ std::string Summary(const WindowRecordingStatus& s)
     line += s.audio ? ", sound " + std::to_string(s.sampleRate) + " Hz" : std::string(", no sound");
     line += ", " + std::to_string(s.frames) + " frames";
     line += s.keyboard.empty() ? ", no keyboard" : ", keyboard " + s.keyboard;
+    if (s.transfer == "nv12")
+        line += ", NV12 frames to ffmpeg";
     return line;
 }
 }  // namespace WindowRecording

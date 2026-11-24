@@ -21,7 +21,8 @@ class Emulator;
 namespace WindowRecording
 {
 /// The fields a start takes besides the file, in the order every surface lists them
-inline constexpr const char* kKeys = "keyboard, codec, hardware, engine, fit, audio, fps, scale, picture_height, width, height, layout";
+inline constexpr const char* kKeys =
+    "keyboard, codec, hardware, engine, fit, audio, fps, scale, picture_height, width, height, layout, transfer";
 
 inline constexpr int kMaxFps = 100;
 inline constexpr int kMinScale = 1;
@@ -66,7 +67,7 @@ Result Stop();
 /// they ran (the caller's thread: not the GUI's). The run control check is the caller's (its session, its origin)
 Result RunFrames(Emulator& emulator, int frames);
 
-/// {recording, path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples}
+/// {recording, path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples, transfer, ...}
 StateNode Report(const WindowRecordingStatus& s);
 /// {ok: false, error, kind} for a failed call
 StateNode ErrorNode(const Result& r);

@@ -51,9 +51,10 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
                    size_t uvStride, uint32_t dstW, uint32_t dstH);
 
 /// Plain conversion of a packed R,G,B,A picture (rows `srcStride` bytes apart) to NV12, w x h even. The reference
-/// of ScaleIntoNv12 and its fallback
+/// of ScaleIntoNv12 and its fallback. `bgra`: the pixels are B,G,R,A (a QImage ARGB32 on a little-endian host), the
+/// same arithmetic and bytes out
 void PackedToNv12(const uint8_t* rgba, size_t srcStride, uint32_t w, uint32_t h, uint8_t* yDst, size_t yStride,
-                  uint8_t* uvDst, size_t uvStride);
+                  uint8_t* uvDst, size_t uvStride, bool bgra = false);
 
 /// One reusable scaler: holds the output buffer and remembers where the bars are
 class Scaler
