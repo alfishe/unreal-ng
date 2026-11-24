@@ -480,9 +480,10 @@ def test_the_zxdma_trace(s):
 
 def test_the_card_profiler(s):
     """The card CPU's profiler (gs-debugger X9 / X2 / X20): off, the aspect says how to start it; started, a running
-    machine profiles the NeoGS firmware: routines with cycles, activity, the ISR budget against the timer's period
-    when the firmware takes interrupts (idle, it keeps them off: the requests merge, `lost`); the frame map's periods; stopped, the data stay; a bad action and an unknown card are refused; the
-    catalog lists both reports"""
+    machine profiles the NeoGS firmware from a card reset (the POST's calls): routines with cycles, activity, the ISR
+    budget against the timer's period when the firmware takes interrupts (idle, it keeps them off: the requests merge,
+    `lost`); the frame map's periods; stopped, the data stay; a bad action and an unknown card are refused; the catalog
+    lists both reports"""
     s.call('control_execution', {'action': 'pause'}, ok=False)
     s.call('emulator_manage', {'action': 'gs_profile_clear'})
     s.call('emulator_manage', {'action': 'gs_profile_stop'})
@@ -492,6 +493,8 @@ def test_the_card_profiler(s):
 
     r = s.call('emulator_manage', {'action': 'gs_profile_start'})
     expect('started' in r.text and 'on' in r.text, 'started', r.text)
+    # The idle firmware calls nothing: the card's reset runs its POST (its routines) under the profiler
+    s.call('emulator_manage', {'action': 'gs_reset_card'})
     s.call('control_execution', {'action': 'resume'})
     deadline = time.time() + 5
     body = {}
@@ -514,7 +517,8 @@ def test_the_card_profiler(s):
            str(body.get('activity'))[-400:])
 
     r = s.call('inspect_state', {'aspects': ['audio_gs_profile'], 'gs_profile_routines': 3})
-    expect('ISR last frame:' in r.text and 'headroom' in r.text and 'Routines' in r.text, 'the text', r.text)
+    expect('ISR last frame:' in r.text and 'Routines' in r.text and
+           ('headroom' in r.text if isr.get('count', 0) > 0 else 'no interrupt ended' in r.text), 'the text', r.text)
     r = s.call('inspect_state', {'aspects': ['audio_gs_events'], 'gs_events_first': 0, 'gs_events_count': 4})
     expect('[audio_gs_events] GS events' in r.text and 'periods of' in r.text, 'the frame map text', r.text)
     r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/events?count=8'})
