@@ -357,64 +357,56 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 return;
             }
 
-            if (action == "formats" || action == "sets")
+            if (action == "formats")
             {
-                // An agent may see only the text: the sets / formats are listed there, not just in the structured answer
-                ResolveAndForward(args, "GET", action == "sets" ? withCpu("/symbols/sets") : "/symbols/formats", nullptr, caller,
-                                  action == "formats" ? "Symbol formats" : "Symbol sets", [action, done](ToolResult result) {
+                // The formats in the text too (an agent may see only content[]): one line each, id first
+                ResolveAndForward(args, "GET", "/symbols/formats", nullptr, caller, "Symbol formats", [done](ToolResult result) {
                     if (result.isError)
                     {
                         done(std::move(result));
                         return;
                     }
+                    const Json::Value& formats = result.structured["formats"];
                     std::ostringstream out;
-                    out << result.text;
-                    if (action == "sets")
+                    out << result.text << ": " << (formats.isArray() ? formats.size() : 0);
+                    if (formats.isArray())
                     {
-                        const Json::Value& sets = result.structured["sets"];
-                        out << ": " << (sets.isArray() ? sets.size() : 0u) << " set(s)";
-                        if (result.structured["cpu"].isString())
-                            out << ", cpu " << result.structured["cpu"].asString();
-                        if (result.structured["labels"].isIntegral())
-                            out << ", " << result.structured["labels"].asUInt() << " label(s) resolved";
-                        if (sets.isArray())
+                        for (const Json::Value& format : formats)
                         {
-                            for (const Json::Value& set : sets)
-                            {
-                                out << "\n" << set["id"].asString();
-                                if (set["title"].isString() && !set["title"].asString().empty())
-                                    out << " \"" << set["title"].asString() << "\"";
-                                out << ": " << set["symbols"].asUInt() << " symbol(s), priority " << set["priority"].asInt()
-                                    << (set["enabled"].asBool() ? "" : ", disabled");
-                                const Json::Value& origin = set["origin"];
-                                if (origin["kind"].isString())
-                                {
-                                    out << ", " << origin["kind"].asString();
-                                    if (origin["where"].isString() && !origin["where"].asString().empty())
-                                        out << " " << origin["where"].asString();
-                                }
-                            }
+                            out << "\n" << format["id"].asString() << " · " << format["title"].asString();
+                            std::string extensions;
+                            for (const Json::Value& extension : format["extensions"])
+                                extensions += (extensions.empty() ? "" : " ") + extension.asString();
+                            if (!extensions.empty())
+                                out << " · " << extensions;
+                            if (format["pages"].asBool())
+                                out << " · pages";
                         }
                     }
-                    else
+                    result.text = out.str();
+                    done(std::move(result));
+                });
+                return;
+            }
+
+            if (action == "sets")
+            {
+                // The sets in the text too (an agent may see only content[]): one line each, id first
+                ResolveAndForward(args, "GET", withCpu("/symbols/sets"), nullptr, caller, "Symbol sets", [done](ToolResult result) {
+                    if (result.isError)
                     {
-                        const Json::Value& formats = result.structured["formats"];
-                        out << ": " << (formats.isArray() ? formats.size() : 0u);
-                        if (formats.isArray())
-                        {
-                            for (const Json::Value& format : formats)
-                            {
-                                out << "\n" << format["id"].asString() << " \"" << format["title"].asString() << "\"";
-                                std::string extensions;
-                                for (const Json::Value& extension : format["extensions"])
-                                    extensions += (extensions.empty() ? "" : " ") + extension.asString();
-                                if (!extensions.empty())
-                                    out << " (" << extensions << ")";
-                                if (format["pages"].asBool())
-                                    out << ", pages";
-                            }
-                        }
+                        done(std::move(result));
+                        return;
                     }
+                    const Json::Value& sets = result.structured["sets"];
+                    std::ostringstream out;
+                    out << result.text << " of cpu " << result.structured.get("cpu", "main").asString() << ": "
+                        << (sets.isArray() ? sets.size() : 0) << ", " << result.structured["labels"].asUInt() << " labels";
+                    if (sets.isArray())
+                        for (const Json::Value& set : sets)
+                            out << "\n" << set["id"].asString() << " · " << set["title"].asString() << " · "
+                                << set["symbols"].asUInt() << " symbols · priority " << set["priority"].asInt()
+                                << (set["enabled"].asBool() ? "" : " · disabled");
                     result.text = out.str();
                     done(std::move(result));
                 });

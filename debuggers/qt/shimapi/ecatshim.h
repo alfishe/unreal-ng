@@ -137,6 +137,17 @@ public:
     virtual std::string page_role(unsigned int) { return std::string(); }
 };
 
+// Not in ecat: an event breakpoint of a processor (the core's BRK_EVENT): a sound card's event or protocol step, a
+// machine's event, by the core's name of the kind (gsdebughooks.h GSCardEventName: "card_command", "host_command",
+// "int_accept"). The card's side is the card CPU's, the host's side and the machine's are the main CPU's
+struct EventBreakpoint {
+    unsigned int id = 0;        // the breakpoint's id among its CPU's breakpoints
+    std::string kind;
+    unsigned int value = 0;     // the event's byte, compared where mask has bits
+    unsigned int mask = 0;      // 0: any value
+    bool enabled = true;
+};
+
 // Not in ecat: one window of a processor's address space and the page mapped there now
 struct AddressWindow {
     unsigned int start = 0;
@@ -190,8 +201,35 @@ public:
     virtual std::string breakpoint_condition(unsigned int) { return {}; }
     virtual bool has_temp_break() const { return false; }
 
+    // Not in ecat: event breakpoints (EventBreakpoint). The kinds this CPU's breakpoints take on this machine, in the
+    // core's names (none: it has no event breakpoints)
+    virtual std::vector<std::string> event_kinds() { return {}; }
+    virtual std::vector<EventBreakpoint> get_event_breakpoints() { return {}; }
+    // False with the reason in @p error (a kind of another CPU, a value out of range)
+    virtual bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+    {
+        (void)kind;
+        (void)value;
+        (void)mask;
+        error = "this processor has no event breakpoints";
+        return false;
+    }
+    virtual bool remove_event_breakpoint(unsigned int id) { (void)id; return false; }
+    virtual bool enable_event_breakpoint(unsigned int id, bool on) { (void)id; (void)on; return false; }
+
     // Not in ecat: the windows of the address space in order, empty when it is not paged
     virtual std::vector<AddressWindow> get_windows() { return {}; }
+
+    // Not in ecat: a sound card CPU's own clock (gs-debugger A4, P5.2; the `gs` report's cpu.frame_cycle): its cycle
+    // in the ZX frame `frame`, and its cycles since the card started when known (-1: not known, the change is then
+    // taken within one frame). False: no such clock (the main CPU, a card without a CPU clock)
+    struct CardCycle {
+        int64_t frame_cycle = -1;
+        int64_t total = -1;
+        uint64_t frame = 0;
+        unsigned int clock_hz = 0;
+    };
+    virtual bool card_cycle(CardCycle &out) { (void)out; return false; }
 };
 
 struct DeviceEntry {
@@ -242,6 +280,28 @@ public:
     virtual void debug_step_over(CPU * c) = 0;
     virtual void debug_step_out(CPU * c) = 0;
     virtual void debug_run_to(CPU * c, unsigned int address) = 0;
+    // A card CPU's run to a moment (not in ecat; gs-debugger P5.4, RunControl::CardRunTo), the machine paused: `until`
+    // "cycle" (to card cycle `value` of the frame), "int" (the card's next interrupt), "command" (the host's next
+    // command to the card) or "main_t" (the main CPU to T `value` of the frame, the card following it lazily). It
+    // returns when the run has ended: the core's answer
+    struct CardRunAnswer {
+        bool ok = false;          // it ran (got there or not); false: refused, nothing ran
+        bool hit = false;         // it got there
+        std::string message;      // the core's sentence (where it stopped, or why it did not run)
+        std::string stop_reason;  // step, breakpoint, timeout, pause
+        int64_t card_cycle = -1;  // where the card stands now: its cycle of the frame (-1: not known)
+        int64_t main_t = -1;      // the main CPU's T of the frame
+        int64_t frame = -1;
+    };
+    virtual CardRunAnswer debug_card_run_to(CPU * c, const std::string &until, uint64_t value)
+    {
+        (void)c;
+        (void)until;
+        (void)value;
+        CardRunAnswer a;
+        a.message = "This machine has no card run";
+        return a;
+    }
     // The CPU of the tab shown: a card's follows the main CPU's steps of the paused machine (its state at the main
     // CPU's moment); the main CPU's ends that
     virtual void debug_select(CPU * c) { (void)c; }
@@ -276,6 +336,120 @@ public:
         bool ok = false;
         std::string json;
     };
+    // A device board (not in ecat; gs-debugger P5.5, debugger-model widget catalog §4): the core's DebugBoards::Read
+    // (over the WebAPI GET /debug/boards/{id}), its columns' groups in order. A control's value as text: numbers
+    // decimal, true / false; its type (hex8, hex16, hex21, dec, counter, rate, bool, led, text, bits, enum, bar) says
+    // how it reads; bits name their bits (bit 0 first), a bar has its max. ok false: no such board here (message why)
+    struct BoardControl {
+        std::string id, label, type, value, note;
+        std::vector<std::string> names;
+        long long max = 0;
+    };
+    struct BoardGroup {
+        std::string title, raw;
+        std::vector<BoardControl> controls;
+    };
+    struct Board {
+        bool ok = false;
+        bool available = false;
+        std::string message, id, title;
+        std::vector<BoardGroup> groups;
+        std::vector<std::pair<std::string, std::string>> actions;  // id, title
+        const BoardControl * control(const std::string &control_id) const
+        {
+            for (const BoardGroup &g : groups)
+                for (const BoardControl &c : g.controls)
+                    if (c.id == control_id) return &c;
+            return nullptr;
+        }
+    };
+    virtual Board read_board(const std::string &id)
+    {
+        Board b;
+        b.id = id;
+        b.message = "This machine has no device boards";
+        return b;
+    }
+    // A board's action (DebugBoards::Action; over the WebAPI POST /debug/boards/{board}/actions/{action} {arg}):
+    // neogs_sd insert <path: an image or a host folder> / eject (the media manager's slot sd.ngs), neogs_flash save.
+    // ok false on a refusal, the core's words in message
+    struct BoardAnswer {
+        bool ok = false;
+        std::string message;
+    };
+    virtual BoardAnswer board_action(const std::string &board, const std::string &action, const std::string &arg)
+    {
+        (void)board;
+        (void)action;
+        (void)arg;
+        return {false, "This machine has no device boards"};
+    }
+
+    // The NeoGS ZX-DMA trace (not in ecat; gui-card-debugger B3.2, gs-debugger N6): the bytes the host moved through
+    // the ZX-DMA window, a row a byte, oldest first: the core's DeviceState::GsZxDmaTrace (over the WebAPI GET
+    // state/audio/gs/zxdma?last=&since=). Recorded while the GS port trace captures (zxdma_trace_capture). A poller
+    // passes the last row's seq (or last_seq) as `since`; restarted: that seq was past the newest (a new session), the
+    // rows are from the start. ok false: not read (message why); available false: no NeoGS (message the core's words)
+    struct ZxDmaRow {
+        uint64_t seq = 0;
+        int64_t frame = 0;
+        int64_t host_t = 0;         // the host's T-state of the frame at the access end (after the wait)
+        int64_t card_time = 0;      // the card CPU's cycles
+        bool write = false;         // the host wrote card RAM (false: read it)
+        unsigned int card_address = 0;
+        unsigned int page = 0;      // card_address >> 14
+        unsigned int value = 0;
+        unsigned int wait = 0;      // the /WAIT T-states
+        unsigned int host_pc = 0;
+        bool dropped = false;
+    };
+    struct ZxDmaTrace {
+        bool ok = false;
+        bool available = false;
+        std::string message;
+        std::string card, device;
+        bool capturing = false;
+        bool armed = false;
+        uint64_t total_bytes_kept = 0;
+        uint64_t evicted = 0;
+        uint64_t last_seq = 0;
+        bool restarted = false;
+        uint64_t bytes_read = 0, bytes_written = 0, bytes_dropped = 0, wait_t_states = 0;
+        std::vector<ZxDmaRow> rows;
+        std::string text;
+        std::string how_to_start;   // while not capturing: how to start it
+    };
+    virtual ZxDmaTrace read_zxdma_trace(size_t last, uint64_t since)
+    {
+        (void)last;
+        (void)since;
+        ZxDmaTrace t;
+        t.message = "This machine has no ZX-DMA trace";
+        return t;
+    }
+    // The GS port trace's capture, which records the ZX-DMA bytes: "start", "stop" or "clear" (in process the card's
+    // start / stop / clearPortTrace; over the WebAPI POST control/audio/gs/porttrace {action})
+    virtual BoardAnswer zxdma_trace_capture(const std::string &action)
+    {
+        (void)action;
+        return {false, "This machine has no ZX-DMA trace"};
+    }
+
+    // The NeoGS ZX-DMA banner (not in ecat; gui-card-debugger S4, neogs-zxdma-design §6.2) for the main CPU's
+    // listing and dump: the core's DeviceState::ZxDmaBanner (over the WebAPI the `gs` report's neogs.dma.zx.banner),
+    // empty while the module is off or without a NeoGS. card_bytes: the module diverts with the ROM paged, the main
+    // CPU's reads of window_start..window_end return card RAM at run time
+    struct ZxDmaBanner {
+        std::string text;
+        bool card_bytes = false;
+        unsigned int window_start = 0x0000;
+        unsigned int window_end = 0x3FFF;
+    };
+    virtual ZxDmaBanner zxdma_banner() { return ZxDmaBanner(); }
+    // How often the views read the card's line (and the banner) while the machine runs (not in ecat): a read of the
+    // card where the machine stands still in this process, a plain GET over the WebAPI; never a pause
+    virtual unsigned int live_card_ms() const { return 250; }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {

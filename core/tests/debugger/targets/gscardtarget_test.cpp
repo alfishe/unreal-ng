@@ -39,6 +39,7 @@
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
+#include "unrealasm/symbols/symbol.h"
 
 namespace
 {
@@ -517,6 +518,23 @@ TEST(GSCardTarget_Test, TheNeoGSDmaWritesHitThePagesWatchpoint)
 // The card CPU's labels (gs-debugger design §6.2, L1-L4): its own store, the shipped firmware symbols chosen by the
 // SHA-256 of the card's ROM page 0, ROM labels tied to their pages; the card's listing names its instructions and
 // operands from them, the main CPU's labels stay out
+// A card fitted with the machine (the PENTAGON's own NeoGS, no switch afterwards) has its firmware symbols from the
+// start: the debug manager comes after the card, so the machine's bundle pass applies the card's too
+TEST(GSCardTarget_Test, TheCardFittedWithTheMachineHasItsSymbols)
+{
+    SoundCardScope sound{TestSound::GeneralSound};
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    GSCardTarget* target = emulator->GetContext()->pDebugManager->GetCardTarget(DebugCpuId::GS);
+    ASSERT_NE(target, nullptr);
+    ASSERT_NE(target->Card(), nullptr) << "the PENTAGON fits a General Sound";
+    bool bundle = false;
+    for (const auto& set : target->GetLabelManager()->GetSymbolSets())
+        bundle = bundle || set.id.rfind("bundle:gs:", 0) == 0;
+    EXPECT_TRUE(bundle) << "the card's firmware symbols without a card switch";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 TEST(GSCardTarget_Test, TheFirmwareSymbolsNameTheCardsCode)
 {
     Card card;
@@ -1042,4 +1060,267 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
               execution::RunReply::Status::BadRequest);
     emulator->Stop();
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+/// The machine's NeoGS (PENTAGON), paused after a few turbo frames, the card in the routine at #4000; the main CPU
+/// at a program of its own at #8000 (interrupts off): LD A,#23 / OUT (#BB),A / JR $ - one host command, then a loop
+struct CardRunMachine
+{
+    static constexpr uint16_t kMainProgram = 0x8000;
+    static constexpr uint16_t kMainOut = 0x8002;
+    static constexpr uint16_t kMainLoop = 0x8004;
+
+    SoundCardScope sound{TestSound::GeneralSound};
+    Emulator* emulator = nullptr;
+    EmulatorContext* context = nullptr;
+    GeneralSoundCard* card = nullptr;
+    std::shared_ptr<Emulator> shared;
+    const execution::Requester requester{execution::Origin::WebApi, {}};
+
+    bool Start()
+    {
+        emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        if (!emulator)
+            return false;
+        context = emulator->GetContext();
+        if (!FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS))
+            return false;
+        emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+        emulator->EnableTurboMode();
+        emulator->StartAsync();
+        if (!TestWait::For([&] { return context->emulatorState.frame_counter > 2; }))
+            return false;
+        emulator->Pause();
+        if (!TestWait::For([&] { return emulator->IsEmulationParked(); }))
+            return false;
+        card = context->pSoundManager->getGeneralSound();
+        shared = EmulatorManager::GetInstance()->GetEmulator(emulator->GetId());
+        return card && shared;
+    }
+
+    /// The main CPU at its program (the command written once it runs)
+    void MainProgram()
+    {
+        const uint8_t program[] = {0x3E, 0x23, 0xD3, 0xBB, 0x18, 0xFE};
+        for (size_t i = 0; i < sizeof(program); i++)
+            context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kMainProgram + i), program[i]);
+        Z80State* z80 = emulator->GetZ80State();
+        z80->pc = kMainProgram;
+        z80->iff1 = z80->iff2 = 0;
+    }
+
+    execution::RunReply Run(const char* until, uint64_t value = 0, DebugCpuId cpu = DebugCpuId::GS)
+    {
+        return execution::RunControl(shared).CardRunTo(requester, cpu, until, value);
+    }
+
+    ~CardRunMachine()
+    {
+        if (emulator)
+        {
+            emulator->Stop();
+            EmulatorTestHelper::CleanupEmulator(emulator);
+        }
+    }
+};
+
+std::string Reason(const execution::RunReply& reply)
+{
+    const StateNode* stop = reply.body.find("stop");
+    const StateNode* reason = stop ? stop->find("reason") : nullptr;
+    return reason ? reason->s : std::string();
+}
+}  // namespace
+
+// Run to a card cycle (gs-debugger TODO P5.4): the card parks at the first boundary at or after it, the reply says the
+// cycle reached; a cycle already passed is the next frame's; a breakpoint on the way ends it first. Bad arguments are
+// refused before anything runs. Boot-bound, turbo
+TEST(GSCardRunTo_Test, ACardCycleIsReachedAndReported)
+{
+    CardRunMachine m;
+    ASSERT_TRUE(m.Start());
+    LoadRoutine(*m.card);
+    const int64_t frameCycles = m.card->cardCycles(m.card->cardFrameLength());
+    ASSERT_GT(frameCycles, 10000);
+
+    // From where the card stands (a step first: the card at a boundary, its cycle in the reply)
+    execution::RunReply step = execution::RunControl(m.shared).CardStep(m.requester, DebugCpuId::GS, "in", 1);
+    ASSERT_TRUE(step.Ok()) << step.message;
+    ASSERT_NE(step.body.find("card_cycle"), nullptr);
+    const int64_t at = step.body["card_cycle"].i;
+    const int64_t frameBefore = step.body["frame"].i;
+    const bool wraps = at + 3000 >= frameCycles;
+    const int64_t ahead = wraps ? 5000 : at + 3000;
+
+    execution::RunReply reached = m.Run("cycle", static_cast<uint64_t>(ahead));
+    ASSERT_TRUE(reached.Ok()) << reached.message;
+    EXPECT_EQ(Reason(reached), "step") << reached.message;
+    EXPECT_TRUE(reached.body["hit"].b);
+    EXPECT_EQ(reached.body["until"].s, "cycle");
+    EXPECT_EQ(reached.body["target_cycle"].i, ahead);
+    EXPECT_EQ(reached.body["stop"]["cpu"].s, "gs");
+    const int64_t got = reached.body["card_cycle"].i;
+    EXPECT_GE(got, ahead) << "the first boundary at or after the cycle";
+    EXPECT_LT(got, ahead + 200) << "one card instruction past it at most";
+    EXPECT_NE(reached.message.find("stopped at card cycle " + std::to_string(got)), std::string::npos)
+        << reached.message;
+    EXPECT_TRUE(m.emulator->IsPaused());
+    if (!wraps)
+        EXPECT_EQ(reached.body["frame"].i, frameBefore);
+
+    // Already past in this frame: the next frame's
+    const int64_t behind = got / 2;
+    execution::RunReply next = m.Run("cycle", static_cast<uint64_t>(behind));
+    ASSERT_TRUE(next.Ok()) << next.message;
+    EXPECT_TRUE(next.body["hit"].b) << next.message;
+    EXPECT_GE(next.body["card_cycle"].i, behind);
+    EXPECT_LT(next.body["card_cycle"].i, behind + 200);
+    EXPECT_GT(next.body["frame"].i, reached.body["frame"].i) << "the next frame's";
+
+    // A breakpoint on the way ends it first
+    std::string error;
+    BreakpointManager* breakpoints = m.context->pDebugManager->GetBreakpointsManager(DebugCpuId::GS);
+    const uint16_t id = breakpoints->AddBreakpoint(Exec(kRoutine + 1), error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    const int64_t far = (next.body["card_cycle"].i + frameCycles / 2) % frameCycles;
+    execution::RunReply stopped = m.Run("cycle", static_cast<uint64_t>(far));
+    ASSERT_TRUE(stopped.Ok()) << stopped.message;
+    EXPECT_EQ(Reason(stopped), "breakpoint") << stopped.message;
+    EXPECT_FALSE(stopped.body["hit"].b);
+    EXPECT_EQ(stopped.body["pc"].i, kRoutine + 1);
+    breakpoints->RemoveBreakpointByID(id);
+    EXPECT_FALSE(m.context->pDebugManager->GetGSTarget()->StepArmed()) << "nothing left armed";
+
+    // Refused: past the frame, an unknown run, the main CPU, no MultiSound
+    EXPECT_EQ(m.Run("cycle", static_cast<uint64_t>(frameCycles)).status, execution::RunReply::Status::BadRequest);
+    EXPECT_EQ(m.Run("sideways").status, execution::RunReply::Status::BadRequest);
+    EXPECT_EQ(m.Run("int", 0, DebugCpuId::Main).status, execution::RunReply::Status::BadRequest);
+    EXPECT_FALSE(m.Run("int", 0, DebugCpuId::MultiSoundGS).Ok());
+    EXPECT_TRUE(m.emulator->IsPaused());
+}
+
+// Run to the card's next interrupt: parked at the handler's first instruction (IM 1: #0038), as an `int` event
+// breakpoint parks; with interrupts off a breakpoint on the way ends it
+TEST(GSCardRunTo_Test, TheNextCardInterruptParksAtItsHandler)
+{
+    CardRunMachine m;
+    ASSERT_TRUE(m.Start());
+    LoadRoutine(*m.card);
+    Z80CpuRegisters regs{};
+    ASSERT_TRUE(m.card->cardRegisters(regs));
+    regs.iff1 = regs.iff2 = 1;
+    regs.im = 1;
+    ASSERT_TRUE(m.card->setCardRegisters(regs));
+
+    execution::RunReply reply = m.Run("int");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(Reason(reply), "step") << reply.message;
+    EXPECT_TRUE(reply.body["hit"].b);
+    EXPECT_EQ(reply.body["pc"].i, 0x0038) << reply.message;
+    EXPECT_EQ(reply.body["stop"]["cpu_pc"].i, 0x0038);
+    EXPECT_NE(reply.message.find("accepted an interrupt"), std::string::npos) << reply.message;
+    ASSERT_TRUE(m.card->cardRegisters(regs));
+    EXPECT_EQ(regs.iff1, 0) << "inside the handler";
+
+    // Interrupts off: the loop's breakpoint ends it
+    LoadRoutine(*m.card);
+    std::string error;
+    BreakpointManager* breakpoints = m.context->pDebugManager->GetBreakpointsManager(DebugCpuId::GS);
+    const uint16_t id = breakpoints->AddBreakpoint(Exec(kRoutine), error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    execution::RunReply stopped = m.Run("int");
+    ASSERT_TRUE(stopped.Ok()) << stopped.message;
+    EXPECT_EQ(Reason(stopped), "breakpoint");
+    EXPECT_FALSE(stopped.body["hit"].b);
+    breakpoints->RemoveBreakpointByID(id);
+}
+
+// Run to the host's next command: the machine pauses after the main CPU's OUT (#BB), the reply names the byte, the card
+// has not taken it yet (the command flip-flop up). A main breakpoint before the OUT ends it first
+TEST(GSCardRunTo_Test, TheNextHostCommandPausesAfterTheOut)
+{
+    CardRunMachine m;
+    ASSERT_TRUE(m.Start());
+    LoadRoutine(*m.card);
+    m.MainProgram();
+
+    BreakpointManager* main = m.context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = main->AddExecutionBreakpoint(CardRunMachine::kMainOut);
+    ASSERT_NE(id, BRK_INVALID);
+    execution::RunReply stopped = m.Run("command");
+    ASSERT_TRUE(stopped.Ok()) << stopped.message;
+    EXPECT_EQ(Reason(stopped), "breakpoint") << stopped.message;
+    EXPECT_EQ(stopped.body["stop"]["cpu"].s, "main");
+    EXPECT_FALSE(stopped.body["hit"].b);
+    EXPECT_EQ(stopped.body["main_pc"].i, CardRunMachine::kMainOut);
+    main->RemoveBreakpointByID(id);
+
+    execution::RunReply reply = m.Run("command");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(Reason(reply), "step") << reply.message;
+    EXPECT_TRUE(reply.body["hit"].b);
+    EXPECT_EQ(reply.body["command"].i, 0x23);
+    EXPECT_EQ(reply.body["stop"]["command"].i, 0x23);
+    EXPECT_EQ(reply.body["stop"]["cpu"].s, "gs");
+    EXPECT_EQ(reply.body["main_pc"].i, CardRunMachine::kMainLoop) << "paused after the OUT";
+    EXPECT_NE(reply.message.find("#23"), std::string::npos) << reply.message;
+    EXPECT_EQ(m.card->getStatusRaw() & 0x01, 0x01) << "the card has not taken it";
+    EXPECT_EQ(m.card->getCommandFromHost(), 0x23);
+    EXPECT_FALSE(m.context->pDebugManager->GetGSTarget()->StepArmed());
+    EXPECT_TRUE(m.emulator->IsPaused());
+
+    // No command comes (the main CPU loops): the deadline pauses it with the reason timeout - not run here (5 s);
+    // a refusal while one is armed instead
+    ASSERT_EQ(m.context->pDebugManager->GetGSTarget()->ArmUntil(GSCardTarget::StepKind::Command), "");
+    EXPECT_EQ(m.Run("command").status, execution::RunReply::Status::Refused) << "one run at a time";
+    m.context->pDebugManager->GetGSTarget()->CancelStep();
+}
+
+// Run the main CPU to a T-state of the frame from the card's view: reached (the first boundary at or after it), the
+// next frame's when already past, a main breakpoint on the way ends it; out of the frame refused
+TEST(GSCardRunTo_Test, TheMainCpuRunsToAFrameT)
+{
+    CardRunMachine m;
+    ASSERT_TRUE(m.Start());
+    LoadRoutine(*m.card);
+    m.MainProgram();
+    Z80* z80 = m.context->pCore->GetZ80();
+    const uint32_t frame = z80->_frameLimit;
+    ASSERT_GT(frame, 0u);
+
+    const uint64_t ahead = (z80->t + 1000) % frame;
+    const uint64_t frameBefore = m.context->emulatorState.frame_counter;
+    execution::RunReply reply = m.Run("main_t", ahead);
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(Reason(reply), "step") << reply.message;
+    EXPECT_EQ(reply.body["stop"]["cpu"].s, "main");
+    EXPECT_TRUE(reply.body["hit"].b);
+    EXPECT_EQ(reply.body["until"].s, "main_t");
+    EXPECT_EQ(reply.body["target_t"].i, static_cast<int64_t>(ahead));
+    EXPECT_GE(reply.body["main_t"].i, static_cast<int64_t>(ahead));
+    EXPECT_LT(reply.body["main_t"].i, static_cast<int64_t>(ahead) + 30) << "one instruction past it at most";
+    EXPECT_NE(reply.body.find("pc"), nullptr) << "the card's registers";
+    EXPECT_TRUE(m.emulator->IsPaused());
+
+    const uint64_t behind = static_cast<uint64_t>(reply.body["main_t"].i) / 2;
+    execution::RunReply next = m.Run("main_t", behind);
+    ASSERT_TRUE(next.Ok()) << next.message;
+    EXPECT_TRUE(next.body["hit"].b);
+    EXPECT_GE(next.body["main_t"].i, static_cast<int64_t>(behind));
+    EXPECT_GT(next.body["frame"].i, reply.body["frame"].i) << "the next frame's";
+    EXPECT_GE(static_cast<uint64_t>(reply.body["frame"].i), frameBefore);
+
+    // The main CPU loops at JR $ after its OUT: a breakpoint there ends the run first
+    const uint16_t id = m.context->pDebugManager->GetBreakpointsManager()->AddExecutionBreakpoint(CardRunMachine::kMainLoop);
+    ASSERT_NE(id, BRK_INVALID);
+    execution::RunReply stopped = m.Run("main_t", (static_cast<uint64_t>(next.body["main_t"].i) + frame / 2) % frame);
+    ASSERT_TRUE(stopped.Ok()) << stopped.message;
+    EXPECT_EQ(Reason(stopped), "breakpoint") << stopped.message;
+    EXPECT_FALSE(stopped.body["hit"].b);
+    EXPECT_EQ(stopped.body["main_pc"].i, CardRunMachine::kMainLoop);
+    m.context->pDebugManager->GetBreakpointsManager()->RemoveBreakpointByID(id);
+
+    EXPECT_EQ(m.Run("main_t", frame).status, execution::RunReply::Status::BadRequest);
 }

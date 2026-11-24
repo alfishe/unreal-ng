@@ -47,6 +47,13 @@ void GSTraceEvent::ToState(StateNode& node) const
     node["value"] = int(value);
     if (side == GSTraceSide::DacFetch || side == GSTraceSide::ZxDma)
         node["channel"] = int(channel);
+    if (side == GSTraceSide::ZxDma)
+    {
+        node["card_address"] = int64_t(cardAddress());
+        node["host_t"] = int64_t(hostT());
+        node["wait"] = int64_t(waitT());
+        node["dropped"] = isDropped();
+    }
     if (side == GSTraceSide::Idle)
         node["iterations"] = int64_t(iterations);
     else if (side == GSTraceSide::Interrupt)

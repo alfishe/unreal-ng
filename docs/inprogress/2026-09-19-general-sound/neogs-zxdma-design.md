@@ -849,6 +849,23 @@ becomes an overlay mode instead:
 | Memory breakpoints in the window | Fire as today (address based). The access tracker records the host's normal byte; the ZX-DMA trace (§6.4) records the card byte. |
 | Instruction progress (§5.4 there) | Counts ZX-DMA waits like contention: `contentionAccumulated` gains the waits, and the progress line says "wait". |
 
+As built (2026-11-23, core; the debuggers' UI follows):
+
+- **Banner.** The `gs` report's `neogs.dma.zx` carries `window_start` / `window_end` (`#0000` / `#3FFF`),
+  `card_address` (the module's address: the cell the next fetch reads, or the one in flight), `next_byte` (what the
+  next diverted read returns: a pending read's cell, else the latch; `NeoGSZxDma::nextReadByte()`, a peek),
+  `rom_paged` (the host's ROM at `#0000`: only then do reads come from the card) and `banner`:
+  "ZX-DMA active: reads at #0000-#3FFF return card RAM @#012345; next byte #A7" while diverting with ROM paged;
+  "ZX-DMA active: RAM paged at #0000-#3FFF, reads return host RAM; writes also go to card RAM @#012345" with RAM
+  paged; "ZX-DMA watching: the module is selected, not started; reads at #0000-#3FFF return host memory (card RAM
+  @#012345 once it starts)" in Watch; empty when Off, on a ZX-bus without memory cycles, or without NeoGS. In process:
+  `DeviceState::ZxDmaBanner(context)` / `ZxDmaBanner(NeoGSStateInfo, romPaged)` (`emulator/state/devicestate.h`).
+- **Wait.** No `contentionAccumulated` exists; the waits are counted apart: `Z80::AddWaitStates` / `AddWaitTicks` add
+  to `Z80::instrWaitTicks`, zeroed with `instrStartT` by the instruction-start debug work (nothing new on the plain
+  path; the wait path is already the overlay's slow path). `MainPosition::waitT` (`InstructionWaitT()`, T rounded up),
+  `wait_t` in `MainPositionNode`, and the text: `main #8003 (finished): T 17 of 16 + 1 T wait, memory write; ...`.
+  `contended` leaves the wait out. Known only where the instruction's start is (debug mode, exec taps, tight mode).
+
 ### 6.3 NeoGS card target (requirement N4)
 
 - **DMA panel**, per module (ZX, SD, MP3):
@@ -875,6 +892,28 @@ becomes an overlay mode instead:
   host time, card time, direction, card address, value, wait, host PC.
 - It is recorded only while tracing is on, like the port trace.
 - Use: "what exactly moved, and where did the host wait".
+
+As built (2026-11-22, gs-debugger N6): the event stays 24 bytes. `port` / `channel` hold the card address (15:0,
+20:16), `pc` the host PC, `timestamp` the card time, `frameNumber` the host frame; `iterations` (unused by this side)
+packs the host side: bits 23:0 the host Z80's `t` in its frame at the access end (after the wait), bits 31:24 the wait
+T-states of this access, capped at 255 (`GSTraceEvent::PackZxDmaHost`, `hostT()`, `waitT()`). A byte the module drops
+(§5.6.5) is an event of its own with `GSTraceFlags::kDropped`: its own direction, address and value (a read's: the cell
+it would have fetched), wait 0. The cost while the trace is off is the existing `isCapturing` test; the wait is
+`waitForPending`'s return value.
+
+The report `DeviceState::GsZxDmaTrace(context, {last, since})` (`gs/gszxdmatrace.h`) gives `{available, card, device,
+capturing, armed, total_bytes_kept, evicted, last_seq, restarted, counters{bytes_read, bytes_written, bytes_dropped,
+wait_t_states}, rows[{seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}],
+text, how_to_start}`: the newest `last` ZX-DMA events (default 256, 0: all) after the history's sequence number
+`since` (`DeviceHistory::Snapshot(last, firstSeq)`), `card_time` in card CPU cycles. Planes: REST
+`GET state/audio/gs/zxdma?last=&since=`, CLI `gs zxdma [last] [--since <seq>]`, Lua / Python `gs_zxdma(last, since)`,
+MCP `inspect_state` aspect `audio_gs_zxdma` (`gs_zxdma_last`, `gs_zxdma_since`), catalog `gs-zxdma` (NeoGS only).
+Tests: `gszxdmatrace_test.cpp`, `neogszxdma_test.cpp` (`TheTraceCarriesEachAccessWait`, `TheTraceShowsTheDroppedByte`).
+
+The bytes are recorded twice while the trace captures: into the port trace's ring (with every other side) and
+into a ring of their own on the card (65,536 bytes): in the shared ring the DAC fetches, about 150,000 a second,
+evict them within half a second. The report reads the card's ring; the port trace's verbs (start, stop, pause,
+resume, clear) drive both.
 
 ### 6.5 Pause and step with ZX-DMA
 

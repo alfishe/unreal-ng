@@ -13,6 +13,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorbinding.h>
 #include "debugger/breakpointstopline.h"
+#include "debugger/cardpanes.h"
 #include "debugger/targets/debugcpuid.h"
 #include "emulator/cpu/z80.h"
 
@@ -107,6 +108,8 @@ public:
     bool selectCpu(DebugCpuId cpu);
     DebuggerCpuTabs* cpuTabs() const { return _cpuTabs; }
     class DebuggerTimeTravel* timeTravel() const { return _timeTravel; }
+    /// The card run controls (Run to's card entries, Step other, the CPU shortcuts): gs-debugger TODO P5.4
+    class DebuggerCardRun* cardRun() const { return _cardRun; }
     /// A byte as the CPU in front sees it (no side effects)
     uint8_t readCpuByte(uint16_t address);
     /// Step In / Over / Out (`kind` "in", "over", "out") or run to `address` ("to") on the card in front
@@ -165,6 +168,8 @@ private slots:
     void onBreakpointHit(const BreakpointHit& hit);
     /// The stop line goes when the machine moves on (continue, a step, a reset)
     void clearStopBanner();
+    /// The stop line with a message of the debugger's own (a card run that did not get there): plain text
+    void showStopNotice(const QString& text);
     void onStopBannerLink(const QString& link);
     void handleCPUStepMessage(int id, Message* message);
     void handleLabelChanged(int id, Message* message);
@@ -219,6 +224,9 @@ signals:
     /// The time travel group's "Show in the TTD panel": MainWindow opens the panel with its Branches row
     void showInTtdPanelRequested();
 
+    /// The NeoGS SD card pane's "Open media panel" (N8): MainWindow shows the media panel on `slot` (`sd.ngs`)
+    void mediaPanelRequested(const QString& slot);
+
     /// The memory view shows another page or its follow mode changed (its cursor: QHexView::positionChanged)
     void memoryViewChanged();
 
@@ -233,7 +241,12 @@ signals:
 public:
     /// region <For the tests>
     QTabWidget* sideTabs() const { return _sideTabs; }
+    QLabel* cardStrip() const { return _cardStrip; }
+    QLabel* mainPositionStrip() const { return _mainPositionStrip; }
+    QLabel* zxDmaMemoryBanner() const { return _zxDmaMemoryBanner; }
+    QLabel* zxDmaDisasmBanner() const { return _zxDmaDisasmBanner; }
     const std::vector<class ReportPane*>& nextPanes() const { return _nextPanes; }
+    const std::vector<CardPanes::Pane>& cardPanes() const { return _cardPanes; }
     /// endregion
 
 protected:
@@ -300,16 +313,29 @@ private:
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
     class LiveSourceWindow* _liveSourceWindow = nullptr;
     class PcHistoryPane* _pcHistoryPane = nullptr;
-    // The splitter's third pane: tabs of every view the machine has (the PC history; a Next's panes)
+    // The splitter's third pane: tabs of every view the machine has (the PC history; a Next's panes; a GS card's)
     class QGroupBox* _sideGroup = nullptr;
     class QTabWidget* _sideTabs = nullptr;
     std::vector<class ReportPane*> _nextPanes;
-    class QTimer* _nextPanesTimer = nullptr;  // a live refresh of the Next tab in front while the machine runs (5 Hz)
+    std::vector<CardPanes::Pane> _cardPanes;  // the General Sound card's (gs-debugger P5.1; NeoGS boards P5.5)
+    class QTimer* _nextPanesTimer = nullptr;  // a live refresh of the report tab in front while the machine runs (5 Hz)
     bool _nextMachine = false;
-    /// Refresh the Next tab in front (when shown); `live`: the machine runs
+    // The card panes' CPU tab in front (they follow it: the GS slot's card or the MultiSound's, CardPanes::Front), and
+    // which of them were shown last (a change: their tabs shown or hidden, their marks forgotten)
+    CardPanes::Follow _cardFollow = std::make_shared<DebugCpuId>(DebugCpuId::Main);
+    std::vector<bool> _cardShown;
+    CardPanes::Target _cardTarget = CardPanes::Target::None;
+    /// Refresh the report or board tab in front (a Next's, a card's; when shown); `live`: the machine runs
     void refreshNextPanes(bool live);
-    /// The Next tabs on a Next only; the PC history records while in front, the live refresh while a Next tab is
+    /// A board pane's action (NeoGS SD insert / eject, flash save) under the context's lease, then its refresh
+    void runBoardAction(class BoardPane* pane, const QString& board, const QString& action, const QString& arg);
+    /// The NeoGS DMA pane's ZX-DMA trace: its capture buttons under the lease, a row's host PC to the main CPU's
+    /// disassembly, its card address to the card CPU's memory view (when a window maps the page)
+    void connectZxDmaTrace(class ZxDmaTraceView* trace);
+    /// The Next tabs on a Next only, the card tabs with a GS card; the PC history records while in front, the live
+    /// refresh while a report tab is
     void updateSidePane();
+    class DebuggerCardRun* _cardRun = nullptr;         // Run to's card entries, Step other, Ctrl+1 / Ctrl+2
     class DebuggerTimeTravel* _timeTravel = nullptr;   // the toolbar's time controls (debuggers.md §4)  // in the splitter, right of the disassembly
     QPointer<class PortEventsDialog> _portEventsDialog;  // not modal: open while the program runs
 
@@ -317,7 +343,22 @@ private:
     SpeedControlWidget* m_speedControl = nullptr;
     // The stop line under the speed control: the breakpoint the machine stopped at
     QLabel* _stopBanner = nullptr;
+    // A sound card's line (gs-debugger A6 S1-S3): its CPU, PC, cycle, page, symbols; whose stop and where the main CPU
+    // stands in its instruction. Shown at a stop while a card is fitted
+    QLabel* _cardStrip = nullptr;
+    void updateCardStrip();
+    // The inside-an-instruction strip on top of the main registers (A6 S3): where the main CPU stands in its instruction
+    // at a card's stop (the card line leaves it out while this shows it)
+    QLabel* _mainPositionStrip = nullptr;
+    // The ZX-DMA banner over the main CPU's memory view and disassembly (A6 S4) while the NeoGS module diverts or
+    // watches the reads at #0000-#3FFF; in Divert with the ROM paged the disassembly's rows there are marked
+    QLabel* _zxDmaMemoryBanner = nullptr;
+    QLabel* _zxDmaDisasmBanner = nullptr;
+    CardPanes::Lines cardLines() const { return {_cardStrip, _mainPositionStrip, _zxDmaMemoryBanner, _zxDmaDisasmBanner}; }
+    // The card line and the banner while the machine runs (4 Hz, while the window is shown)
+    CardPanes::LiveLine* _liveLine = nullptr;
     uint16_t _stopBreakpointId = BRK_INVALID;
+    DebugCpuId _stopBreakpointCpu = DebugCpuId::Main;  // whose breakpoint the stop line names (its manager)
     uint64_t _breakpointObserver = 0;  // NC_EXECUTION_BREAKPOINT, filtered by the machine's id
     uint64_t _markupObserver = 0;      // NC_READOUTS_CHANGED of the markup, filtered by the machine's id
     QLabel* _markupLegend = nullptr;   // under the memory view: the kinds it colours

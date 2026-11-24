@@ -1213,6 +1213,11 @@ PictureGeometry Screen::DescribeNativeFrame() const
 
 PictureGeometry Screen::DescribeExternalFrame() const
 {
+    return DescribeExternalFrame(_context ? _context->emulatorState.frame_counter : 0);
+}
+
+PictureGeometry Screen::DescribeExternalFrame(uint64_t frameNumber) const
+{
     PictureGeometry g;
     g.width = _external.width;
     g.height = _external.height;
@@ -1220,7 +1225,7 @@ PictureGeometry Screen::DescribeExternalFrame() const
     g.screenWindow = PictureRect{0, 0, g.width, g.height};  // the card's picture has no border: all of it is the picture
     g.videoMode = M_NUL;
     g.source = FrameSource::External;
-    g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    g.frameNumber = frameNumber;
     return g;
 }
 
@@ -1365,7 +1370,7 @@ void Screen::LatchExternalFrame()
     LatchExternalFrame(nullptr, nullptr);
 }
 
-bool Screen::LatchExternalFrame(ExternalFill fill, void* context)
+bool Screen::LatchExternalFrame(ExternalFill fill, void* context, const ExternalFrameStamp* stamp)
 {
     if (!IsExternalPictureActive() || _external.memoryBuffer == nullptr)
         return false;
@@ -1382,7 +1387,7 @@ bool Screen::LatchExternalFrame(ExternalFill fill, void* context)
         VideoUtils::CopyFrameBuffer(_presentSlots[index], _external.memoryBuffer, _presentBufferSize);
     _presentPlaneB[index].clear();  // plane B belongs to the ZX raster
     _presentSlotWindow[index] = TemporalWindow{};  // no temporal output for an external frame
-    _presentSlotGeometry[index] = DescribeExternalFrame();
+    _presentSlotGeometry[index] = stamp ? DescribeExternalFrame(stamp->frameNumber) : DescribeExternalFrame();
     _presentSlotSerial[index] = ++_presentSerial;
     _presentSlotProcessed[index] = false;
     _presentSlotShown[index] = false;
@@ -1392,10 +1397,12 @@ bool Screen::LatchExternalFrame(ExternalFill fill, void* context)
     ResetSlotTimingLocked(index);
     _presentSlotTiming[index].latchNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
     // The card's frame is complete here, inside the machine's frame: its sound ends at this fraction of the frame's
-    if (_context && _context->pCore && _context->config.frame)
+    if (stamp)
+        _presentSlotTiming[index].fraction = std::clamp(stamp->fraction, 0.0f, 1.0f);
+    else if (_context && _context->pCore && _context->config.frame)
     {
-        const double fraction = static_cast<double>(_context->pCore->GetZ80()->t) / _context->config.frame;
-        _presentSlotTiming[index].fraction = static_cast<float>(std::clamp(fraction, 0.0, 1.0));
+        const double now = static_cast<double>(_context->pCore->GetZ80()->t) / _context->config.frame;
+        _presentSlotTiming[index].fraction = static_cast<float>(std::clamp(now, 0.0, 1.0));
     }
     _lastLatchTimestampUs.store(std::chrono::duration_cast<std::chrono::microseconds>(now).count(),
                                 std::memory_order_release);

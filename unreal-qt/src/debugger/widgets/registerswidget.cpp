@@ -12,6 +12,7 @@
 #include "debugger/debuggerwindow.h"
 #include "debugger/targets/cpuview.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/remotecontrolguard.h"
 #include "ui_registerswidget.h"
 
@@ -87,6 +88,29 @@ void RegistersWidget::buildInterruptAndFlagCells()
             emit jumpToAddressInDisassembly(isrAddress());
     });
     ui->horizontalLayout_20->insertWidget(++at, m_isrCell);
+}
+
+void RegistersWidget::showCardCycle()
+{
+    EmulatorContext* context = getEmulatorContext();
+    const GeneralSoundCard* card = context ? debuggercpu::Card(context, m_cpu) : nullptr;
+    if (!card || card->cardCpuClockHz() == 0)
+    {
+        ui->valT->setText(QStringLiteral("-"));
+        ui->valT->setToolTip(QString());
+        return;
+    }
+    const int64_t cycle = card->cardCycles(card->cardFrameTime());
+    const int64_t total = card->cardCycles(card->cardTime());
+    if (m_cardCycleShown >= 0 && total != m_cardCycleShown)
+        m_cardCycleDelta = total - m_cardCycleShown;
+    m_cardCycleShown = total;
+    QString text = QStringLiteral("c%1").arg(cycle);
+    if (m_cardCycleDelta != 0)
+        text += QStringLiteral(" ") + QChar(0x0394) + QString::number(m_cardCycleDelta);
+    ui->valT->setText(text);
+    ui->valT->setToolTip(tr("The card's CPU cycle in the ZX frame (%1 MHz); delta: its cycles since the value shown before")
+                             .arg(card->cardCpuClockHz() / 1000000));
 }
 
 uint16_t RegistersWidget::isrAddress() const
@@ -468,9 +492,15 @@ void RegistersWidget::refresh()
         ui->valIY->setText(QStringLiteral("%1").arg(m_z80Registers->iy, 4, 16, QLatin1Char('0')).toUpper());
 
         ui->valIR->setText(QStringLiteral("%1").arg((m_z80Registers->i << 8) | Z80::RegisterR(m_z80Registers), 4, 16, QLatin1Char('0')).toUpper());
-        // A card counts its own clock: no T of the frame
-        ui->valT->setText(IsCardCpu(m_cpu) ? QStringLiteral("-")
-                                           : QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
+        // A card counts its own clock: its cycle in the ZX frame and the cycles since the last value shown
+        // (gs-debugger A4: `c 119,985 · Δ 12 c`)
+        if (IsCardCpu(m_cpu))
+            showCardCycle();
+        else
+        {
+            ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
+            ui->valT->setToolTip(QString());
+        }
         // Interrupt mode, the enable flip-flops (set: bold, clear: gray) and where an INT would go
         ui->valINT->setText(QStringLiteral("IM%1").arg(m_z80Registers->im));
         const QString on = QStringLiteral("QLabel { font-weight: bold; }");

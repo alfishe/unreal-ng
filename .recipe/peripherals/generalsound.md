@@ -124,6 +124,20 @@ gs-debugger design §8A.9) with its `symbolFile` (relative to `data/symbols/gs`)
 `#1E`), and `unknown_commands` the commands the host sent that no profile names. A profile from the firmware's
 sources: `tools/gsfirmware/profile_from_source.py --source DIR --map FILE --id ID`.
 
+The lightweight player (no CPU) is read through `audio_gs` itself: `interpreter` (`state` idle / params / command /
+upload / reply / covox, `text` such as "Upload, 2,000 of 3,196 bytes", the queues) and `player` (position, row, tick,
+speed, BPM, the four channels with sample, volume, period, note, rate; the module (P) / (S) and its samples);
+`audio_gs_firmware` answers the v1.05a variables its interpreter mirrors (`source: mirror`). The ZX-MultiSound's GS
+(debugger CPU `ms`): `audio_multisound`'s `gs` has the `audio_gs` fields; its firmware objects and statistics are
+`audio_gs_firmware` / `audio_gs_stats` with `"gs_cpu": "ms"`, its command log `device_history` `<slot>.gs.commands`.
+
+NeoGS ZX-DMA bytes (what the Spectrum read from / wrote to card RAM through the window, and where it waited): start the
+port trace (`invoke_api POST /api/v1/emulator/{id}/control/audio/gs/porttrace {"action":"start"}`), run, then
+`inspect_state {"aspects":["audio_gs_zxdma"]}`: a line a byte with seq, host frame / T, card cycle, direction, card
+address and page, value, wait T, host PC, `DROPPED` for a byte lost to mixed directions. `"gs_zxdma_last": N` (0: all
+kept), `"gs_zxdma_since": <last_seq>` for only the new rows. WebAPI `GET .../state/audio/gs/zxdma?last=&since=`, CLI
+`gs zxdma`, Lua / Python `gs_zxdma(last, since)`. The bytes have a ring of their own (65,536): on a long transfer read sooner or stop the trace after it.
+
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on
 activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`

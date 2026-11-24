@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -20,6 +21,7 @@
 #include "emulator/io/fdc/upd765.h"
 #include "emulator/ports/models/portdecoder_p2666.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/memory/memory.h"
@@ -649,9 +651,96 @@ TEST(DeviceStateGs_Test, NeoGsReportFollowsTheMailbox)
     EXPECT_NE(neogs->find("dma")->find("zx")->find("mode"), nullptr);
     EXPECT_EQ(gs.find("fixed_window_hex"), nullptr) << "the RAM window is opt-in";
 
+    // The debugger's card line (gs-debugger A6 S1): the card's CPU, its PC, cycle in the frame and page
+    ASSERT_NE(gs.find("cpu")->find("clock_hz"), nullptr);
+    ASSERT_NE(gs.find("cpu")->find("frame_cycle"), nullptr);
+    const std::string strip = gs.find("strip")->s;
+    EXPECT_EQ(strip.rfind("NeoGS Z80 ", 0), 0u) << strip;
+    EXPECT_NE(strip.find(" · cycle "), std::string::npos) << strip;
+    EXPECT_NE(strip.find(" · MPAG #"), std::string::npos) << strip;
+
     const StateNode withRam = DeviceState::Gs(context, /*ramWindow*/ true);
     ASSERT_NE(withRam.find("fixed_window_hex"), nullptr);
     EXPECT_EQ(withRam.find("fixed_window_hex")->s.size(), 0x4000u * 2);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(DeviceStateGs_Test, TheStripSaysTheCardInOneLine)
+{
+    StateNode report = StateNode::Object();
+    report["implementation"] = "lle";
+    StateNode cpu = StateNode::Object();
+    cpu["pc"] = 0x0C32;
+    cpu["halted"] = false;
+    cpu["clock_hz"] = int64_t(12000000);
+    cpu["frame_cycle"] = int64_t(119985);
+    report["cpu"] = cpu;
+    report["page"] = 3;
+    StateNode profile = StateNode::Object();
+    profile["known"] = true;
+    profile["title"] = "GS v1.05a";
+    report["firmware_profile"] = profile;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(report), "GS Z80 12 MHz · PC #0C32 · cycle 119,985 · MPAG #03 · Symbols: GS v1.05a");
+
+    StateNode unknown = StateNode::Object();
+    unknown["known"] = false;
+    report["firmware_profile"] = unknown;
+    EXPECT_NE(DeviceState::GeneralSoundStrip(report).find("Symbols: unknown firmware"), std::string::npos);
+
+    StateNode lw = StateNode::Object();
+    lw["implementation"] = "lightweight";
+    lw["page"] = 0;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(lw), "GS lightweight player · MPAG #00");
+
+    // NeoGS extended paging (GSCFG0.EXPAG): MPAG sets window 2, MPAGEX window 3 - both named, only while it is on
+    StateNode ngs = StateNode::Object();
+    ngs["implementation"] = "ngs";
+    ngs["page"] = 3;
+    StateNode neogs = StateNode::Object();
+    neogs["mpagex"] = 5;
+    neogs["extended_paging"] = false;
+    ngs["neogs"] = neogs;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(ngs), "NeoGS · MPAG #03");
+    ngs["neogs"]["extended_paging"] = true;
+    EXPECT_EQ(DeviceState::GeneralSoundStrip(ngs), "NeoGS · MPAG #03 · MPAGEX #05");
+}
+
+// The NeoGS part names MPAGEX (gs-debugger P5.5) and the strip carries it while extended paging is on
+TEST(DeviceStateGs_Test, NeoGsReportNamesMpagEx)
+{
+    SoundCardScope cards(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    StateNode gs = DeviceState::Gs(context);
+    ASSERT_NE(gs.find("neogs"), nullptr);
+    EXPECT_FALSE(gs["neogs"]["extended_paging"].b);
+    EXPECT_EQ(gs["strip"].s.find("MPAGEX"), std::string::npos) << gs["strip"].s;
+
+    card->memory().setConfig(0x01 | NeoGSMemory::CFG_EXPAG);
+    card->memory().writeMpag(0x03);
+    card->memory().writeMpagEx(0x05);
+    gs = DeviceState::Gs(context);
+    EXPECT_TRUE(gs["neogs"]["extended_paging"].b);
+    EXPECT_EQ(gs["neogs"]["mpag"].i, 0x03);
+    EXPECT_EQ(gs["neogs"]["mpagex"].i, 0x05);
+    EXPECT_NE(gs["strip"].s.find(" · MPAG #03 · MPAGEX #05"), std::string::npos) << gs["strip"].s;
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// The classic card has no ZX-DMA: no `neogs` part, no banner (gui-card-debugger S4)
+TEST(DeviceStateGs_Test, TheClassicCardHasNoZxDmaBanner)
+{
+    SoundCardScope cards(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    const StateNode gs = DeviceState::Gs(context);
+    EXPECT_EQ(gs.find("neogs"), nullptr);
+    EXPECT_EQ(DeviceState::ZxDmaBanner(context), "");
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

@@ -26,6 +26,7 @@ void NeoGSMemory::powerOn()
     _pg[2] = 0;
     _pg[3] = 2;
     _mpag = 0;
+    _mpagex = 0;
     resetRegisters();
 }
 
@@ -49,6 +50,7 @@ void NeoGSMemory::writeMpagEx(uint8_t value)
 {
     if (!(_cfg & CFG_EXPAG))
         return;
+    _mpagex = value;
     _pg[3] = static_cast<uint8_t>((value << 1) | (value >> 7));
     rebuild();
 }
@@ -65,11 +67,12 @@ void NeoGSMemory::setConfig(uint8_t gscfg0)
     rebuild();
 }
 
-void NeoGSMemory::setPagesRaw(const uint8_t pages[4], uint8_t mpag, uint8_t cfg)
+void NeoGSMemory::setPagesRaw(const uint8_t pages[4], uint8_t mpag, uint8_t mpagex, uint8_t cfg)
 {
     for (int i = 0; i < 4; i++)
         _pg[i] = pages[i];
     _mpag = mpag;
+    _mpagex = mpagex;
     _cfg = cfg;
     rebuild();
 }

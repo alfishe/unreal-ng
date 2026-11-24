@@ -158,6 +158,7 @@ struct GSStatsQuery
     bool fresh = false;    ///< a block from a frame end after this read
     uint64_t minFrame = 0; ///< set by the first reply of a fresh read: pass it back to wait for the same frame
     uint32_t waitMs = 0;   ///< wait on this thread for the block (never on the machine thread)
+    std::string cpu;       ///< the card by its debugger CPU: "" or "gs" the GS slot's, "ms" the ZX-MultiSound's
 };
 
 struct GSStatsReply
@@ -169,6 +170,12 @@ struct GSStatsReply
     std::string text;      ///< the same for people
     std::vector<std::string> counters; ///< the paths of the body's counters ("mailbox.host_commands"); the rest is state
 };
+
+/// The General Sound card a read names by its debugger CPU (DebugCpuName): "" or "gs" the GS slot's card, "ms" the
+/// one a slot card carries (the ZX-MultiSound's, ICard::DebugGeneralSound); nullptr when it is not fitted or the name
+/// is none of these (`known` false then). `stats`: that card's statistics publisher
+GeneralSoundCard* GSCardForCpu(EmulatorContext* context, const std::string& cpu, GSStatsPublisher** stats = nullptr,
+                               bool* known = nullptr);
 
 GSStatsReply GSStatsRead(EmulatorContext* context, GSStatsQuery query);
 /// A new baseline from the counters now: {baseline, frame}. Pending like a read until a block exists

@@ -151,6 +151,8 @@ private:
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args);
+    /// card_run_to <until> [value] [--cpu gs|ms]: a card CPU's run to a moment (RunControl::CardRunTo)
+    void HandleCardRunTo(const ClientSession& session, const std::vector<std::string>& args);
     // Device boards: board list | board <id> [values] | board <id> <action> [arg] (core DebugBoards)
     void HandleBoard(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)

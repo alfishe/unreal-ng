@@ -170,7 +170,9 @@ Available commands:
 works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
 `disasm --cpu gs`; [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), and on
 `step [count]`, `steps <count>`, `stepover` and `stepout` steps it: the machine runs until the card's step ends
-(`stepover --cpu gs`); `skip_until <pc> --cpu gs` runs it to the cursor (a breakpoint on the way ends it). `selected-cpu [main|gs|ms]` sets or shows the CPU the front-ends show: a card shown follows
+(`stepover --cpu gs`); `skip_until <pc> --cpu gs` runs it to the cursor (a breakpoint on the way ends it);
+`card_run_to cycle <N> | int | command | main_t <T> [--cpu gs|ms]` runs it to card cycle N of the frame, its next
+interrupt, the host's next command (paused after that main instruction) or the main CPU's T of the frame. `selected-cpu [main|gs|ms]` sets or shows the CPU the front-ends show: a card shown follows
 the main CPU's steps of the paused machine.
 
 **Command Aliases**:
@@ -586,6 +588,7 @@ reference: [command-interface.md](./command-interface.md).
 | :--- | :--- |
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). `--cpu gs\|ms`: the sound card CPU runs to `<pc>` (a breakpoint ends it, 5 s). |
+| `card_run_to <until> [N] [--cpu gs\|ms]` | The sound card CPU (gs by default) to a moment: `cycle <N>` (card cycle N of the frame, the next frame's when passed), `int` (its next interrupt: the handler's first instruction), `command` (the host's next command: paused after that main instruction, the byte named), `main_t <T>` (the main CPU to T of the frame). A breakpoint of any CPU ends it, 5 s. Two lines: the message, then the card's PC / SP / card cycle and the main CPU's PC / T / frame. |
 | `run_frames <N> [breakpoints]`, `run_tstates <N> [breakpoints]` | N frames (1..200000) / t-states (1..14000000000) on the run timeline: split-independent, more than the limit is refused, never cut. One line from what ran: "Ran 100 frames (frame 1234, t 17)" or "Ran 12 of 100 frames: stopped at breakpoint #2 (execute $8000) (frame 24, t 5678)", then PC and SP ([counted runs](./command-interface.md)). |
 | `run_until [N] key=value ...` | Whole frames until the rules hold at a frame end: `if="M(#5C3A)==1"`, `text="GAME OVER"`, `screen=changed\|stable`, `stable_frames=25`, `event=died`, `match=any\|all`, `breakpoints=true`; a bare N is `max_frames` (3000, at most 200000). One line: "met at frame 4521 after 312 frames (text, row \"GAME OVER\"), PC #0038, 41 ms; paused" or "not met after 3000 frames ...". |
 | `watch add key=value ...` / `watch list` / `watch del <id\|all>` | Frame watches on the running machine (the `run_until` rules plus `label=`, `then=pause\|notify`, `once=true\|false`; at most 16): a hit pauses at that frame end (stop reason `watch`) and is pushed as `watch_hit` on `debug.events`. `watches` = `watch list`. |

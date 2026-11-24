@@ -1159,6 +1159,13 @@ void PortDecoder_TSConf::UpdateBanks()
         _memory->UpdateZ80Banks();
 }
 
+void PortDecoder_TSConf::BeforeRelease()
+{
+    _flash.SaveIfUnsaved();
+    if (_vdac2)
+        _vdac2->BeforeRelease();
+}
+
 void PortDecoder_TSConf::OnFrameEnd()
 {
     _flash.OnFrameEnd();

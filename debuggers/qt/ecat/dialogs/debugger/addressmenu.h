@@ -37,6 +37,8 @@ signals:
     void show_code(CPU * cpu, unsigned int address);
     void show_memory(CPU * cpu, unsigned int address);
     void show_page(CPU * cpu, unsigned int address);
+    //A byte of a paged memory (a card's RAM) by its offset, in the pages tab
+    void show_memory_offset(Memory * memory, unsigned int offset);
     void toggle_breakpoint(CPU * cpu, unsigned int address);
     void run_to(CPU * cpu, unsigned int address);
     void set_pc(CPU * cpu, unsigned int address);

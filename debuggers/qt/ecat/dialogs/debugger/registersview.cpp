@@ -5,9 +5,12 @@
 
 #include "registersview.h"
 
+#include <QDateTime>
+#include <QHelpEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
+#include <QToolTip>
 
 #include "addressmenu.h"
 #include "celleditor.h"
@@ -51,9 +54,59 @@ RegistersView::RegistersView(Emulator * e, CPU * cpu, QWidget *parent):
     mark_stop();
 }
 
+//The card's clock (not in ecat): the cycle in the ZX frame and the cycles since the value shown before, as the
+//embedded debugger's T field ("c119985 Δ12"); with no count since the card started (over the WebAPI), the change is
+//taken within one frame. While the machine runs, read at the card line's pace
+void RegistersView::add_cycle_row()
+{
+    m_cycle_row = -1;
+    CPU::CardCycle now;
+    const bool running = !e->debug_paused();
+    const qint64 ms = QDateTime::currentMSecsSinceEpoch();
+    const bool due = !running || m_cycle_read_ms < 0 || ms - m_cycle_read_ms >= (qint64)e->live_card_ms();
+    if (due) {
+        if (!cpu->card_cycle(now)) {
+            m_cycle_text.clear();
+            m_cycle_known = false;
+            return;
+        }
+        m_cycle_read_ms = ms;
+        if (m_cycle_known) {
+            if (now.total >= 0 && m_cycle_shown.total >= 0) {
+                if (now.total != m_cycle_shown.total) m_cycle_delta = now.total - m_cycle_shown.total;
+            } else if (now.frame != m_cycle_shown.frame || now.frame_cycle != m_cycle_shown.frame_cycle) {
+                m_cycle_delta = now.frame == m_cycle_shown.frame ? now.frame_cycle - m_cycle_shown.frame_cycle : 0;
+            }
+        }
+        m_cycle_shown = now;
+        m_cycle_known = true;
+        m_cycle_text = QString("c%1").arg(now.frame_cycle);
+        if (m_cycle_delta != 0) m_cycle_text += QString(" ") + QChar(0x0394) + QString::number(m_cycle_delta);
+        m_cycle_tip = tr("The card's CPU cycle in the ZX frame (%1 MHz); %2: its cycles since the value shown before")
+                          .arg(now.clock_hz / 1000000).arg(QChar(0x0394));
+        if (now.total < 0) m_cycle_tip += tr(" (within one frame)");
+    }
+    if (!m_cycle_known) return;
+    m_regs.push_back(CpuRegister());
+    m_regs.push_back(CpuRegister{"T", (unsigned int)m_cycle_shown.frame_cycle, 0});
+    m_cycle_row = (int)m_regs.size() - 1;
+}
+
+bool RegistersView::viewportEvent(QEvent *event)
+{
+    if (event->type() == QEvent::ToolTip) {
+        const QHelpEvent * h = static_cast<QHelpEvent*>(event);
+        if (m_cycle_row >= 0 && first_row() + h->pos().y() / m_rh == m_cycle_row) QToolTip::showText(h->globalPos(), m_cycle_tip, viewport());
+        else QToolTip::hideText();
+        return true;
+    }
+    return QAbstractScrollArea::viewportEvent(event);
+}
+
 void RegistersView::refresh()
 {
     m_regs = cpu->get_register_values();
+    add_cycle_row();
     m_name_chars = 2;
     for (const CpuRegister &r : m_regs)
         if ((int)r.name.size() > m_name_chars) m_name_chars = (int)r.name.size();
@@ -74,7 +127,7 @@ QString RegistersView::row_key(int row) const
     auto it = m_prev.find(reg.name);
     const bool changed = it != m_prev.end() && it->second != reg.value;
     return QString::fromStdString(reg.name) + ' ' + QString::number(reg.value) + (changed ? " c " : " - ")
-           + QString::number(x_value());
+           + QString::number(x_value()) + (i == m_cycle_row ? ' ' + m_cycle_text : QString());
 }
 
 void RegistersView::mark_stop()
@@ -89,6 +142,7 @@ QSize RegistersView::sizeHint() const
     int w = 0;
     for (const CpuRegister &r : m_regs)
         w = std::max(w, x_binary() + m_cw * binary_chars(r));
+    if (m_cycle_row >= 0) w = std::max(w, x_value() + m_cw * (int)m_cycle_text.size());
     return QSize(w + m_cw * 2, m_rh * ((int)m_regs.size() + 1));
 }
 
@@ -186,6 +240,10 @@ void RegistersView::paintEvent(QPaintEvent *event)
         auto it = m_prev.find(reg.name);
         const bool changed = it != m_prev.end() && it->second != reg.value;
         p.setPen(changed ? c.changed : c.dim);
+        if (i == m_cycle_row) {
+            p.drawText(dx + x_value(), y, m_cycle_text);
+            continue;
+        }
         p.drawText(dx + x_value(), y, value_text(reg));
         p.setPen(changed ? c.changed : c.dim);
         p.drawText(dx + x_binary(), y, binary_text(reg));
@@ -195,7 +253,7 @@ void RegistersView::paintEvent(QPaintEvent *event)
 void RegistersView::contextMenuEvent(QContextMenuEvent *event)
 {
     const int i = first_row() + event->pos().y() / m_rh;
-    if (i < 0 || i >= (int)m_regs.size() || m_regs[i].name.empty()) return;
+    if (i < 0 || i >= (int)m_regs.size() || m_regs[i].name.empty() || i == m_cycle_row) return;
     const CpuRegister &reg = m_regs[i];
     exec_address_menu(this, event->globalPos(),
                       AddressTarget{cpu, reg.value & 0xFFFF, QString::fromStdString(reg.name)});
@@ -205,7 +263,7 @@ void RegistersView::mouseDoubleClickEvent(QMouseEvent *event)
 {
     if (AddressRouter::read_only_at(this)) return;
     const int i = first_row() + event->pos().y() / m_rh;
-    if (i < 0 || i >= (int)m_regs.size() || m_regs[i].name.empty()) return;
+    if (i < 0 || i >= (int)m_regs.size() || m_regs[i].name.empty() || i == m_cycle_row) return;
     const CpuRegister &reg = m_regs[i];
     const int dx = -horizontalScrollBar()->value();
     const int x = event->pos().x() - dx;

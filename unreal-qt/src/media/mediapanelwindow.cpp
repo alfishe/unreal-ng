@@ -287,6 +287,28 @@ void MediaPanelWindow::rebuildTable()
     updateButtons();
 }
 
+bool MediaPanelWindow::focusSlot(const std::string& slot)
+{
+    refresh();
+    for (int r = 0; r < static_cast<int>(_rows.size()); r++)
+        if (_rows[static_cast<size_t>(r)].slot == slot)
+        {
+            _table->selectRow(r);
+            if (QTableWidgetItem* item = _table->item(r, 0))
+                _table->scrollToItem(item);
+            _table->setFocus();
+            updateButtons();
+            return true;
+        }
+    return false;
+}
+
+std::string MediaPanelWindow::selectedSlot() const
+{
+    const MediaPanelRow* row = selectedRow();
+    return row ? row->slot : std::string();
+}
+
 const MediaPanelRow* MediaPanelWindow::selectedRow() const
 {
     const auto rows = _table->selectionModel() ? _table->selectionModel()->selectedRows() : QModelIndexList();

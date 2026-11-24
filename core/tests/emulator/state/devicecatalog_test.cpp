@@ -66,7 +66,41 @@ TEST(DeviceCatalog_Test, GeneralSoundAppearsWithTheCard)
     const StateNode catalog = DeviceState::Catalog(emulator->GetContext());
     EmulatorTestHelper::CleanupEmulator(emulator);
 
-    EXPECT_EQ(Ids(catalog).count("gs"), 1u);
+    // The card and the debugger's card panes (gs-debugger phase 5): the command log, the firmware objects, the
+    // statistics, each with the commands that read it on every plane
+    const std::set<std::string> ids = Ids(catalog);
+    for (const char* id : {"gs", "gs-commands", "gs-firmware", "gs-stats"})
+        EXPECT_EQ(ids.count(id), 1u) << id;
+    const StateNode* firmware = Report(catalog, "gs-firmware");
+    ASSERT_NE(firmware, nullptr);
+    EXPECT_EQ(firmware->find("route")->s, "state/audio/gs/firmware");
+    EXPECT_EQ(firmware->find("cli")->s, "gs firmware");
+    EXPECT_EQ(firmware->find("mcp")->s, "audio_gs_firmware");
+    // The command log is a history named by the card's slot: its route and command say that name
+    const StateNode* commands = Report(catalog, "gs-commands");
+    ASSERT_NE(commands, nullptr);
+    const std::string route = commands->find("route")->s;
+    EXPECT_EQ(route.rfind("history/", 0), 0u) << route;
+    EXPECT_NE(route.find(".commands?last="), std::string::npos) << route;
+    EXPECT_EQ(commands->find("cli")->s.rfind("history ", 0), 0u) << commands->find("cli")->s;
+    EXPECT_EQ(commands->find("mcp")->s, "device_history");
+}
+
+TEST(DeviceCatalog_Test, TheCardPanesGoWithTheCard)
+{
+    SoundCardScope cards(TestSound::TurboSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    const StateNode all = DeviceState::Catalog(emulator->GetContext(), true);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+
+    for (const char* id : {"gs-commands", "gs-firmware", "gs-stats", "ms-gs-commands", "ms-gs-firmware", "ms-gs-stats"})
+    {
+        const StateNode* r = Report(all, id);
+        ASSERT_NE(r, nullptr) << id;
+        EXPECT_FALSE(r->find("available")->b) << id;
+        EXPECT_FALSE(r->find("description")->s.empty()) << id;
+    }
 }
 
 TEST(DeviceCatalog_Test, AnEmptyAySocketIsNoDevice)

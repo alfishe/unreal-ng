@@ -426,6 +426,7 @@ POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"cou
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
 POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop; ?cpu=gs / ms: that card CPU runs to pc, a breakpoint ends it, answers the card step's reply plus hit)
+POST /api/v1/emulator/{id}/card_run_to       A card CPU to a moment (body: {"cpu": "gs"|"ms" (default gs), "until": "cycle"|"int"|"command"|"main_t", "value": N}; the machine paused; answers the card step's reply plus until, hit, target_cycle / target_t, card_cycle, main_t, frame, command)
 POST /api/v1/emulator/{id}/run_until         Whole frames until frame-end rules hold (body: {"if"?, "text"?, "screen"?: "changed"|"stable", "stable_frames"?, "event"?, "match"?: "any"|"all", "max_frames"?: 1..200000 (3000), "breakpoints"?: false}; answers met, outcome (met|budget|breakpoint|aborted), frames, frame, pc, ttd_frame?, ms, hit {frame, reasons, text_line?, stable_for?, event_fires?}, text; long-call pool)
 GET  /api/v1/emulator/{id}/watches           Armed frame watches: {count, watches: [{id, label?, spec, then, once, armed_frame, hits, last_hit?, error?}], text}
 POST /api/v1/emulator/{id}/watches           Arm a frame watch (the run_until rules plus "label"?, "then"?: "pause"|"notify", "once"?: true): 201 {id, watch, text}; 400 a bad spec or 16 armed. A hit: watch_hit on debug.events, debug/wait wakes, then=pause pauses (stop reason "watch")
@@ -518,7 +519,19 @@ with the card - `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary` an
 `elapsed_t`, `total_t`, `total_t_alt`, `bus_cycles`, `bus_cycle`, `bus_cycle_index`, `contended`), the card CPU's `pc` and `sp`, `main_pc`, `main_sp`,
 `state`; 409 when not paused or a step of that CPU is under way. The step runs the card in tight mode: the main CPU
 moves on only as far as the card's time needs, and parks at the start of an instruction; none within 2 s (over / out
-5 s) is a `timeout`.
+5 s) is a `timeout`. The card step's reply also has `card_cycle` (the card CPU's cycle of the ZX frame, as the `gs`
+report's `cpu.frame_cycle`), `main_t` (the main CPU's T of the frame) and `frame`.
+
+`POST /card_run_to {cpu, until, value}` runs a card CPU (`gs` by default) to a moment, the machine paused:
+`until` `cycle` parks the card at the first instruction boundary at or after card cycle `value` of the ZX frame (a
+cycle it already stands at or passed: the next frame's; `value` past the frame's card cycles is a 400); `int` at the
+first instruction of the handler of its next accepted interrupt (where an `int` event breakpoint parks); `command`
+pauses the machine after the main CPU's next OUT to the card's command port, before the card takes it (`command`: the
+byte, in `stop` too; the stop has no `main`); `main_t` runs the main CPU to T-state `value` of the frame (the next
+frame's when at or past it; a direct run of at most a frame, `stop.cpu` main). A breakpoint of any CPU on the way ends
+it (`hit` false); none of the others within 5 s is a `timeout`. The reply: the card step's plus `until`, `hit`,
+`target_cycle` / `target_t`; the message says where it stopped ("Ran cpu gs to card cycle 120000: stopped at card
+cycle 120007, #0278"). 400 for no or an unknown `until` or `cpu` main, 409 when not paused or a step is under way.
 
 `GET` / `PUT /debug/selected_cpu` (`{cpu: "main" | "gs" | "ms"}` or `?cpu=`): the CPU the debugger front-ends show,
 one per machine, `{cpu, follows}`. A card shown follows the main CPU's steps of the paused machine (step, steps,
@@ -606,6 +619,7 @@ GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and ch
 GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
 GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, page, DAC channels, card CPU, "neogs" block (404 without a card; ?ram=1 adds the #4000-#7FFF window)
+GET  /api/v1/emulator/{id}/state/audio/gs/zxdma?last=N&since=S  NeoGS ZX-DMA trace: a row a byte the host moved (seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped), last_seq, text; recorded while the GS port trace captures (404 without a NeoGS)
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes

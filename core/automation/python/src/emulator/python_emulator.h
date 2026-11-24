@@ -23,6 +23,7 @@
 #include "emulator/machinecatalog.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
+#include <functional>
 #include <optional>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -65,6 +66,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
+#include <emulator/sound/chips/gs/gszxdmatrace.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
@@ -222,9 +224,10 @@ inline LabelManager* PythonLabels(Emulator& self, const std::string& cpu)
 
 inline pybind11::object StateNodeToPy(const StateNode& node);
 
-/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`): the reply's body and ok = True,
-/// or ok = False and error. The machine runs until the card ends it, then is paused; the GIL is free meanwhile
-inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0)
+/// A card CPU's step or run (`run`: the RunControl call): the reply's body and ok = True, or ok = False and error. The
+/// machine runs until the card ends it, then is paused; the GIL is free meanwhile
+inline py::dict PythonCardRun(Emulator& self,
+                              const std::function<execution::RunReply(execution::RunControl&, const execution::Requester&)>& run)
 {
     py::dict d;
     std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
@@ -240,7 +243,8 @@ inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind,
     execution::RunReply reply;
     {
         py::gil_scoped_release release;  // the card runs until its step ends (up to 5 s)
-        reply = execution::RunControl(shared).CardStep(requester, cpu, kind, count, address);
+        execution::RunControl control(shared);
+        reply = run(control, requester);
     }
     if (reply.status == execution::RunReply::Status::Revoked)
         throw std::runtime_error(reply.message);
@@ -253,6 +257,14 @@ inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind,
     d = StateNodeToPy(reply.body).cast<py::dict>();
     d["ok"] = true;
     return d;
+}
+
+/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`)
+inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0)
+{
+    return PythonCardRun(self, [&](execution::RunControl& control, const execution::Requester& requester) {
+        return control.CardStep(requester, cpu, kind, count, address);
+    });
 }
 
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
@@ -5718,11 +5730,22 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "A send by id (0: the last): its bytes, replies and state", py::arg("id") = 0)
+            // The NeoGS ZX-DMA trace (gszxdmatrace.h, gs-debugger N6)
+            .def("gs_zxdma", [](Emulator& self, size_t last, uint64_t since) -> py::object {
+                GSZxDmaTraceQuery query;
+                query.last = last;
+                query.since = since;
+                return StateNodeToPy(DeviceState::GsZxDmaTrace(self.GetContext(), query));
+            }, "The NeoGS ZX-DMA trace: {available, card, capturing, total_bytes_kept, last_seq, rows: [{seq, frame, "
+               "host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}], text}; last: the "
+               "newest N bytes (0: all), since: the rows after this seq. Recorded while the GS port trace captures",
+               py::arg("last") = 256, py::arg("since") = 0)
             // The GS slot's statistics (gsslotstats.h, gs-debugger N7)
-            .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since) -> py::object {
+            .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since, const std::string& cpu) -> py::object {
                 GSStatsQuery query;
                 query.section = section;
                 query.since = since;
+                query.cpu = cpu; // "ms": the ZX-MultiSound's GS
                 query.waitMs = 500;
                 GSStatsReply reply;
                 {
@@ -5735,11 +5758,12 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "The GS slot's statistics: the block or one section (card, mailbox, interrupts, cpu, audio, dma, spi, sd, "
-               "mp3, flash, rates, errors); since: a baseline from gs_reset_counters", py::arg("section") = "",
-               py::arg("since") = 0)
-            .def("gs_reset_counters", [](Emulator& self) -> py::object {
+               "mp3, flash, rates, errors); since: a baseline from gs_reset_counters; cpu: 'ms' the ZX-MultiSound's GS",
+               py::arg("section") = "", py::arg("since") = 0, py::arg("cpu") = "")
+            .def("gs_reset_counters", [](Emulator& self, const std::string& cpu) -> py::object {
                 GSStatsQuery query;
                 query.waitMs = 500;
+                query.cpu = cpu;
                 GSStatsReply reply;
                 {
                     py::gil_scoped_release release;
@@ -5750,18 +5774,22 @@ namespace PythonBindings
                 if (reply.status != 200)
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
-            }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then")
+            }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then; cpu: "
+               "'ms' the ZX-MultiSound's GS", py::arg("cpu") = "")
             // The firmware objects through the card's profile (gsfirmwareobjects.h, gs-debugger §8A.9)
-            .def("gs_firmware", [](Emulator& self, const std::string& object, const std::string& profile) -> py::object {
+            .def("gs_firmware", [](Emulator& self, const std::string& object, const std::string& profile,
+                                   const std::string& cpu) -> py::object {
                 GSFirmwareObjectsQuery query;
                 query.object = object;
                 query.profile = profile;
+                query.cpu = cpu;
                 const GSFirmwareObjectsReply reply = GSFirmwareObjectsRead(self.GetContext(), query);
                 if (reply.status != 200)
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "The GS card's firmware objects through its profile: struct instances as rows of fields, variables; "
-               "object: one by name; profile: another profile by id", py::arg("object") = "", py::arg("profile") = "")
+               "object: one by name; profile: another profile by id; cpu: 'ms' the ZX-MultiSound's GS",
+               py::arg("object") = "", py::arg("profile") = "", py::arg("cpu") = "")
             .def("gs_firmware_profiles", [](Emulator& self) -> py::object {
                 (void)self;
                 return StateNodeToPy(GSFirmwareProfilesState()["profiles"]);
@@ -5923,7 +5951,7 @@ namespace PythonBindings
                     ev["value"] = e.value;
                     ev["pc"] = e.pc;
                     if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
-                    if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
+                    if (e.side == GSTraceSide::ZxDma) { ev["card_address"] = e.cardAddress(); ev["host_t"] = e.hostT(); ev["wait"] = e.waitT(); ev["dropped"] = e.isDropped(); }
                     if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                     if (e.side == GSTraceSide::Idle) ev["iterations"] = e.iterations;
                     result.append(ev);
@@ -7715,6 +7743,21 @@ namespace PythonBindings
             return d;
         }, "Step out of the current subroutine (emulation ends paused); cpu='gs' / 'ms': the sound card CPU's",
            py::arg("cpu") = "")
+
+        // card_run_to(until, value=0, cpu="gs"): a card CPU's run to a moment (RunControl::CardRunTo)
+        .def("card_run_to", [](Emulator& self, const std::string& until, uint64_t value, const std::string& cpu) {
+            const DebugCpuId card = PythonCpu(self, cpu);
+            if (!IsCardCpu(card))
+                throw py::value_error("cpu must be a card's: 'gs' or 'ms'");
+            return PythonCardRun(self, [&](execution::RunControl& control, const execution::Requester& requester) {
+                return control.CardRunTo(requester, card, until, value);
+            });
+        }, "Run a sound card CPU (the machine paused) until: 'cycle' (card cycle value of the ZX frame, the next "
+           "frame's when passed), 'int' (its next accepted interrupt: the handler's first instruction), 'command' (the "
+           "host's next command write: paused after that main instruction), 'main_t' (the main CPU to T-state value "
+           "of the frame). A breakpoint of any CPU ends it first, 5 s at most. Returns {ok, stop, until, hit, pc, sp, "
+           "main_pc, main_sp, card_cycle, main_t, frame, command, state} or {ok: False, error}",
+           py::arg("until"), py::arg("value") = 0, py::arg("cpu") = "gs")
 
         .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates, const std::string& cpu) -> py::dict {
             py::dict d;

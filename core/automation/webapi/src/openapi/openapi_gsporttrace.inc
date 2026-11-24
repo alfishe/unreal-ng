@@ -122,4 +122,33 @@
         idParameter(profiles);
         profiles["responses"]["200"]["description"] = "{profiles: [{id, title, source, matches, commands, ...}], text}";
         profiles["responses"]["404"]["description"] = "Emulator not found";
+
+        // The NeoGS ZX-DMA trace (gszxdmatrace.h, gs-debugger N6); CLI 'gs zxdma', MCP inspect_state aspect
+        // audio_gs_zxdma, Lua / Python gs_zxdma
+        Json::Value& zxdma = paths["/api/v1/emulator/{id}/state/audio/gs/zxdma"]["get"];
+        zxdma["summary"] = "NeoGS ZX-DMA trace";
+        zxdma["description"] =
+            "The bytes the host read from / wrote to the NeoGS card RAM through the ZX-DMA window, one row a byte, "
+            "oldest first: seq (the port trace history's number), frame and host_t (the host frame and T-state at the "
+            "access end, after the wait), card_time (card CPU cycles), direction (read / write), card_address, page "
+            "(address >> 14), value, wait (/WAIT T-states, capped at 255), host_pc, dropped (the pending byte an access "
+            "of the other direction dropped). Recorded while the GS port trace captures (POST "
+            "control/audio/gs/porttrace {action: start}); the DAC fetches share its ring (evicted). Also capturing, "
+            "armed, total_bytes_kept, last_seq (pass it back as since), restarted (since was past last_seq: a new "
+            "session), counters (the module's bytes_read / written / dropped, wait_t_states), text";
+        zxdma["tags"].append("Audio State");
+        idParameter(zxdma);
+        for (const char* name : {"last", "since"})
+        {
+            Json::Value& param = zxdma["parameters"][zxdma["parameters"].size()];
+            param["name"] = name;
+            param["in"] = "query";
+            param["required"] = false;
+            param["schema"]["type"] = "integer";
+            param["description"] = std::string(name) == "last" ? "The newest N bytes (default 256, 0: every one kept)"
+                                                               : "Only the rows after this seq (a poller's cursor)";
+        }
+        zxdma["responses"]["200"]["description"] = "{available, card, capturing, total_bytes_kept, last_seq, rows, text}";
+        zxdma["responses"]["400"]["description"] = "last or since is not a number";
+        zxdma["responses"]["404"]["description"] = "Emulator not found, or no NeoGS fitted (the classic GS has no ZX-DMA)";
     }

@@ -25,6 +25,7 @@
 #include "emulator/sound/chips/chipwritehistory.h"
 #include "emulator/sound/chips/gs/gscommandlog.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
 
 class EmulatorContext;
 
@@ -80,6 +81,11 @@ public:
     bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const override;
     /// The card's General Sound: the debugger's `ms` CPU
     GeneralSoundCard* DebugGeneralSound() override;
+    /// Its statistics, published at this card's frame ends while read (`gs stats --cpu ms`)
+    GSStatsPublisher* DebugGeneralSoundStats() override
+    {
+        return &_gsStats;
+    }
     /// endregion </ICard>
 
     MultiSoundCard& Card()
@@ -137,6 +143,7 @@ private:
     history::Registered<GSTraceEvent> _gsHistory;  ///< `<slot>.gs`: the card's GS port and activity events
     ExecHistory _gsExecHistory;                    ///< `<slot>.gs.cpu`: the instructions of the card's GS Z80
     GSCommandLog _gsCommandLog;                    ///< `<slot>.gs.commands`: the host's GS commands, decoded
+    GSStatsPublisher _gsStats;                     ///< the GS's statistics (gsslotstats.h), published while read
     MultiSoundCard _card;
     uint64_t _origin = 0;
     uint64_t _last = 0;

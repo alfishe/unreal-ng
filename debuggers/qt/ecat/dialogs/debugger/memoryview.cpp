@@ -650,6 +650,8 @@ MemoryPanel::MemoryPanel(Emulator * e, const MemorySource &source, QWidget *pare
     h->addWidget(save_button);
 
     v->addLayout(h);
+    m_banner = create_banner(this);
+    v->addWidget(m_banner);
     if (source.windows) {
         m_banks = new BankStrip(source.windows, m_view->base(), this);
         if (source.pc) m_banks->set_pc(source.pc);
@@ -824,6 +826,34 @@ void MemoryPanel::save_file()
         QMessageBox::critical(this, tr("Error"), tr("Cannot write the file"));
 }
 
+void MemoryPanel::set_banner(const QString &text)
+{
+    set_banner_text(m_banner, text);
+}
+
+QLabel * create_banner(QWidget * parent)
+{
+    QLabel * l = new QLabel(parent);
+    l->setObjectName("zxdma_banner");
+    l->setFont(dbg::font());
+    l->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    l->hide();
+    return l;
+}
+
+void set_banner_text(QLabel * banner, const QString &text)
+{
+    if (banner == nullptr) return;
+    if (banner->text() != text) {
+        const dbg::Colors c = dbg::colors(banner->palette());
+        banner->setStyleSheet(QString("QLabel { background: %1; color: %2; padding: 1px 4px; }")
+                                  .arg(c.pc_back.name(), c.jump.name()));
+        banner->setText(text);
+        banner->setToolTip(text);
+    }
+    banner->setVisible(!text.isEmpty());
+}
+
 //------------------------------- MemoryTabs -------------------------------//
 
 MemoryTabs::MemoryTabs(Emulator * e, QWidget *parent):
@@ -924,6 +954,14 @@ void MemoryTabs::show_page(CPU * cpu, unsigned int address)
     m_paged->show_page(m, windows[i].offset + (address - windows[i].start));
 }
 
+bool MemoryTabs::show_memory_offset(Memory * memory, unsigned int offset)
+{
+    if (m_paged == nullptr || memory == nullptr || memory->page_size() == 0 || offset >= memory->get_size()) return false;
+    setCurrentWidget(m_paged);
+    m_paged->show_page(memory, offset);
+    return true;
+}
+
 void MemoryTabs::refresh()
 {
     for (MemoryPanel * m : m_panels) m->refresh();
@@ -934,6 +972,18 @@ void MemoryTabs::set_read_only(bool on)
 {
     for (MemoryPanel * m : m_panels) m->set_read_only(on);
     if (m_paged != nullptr) m_paged->set_read_only(on);
+}
+
+MemoryPanel * MemoryTabs::panel_of(CPU * cpu) const
+{
+    for (MemoryPanel * p : m_panels)
+        if (p->view()->source().cpu == cpu) return p;
+    return nullptr;
+}
+
+void MemoryTabs::set_banner(CPU * cpu, const QString &text)
+{
+    if (MemoryPanel * p = panel_of(cpu)) p->set_banner(text);
 }
 
 void MemoryTabs::mark_stop()

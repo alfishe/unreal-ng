@@ -112,7 +112,12 @@ TEST_F(DebugBoards_Test, TheNeoGSBoardsCarryTheCardsState)
 
     const DebugBoardReply dma = DebugBoards::Read(_ctx, "neogs_dma", true);
     EXPECT_EQ(Value(dma, "zx.mode").s, s.zxMode);
+    EXPECT_EQ(Value(dma, "zx.next_byte").i, s.zxNextByte);
     EXPECT_EQ(Value(dma, "modules[sd].address").i, s.dmaAddress[1] & 0x1FFFFF);
+    // DMA_MOD numbers the modules from 1 (1 ZX, 2 SD, 3 MP3); 0 selects none
+    const char* const modules[3] = {"modules[zx].selected", "modules[sd].selected", "modules[mp3].selected"};
+    for (int m = 0; m < 3; m++)
+        EXPECT_EQ(Value(dma, modules[m]).b, s.dmaSelect == m + 1) << modules[m] << ", DMA_MOD " << int(s.dmaSelect);
 
     const DebugBoardReply sd = DebugBoards::Read(_ctx, "neogs_sd", true);
     EXPECT_TRUE(Value(sd, "present").b);
@@ -127,6 +132,25 @@ TEST_F(DebugBoards_Test, TheNeoGSBoardsCarryTheCardsState)
     const DebugBoardReply flash = DebugBoards::Read(_ctx, "neogs_flash");
     ASSERT_EQ(flash.status, 200);
     EXPECT_NE(flash.text.find("actions: save"), std::string::npos) << flash.text;
+}
+
+/// P5.5: the Paging group names MPAGEX and says whether extended paging is on
+TEST_F(DebugBoards_Test, TheNeoGSPagingGroupNamesMpagEx)
+{
+    ASSERT_TRUE(FitNeoGSWithSd(_ctx, _image->path()));
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(_ctx->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    DebugBoardReply neogs = DebugBoards::Read(_ctx, "neogs", true);
+    EXPECT_FALSE(Value(neogs, "extended_paging").b);
+
+    card->memory().setConfig(0x01 | NeoGSMemory::CFG_EXPAG);
+    card->memory().writeMpagEx(0x05);
+    neogs = DebugBoards::Read(_ctx, "neogs", true);
+    EXPECT_TRUE(Value(neogs, "extended_paging").b);
+    EXPECT_EQ(Value(neogs, "mpagex").i, 0x05);
+    const DebugBoardReply full = DebugBoards::Read(_ctx, "neogs");
+    EXPECT_NE(full.text.find("MPAGEX=#05"), std::string::npos) << full.text;
+    EXPECT_NE(full.text.find("MPAGEX window 3"), std::string::npos) << full.text;
 }
 
 /// N8: a folder inserted through the SD board is the medium of the slot `sd.ngs`; eject empties it

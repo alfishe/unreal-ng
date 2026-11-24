@@ -133,6 +133,12 @@ class Emulator:
         MPAG page, DAC channels, card CPU, and on NeoGS a 'neogs' dict (windows, SD, MP3, DMA,
         ZX-DMA). available=False with a description when no card is fitted"""
 
+    def gs_zxdma(self, last: int = 256, since: int = 0) -> dict:
+        """NeoGS ZX-DMA trace: the bytes the host moved through the window while the GS port
+        trace captures; rows[{seq, frame, host_t, card_time, direction, card_address, page, value,
+        wait, host_pc, dropped}], last_seq (pass as since), counters, text. available=False without
+        a NeoGS"""
+
     def audio_covox_state(self) -> dict:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""
@@ -613,6 +619,11 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
     # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
     # or {ok: False, error}
+    # card_run_to(until, value=0, cpu="gs"): the card CPU's run to a moment - "cycle" (card cycle value of the ZX
+    # frame; the next frame's when passed), "int" (its next accepted interrupt: the handler's first instruction),
+    # "command" (the host's next command write: paused after that main instruction), "main_t" (the main CPU to
+    # T-state value of the frame); the step's answer plus until, hit, target_cycle / target_t, card_cycle, main_t,
+    # frame (command: command)
     # select_cpu("gs") / selected_cpu(): the CPU the front-ends show, {cpu, follows}; a card shown follows the main
     # CPU's steps of the paused machine (its state at the main CPU's moment); "main" ends it
         

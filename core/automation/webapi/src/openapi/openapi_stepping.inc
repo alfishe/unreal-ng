@@ -193,6 +193,44 @@
         "Step out completed (pc/sp/state)";
 
     // Skip until endpoint (fast-forward to a PC target)
+    {
+        // A card CPU's run to a moment (RunControl::CardRunTo; the card debugger's Run to)
+        Json::Value& op = paths["/api/v1/emulator/{id}/card_run_to"]["post"];
+        op["summary"] = "Run a sound card CPU to a card cycle, its next interrupt, the next host command or a main T";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "The machine paused, from a card CPU's view (cpu gs, the default, or ms). until: cycle (the card CPU "
+            "parks at the first instruction boundary at or after card cycle value of the ZX frame, the gs report's "
+            "cpu.frame_cycle; a cycle it already passed: the next frame's), int (parks at the first instruction of "
+            "the handler of the card's next accepted interrupt), command (the main CPU's next OUT to the card's "
+            "command port: the machine pauses after that main instruction, the card has not taken the command yet; "
+            "the reply adds command), main_t (the main CPU runs to T-state value of the frame, the next frame's when "
+            "at or past it). A breakpoint of any CPU on the way ends it; no end within 5 s pauses with the reason "
+            "timeout. The reply: stop {cpu, reason step / breakpoint / pause / timeout, cpu_pc, breakpoint_id, address, "
+            "access, main, command}, until, hit, target_cycle / target_t, cpu, the card CPU's pc and sp, main_pc, "
+            "main_sp, card_cycle (where the card stands in the frame), main_t, frame, state, message.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& properties = op["requestBody"]["content"]["application/json"]["schema"]["properties"];
+        op["requestBody"]["content"]["application/json"]["schema"]["required"].append("until");
+        properties["cpu"]["type"] = "string";
+        properties["cpu"]["enum"].append("gs");
+        properties["cpu"]["enum"].append("ms");
+        properties["cpu"]["description"] = "The card CPU (default gs); ?cpu= works too";
+        properties["until"]["type"] = "string";
+        for (const char* until : {"cycle", "int", "command", "main_t"})
+            properties["until"]["enum"].append(until);
+        properties["value"]["type"] = "integer";
+        properties["value"]["description"] =
+            "cycle: the card cycle of the frame (0 .. the frame's card cycles - 1); main_t: the main CPU's T-state of "
+            "the frame (0 .. frame - 1); not used by int and command";
+        op["responses"]["200"]["description"] = "Where it stopped (stop, hit, pc, card_cycle, main_t, ...)";
+        op["responses"]["400"]["description"] = "No or an unknown until, a value out of range, cpu main";
+        op["responses"]["404"]["description"] = "Emulator instance not found, or the card CPU is not there";
+        op["responses"]["409"]["description"] = "Not paused, a step of that CPU under way, or run control held";
+    }
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["summary"] = "Fast-forward until PC reaches target";
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"] =

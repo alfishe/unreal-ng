@@ -146,6 +146,8 @@ struct NeoGSStateInfo
     uint8_t pages[4] = {};
     bool windowFlash[4] = {};
     uint8_t mpag = 0;
+    uint8_t mpagex = 0;               // the last MPAGEX (#10) write that took effect (extended paging on)
+    bool extendedPaging = false;      // GSCFG0.EXPAG: MPAG sets PG2 only, MPAGEX sets PG3
     bool ledOn = false;
     bool readyForCommands = false;
     // Output: the DAC's level now, before the line output's coupling (dacLevel)
@@ -194,7 +196,8 @@ struct NeoGSStateInfo
     const char* zxMode = "off";       // off | watch | divert
     bool zxOverlayInstalled = false;
     bool zxHostMemoryBus = true;      // the card's ZX-bus carries the host's memory cycles (false: the Sprinter's ISA adapter)
-    uint8_t zxReadLatch = 0;          // the byte the next host read gets
+    uint8_t zxReadLatch = 0;          // the latch now (the byte fetched by the last completed read)
+    uint8_t zxNextByte = 0;           // the byte the next diverted host read returns (a pending read's cell, else the latch)
     const char* zxPending = "none";   // none | read | write
     uint32_t zxPendingAddress = 0;
     uint64_t zxBytesRead = 0;
@@ -513,9 +516,22 @@ public:
     /// catch-up would run now. 0 without a CPU, or while the host clock has no base for this frame
     virtual int64_t hostLead() const { return 0; }
     virtual double cardUnitsPerSecond() const { return 0.0; }
+    /// The card CPU's clock now (classic GS 12 MHz, the MultiSound's 16 MHz, NeoGS by GSCFG0); 0 without a CPU
+    virtual uint32_t cardCpuClockHz() const { return 0; }
+    /// `units` of card time (cardTime, cardFrameTime) as CPU cycles at the clock now: `c 119,985` (gs-debugger A4); 0
+    /// without a CPU
+    int64_t cardCycles(int64_t units) const
+    {
+        const uint32_t hz = cardCpuClockHz();
+        const double perSecond = cardUnitsPerSecond();
+        return hz != 0 && perSecond > 0.0 ? static_cast<int64_t>(static_cast<double>(units) * hz / perSecond) : 0;
+    }
     /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
     /// same instruction of the frame
     virtual int64_t cardFrameTime() const { return 0; }
+    /// The ZX frame's length in card time (the unit of cardFrameTime), as the frame start set it: cardCycles of it is
+    /// the card cycles of the frame. 0 without a CPU or before the first frame
+    virtual int64_t cardFrameLength() const { return 0; }
     /// The card runs to the ZX frame's end (handleFrameEnd): the frame counter already names the next frame
     virtual bool inFrameEndCatchUp() const { return false; }
     /// A script's write to card memory as the card CPU's write would land (a ROM or flash window keeps its byte):
@@ -568,6 +584,13 @@ public:
     virtual bool isPortTraceArmed() const = 0;
     virtual std::vector<GSTraceEvent> getPortTraceEvents() const = 0;
     virtual std::vector<GSTraceEvent> getPortTraceLast(size_t count) const = 0;
+    /// The kept events of one side numbered after `since` (a poller's cursor: the ZX-DMA trace's `since`), the newest
+    /// `last` (0: all) with their numbers; @p matched every kept event of that side, @p lastSeq the newest event's
+    /// number, @p evicted the events the ring holding that side evicted (GSPortTraceRecorder::select). The NeoGS keeps
+    /// its ZX-DMA bytes in a ring of their own: the DAC fetches would evict them within a second
+    virtual std::vector<std::pair<uint64_t, GSTraceEvent>> getPortTraceSide(GSTraceSide side, uint64_t since, size_t last,
+                                                                            size_t& matched, uint64_t& lastSeq,
+                                                                            uint64_t& evicted) const = 0;
     virtual size_t getPortTraceEventCount() const = 0;
     virtual uint64_t getPortTraceTotalProduced() const = 0;
     virtual uint64_t getPortTraceTotalEvicted() const = 0;

@@ -60,6 +60,11 @@ public:
     bool cursor_line(DisasmLine &line) const;
     //The windows of a paged space: a line marks where each one starts
     void set_windows(const std::vector<AddressWindow> &windows) { m_windows = windows; }
+    //Not in ecat (gui-card-debugger S4): the addresses whose bytes come from elsewhere at run time (a NeoGS's ZX-DMA
+    //diverting the ROM: the listing shows the ROM, the CPU reads card RAM); their rows say so. Off: from > to
+    void set_runtime_bytes(unsigned int from, unsigned int to, const QString &note);
+    bool runtime_bytes(unsigned int address) const { return m_runtime_from <= m_runtime_to && address >= m_runtime_from && address <= m_runtime_to; }
+    QString runtime_note() const { return m_runtime_note; }
 
     unsigned int space() const { return m_space; }
     int base() const { return m_base; }
@@ -126,6 +131,9 @@ private:
     bool label_cut(const std::string &label) const;
     PaintedRows m_painted_arrows;   //The arrows' strip as one row
     std::vector<AddressWindow> m_windows;
+    unsigned int m_runtime_from = 1;
+    unsigned int m_runtime_to = 0;
+    QString m_runtime_note;
 
     int rows() const;
     int bytes_chars() const;

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -26,10 +27,13 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/chips/gs/gsmodplayer.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/state/devicestate.h"
 
 namespace
 {
@@ -689,6 +693,157 @@ TEST_F(SoundChip_GSLightweight_Test, TTD_RoundTripDeterministic)
         EXPECT_NEAR(rmsB / rmsA, 1.0, 0.03) << "restored waveform diverged beyond the DC offset";
     }
 }
+
+/// region <Inspector (gs-debugger A10, W2-W3)>
+
+/// W2: during a module upload the interpreter reads "Upload, <received> of <total> bytes"; the total comes from the
+/// module's header once its 1084 bytes are in; D2 ends the upload and the player has the module, stopped
+TEST_F(SoundChip_GSLightweight_Test, Inspector_UploadShowsReceivedOfTotal)
+{
+    const std::vector<uint8_t> module = buildTestModule(false);
+    EXPECT_EQ(GSModPlayer::expectedModuleSize(module.data(), module.size()), module.size());
+    EXPECT_EQ(chip->interpreterState().find("state")->s, "idle");
+
+    chip->sendData(0x01);
+    chip->sendCommand(0x30);
+    ASSERT_EQ(chip->readData(), 1);
+    for (size_t i = 0; i < 500; i++)
+        chip->sendData(module[i]);
+    StateNode in = chip->interpreterState();
+    EXPECT_EQ(in.find("state")->s, "upload");
+    EXPECT_EQ(in.find("command")->i, 0x30);
+    EXPECT_EQ(in.find("upload")->find("received")->i, 500);
+    EXPECT_EQ(in.find("upload")->find("total")->i, 0) << "the total is known once the header is in";
+    EXPECT_EQ(in.find("text")->s, "Upload, 500 bytes");
+
+    for (size_t i = 500; i < 2000; i++)
+        chip->sendData(module[i]);
+    in = chip->interpreterState();
+    EXPECT_TRUE(in.find("upload")->find("active")->b);
+    EXPECT_EQ(in.find("upload")->find("kind")->s, "module");
+    EXPECT_EQ(in.find("expected")->i, 3196);
+    EXPECT_EQ(in.find("received")->i, 2000);
+    EXPECT_EQ(in.find("text")->s, "Upload, 2,000 of 3,196 bytes");
+    EXPECT_NE(DeviceState::GeneralSoundReport(*chip, nullptr).find("strip")->s.find("Upload, 2,000 of 3,196 bytes"), std::string::npos);
+
+    for (size_t i = 2000; i < module.size(); i++)
+        chip->sendData(module[i]);
+    chip->sendCommand(0xD2);
+    in = chip->interpreterState();
+    EXPECT_EQ(in.find("state")->s, "idle");
+    EXPECT_FALSE(in.find("upload")->find("active")->b);
+    EXPECT_EQ(in.find("upload")->find("received")->i, 3196);
+    EXPECT_EQ(in.find("upload")->find("total")->i, 3196);
+    const StateNode player = chip->playerState();
+    EXPECT_TRUE(player.find("loaded")->b);
+    EXPECT_EQ(player.find("state")->s, "stopped");
+    ASSERT_EQ(player.find("modules")->items.size(), 1u);
+    EXPECT_EQ(player.find("modules")->items[0].find("marker")->s, "(S)");
+    EXPECT_EQ(player.find("modules")->items[0].find("length")->i, 3196);
+}
+
+/// W2: a reply the host has not read, params ahead of their command, a selector awaited
+TEST_F(SoundChip_GSLightweight_Test, Inspector_ReplyParamsAndSelector)
+{
+    chip->sendCommand(0x20); // total memory: three reply bytes
+    StateNode in = chip->interpreterState();
+    EXPECT_EQ(in.find("state")->s, "reply");
+    EXPECT_TRUE(in.find("reply_pending")->b);
+    EXPECT_EQ(in.find("replies_queued")->i, 3);
+    EXPECT_EQ(in.find("text")->s, "Reply, 3 bytes pending");
+    ASSERT_NE(in.find("command_name"), nullptr) << "named by the v1.05a profile";
+
+    for (int i = 0; i < 3; i++)
+        chip->readData();
+    EXPECT_EQ(chip->interpreterState().find("state")->s, "idle") << "the host read the reply";
+
+    chip->sendData(0x07); // data first: the byte waits for its command
+    in = chip->interpreterState();
+    EXPECT_EQ(in.find("state")->s, "params");
+    EXPECT_EQ(in.find("params_queued")->i, 1);
+    EXPECT_EQ(in.find("received")->i, 1);
+
+    chip->sendCommand(0x50); // takes its param, then waits for the selector
+    in = chip->interpreterState();
+    EXPECT_EQ(in.find("state")->s, "command");
+    EXPECT_EQ(in.find("command")->i, 0x50);
+    EXPECT_EQ(in.find("expected")->i, 1);
+    EXPECT_TRUE(in.find("selector_expected")->b);
+}
+
+/// W3: a started module plays: position / row advance, the channel names its sample, period, note and rate, the
+/// sample row has the Unreal GS dialog's columns; COM32 stops it ((S)) and the firmware window mirrors the variables
+TEST_F(SoundChip_GSLightweight_Test, Inspector_PlayerAdvancesAndMirrorsTheFirmwareWindow)
+{
+    ASSERT_EQ(uploadModule(buildTestModule(true)), 1); // F01: one row per tick
+    ASSERT_EQ(startPlayback(), 1);
+    runFrames(6);
+
+    StateNode player = chip->playerState();
+    EXPECT_TRUE(player.find("playing")->b);
+    EXPECT_EQ(player.find("state")->s, "playing");
+    EXPECT_EQ(player.find("speed")->i, 1);
+    EXPECT_EQ(player.find("bpm")->i, 125);
+    EXPECT_GE(player.find("row")->i, 4) << "one row per 20 ms tick";
+    EXPECT_EQ(player.find("song_length")->i, 2);
+    const StateNode& voice = player.find("channels")->items[0];
+    EXPECT_EQ(voice.find("sample")->i, 1);
+    EXPECT_EQ(voice.find("period")->i, 428);
+    EXPECT_EQ(voice.find("note")->s, "C-2");
+    EXPECT_NEAR(voice.find("rate_hz")->d, 8287.1, 0.1);
+    ASSERT_EQ(player.find("samples")->items.size(), 1u) << "only the samples with data";
+    const StateNode& smp = player.find("samples")->items[0];
+    EXPECT_EQ(smp.find("number")->i, 1);
+    EXPECT_EQ(smp.find("volume")->i, 63);
+    EXPECT_EQ(smp.find("length")->i, 64);
+    EXPECT_TRUE(smp.find("loop")->b);
+    EXPECT_EQ(smp.find("channel")->i, 0);
+    EXPECT_EQ(smp.find("note")->s, "C-2");
+    EXPECT_EQ(smp.find("priority")->i, 0);
+    EXPECT_EQ(player.find("modules")->items[0].find("marker")->s, "(P)");
+
+    const StateNode report = DeviceState::GeneralSoundReport(*chip, nullptr);
+    ASSERT_NE(report.find("interpreter"), nullptr);
+    ASSERT_NE(report.find("player"), nullptr);
+    EXPECT_NE(report.find("strip")->s.find("playing pos 0 row"), std::string::npos) << report.find("strip")->s;
+
+    // The firmware objects of the v1.05a profile answer on the card without RAM from the mirror
+    const StateNode objects = GSReadFirmwareObjects(*chip, *GSFirmwareProfiles()[1]);
+    std::map<std::string, int64_t> values;
+    for (const StateNode& v : objects.find("window_variables")->items)
+        if (const StateNode* value = v.find("value"))
+        {
+            values[v.find("name")->s] = value->i;
+            EXPECT_EQ(v.find("source")->s, "mirror") << v.find("name")->s;
+        }
+    EXPECT_EQ(values["MODVOL"], 0x40);
+    EXPECT_EQ(values["CNTMOD"], 1);
+    EXPECT_EQ(values["MTSPEED"], 1);
+    EXPECT_EQ(values["MTPATPS"], player.find("row")->i);
+
+    const int64_t row = player.find("row")->i;
+    chip->sendData(0x00);
+    chip->sendCommand(0x32);
+    player = chip->playerState();
+    EXPECT_FALSE(player.find("playing")->b);
+    EXPECT_EQ(player.find("modules")->items[0].find("marker")->s, "(S)");
+    EXPECT_EQ(player.find("samples")->items[0].find("channel")->i, -1) << "no channel sounds it while stopped";
+    EXPECT_GE(player.find("row")->i, row);
+}
+
+TEST(GSModPlayer_Notes, PeriodsNameTheirNotes)
+{
+    EXPECT_EQ(GSModPlayer::noteName(GSModPlayer::noteForPeriod(856)), "C-1");
+    EXPECT_EQ(GSModPlayer::noteName(GSModPlayer::noteForPeriod(428)), "C-2");
+    EXPECT_EQ(GSModPlayer::noteName(GSModPlayer::noteForPeriod(113)), "B-3");
+    EXPECT_EQ(GSModPlayer::noteName(GSModPlayer::noteForPeriod(254)), "A-2");
+    EXPECT_EQ(GSModPlayer::noteForPeriod(0), -1);
+    EXPECT_EQ(GSModPlayer::noteName(-1), "");
+    EXPECT_EQ(GSModPlayer::rateForPeriod(0), 0.0);
+    EXPECT_EQ(GSModPlayer::expectedModuleSize(nullptr, 0), 0u);
+}
+
+/// endregion </Inspector>
 
 /// Regression: pausing the emulator stops handleFrameStart/End from being
 /// called at all (MainLoop's pause loop never reaches SoundManager::

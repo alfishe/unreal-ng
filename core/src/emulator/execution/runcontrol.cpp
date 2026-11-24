@@ -15,26 +15,29 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 
 namespace execution
 {
 
 std::string MainPositionText(const MainPosition& main)
 {
-    char text[160];
+    char text[192];
     const std::string gap = std::to_string(main.gapT) + " T past the card";
     if (main.frameEnd)
         return "main between frames; " + gap;
+    // Device /WAIT main got in the instruction (ZX-DMA, gui-card-debugger S3): "+ 3 T wait"
+    const std::string wait = main.waitT ? " + " + std::to_string(main.waitT) + " T wait" : std::string();
     if (!main.timed)
     {
-        std::snprintf(text, sizeof(text), "main #%04X; %s", main.pc, gap.c_str());
+        std::snprintf(text, sizeof(text), "main #%04X%s; %s", main.pc, wait.c_str(), gap.c_str());
         return text;
     }
     std::string total = std::to_string(main.totalT);
     if (main.totalTAlt)
         total += "/" + std::to_string(main.totalTAlt);
-    std::snprintf(text, sizeof(text), "main #%04X%s: T %u of %s%s%s%s; %s", main.pc,
-                  main.onBoundary ? " (finished)" : "", main.elapsedT, total.c_str(),
+    std::snprintf(text, sizeof(text), "main #%04X%s: T %u of %s%s%s%s%s; %s", main.pc,
+                  main.onBoundary ? " (finished)" : "", main.elapsedT, total.c_str(), wait.c_str(),
                   main.contended ? " contended" : "", main.busCycle >= 0 ? ", " : "",
                   main.busCycle >= 0 ? Z80MCycleDecoder::Description(main.cycles.cycles[main.busCycle].kind) : "",
                   gap.c_str());
@@ -47,6 +50,7 @@ StateNode MainPositionNode(const MainPosition& main)
     node["text"] = MainPositionText(main);
     node["pc"] = static_cast<int>(main.pc);
     node["t_in_instruction"] = static_cast<int>(main.tInInstruction);
+    node["wait_t"] = static_cast<int>(main.waitT);
     node["gap_t"] = static_cast<int>(main.gapT);
     node["frame_end"] = main.frameEnd;
     node["on_boundary"] = main.onBoundary;
@@ -294,6 +298,28 @@ RunReply RunControl::StepOut(const Requester& requester)
     return Finish("Step out completed");
 }
 
+namespace
+{
+/// A card reply's refusal
+RunReply CardRefusal(RunReply::Status status, const std::string& message)
+{
+    RunReply reply;
+    reply.status = status;
+    reply.error = status == RunReply::Status::BadRequest ? "Bad Request" : "Conflict";
+    reply.message = message;
+    reply.body["status"] = "error";
+    reply.body["message"] = message;
+    return reply;
+}
+
+std::string Hex4(unsigned value)
+{
+    char text[16];
+    std::snprintf(text, sizeof(text), "#%04X", value & 0xFFFF);
+    return text;
+}
+}  // namespace
+
 RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const std::string& kind, unsigned count,
                               uint16_t address)
 {
@@ -302,15 +328,6 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
     EmulatorContext* context = _emulator->GetContext();
     if (HeldByOther(context, requester))
         return HeldReply("step");
-    RunReply reply;
-    auto refuse = [&reply](RunReply::Status status, const std::string& message) {
-        reply.status = status;
-        reply.error = status == RunReply::Status::BadRequest ? "Bad Request" : "Conflict";
-        reply.message = message;
-        reply.body["status"] = "error";
-        reply.body["message"] = message;
-        return reply;
-    };
     GSCardTarget::StepKind step = GSCardTarget::StepKind::None;
     if (kind == "in")
         step = GSCardTarget::StepKind::In;
@@ -321,27 +338,196 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
     else if (kind == "to")
         step = GSCardTarget::StepKind::To;
     else
-        return refuse(RunReply::Status::BadRequest, "Unknown step '" + kind + "' (in, over, out, to)");
+        return CardRefusal(RunReply::Status::BadRequest, "Unknown step '" + kind + "' (in, over, out, to)");
     if (count < 1 || count > 10000)
-        return refuse(RunReply::Status::BadRequest, "count must be 1-10000");
+        return CardRefusal(RunReply::Status::BadRequest, "count must be 1-10000");
     GSCardTarget* target =
         context && context->pDebugManager ? context->pDebugManager->GetCardTarget(cpu) : nullptr;
     if (!target)
-        return refuse(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) + " not available");
+        return CardRefusal(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) + " not available");
     if (!_emulator->IsPaused())
-        return refuse(RunReply::Status::Refused, "Emulator is not paused: pause it before a step");
+        return CardRefusal(RunReply::Status::Refused, "Emulator is not paused: pause it before a step");
     if (const std::string error = target->ArmStep(step, count, address); !error.empty())
-        return refuse(RunReply::Status::Refused, error);
+        return CardRefusal(RunReply::Status::Refused, error);
 
-    const uint64_t stopsBefore = target->StopCount();
+    const std::string name = DebugCpuName(cpu);
+    const bool to = step == GSCardTarget::StepKind::To;
+    CardRunTexts texts;
+    texts.done = to ? "Ran cpu " + name + " to " + Hex4(address) : "Step " + kind + " of cpu " + name + " completed";
+    texts.timeout = to ? "cpu " + name + " did not reach " + Hex4(address) + " in time; paused"
+                       : "The step of cpu " + name + " did not end in time; paused";
+    texts.other = "Stopped before the step of cpu " + name + " ended";
+    bool ended = false;
+    RunReply reply = RunCard(requester, cpu, *target,
+                             std::chrono::milliseconds(step == GSCardTarget::StepKind::In ? 2000 : 5000), texts, ended);
+    if (reply.Ok() && to)
+        reply.body["hit"] = ended;
+    return reply;
+}
+
+RunReply RunControl::CardRunTo(const Requester& requester, DebugCpuId cpu, const std::string& until, uint64_t value)
+{
+    if (!_emulator)
+        return Missing();
+    EmulatorContext* context = _emulator->GetContext();
+    if (HeldByOther(context, requester))
+        return HeldReply("step");
+    GSCardTarget::StepKind step = GSCardTarget::StepKind::None;
+    const bool mainT = until == "main_t";
+    if (until == "cycle")
+        step = GSCardTarget::StepKind::Cycle;
+    else if (until == "int")
+        step = GSCardTarget::StepKind::Int;
+    else if (until == "command")
+        step = GSCardTarget::StepKind::Command;
+    else if (!mainT)
+        return CardRefusal(RunReply::Status::BadRequest,
+                           "Unknown run '" + until + "' (cycle, int, command, main_t)");
+    if (!IsCardCpu(cpu))
+        return CardRefusal(RunReply::Status::BadRequest,
+                           std::string("cpu ") + DebugCpuName(cpu) + ": card_run_to takes a card CPU (gs, ms)");
+    GSCardTarget* target =
+        context && context->pDebugManager ? context->pDebugManager->GetCardTarget(cpu) : nullptr;
+    GeneralSoundCard* card = target ? target->Card() : nullptr;
+    if (!card)
+        return CardRefusal(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) +
+                                                          " not available: no card with a CPU in its slot");
+    if (!_emulator->IsPaused())
+        return CardRefusal(RunReply::Status::Refused, "Emulator is not paused: pause it before a run");
+    const std::string name = DebugCpuName(cpu);
+
+    if (mainT)
+        return CardRunToMainT(cpu, *target, value);
+
+    if (step == GSCardTarget::StepKind::Cycle)
+    {
+        const int64_t frameCycles = card->cardCycles(card->cardFrameLength());
+        if (frameCycles > 0 && value >= static_cast<uint64_t>(frameCycles))
+            return CardRefusal(RunReply::Status::BadRequest,
+                               "value " + std::to_string(value) + ": a card cycle of the frame is 0.." +
+                                   std::to_string(frameCycles - 1));
+        if (value > UINT32_MAX)
+            return CardRefusal(RunReply::Status::BadRequest, "value " + std::to_string(value) + " out of range");
+    }
+    if (const std::string error = target->ArmUntil(step, static_cast<uint32_t>(value)); !error.empty())
+        return CardRefusal(RunReply::Status::Refused, error);
+
+    CardRunTexts texts;
+    if (step == GSCardTarget::StepKind::Cycle)
+    {
+        texts.done = "Ran cpu " + name + " to card cycle " + std::to_string(value);
+        texts.timeout = "cpu " + name + " did not reach card cycle " + std::to_string(value) + " in time; paused";
+    }
+    else if (step == GSCardTarget::StepKind::Int)
+    {
+        texts.done = "cpu " + name + " accepted an interrupt";
+        texts.timeout = "cpu " + name + " accepted no interrupt in time; paused";
+    }
+    else
+    {
+        texts.done = "The host wrote a command to cpu " + name;
+        texts.timeout = "The host wrote no command to cpu " + name + " in time; paused";
+    }
+    texts.other = "Stopped before the run of cpu " + name + " to its " +
+                  (step == GSCardTarget::StepKind::Cycle ? "cycle" : step == GSCardTarget::StepKind::Int
+                                                                         ? "next interrupt"
+                                                                         : "next host command") +
+                  " ended";
+    bool ended = false;
+    RunReply reply = RunCard(requester, cpu, *target, std::chrono::milliseconds(5000), texts, ended);
+    if (!reply.Ok())
+        return reply;
+    reply.body["until"] = until;
+    reply.body["hit"] = ended;
+    if (step == GSCardTarget::StepKind::Cycle)
+        reply.body["target_cycle"] = static_cast<int64_t>(value);
+    StateNode& stop = reply.body["stop"];
+    if (ended && step == GSCardTarget::StepKind::Command)
+    {
+        const GSCardTarget::Stop last = target->LastStop();
+        reply.body["command"] = static_cast<int>(last.value);
+        stop["command"] = static_cast<int>(last.value);
+    }
+    // The message says where it stopped
+    std::string message = reply.message;
+    if (ended && step == GSCardTarget::StepKind::Cycle)
+    {
+        if (const StateNode* reached = reply.body.find("card_cycle"))
+            message += ": stopped at card cycle " + std::to_string(reached->i) + ", " + Hex4(static_cast<unsigned>(reply.body["pc"].i));
+    }
+    else if (ended && step == GSCardTarget::StepKind::Int)
+        message += ": parked at the handler's first instruction " + Hex4(static_cast<unsigned>(reply.body["pc"].i));
+    else if (ended)
+    {
+        const StateNode* mainPc = reply.body.find("main_pc");
+        char command[8];
+        std::snprintf(command, sizeof(command), "#%02X", static_cast<unsigned>(target->LastStop().value));
+        message += std::string(" ") + command + "; paused after the main instruction (main at " +
+                   (mainPc ? Hex4(static_cast<unsigned>(mainPc->i)) : std::string("?")) +
+                   "), the card has not taken it yet";
+    }
+    reply.message = message;
+    reply.body["message"] = message;
+    return reply;
+}
+
+RunReply RunControl::CardRunToMainT(DebugCpuId cpu, GSCardTarget& target, uint64_t value)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    Z80* z80 = context && context->pCore ? context->pCore->GetZ80() : nullptr;
+    if (!z80)
+        return CardRefusal(RunReply::Status::Failed, "No main CPU");
+    const uint32_t frame = z80->_frameLimit;
+    if (frame == 0 || value >= frame)
+        return CardRefusal(RunReply::Status::BadRequest, "value " + std::to_string(value) + ": a main T-state of the "
+                                                         "frame is 0.." + std::to_string(frame ? frame - 1 : 0));
+    // T `value` of this frame, or the next frame's when the main CPU stands at it or past it
+    const uint32_t now = z80->t;
+    const uint64_t delta = value > now ? value - now : static_cast<uint64_t>(frame > now ? frame - now : 0) + value;
+    const Emulator::DirectRunResult result = _emulator->RunTStates(std::max<uint64_t>(delta, 1), false);
+    const Emulator::BreakpointStop stop = _emulator->LastDirectStop();
+    const bool hit = result.reached && !stop.hit;
+    const std::string name = DebugCpuName(cpu);
+    RunReply reply = Finish(hit ? "Ran the main CPU to T " + std::to_string(z80->t) + " (asked " + std::to_string(value) +
+                                      ")"
+                                : "Stopped before the main CPU reached T " + std::to_string(value));
+    if (!reply.Ok())
+        return reply;
+    StateNode stopNode = StateNode::Object();
+    if (stop.hit)
+    {
+        stopNode["cpu"] = DebugCpuName(stop.cpu);
+        stopNode["reason"] = "breakpoint";
+        stopNode["breakpoint_id"] = static_cast<int>(stop.breakpointId);
+        stopNode["address"] = static_cast<int>(stop.address);
+        stopNode["access"] = BreakpointHitKindName(stop.kind);
+        if (stop.cpu != DebugCpuId::Main)
+            stopNode["cpu_pc"] = static_cast<int>(stop.cpuPc);
+    }
+    else
+    {
+        stopNode["cpu"] = "main";
+        stopNode["reason"] = hit ? "step" : "pause";
+    }
+    reply.body = CardBody(reply, std::move(stopNode), cpu, target);
+    reply.body["until"] = "main_t";
+    reply.body["hit"] = hit;
+    reply.body["target_t"] = static_cast<int64_t>(value);
+    return reply;
+}
+
+RunReply RunControl::RunCard(const Requester& requester, DebugCpuId cpu, GSCardTarget& target,
+                             std::chrono::milliseconds limit, const CardRunTexts& texts, bool& ended)
+{
+    const uint64_t stopsBefore = target.StopCount();
     const std::string id = _emulator->GetId();
     if (!EmulatorManager::GetInstance()->ResumeEmulator(id, requester))
     {
-        target->CancelStep();
-        return refuse(RunReply::Status::Failed, "The machine did not resume for the step");
+        target.CancelStep();
+        return CardRefusal(RunReply::Status::Failed, "The machine did not resume for the step");
     }
     // Until the machine pauses again: the step's park, a breakpoint (any CPU's) or somebody's pause
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(step == GSCardTarget::StepKind::In ? 2000 : 5000);
+    const auto deadline = std::chrono::steady_clock::now() + limit;
     bool timedOut = false;
     uint64_t seq = _emulator->DebugSeq();
     while (!_emulator->IsPaused())
@@ -357,26 +543,17 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
     }
     if (timedOut)
     {
-        target->CancelStep();
+        target.CancelStep();
         EmulatorManager::GetInstance()->PauseEmulatorWithResult(id, requester, std::chrono::milliseconds(1000));
     }
-    const bool stepEnded = target->StopCount() > stopsBefore && target->LastStop().step;
-    target->CancelStep();  // another cause paused it first: the step is over too
+    // A pause from the host side (a command write) is applied at the main CPU's next instruction boundary
+    _emulator->WaitForPauseConfirmation(1000);
+    ended = target.StopCount() > stopsBefore && target.LastStop().step;
+    target.CancelStep();  // another cause paused it first: the step is over too
 
-    char cursor[16];
-    std::snprintf(cursor, sizeof(cursor), "#%04X", static_cast<unsigned>(address));
-    reply = Finish(timedOut && step == GSCardTarget::StepKind::To
-                       ? std::string("cpu ") + DebugCpuName(cpu) + " did not reach " + cursor + " in time; paused"
-                   : timedOut  ? std::string("The step of cpu ") + DebugCpuName(cpu) + " did not end in time; paused"
-                   : stepEnded && step == GSCardTarget::StepKind::To
-                       ? std::string("Ran cpu ") + DebugCpuName(cpu) + " to " + cursor
-                   : stepEnded ? std::string("Step ") + kind + " of cpu " + DebugCpuName(cpu) + " completed"
-                               : std::string("Stopped before the step of cpu ") + DebugCpuName(cpu) + " ended");
+    RunReply reply = Finish(timedOut ? texts.timeout : ended ? texts.done : texts.other);
     if (!reply.Ok())
         return reply;
-    StateNode body = StateNode::Object();
-    body["status"] = "success";
-    body["message"] = reply.message;
     StateNode stopNode = StateNode::Object();
     const Emulator::DebugStop last = _emulator->LastStop();
     const Emulator::BreakpointStop& cause = last.breakpoint;
@@ -385,11 +562,11 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
         stopNode["cpu"] = DebugCpuName(cpu);
         stopNode["reason"] = "timeout";
     }
-    else if (stepEnded)
+    else if (ended)
     {
         stopNode["cpu"] = DebugCpuName(cpu);
         stopNode["reason"] = "step";
-        stopNode["cpu_pc"] = static_cast<int>(target->LastStop().boundaryPc);
+        stopNode["cpu_pc"] = static_cast<int>(target.LastStop().boundaryPc);
         AddMainPosition(stopNode, cause.main);
     }
     else if (last.reason == Emulator::DebugStop::Reason::Breakpoint && cause.hit)
@@ -408,24 +585,37 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
         stopNode["cpu"] = "main";
         stopNode["reason"] = "pause";
     }
-    body["stop"] = std::move(stopNode);
+    reply.body = CardBody(reply, std::move(stopNode), cpu, target);
+    return reply;
+}
+
+StateNode RunControl::CardBody(const RunReply& reply, StateNode stop, DebugCpuId cpu, GSCardTarget& target) const
+{
+    StateNode body = StateNode::Object();
+    body["status"] = "success";
+    body["message"] = reply.message;
+    body["stop"] = std::move(stop);
     body["cpu"] = DebugCpuName(cpu);
-    if (step == GSCardTarget::StepKind::To)
-        body["hit"] = stepEnded;
     if (const StateNode* pc = reply.body.find("pc"))
         body["main_pc"] = *pc;
     if (const StateNode* sp = reply.body.find("sp"))
         body["main_sp"] = *sp;
-    Z80Registers card{};
-    if (target->Registers(card))
+    Z80Registers registers{};
+    if (target.Registers(registers))
     {
-        body["pc"] = static_cast<int>(card.pc);
-        body["sp"] = static_cast<int>(card.sp);
+        body["pc"] = static_cast<int>(registers.pc);
+        body["sp"] = static_cast<int>(registers.sp);
     }
+    // Where both CPUs stand in the frame: the card's cycle (the `gs` report's cpu.frame_cycle) and the main CPU's T
+    if (GeneralSoundCard* card = target.Card(); card && card->cardCpuClockHz() != 0 && card->cardUnitsPerSecond() > 0.0)
+        body["card_cycle"] = static_cast<int64_t>(card->cardCycles(card->cardFrameTime()));
+    if (Z80State* z80 = _emulator->GetZ80State())
+        body["main_t"] = static_cast<int64_t>(z80->t);
+    if (const EmulatorContext* context = _emulator->GetContext())
+        body["frame"] = static_cast<int64_t>(context->emulatorState.frame_counter);
     if (const StateNode* state = reply.body.find("state"))
         body["state"] = *state;
-    reply.body = std::move(body);
-    return reply;
+    return body;
 }
 
 RunReply RunControl::FrameStep(const Requester& requester)

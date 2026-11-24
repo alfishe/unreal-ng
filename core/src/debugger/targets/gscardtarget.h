@@ -54,6 +54,24 @@ public:
     /// The card the slot has now, when it has a CPU
     GeneralSoundCard* Card() const;
 
+    /// A step of the card CPU (ArmStep, ArmUntil; gs-debugger design §5.3)
+    enum class StepKind : uint8_t
+    {
+        None,
+        In,    ///< after `count` instructions
+        Over,  ///< CALL, RST, DJNZ, a block instruction: at the next instruction with SP at or above the entry SP;
+               ///< another instruction: as In
+        Out,   ///< after a return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP
+        To,    ///< at the next instruction at `target` (run to the cursor); the instruction at PC runs first
+        // Runs to a moment (ArmUntil; gs-debugger TODO P5.4)
+        Cycle,   ///< at the first boundary at or after card cycle `value` of the ZX frame (cardCycles of cardFrameTime,
+                 ///< the `gs` report's cpu.frame_cycle); a cycle the card already passed: the next frame's
+        Int,     ///< at the first boundary after the card CPU accepted an INT: the handler's first instruction (where
+                 ///< an `int` event breakpoint parks too)
+        Command  ///< the host's next command write (OUT #BB, the main CPU): the machine pauses after that main
+                 ///< instruction, the card has not taken the command yet. No hooks, no tight mode (OnHostCommand)
+    };
+
     /// The last stop on the card CPU (hit = false: none yet)
     struct Stop
     {
@@ -68,6 +86,7 @@ public:
         uint8_t master = 0;       ///< DmaWrite: the bus master (NeoGS DMA module: 0 ZX-DMA, 1 SD)
         uint8_t page = 0;         ///< DmaWrite: the RAM page written (`address` the offset in it)
         bool step = false;        ///< no breakpoint: a step ended at `boundaryPc`
+        StepKind stepKind = StepKind::None;  ///< the step that ended (`step`); Command: `value` the command byte
     };
     Stop LastStop() const { return _lastStop; }
     /// Stops since creation (tests, diagnosis)
@@ -76,27 +95,34 @@ public:
     bool HooksAttached() const { return _attached != nullptr; }
 
     /// region <Steps (gs-debugger design §5.3): a one-shot park at a card instruction boundary>
-    enum class StepKind : uint8_t
-    {
-        None,
-        In,    ///< after `count` instructions
-        Over,  ///< CALL, RST, DJNZ, a block instruction: at the next instruction with SP at or above the entry SP;
-               ///< another instruction: as In
-        Out,   ///< after a return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP
-        To     ///< at the next instruction at `target` (run to the cursor); the instruction at PC runs first
-    };
     /// Arm a step of the card CPU (the machine paused; the caller resumes it then): the next card run parks the
     /// machine there with the reason step (Emulator::OnTargetStep). A breakpoint on the way ends it first. "" or why
     /// not (no card CPU, a step already armed). The card runs only as the main CPU's run takes it along (at a host
     /// port access or the frame end), so the main CPU moves on to that point. `target`: To's address
     std::string ArmStep(StepKind kind, uint32_t count = 1, uint16_t target = 0);
+    /// Arm a run of the card to a moment (Cycle `value`, Int, Command; the machine paused, the caller resumes it):
+    /// "" or why not, as ArmStep. Cycle: `value` below the frame's card cycles (cardFrameLength)
+    std::string ArmUntil(StepKind kind, uint32_t value = 0);
     /// Disarm a step that did not end (a timeout, a pause of another cause)
     void CancelStep();
     bool StepArmed() const { return _stepKind.load(std::memory_order_acquire) != StepKind::None; }
-    /// Debugged with a stop (a stopping breakpoint, an armed step): the machine runs in tight mode for it
+    /// An armed step that waits at the card's instruction boundaries (all but Command): the debug loop runs for it
+    bool CardStepArmed() const
+    {
+        const StepKind kind = _stepKind.load(std::memory_order_acquire);
+        return kind != StepKind::None && kind != StepKind::Command;
+    }
+    /// A Command step is armed: the host side's command write ends it (GSReportHostEvent)
+    bool HostStepArmed() const { return _stepKind.load(std::memory_order_acquire) == StepKind::Command; }
+    /// The host wrote command `value` to `card` (nullptr: unknown, any card), inside the main CPU's OUT: an armed
+    /// Command step of this card ends; the machine pauses after that instruction (Emulator::OnTargetStep, no park)
+    void OnHostCommand(const GeneralSoundCard* card, uint8_t value);
+    /// Debugged with a stop (a stopping breakpoint, an armed step at card boundaries): the machine runs in tight
+    /// mode for it
     bool WantsTight() const
     {
-        return _stopWanted.load(std::memory_order_acquire) || StepArmed() || _scanning.load(std::memory_order_acquire);
+        return _stopWanted.load(std::memory_order_acquire) || CardStepArmed() ||
+               _scanning.load(std::memory_order_acquire);
     }
     /// The machine is parked inside the card's run (a card breakpoint or step): the next instruction is the
     /// boundary's
@@ -309,6 +335,10 @@ private:
     uint16_t _stepSp = 0;                    // Over / Out: SP when armed
     bool _stepReturning = false;             // Out: the instruction now running is a return
     uint16_t _stepReturnSp = 0;              // Out: SP before that return
+    uint32_t _stepCycle = 0;                 // Cycle: the card cycle of the frame
+    uint32_t _stepWraps = 0;                 // Cycle: frame starts still to pass (1: the cycle is past this frame)
+    int64_t _stepFrameTime = 0;              // Cycle: cardFrameTime at the last boundary (a drop: a new frame)
+    bool _stepIntSeen = false;               // Int: the card accepted an INT since the arm
     std::atomic<bool> _parkedInside{false};  // inside Park's call: the machine waits in the card's run
     // A TTD card scan (BeginScan): set and read with the machine held, on its thread during the replay
     std::atomic<bool> _scanning{false};
@@ -342,4 +372,6 @@ private:
 
 /// The host side of the mailbox (the main CPU's access to #B3 / #BB, inside its instruction): a host-side event
 /// breakpoint of the main CPU stops the machine there, as a port breakpoint does. Free without one
-void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value, int arg = -1);
+/// `card`: the card whose host port it is (HostCommandWrite: an armed Command step of that card's target ends there)
+void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value, int arg = -1,
+                       const GeneralSoundCard* card = nullptr);

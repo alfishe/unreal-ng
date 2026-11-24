@@ -287,6 +287,77 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
     return true;
 }
 
+// card_run_to <cycle N | int | command | main_t N> [--cpu gs|ms]: a card CPU's run to a moment (RunControl::CardRunTo,
+// the card debugger's Run to): the machine paused, gs by default
+void CLIProcessor::HandleCardRunTo(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    std::vector<std::string> rest = args;
+    DebugCpuId cpu = DebugCpuId::GS;
+    if (std::find(rest.begin(), rest.end(), "--cpu") != rest.end() && !TakeCpuOption(session, rest, cpu))
+        return;
+    const std::string usage = "Usage: card_run_to cycle <N> | int | command | main_t <T> [--cpu gs|ms]";
+    if (rest.empty())
+    {
+        session.SendResponse(usage + NEWLINE);
+        return;
+    }
+    const std::string& until = rest[0];
+    const bool valued = until == "cycle" || until == "main_t";
+    uint64_t value = 0;
+    if (valued)
+    {
+        if (rest.size() < 2)
+        {
+            session.SendResponse(usage + NEWLINE);
+            return;
+        }
+        try
+        {
+            size_t used = 0;
+            value = std::stoull(rest[1], &used, 0);
+            if (used != rest[1].size())
+                throw std::invalid_argument(rest[1]);
+        }
+        catch (const std::exception&)
+        {
+            session.SendResponse("Error: '" + rest[1] + "' is not a number" + std::string(NEWLINE));
+            return;
+        }
+    }
+    const execution::RunReply reply =
+        execution::RunControl(emulator).CardRunTo(CliRequester(emulator->GetContext()), cpu, until, value);
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    const StateNode& body = reply.body;
+    const StateNode* stop = body.find("stop");
+    const StateNode* reason = stop ? stop->find("reason") : nullptr;
+    std::ostringstream out;
+    out << reply.message;
+    if (reason && reason->s == "breakpoint")
+        out << ": breakpoint #" << stop->find("breakpoint_id")->i << " of cpu " << stop->find("cpu")->s << " ("
+            << stop->find("access")->s << " 0x" << Hex(static_cast<unsigned>(stop->find("address")->i), 4) << ")";
+    else if (reason && reason->s != "step")
+        out << " (" << reason->s << ")";
+    out << NEWLINE;
+    auto number = [&body](const char* key) { const StateNode* v = body.find(key); return v ? v->i : 0; };
+    out << "  cpu " << DebugCpuName(cpu) << " PC: 0x" << Hex(static_cast<unsigned>(number("pc")), 4) << "  SP: 0x"
+        << Hex(static_cast<unsigned>(number("sp")), 4);
+    if (body.find("card_cycle"))
+        out << "  card cycle " << number("card_cycle");
+    out << "  main PC: 0x" << Hex(static_cast<unsigned>(number("main_pc")), 4) << "  main T " << number("main_t")
+        << "  frame " << number("frame") << NEWLINE;
+    session.SendResponse(out.str());
+}
+
 // selected-cpu [main|gs|ms]: the CPU the front-ends show (gs-debugger design §5.2, core CpuView::SetSelected, the
 // WebAPI GET / PUT /debug/selected_cpu); a card shown follows the main CPU's steps of the paused machine
 void CLIProcessor::HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args)

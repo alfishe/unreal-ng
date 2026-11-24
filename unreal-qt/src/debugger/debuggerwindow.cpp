@@ -1,4 +1,5 @@
 #include "debuggerwindow.h"
+#include "debugger/debuggercardrun.h"
 #include "debugger/debuggercpu.h"
 #include "debugger/debuggertimetravel.h"
 #include "emulator/remotecontrolguard.h"
@@ -38,6 +39,9 @@
 #include "debugger/disksectordialog.h"
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
+#include "debugger/boardpane.h"
+#include "debugger/cardpanes.h"
+#include "debugger/gslwpane.h"
 #include "debugger/nextpanes.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/reportpane.h"
@@ -47,6 +51,7 @@
 #include "debugger/porteventsdialog.h"
 #include "debugger/portwatchdialog.h"
 #include "debugger/rtcdialog.h"
+#include "debugger/zxdmatraceview.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
@@ -94,6 +99,23 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         _sideTabs->setTabToolTip(index, pane.tooltip);
         _sideTabs->setTabVisible(index, false);
         _nextPanes.push_back(pane.pane);
+    }
+    for (const CardPanes::Pane& pane : CardPanes::Create(_sideTabs, _cardFollow))
+    {
+        const int index = _sideTabs->addTab(pane.widget(), pane.title);
+        _sideTabs->setTabToolTip(index, pane.tooltip);
+        _sideTabs->setTabVisible(index, false);
+        if (BoardPane* board = pane.board)
+            connect(board, &BoardPane::actionRequested, this,
+                    [this, board](const QString& id, const QString& action, const QString& arg) { runBoardAction(board, id, action, arg); });
+        if (BoardPane* board = pane.board)
+            connect(board, &BoardPane::uiActionRequested, this, [this](const QString&, const QString& id) {
+                if (id == QLatin1String(CardPanes::kOpenMediaPanel))
+                    emit mediaPanelRequested(QString::fromLatin1(CardPanes::kSdSlot));
+            });
+        if (ZxDmaTraceView* trace = pane.trace)
+            connectZxDmaTrace(trace);
+        _cardPanes.push_back(pane);
     }
     historyLayout->addWidget(_sideTabs);
     ui->mainSplitter->addWidget(_sideGroup);
@@ -365,10 +387,46 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(_stopBanner, &QLabel::linkActivated, this, &DebuggerWindow::onStopBannerLink);
     ui->verticalLayout_2->insertWidget(2, _stopBanner);
 
+    _cardStrip = new QLabel(this);
+    _cardStrip->setObjectName("debuggerCardStrip");
+    _cardStrip->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _cardStrip->setStyleSheet("QLabel { border-left: 4px solid #E0A020; padding: 2px 6px; }");
+    _cardStrip->setVisible(false);
+    ui->verticalLayout_2->insertWidget(3, _cardStrip);
+    _liveLine = new CardPanes::LiveLine(
+        this, [this]() { return _emulator; },
+        // Running: the labels only (no stop to name); the disassembly's marks follow at the stop, as its rows do (a
+        // running machine's memory map moves under a reader)
+        [this](EmulatorContext* context) { CardPanes::FillLiveLines(cardLines(), context, currentCpu()); });
+
+    // S3 on top of the main registers, S4 over the main memory view and disassembly: thin lines in their groups
+    _mainPositionStrip = new QLabel(ui->registersGroup);
+    _mainPositionStrip->setObjectName("debuggerMainPositionStrip");
+    _mainPositionStrip->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _mainPositionStrip->setWordWrap(true);
+    _mainPositionStrip->setToolTip(tr("Where the main CPU stands in its instruction at the card's stop: T of its total, "
+                                      "device wait (ZX-DMA), the bus cycle under way, the gap to the card"));
+    _mainPositionStrip->setStyleSheet("QLabel { border-left: 4px solid #E0A020; padding: 1px 4px; }");
+    _mainPositionStrip->setVisible(false);
+    ui->registersGroupLayout->insertWidget(0, _mainPositionStrip);
+    const auto banner = [](QWidget* parent, const char* name) {
+        auto* label = new QLabel(parent);
+        label->setObjectName(name);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        label->setWordWrap(true);
+        label->setStyleSheet("QLabel { background: #FFF1C2; color: #202020; border-left: 4px solid #E0A020; padding: 1px 4px; }");
+        label->setVisible(false);
+        return label;
+    };
+    _zxDmaMemoryBanner = banner(ui->memoryGroup, "debuggerZxDmaMemoryBanner");
+    ui->memoryGroupLayout->insertWidget(0, _zxDmaMemoryBanner);
+    _zxDmaDisasmBanner = banner(ui->disasmGroup, "debuggerZxDmaDisasmBanner");
+    ui->disasmGroupLayout->insertWidget(0, _zxDmaDisasmBanner);
+
     // The processor tabs (debuggercpu.h): the main CPU and each sound card CPU fitted, above the panes they retarget;
     // hidden with the main CPU alone
     auto* cpuBar = new QTabBar(this);
-    ui->verticalLayout_2->insertWidget(3, cpuBar);
+    ui->verticalLayout_2->insertWidget(4, cpuBar);
     _cpuTabs = new DebuggerCpuTabs(cpuBar, this);
     _registersTitle = ui->registersGroup->title();
     _stackTitle = ui->stackGroup->title();
@@ -377,8 +435,32 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _disasmTitle = ui->disasmGroup->title();
     connect(_cpuTabs, &DebuggerCpuTabs::cpuChanged, this, [this](DebugCpuId cpu) {
         retargetPanes();
+        if (_cardRun)
+            _cardRun->update();
+        // The card panes follow the card CPU in front (the GS slot's card or the MultiSound's)
+        updateSidePane();
+        refreshNextPanes(_emulator && !_emulator->IsPaused());
+        // The S3 strip and the ZX-DMA banner belong to the main CPU's views; the card line names the card in front
+        if (_emulator && _emulator->IsPaused() && !_emulator->IsDirectStepping())
+            if (const Emulator::ContextLease lease = _emulator->LeaseContext())
+                updateCardStrip();
         emit cpuChanged(cpu);
     });
+
+    // With a card fitted (gs-debugger TODO P5.4): Run to's card entries, Step other beside the steps, Ctrl+1 / Ctrl+2
+    DebuggerCardRun::Hooks cardRunHooks;
+    cardRunHooks.before = [this]() {
+        clearStopBanner();  // the machine moves on
+        _breakpointTriggered = false;
+        if (m_speedControl)
+            m_speedControl->stop();
+    };
+    cardRunHooks.notice = [this](const QString& text) { showStopNotice(text); };
+    cardRunHooks.after = [this]() {
+        updateState();
+        emit screenRefreshRequested();
+    };
+    _cardRun = new DebuggerCardRun(this, _cpuTabs, atomicStepMenu, toolBar, frameStepAction, std::move(cardRunHooks));
 
     connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
         updateState();
@@ -650,6 +732,8 @@ void DebuggerWindow::propagateEmulator()
         _cpuTabs->setEmulator(_emulator);
     if (_timeTravel)
         _timeTravel->setEmulator(_emulator);
+    if (_cardRun)
+        _cardRun->setEmulator(_emulator);
     // Port events holds the machine it searches: another machine (or none) closes it
     if (_portEventsDialog && _portEventsDialog->emulator() != _emulator)
         _portEventsDialog->close();
@@ -726,7 +810,10 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
         case StateResumed:  // StateResumed = running after pause, same as StateRun
             // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON)
             updateToolbarActions(false, true, false, true, true, true);
-            clearStopBanner();
+            // A run of the debugger's own (a card run, a card step) resumes and pauses again before this queued
+            // state arrives: the machine paused by then keeps the stop line that run left
+            if (!_emulator || !_emulator->IsPaused())
+                clearStopBanner();
             break;
         case StateStopped:
         case StateUnknown:
@@ -750,6 +837,8 @@ void DebuggerWindow::showEvent(QShowEvent* event)
     if (_cpuTabs)
         _cpuTabs->setActive(true);  // a card in front follows the main CPU's steps again
     updateSidePane();
+    if (_liveLine)
+        _liveLine->update();  // the card line live while the machine runs
     emit visibilityChanged(true);
 }
 
@@ -761,6 +850,8 @@ void DebuggerWindow::hideEvent(QHideEvent* event)
     if (_cpuTabs)
         _cpuTabs->setActive(false);  // nor does a card it showed
     _nextPanesTimer->stop();  // nor do the Next panes
+    if (_liveLine)
+        _liveLine->update();  // nor does the card line
     emit visibilityChanged(false);
 }
 
@@ -773,6 +864,8 @@ void DebuggerWindow::onBindingReady()
     // (ready fires on the new emulator's first pause, before any CPU step refresh).
     if (_cpuTabs)
         _cpuTabs->update();  // the machine is complete now: its card CPUs have tabs
+    if (_cardRun)
+        _cardRun->update();
     ui->registersWidget->setZ80State(_emulator ? cpuState() : nullptr);
 
     // Dispatch to children via signal (widgets are connected to readyForChildren)
@@ -1140,6 +1233,8 @@ void DebuggerWindow::updateState()
             _cpuTabs->update();
             _cpuTabs->followStop();
         }
+        if (_cardRun)
+            _cardRun->update();  // a card fitted or removed: its entries show or hide
         Z80State* state = cpuState();
 
         // Refresh registers widget
@@ -1158,6 +1253,7 @@ void DebuggerWindow::updateState()
         _pcHistoryPane->refresh();
         updateSidePane();  // a model switch keeps the machine: the Next panes follow it
         refreshNextPanes(false);
+        updateCardStrip();
         showMemoryAtPc();
     }
     else
@@ -1234,6 +1330,8 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     stepOutAction->setEnabled(canStep);
     frameStepAction->setEnabled(canStep);
     waitInterruptAction->setEnabled(canStep);
+    if (_cardRun)
+        _cardRun->setEnabled(canStep);
 
     // Update breakpoint management
     breakpointsAction->setEnabled(canManageBreakpoints);
@@ -1475,6 +1573,7 @@ void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
     if (BreakpointManager::IsUserBreakpoint(*breakpoint) && !breakpoint->hidden)
     {
         _stopBreakpointId = breakpointID;
+        _stopBreakpointCpu = hitCpu;
         _stopBanner->setText(BreakpointStopLine(*breakpoint, hit));
         _stopBanner->setVisible(true);
     }
@@ -1485,11 +1584,40 @@ void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
     updateState();
 }
 
+void DebuggerWindow::showStopNotice(const QString& text)
+{
+    if (!_stopBanner || text.isEmpty())
+        return;
+    _stopBreakpointId = BRK_INVALID;
+    _stopBanner->setText(text.toHtmlEscaped());
+    _stopBanner->setVisible(true);
+}
+
 void DebuggerWindow::clearStopBanner()
 {
     _stopBreakpointId = BRK_INVALID;
     if (_stopBanner)
         _stopBanner->setVisible(false);
+    if (_cardStrip)
+        _cardStrip->setVisible(false);
+    if (_mainPositionStrip)
+        _mainPositionStrip->setVisible(false);
+}
+
+// Called by a stop's refresh (updateState holds the context lease)
+void DebuggerWindow::updateCardStrip()
+{
+    if (!_cardStrip)
+        return;
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: under the caller's lease
+    Emulator::DebugStop stop;  // named: g++ 14 crashes on a temporary of it (z80mcycles.h)
+    if (_emulator)
+        stop = _emulator->LastStop();
+    if (CardPanes::FillLines(cardLines(), context, stop, currentCpu(), false))
+        ui->disassemblerWidget->setRunTimeRange(0x0000, 0x3FFF,
+                                                tr("ZX-DMA Divert: at run time the CPU reads card RAM here, not the host ROM shown"));
+    else
+        ui->disassemblerWidget->clearRunTimeRange();
 }
 
 void DebuggerWindow::onStopBannerLink(const QString& link)
@@ -1498,12 +1626,13 @@ void DebuggerWindow::onStopBannerLink(const QString& link)
         return;
     if (link == "edit" && _stopBreakpointId != BRK_INVALID)
     {
-        if (!_emulator->GetBreakpointManager()->GetBreakpointById(_stopBreakpointId))
+        BreakpointManager* manager = _emulator->GetDebugManager()->GetBreakpointsManager(_stopBreakpointCpu);
+        if (!manager || !manager->GetBreakpointById(_stopBreakpointId))
         {
             clearStopBanner();  // removed meanwhile
             return;
         }
-        BreakpointEditor editor(_emulator, BreakpointEditor::Edit, _stopBreakpointId, this);
+        BreakpointEditor editor(_emulator, BreakpointEditor::Edit, _stopBreakpointId, this, _stopBreakpointCpu);
         editor.exec();
         updateState();
     }
@@ -1864,15 +1993,45 @@ void DebuggerWindow::updateSidePane()
             pane->clearMarks();  // another machine: nothing to compare with
             _sideTabs->setTabVisible(_sideTabs->indexOf(pane), next);
         }
-        _sideGroup->setTitle(next ? "PC history / Next" : "PC history");
     }
+    // The card panes show the card CPU in front's card (CardPanes::Front): a tab switch between `gs` and `ms` retargets them
+    const DebugCpuId front = currentCpu();
+    *_cardFollow = front;
+    const CardPanes::Target target = CardPanes::Front(context, front);
+    std::vector<bool> cardShown;
+    cardShown.reserve(_cardPanes.size());
+    for (const CardPanes::Pane& pane : _cardPanes)
+        cardShown.push_back(CardPanes::Shown(pane.card, context, front));
+    if (cardShown != _cardShown || target != _cardTarget)
+    {
+        _cardShown = cardShown;
+        _cardTarget = target;
+        for (size_t i = 0; i < _cardPanes.size(); i++)
+        {
+            const CardPanes::Pane& pane = _cardPanes[i];
+            if (pane.pane)
+                pane.pane->clearMarks();  // another card: nothing to compare with
+            if (pane.board)
+                pane.board->clearMarks();
+            if (pane.trace)
+                pane.trace->reset();  // another card: its own trace
+            _sideTabs->setTabVisible(_sideTabs->indexOf(pane.widget()), cardShown[i]);
+        }
+    }
+    const bool neogs = target == CardPanes::Target::Slot && CardPanes::NeoGSFitted(context);
+    const char* card = target == CardPanes::Target::MultiSound ? " / MultiSound GS"
+                       : neogs                                 ? " / NeoGS"
+                       : target == CardPanes::Target::Slot     ? " / GS"
+                                                               : "";
+    _sideGroup->setTitle(QString("PC history") + (next ? " / Next" : "") + card);
     // The PC history records while its tab is in front of a shown window (records cost every instruction); the live
     // refresh of a Next tab runs while one is in front, a paused machine is refreshed by its stop (updateState)
     const bool shown = isVisible();
     const bool history = shown && _sideTabs->currentWidget() == _pcHistoryPane;
     if (_pcHistoryPane->isRecording() != history)
         _pcHistoryPane->setRecording(history);
-    if (shown && qobject_cast<ReportPane*>(_sideTabs->currentWidget()))
+    if (shown && (qobject_cast<ReportPane*>(_sideTabs->currentWidget()) || qobject_cast<BoardPane*>(_sideTabs->currentWidget()) ||
+                  qobject_cast<GsLwPane*>(_sideTabs->currentWidget())))
         _nextPanesTimer->start();
     else
         _nextPanesTimer->stop();
@@ -1880,17 +2039,81 @@ void DebuggerWindow::updateSidePane()
 
 void DebuggerWindow::refreshNextPanes(bool live)
 {
-    if (!_emulator || !_nextMachine || !isVisible())
+    if (!_emulator || !isVisible())
         return;
     ReportPane* pane = qobject_cast<ReportPane*>(_sideTabs->currentWidget());
-    if (!pane)
+    BoardPane* board = qobject_cast<BoardPane*>(_sideTabs->currentWidget());
+    GsLwPane* inspector = qobject_cast<GsLwPane*>(_sideTabs->currentWidget());
+    if ((!pane && !board && !inspector) || !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
         return;
     if (!live && _emulator->IsDirectStepping())
         return;  // the stepping's end refreshes (updateState)
     Emulator::ContextLease lease = _emulator->LeaseContext();
     if (!lease)
         return;
-    pane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    if (pane)
+        pane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else if (board)
+        board->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else
+        inspector->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+}
+
+void DebuggerWindow::runBoardAction(BoardPane* pane, const QString& board, const QString& action, const QString& arg)
+{
+    if (!_emulator)
+        return;
+    {
+        Emulator::ContextLease lease = _emulator->LeaseContext();
+        if (!lease)
+            return;
+        pane->runAction(_emulator->GetContext(), board, action, arg);  // lifetime-ok: the lease holds it for this request
+    }
+    refreshNextPanes(!_emulator->IsPaused());
+}
+
+void DebuggerWindow::connectZxDmaTrace(ZxDmaTraceView* trace)
+{
+    // Expanded: filled at once, not at the next tick (a paused machine has none)
+    connect(trace, &ZxDmaTraceView::expandedChanged, this, [this](bool) { refreshNextPanes(_emulator && !_emulator->IsPaused()); });
+    // Start / Stop / Clear: the GS port trace through tracecontrol, as every plane drives it
+    connect(trace, &ZxDmaTraceView::captureRequested, this, [this, trace](const QString& op) {
+        if (!_emulator)
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            trace->capture(_emulator.get(), op);
+        }
+        refreshNextPanes(!_emulator->IsPaused());
+    });
+    // A row's host PC: the main CPU's disassembly at the instruction that made the access
+    connect(trace, &ZxDmaTraceView::hostPcPicked, this, [this](uint16_t pc) {
+        selectCpu(DebugCpuId::Main);
+        ui->disassemblerWidget->goToAddress(pc);
+    });
+    // A row's card address: the card CPU's memory view, when one of its windows maps that RAM page now
+    connect(trace, &ZxDmaTraceView::cardAddressPicked, this, [this, trace](uint32_t address) {
+        if (!_emulator)
+            return;
+        std::optional<uint16_t> at;
+        {
+            const Emulator::ContextLease lease = _emulator->LeaseContext();
+            at = CardPanes::CardCpuAddress(lease.get(), address);
+        }
+        if (!at)
+        {
+            trace->setNote(tr("Card RAM #%1 (page #%2) is not in a window of the card CPU now: the memory view shows "
+                              "the card CPU's windows")
+                               .arg(QString::number(address, 16).toUpper().rightJustified(6, QLatin1Char('0')),
+                                    QString::number(address >> 14, 16).toUpper().rightJustified(2, QLatin1Char('0'))));
+            return;
+        }
+        trace->setNote(QString());
+        if (selectCpu(DebugCpuId::GS))
+            showMemoryAt(*at);
+    });
 }
 
 void DebuggerWindow::showPortWatch()

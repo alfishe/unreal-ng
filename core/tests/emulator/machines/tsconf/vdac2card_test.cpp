@@ -9,6 +9,8 @@
 
 #include "vdac2cardfixture.h"
 
+#include "_helpers/testwaithelper.h"
+
 #include <vector>
 
 #include "emulator/platforms/tsconf/vdac2card.h"
@@ -286,7 +288,9 @@ TEST_F(Vdac2Card_Test, MonitorShowsTheFt812PictureWhileMselIsSet)
     const uint64_t before = Card()->LatchedFrames();
     Tick(4 * kSmallFrameTacts);
     Read32(kRegId);  // any access brings the chip to now
-    EXPECT_GE(Card()->LatchedFrames(), before + 3) << "one latch per FT812 frame";
+    // With the drawing on the renderer thread ([VDAC2] FtDrawThread, default) a frame is latched once the renderer
+    // drew its last line, a little after the chip got there
+    EXPECT_TRUE(TestWait::For([&] { return Card()->LatchedFrames() >= before + 3; })) << "one latch per FT812 frame";
 
     std::vector<uint8_t> presented(shown.memoryBufferSize);
     ASSERT_TRUE(screen->CopyPresentedFramebuffer(presented.data(), presented.size()));

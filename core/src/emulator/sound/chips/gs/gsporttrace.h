@@ -43,6 +43,8 @@ namespace GSTraceFlags
 {
 constexpr uint8_t kDirectionOut = 1u << 0;  // 0 = IN/read, 1 = OUT/write
 constexpr uint8_t kNmi          = 1u << 1;  // Interrupt event was an NMI, not the periodic INT
+constexpr uint8_t kDropped      = 1u << 2;  // ZxDma: the pending byte the module dropped (an access of the other
+                                            // direction came before its grant): address, value and direction its own
 }  // namespace GSTraceFlags
 
 /// One structured record per GS I/O operation, DAC fetch, or interrupt. 24 bytes.
@@ -56,10 +58,25 @@ struct GSTraceEvent
     uint8_t  channel = 0;     // DacFetch: channel index 0-3. ZxDma: card RAM address 20:16
     GSTraceSide side = GSTraceSide::Host;
     uint8_t  flags = 0;       // GSTraceFlags bitfield
-    uint32_t iterations = 0;  // Idle: the loop's iterations the sleep stood for (their port reads are not recorded)
+    // Idle: the loop's iterations the sleep stood for (their port reads are not recorded).
+    // ZxDma: the host side of the byte, packed (the event stays 24 bytes): bits 23:0 the host CPU's T-state in its
+    // frame at the access end (after the wait; frameNumber is the host frame), bits 31:24 the /WAIT T-states the
+    // module put on this access, capped at 255 (kZxDmaWaitCap)
+    uint32_t iterations = 0;
+
+    static constexpr uint32_t kZxDmaWaitCap = 0xFF;
+    static uint32_t PackZxDmaHost(uint32_t hostT, uint32_t waitT)
+    {
+        return (hostT & 0x00FFFFFFu) | ((waitT < kZxDmaWaitCap ? waitT : kZxDmaWaitCap) << 24);
+    }
 
     bool isOut() const { return flags & GSTraceFlags::kDirectionOut; }
     bool isNmi() const { return flags & GSTraceFlags::kNmi; }
+    bool isDropped() const { return flags & GSTraceFlags::kDropped; }
+    /// ZxDma: the card RAM address (21 bits), the host T-state in its frame, the wait T-states (capped at 255)
+    uint32_t cardAddress() const { return (static_cast<uint32_t>(channel) << 16) | port; }
+    uint32_t hostT() const { return iterations & 0x00FFFFFFu; }
+    uint32_t waitT() const { return iterations >> 24; }
 
     void ToState(StateNode& node) const;
 };
@@ -220,6 +237,12 @@ public:
     }
 
     std::vector<GSTraceEvent> getAll() const { return _history->Snapshot(); }
+    /// The kept events of one side after `since`, the newest `last` (DeviceHistory::Select)
+    std::vector<std::pair<uint64_t, GSTraceEvent>> select(GSTraceSide side, uint64_t since, size_t last, size_t& matched,
+                                                          uint64_t& lastSeq) const
+    {
+        return _history->Select([side](const GSTraceEvent& e) { return e.side == side; }, since, last, matched, lastSeq);
+    }
     std::vector<GSTraceEvent> getLast(size_t count) const { return _history->Snapshot(count); }
     size_t eventCount() const { return static_cast<size_t>(_history->GetStats().kept); }
     uint64_t totalProduced() const { return _history->GetStats().written; }
