@@ -140,8 +140,14 @@ std::vector<InterfaceSpec> Declared()
               {{"preset", ParamKind::String, false, "windowed, frameless or fullscreen"}},
               "The wall's layout: a window with the tiles kept, or the screen filled with tiles (frameless: no "
               "frame, fullscreen: full screen); back to windowed the extra tiles go."},
+             {"tilegrid.smooth_motion",
+              "Smooth motion",
+              {{"mode", ParamKind::String, false, "off, blend, interpolate-lite or interpolate"}},
+              "The picture between two frames on every tile, for a display that does not run at the machines' "
+              "rate (GPU rendering only). off: every frame as it is, at no cost. interpolate steps down to "
+              "interpolate-lite, and that to blend, on the tiles whose pictures take too long."},
          },
-         {"tiles", "focused", "single_sync", "layout"},
+         {"tiles", "focused", "single_sync", "layout", "smooth_motion", "smooth"},
          "The video wall's grid of tiles, each showing a machine."},
         {"screen",
          Level::View,

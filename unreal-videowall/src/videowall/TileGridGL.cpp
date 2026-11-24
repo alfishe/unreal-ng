@@ -12,6 +12,10 @@
 #include <QOpenGLPixelTransferOptions>
 #include <QPainter>
 #include <QUrl>
+#include <algorithm>
+#include <chrono>
+#include <thread>
+#include <QScreen>
 #include <cmath>
 #include <cstring>
 
@@ -327,8 +331,203 @@ void TileGridGL::updateLayout()
     }
 }
 
+void TileGridGL::uploadTile(TileState& tile, const uchar* pixels, int width, int height, const PictureGeometry& geometry)
+{
+    // The tile shows the working picture the frame was latched with (a Spectrum's paper, a TS-Conf's whole
+    // frame, an ATM's 640x200): the machine says where it is
+    tile.source = QRectF(0.0, 0.0, 1.0, 1.0);
+    tile.aspect = 4.0 / 3.0;
+    if (geometry.width > 0 && geometry.height > 0 && geometry.screenWindow.width > 0 && geometry.screenWindow.height > 0)
+    {
+        tile.source = QRectF(static_cast<double>(geometry.screenWindow.x) / geometry.width,
+                             static_cast<double>(geometry.screenWindow.y) / geometry.height,
+                             static_cast<double>(geometry.screenWindow.width) / geometry.width,
+                             static_cast<double>(geometry.screenWindow.height) / geometry.height);
+        tile.aspect = DisplayGeometry::WindowAspect(geometry.width, geometry.height, geometry.screenWindow.width,
+                                                    geometry.screenWindow.height);
+    }
+
+    // A video mode with another frame size needs a texture of that size
+    if (tile.texture && (tile.texture->width() != width || tile.texture->height() != height))
+    {
+        delete tile.texture;
+        tile.texture = nullptr;
+    }
+
+    if (!tile.texture)
+    {
+        tile.texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
+        tile.texture->create();
+        tile.texture->setSize(width, height);
+        tile.texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+        tile.texture->setMipLevels(1);
+        tile.texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+        tile.texture->setMinificationFilter(QOpenGLTexture::Nearest);
+        tile.texture->setMagnificationFilter(QOpenGLTexture::Nearest);
+        tile.texture->setWrapMode(QOpenGLTexture::ClampToEdge);
+    }
+
+    tile.texture->bind();
+    QOpenGLPixelTransferOptions transfer;
+    transfer.setAlignment(1);
+    transfer.setRowLength(width);
+    tile.texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, pixels, &transfer);
+}
+
+int64_t TileGridGL::refreshPeriodNs() const
+{
+    const QScreen* display = screen();
+    const double hz = display && display->refreshRate() > 0.0 ? display->refreshRate() : 60.0;
+    return static_cast<int64_t>(1e9 / hz);
+}
+
+void TileGridGL::setSmoothMotion(smoothmotion::Mode mode)
+{
+    if (mode == smoothmotion::Mode::Auto)
+        mode = smoothmotion::Mode::InterpolateLite;
+    if (mode == _smoothMode)
+        return;
+    _smoothMode = mode;
+    if (mode == smoothmotion::Mode::Off)
+    {
+        // Off is the wall as it was: no engine, no pool, a frame's notification draws
+        for (auto& tile : _emulators)
+        {
+            tile.smooth.reset();
+            tile.needsUpdate = true;
+        }
+        _smoothPool.reset();
+        _smoothMoving = false;
+    }
+    else
+        for (auto& tile : _emulators)
+            if (tile.smooth)
+                tile.smooth->SetMode(mode);
+    _smoothWallGuard.Reset();
+    _smoothWallSteps = 0;
+    _smoothMaxStepMs = 0.0;
+    update();
+}
+
+TileGridGL::SmoothStats TileGridGL::smoothStats() const
+{
+    SmoothStats stats;
+    for (const auto& tile : _emulators)
+    {
+        if (!tile.smooth)
+            continue;
+        const smoothmotion::Tile::Stats& s = tile.smooth->GetStats();
+        stats.tiles++;
+        stats.moving += tile.smooth->Moving() ? 1 : 0;
+        stats.steppedDown += s.steppedDown ? 1 : 0;
+        stats.tooSlow += s.tooSlow ? 1 : 0;
+        stats.framesOnly += s.framesOnly ? 1 : 0;
+        stats.pictures += s.pictures;
+        stats.between += s.between;
+    }
+    stats.lastStepMs = _smoothLastStepMs;
+    stats.maxStepMs = _smoothMaxStepMs;
+    stats.wallSteps = _smoothWallSteps;
+    stats.threads = _smoothPool ? static_cast<int>(_smoothPool->Size()) + 1 : 0;
+    return stats;
+}
+
+void TileGridGL::updateTexturesSmooth()
+{
+    const auto start = std::chrono::steady_clock::now();
+    const int count = static_cast<int>(_emulators.size());
+    if (!_smoothPool)
+    {
+        // Half the cores, at most 8 with this thread: the machines' own threads keep the rest
+        const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+        _smoothPool = std::make_unique<ThreadPool>(std::clamp<size_t>(cores / 2, 1, 8) - 1, "wall-smooth",
+                                                   ThreadPool::Priority::Interactive);
+    }
+    for (auto& tile : _emulators)
+        if (!tile.smooth)
+        {
+            tile.smooth = std::make_unique<smoothmotion::Tile>();
+            tile.smooth->SetMode(_smoothMode);
+        }
+    // The picture drawn now reaches the screen at the next refresh. A tile may take its share of a refresh: the
+    // threads' time over the tiles that draw
+    const int64_t refreshNs = refreshPeriodNs();
+    const int64_t tNs =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count() +
+        refreshNs;
+    const int threads = static_cast<int>(_smoothPool->Size()) + 1;
+    int drawing = 0;
+    for (const auto& tile : _emulators)
+        drawing += tile.smooth->Moving() ? 1 : 0;
+    const int64_t shareNs = refreshNs * threads / std::max(drawing, threads);
+    _smoothStep.assign(static_cast<size_t>(count), static_cast<uint8_t>(smoothmotion::Tile::Step::Nothing));
+    const auto tiles = [&](int first, int last) {
+        for (int i = first; i < last; i++)
+        {
+            TileState& tile = _emulators[static_cast<size_t>(i)];
+            EmulatorContext* ctx = tile.emulator ? tile.emulator->GetContext() : nullptr;
+            Screen* screen = ctx ? ctx->pScreen : nullptr;
+            if (!screen)
+                continue;
+            const auto& desc = screen->GetFramebufferDescriptor();
+            const auto next = [screen](uint64_t after, uint8_t* dst, size_t bytes, PresentFrameInfo* info) {
+                return screen->CopyNextFrame(after, dst, bytes, info, false);
+            };
+            _smoothStep[static_cast<size_t>(i)] = static_cast<uint8_t>(
+                tile.smooth->Advance(next, static_cast<int>(desc.width), static_cast<int>(desc.height), tNs, shareNs));
+        }
+    };
+    if (count > 1 && threads > 1)
+        _smoothPool->ParallelFor(count, std::min(count, threads * 2), tiles);
+    else
+        tiles(0, count);
+    // GL on this thread: the pictures that changed
+    _smoothMoving = false;
+    for (int i = 0; i < count; i++)
+    {
+        TileState& tile = _emulators[static_cast<size_t>(i)];
+        _smoothMoving |= tile.smooth->Moving();
+        if (static_cast<smoothmotion::Tile::Step>(_smoothStep[static_cast<size_t>(i)]) == smoothmotion::Tile::Step::Updated)
+            uploadTile(tile, reinterpret_cast<const uchar*>(tile.smooth->Picture()), tile.smooth->Width(),
+                       tile.smooth->Height(), tile.smooth->Geometry());
+        tile.needsUpdate = false;
+    }
+    _smoothLastStepMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    _smoothMaxStepMs = std::max(_smoothMaxStepMs, _smoothLastStepMs);
+
+    // The wall's own guard: every tile may be quick enough alone and the refresh still not fit them all (frames
+    // come to every tile 50 times a second whatever it draws)
+    if (_smoothMoving &&
+        _smoothWallGuard.Note(0, static_cast<int64_t>(_smoothLastStepMs * 1e6), refreshNs))
+    {
+        _smoothOrder.resize(static_cast<size_t>(count));
+        for (int i = 0; i < count; i++)
+            _smoothOrder[static_cast<size_t>(i)] = i;
+        std::stable_sort(_smoothOrder.begin(), _smoothOrder.end(), [&](int p, int q) {
+            return _emulators[static_cast<size_t>(p)].smooth->GetStats().lastNs >
+                   _emulators[static_cast<size_t>(q)].smooth->GetStats().lastNs;
+        });
+        int left = std::max(1, count / 4);
+        for (int i : _smoothOrder)
+            if (left > 0 && _emulators[static_cast<size_t>(i)].smooth->StepDown())
+                left--;
+        _smoothWallSteps++;
+        // The guard counts over its last pictures: the one that tipped it may be a quick one
+        qWarning() << "TileGridGL: smooth motion of" << count << "tiles keeps missing a refresh of"
+                   << static_cast<double>(refreshNs) / 1e6 << "ms (up to" << _smoothMaxStepMs
+                   << "ms) - the costliest quarter one level down";
+    }
+}
+
 void TileGridGL::updateTextures()
 {
+    if (_smoothMode != smoothmotion::Mode::Off)
+    {
+        updateTexturesSmooth();
+        return;
+    }
     for (auto& tile : _emulators)
     {
         if (!tile.emulator || !tile.needsUpdate)
@@ -356,46 +555,7 @@ void TileGridGL::updateTextures()
             continue;
         }
 
-        // The tile shows the working picture the frame was latched with (a Spectrum's paper, a TS-Conf's whole
-        // frame, an ATM's 640x200): the machine says where it is
-        tile.source = QRectF(0.0, 0.0, 1.0, 1.0);
-        tile.aspect = 4.0 / 3.0;
-        if (geometry.width > 0 && geometry.height > 0 && geometry.screenWindow.width > 0 && geometry.screenWindow.height > 0)
-        {
-            tile.source = QRectF(static_cast<double>(geometry.screenWindow.x) / geometry.width,
-                                 static_cast<double>(geometry.screenWindow.y) / geometry.height,
-                                 static_cast<double>(geometry.screenWindow.width) / geometry.width,
-                                 static_cast<double>(geometry.screenWindow.height) / geometry.height);
-            tile.aspect = DisplayGeometry::WindowAspect(geometry.width, geometry.height, geometry.screenWindow.width,
-                                                        geometry.screenWindow.height);
-        }
-
-        // A video mode with another frame size needs a texture of that size
-        if (tile.texture && (tile.texture->width() != static_cast<int>(desc.width) ||
-                             tile.texture->height() != static_cast<int>(desc.height)))
-        {
-            delete tile.texture;
-            tile.texture = nullptr;
-        }
-
-        if (!tile.texture)
-        {
-            tile.texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
-            tile.texture->create();
-            tile.texture->setSize(static_cast<int>(desc.width), static_cast<int>(desc.height));
-            tile.texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-            tile.texture->setMipLevels(1);
-            tile.texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
-            tile.texture->setMinificationFilter(QOpenGLTexture::Nearest);
-            tile.texture->setMagnificationFilter(QOpenGLTexture::Nearest);
-            tile.texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-        }
-
-        tile.texture->bind();
-        QOpenGLPixelTransferOptions transfer;
-        transfer.setAlignment(1);
-        transfer.setRowLength(static_cast<int>(tile.latchedFrame.bytesPerLine() / 4));
-        tile.texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, tile.latchedFrame.constBits(), &transfer);
+        uploadTile(tile, tile.latchedFrame.constBits(), tile.latchedFrame.width(), tile.latchedFrame.height(), geometry);
 
         tile.needsUpdate = false;
     }
@@ -406,6 +566,10 @@ void TileGridGL::paintGL()
     drawGrid();
     if (_captureEnabled)
         readBackFrame();
+    // Smooth motion draws a picture a refresh while a tile is between frames (the swap paces it); at rest the
+    // wall waits for a frame's notification, as with smooth motion off
+    if (_smoothMoving)
+        update();
 }
 
 void TileGridGL::setCaptureEnabled(bool enable)
