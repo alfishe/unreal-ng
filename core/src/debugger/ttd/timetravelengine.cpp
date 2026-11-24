@@ -2777,6 +2777,15 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
             result.Add(issue);
             continue;
         }
+        std::string diverged;
+        if (e.withoutRegions && e.withoutRegions->TTDLoadDiverged(diverged))
+        {
+            TTDRestoreIssue replay = issue;
+            replay.kind = TTDRestoreIssueKind::ReplayDiverged;
+            replay.severity = TTDRestoreStatus::NotBitExact;
+            replay.detail = "computed again from its keyframe, it did not reach the recorded state: " + diverged;
+            result.Add(replay);
+        }
         // Restored exactly; a replay from here may still differ when the firmware does
         const uint64_t live = e.device->TTDDescribe().firmwareFingerprint;
         if (live != d.firmwareFingerprint)

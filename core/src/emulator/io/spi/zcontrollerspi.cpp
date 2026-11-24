@@ -28,7 +28,9 @@ void ZControllerSpi::AttachDevice(uint8_t slot, SpiDevice* device, uint8_t confi
 
 void ZControllerSpi::Reset()
 {
-    SetState(State{});
+    // A reset drives the lines: every device sees the change as bus activity
+    _state = State{};
+    AnnounceAll();
 }
 
 void ZControllerSpi::WriteConfig(uint8_t value)
@@ -82,7 +84,9 @@ void ZControllerSpi::Report(uint8_t mosi, uint8_t miso, bool read)
 void ZControllerSpi::SetState(const State& state)
 {
     _state = state;
-    AnnounceAll();
+    for (uint8_t slot = 0; slot < kSlots; slot++)
+        if (_devices[slot])
+            _devices[slot]->restoreSelect(IsSlotSelected(slot));
 }
 
 void ZControllerSpi::AnnounceAll()

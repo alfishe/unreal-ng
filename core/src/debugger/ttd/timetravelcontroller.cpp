@@ -1743,7 +1743,13 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
 
     // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
     // device whose state also carries the memory it offers as regions (General Sound)
-    // gives its state without that memory; the registry does not serialize it whole ---
+    // gives its state without that memory; the registry does not serialize it whole.
+    // A region source first learns whether this capture offers every piece (a rescan) ---
+    {
+        const bool rescan = _shadowRescan || ShadowSessionDue(_line->timeline.empty());
+        for (ITTDRegionSource* source : _peripherals.RegionSources())
+            source->TTDCaptureBegins(rescan);
+    }
     _peripherals.CaptureStates();
     _captureWork.deviceStateBytes += _peripherals.LastCaptureStateBytes();
 
@@ -1940,6 +1946,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
         _engine->ForgetMemory();
         (void)TakeWrittenSinceRestore();   // the marks so far are covered by forgetting: start counting here
     }
+    _replayIssues.clear();   // this restore's own, below
     CheckEngineCheckpoint(size_t(engineIndex), false);
     SetMediaToCheckpoint(size_t(engineIndex));
     const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore);
@@ -1949,6 +1956,14 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
         _engine->RestoreDevices(size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
     if (_engineMemoryKnown)
         (void)TakeWrittenSinceRestore();   // marks the restore itself made (a device loading its state) hold the checkpoint
+    // A device computed again on load that missed its recorded state (the VDAC4 ESP's replay) makes the position
+    // not bit-exact: the seek's check says so (the replay path's check takes them again)
+    for (const TTDRestoreIssue& issue : devices.issues)
+        if (issue.kind == TTDRestoreIssueKind::ReplayDiverged)
+        {
+            _replayIssues.push_back(issue);
+            _lastEngineCheck.Add(issue);
+        }
     if (!memory.Ok() || devices.status != TTDRestoreStatus::Exact)
         MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
@@ -1972,6 +1987,9 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
 
 TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
 {
+    // A device whose memory moved on without marks marks it now (the VDAC4 ESP between keyframes)
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDBeforeRestore();
     // A device that tracks writes its own way (MoonSound's wave memory) moves them into its trackers first
     for (ITTDRegionSource* source : _peripherals.RegionSources())
         source->TTDBeforeCapture();
@@ -5283,6 +5301,8 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
 {
     _lastEngineCheck = _replayEngine->CheckConfiguration(
         index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
+    for (const TTDRestoreIssue& issue : _replayIssues)
+        _lastEngineCheck.Add(issue);
     if (!forReplay)
         return;
     // The media the restore could not set to their recorded versions (SetMediaToCheckpoint)
@@ -5331,6 +5351,7 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
     _replayEngine = engine;
     _inputStartFrame = UINT64_MAX;
     _lastEngineCheck = {};
+    _replayIssues.clear();
     _replayRomSignature = ComputeRomSignature();
     if (engine == _engine.get())
         return;   // the session's own engine is this machine's
@@ -5340,12 +5361,21 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
         MLOGWARNING("TimeTravelController::SetReplaySource — not bound to this machine: %s", unbound.c_str());
 }
 
+bool TimeTravelController::ShadowSessionDue(bool baseline) const
+{
+    if (!_shadowEngine)
+        return false;
+    const TimeTravelEngine& engine = *_shadowEngine;
+    const uint32_t pieces = static_cast<uint32_t>(_modelRamPages) * 4;
+    return baseline || !engine.IsSessionOpen() || engine.Regions().empty() || engine.Regions()[0].pieces != pieces;
+}
+
 bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
 {
     TimeTravelEngine& engine = *_shadowEngine;
     std::string error;
     const uint32_t pieces = static_cast<uint32_t>(_modelRamPages) * 4;
-    if (baseline || !engine.IsSessionOpen() || engine.Regions().empty() || engine.Regions()[0].pieces != pieces)
+    if (ShadowSessionDue(baseline))
     {
         TTDRegionDesc ram;
         ram.id = TTDRegionId::MachineRam;

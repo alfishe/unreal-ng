@@ -557,10 +557,13 @@ TEST_F(SoundManagerCd_Test, HeadRunsOnEmulatedTimeAtAnySpeed)
     // The head moves frame x 44100 / 3.5 MHz samples per frame: at the base clock,
     // at a 4x host multiplier (the CPU runs 4x the T-states in each frame) and in turbo
     const uint32_t frame = _context->config.frame;
+    int64_t elapsedT = 0;  // base T-states run() covered: whole frames plus the start / end frame position
     auto run = [&](int frames) {
         Cd().Audio().Play(kTrack2, kTrack2 + 150);
         const uint64_t start = Cd().Audio().HeadSample();
+        const int64_t t0 = IdeController::FrameElapsedBaseT(_context);
         _emulator->RunNFrames(frames);
+        elapsedT = static_cast<int64_t>(frames) * frame + IdeController::FrameElapsedBaseT(_context) - t0;
         return Cd().Audio().HeadSample() - start;
     };
     _emulator->RunNFrames(1);  // a frame boundary: PLAY at elapsed 0
@@ -575,7 +578,11 @@ TEST_F(SoundManagerCd_Test, HeadRunsOnEmulatedTimeAtAnySpeed)
 
     _emulator->EnableTurboMode(false);
     _emulator->RunNFrames(1);
-    EXPECT_EQ(run(10), base) << "turbo without audio: the head still moves";
+    // A turbo run does not stop on a frame boundary (ATM3 hardware turbo counts the frame in doubled T-states): it
+    // starts and ends wherever the frame counter is, so the expected head is the covered time, not whole frames
+    const uint64_t turbo = run(10);
+    const uint64_t expected = static_cast<uint64_t>(elapsedT) * 44100 / 3500000;
+    EXPECT_NEAR(static_cast<double>(turbo), static_cast<double>(expected), 1.0) << "turbo without audio: the head still moves";
     EXPECT_EQ(Sound().deviceBuffer(AudioSourceType::CdAudio1), nullptr) << "nothing rendered in turbo";
     _emulator->DisableTurboMode();
 }

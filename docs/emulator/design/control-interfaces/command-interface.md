@@ -3591,7 +3591,7 @@ the history - `seek`, `step-back`, `step-forward`, `step-instruction`, `reverse-
 
 | Field | Meaning |
 | :--- | :--- |
-| `status` | `exact`; `not_bit_exact`: the state is the recorded one, but the replay to the target ran on other settings (`configuration_differs`, the setting named in `detail`) or a medium was written since the checkpoint and cannot go back (`media_version_differs`); `degraded` / `damaged`: part of the state could not be restored / failed its integrity check |
+| `status` | `exact`; `not_bit_exact`: the state is the recorded one, but the replay to the target ran on other settings (`configuration_differs`, the setting named in `detail`) or a medium was written since the checkpoint and cannot go back (`media_version_differs`), or a device computed again on restore (the VDAC4 ESP, re-run from its keyframe) did not reach its recorded state (`replay_diverged`); `degraded` / `damaged`: part of the state could not be restored / failed its integrity check |
 | `message` | every issue in one sentence; empty when exact |
 | `issues` | `{kind, severity, device, detail}` per issue (`device` empty for settings and media) |
 

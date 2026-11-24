@@ -11,6 +11,24 @@ jobs on a worker thread) and the board state on every automation plane. Design a
   histories; a seek inside DOOM gameplay reproduces the frames; zero cost with the board absent or recording off
   (A/B). Before the work: measure what an ESP history costs (the pages the app dirties per frame, the state's
   size, the checkpoint time), so the design fits the numbers.
+  - Measured 2026-11-23 (DOOM demo after 6000 frames, ESP memory read through `GET /vdac4/esp/memory`, 4 KB
+    pieces, zstd of the XOR with the previous version as the piece store does): 887 of 2152 pieces non-zero
+    (3.5 MB); a frame changes 7-95 pieces (90 on a game tick, about every third frame), 45-62 KB/frame
+    compressed, about 2.3-3 MB/s = 140-190 MB per minute at a checkpoint per frame. The set is hot: 125 pieces
+    (500 KB) over 250 frames, so a checkpoint every 50 frames costs 1.4 KB/frame (about 4 MB per minute).
+    zstd of the changed pieces: 0.8-0.9 ms/frame on a loaded M1 Ultra (load 100; DOOM itself 3.7 ms/frame on
+    an idle M3 Ultra). For comparison the Z80 side of this recording stores 5-10 KB/frame (session heap growth).
+  - Today a recording on `TSL-VDAC4` starts and is silently incomplete: no VDAC4 device in its peripherals,
+    `not_recorded` empty, and after a seek back 100 frames the ESP memory is neither the recorded one nor
+    the present one. Until the devices exist, a recording with the board must be refused (or list the board in
+    `not_recorded`).
+  - Landed 2026-11-24 (`1f0154632`, `293d25062`): sparse ESP keyframes and an input journal,
+    [ttd-design.md](ttd-design.md); DOOM recorded at 2.80 ms per frame (1.94 off), 18.7 KB per frame, 55 of 55 seeks
+    restore the ESP memory exactly (§9). Open items there (§10).
+  - Direction: the ESP app is deterministic from its inputs (the LINK traffic is in the port journal), so
+    sparse ESP keyframes (every 25-50 frames, a sync point with the worker only there) plus re-running the ESP
+    from the keyframe on a seek; the Tang / FT812 state (RAM_G 3 MB, mostly uniform) recorded per frame like
+    VDAC2's RAM_G.
 - [ ] HMM2-VDAC4 to the adventure map with music (OGG module): needs the game's `HMM2.DAT` from the owner.
 - [ ] DEMO3D (BL616 3D commands A0-AF): implemented in `eve-vdac4-3d.cpp`, no program to check it with.
 - [ ] x86 speed: the A/B numbers of the 2026-11-22 / 23 rounds on a quiet x86 host (the Linux host was loaded,
