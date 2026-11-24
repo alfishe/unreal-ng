@@ -311,6 +311,19 @@ Write them again after a format change (then `git add -f`, `*.ttd` is ignored):
 `tools/verification/ttd-analyzer/tests/test_ttdcontainer.py` checks the analyzer
 against them.
 
+Segment files of a recording folder, with the seek data a restore reads one stretch of them through (stream 2
+`piece-tables` and the seek index in the index extra, since 2026-11-23):
+
+| Fixture | What |
+|---|---|
+| `v2/seek/segment-trunk.ttd` | the second segment (frames 40-79) of a synthetic session: 8 parts of 5 checkpoints, a piece table every 8 checkpoints |
+| `v2/seek/segment-branch.ttd` | the first segment of a branch of such a session (branch streams `0x0201`-`0x0203`, its first checkpoint the fork's copy whole) |
+
+`TTDSegmentWindow_Test.TheCommittedSegmentFilesReadBackInStretches` reads them back into the sessions they were
+written from (`core/tests/debugger/ttd/engine/ttdsegmentwindow_test.cpp`); `check_ksy.py` checks `ttd.ksy`'s
+`payload_piece_tables` and `seek_index` against them. Written again by the same test with
+`UNREAL_TTD_WRITE_SEEK_FIXTURES=1` (then `git add -f`).
+
 ## Branched sessions for the maintenance tools (`branches/`)
 
 Fixtures of the TTD maintenance tools ([tools/python/ttd](../../tools/python/ttd/README.md), P7 of

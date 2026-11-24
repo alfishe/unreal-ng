@@ -260,6 +260,12 @@ private:
     uint64_t _cursor = 0;  ///< next record replayed (Play)
 
     std::vector<Block> _blocks;      ///< the sealed blocks still held, oldest first
+    /// The sealed blocks' sizes, summed as blocks come and go (CountBlock): the session's status asks for the three
+    /// of them at every seek's publish, and each walked every block (P1.S10 seek format)
+    size_t _blocksHeap = 0;          ///< compressed and summary capacities
+    size_t _blocksSlack = 0;         ///< compressed capacity past its size
+    size_t _blocksSerialized = 0;    ///< compressed sizes and block headers, as SerializedBytes counts them
+    void CountBlock(const Block& b, bool add);
     uint64_t _droppedBlocks = 0;     ///< sealed blocks dropped from the front (DropBefore)
     uint64_t _sealedRecords = 0;     ///< records in sealed blocks, dropped ones included (absolute)
     std::vector<TTDPortRecord> _open;

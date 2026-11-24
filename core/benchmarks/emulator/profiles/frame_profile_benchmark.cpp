@@ -32,11 +32,13 @@
 
 #include <benchmark/benchmark.h>
 
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <string>
 
 #include "base/featuremanager.h"
+#include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -112,6 +114,11 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::shared_ptr<Emulator> emulator;
+
+    // UNREAL_TTD_PIECE_STRIDE=<n>: the piece store's skip stride of the machines made here (1: every version builds
+    // on the previous one, the capture before 2026-11-23): the other side of an A/B of the TtdRecord rows
+    if (const char* stride = std::getenv("UNREAL_TTD_PIECE_STRIDE"))
+        ttd::TTDPieceStore::SetDefaultSkipStride(static_cast<uint16_t>(std::atoi(stride)));
 
 #ifdef FRAME_PROFILE_HAS_SLOTS
     std::function<void(CONFIG&)> configOverride;

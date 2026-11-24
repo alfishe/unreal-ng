@@ -308,6 +308,41 @@ Release build), reference workloads of §5.3.
     - PR-6's 1 ms p50 is 1.3-1.4 ms at 240k. The floor is the full decode
       plus one frame run for the picture.
 
+  **Measured** (P1.S10 seek format, 2026-11-24). The same harness with sides
+  interleaved in one process (`UNREAL_TTD_SEEK_SIDES`), every mechanism
+  switched off for "before", the shipped tree twice for the A/A, 100 seeks
+  per kind, 2 rounds, on a machine at load 14-330 (so the tails are read from
+  the quieter rounds). At 240k frames, before -> after:
+  - seek inside the window, frame-aligned: p50 1.31 -> 0.69-0.71 ms (0.73
+    with coverage); stepping back 0.85 -> 0.57-0.59 ms. The memory decode is
+    0.45 -> 0.14 ms (153 -> 41 differences applied), the session's publish
+    0.26 -> 0.01 ms; the picture's frame run, 0.55 ms, is what is left. PR-6's
+    p50 <= 1 ms holds at every length (0.69-0.80 ms from 10k to 240k);
+  - seek into evicted history: p50 4.70 -> 1.33-2.44 ms (the A/A's two
+    rounds: load 14 and load 80-147), p95 / p99 1.68 / 1.82 and 2.14 / 2.53 ms
+    in the rounds at load 52-170, 36 / 68 ms before under the same load. The
+    read back is 3.30 -> 0.42 ms: about 410 KB of 7-8 parts of a 4.3 MB file,
+    500 versions imported. PR-5's p99 <= 5 ms holds for evicted history on a
+    machine that is not starved; under load 200-330 the same binary shows p99
+    of 15-40 ms on any seek, in memory too;
+  - what did it: a seek reads one stretch of the segment's file through a
+    seek index and piece tables (`ReadSegmentWindow`; evicted p50 3.81 ->
+    1.5 ms alone); every 7th version of a piece's chain builds on the one 7
+    before (decode 0.29 -> 0.14 ms); a baseline keeps the version of an
+    unchanged piece (0.27 -> 0.14 ms); piece records uncompressed in the
+    file (read back 0.71 -> 0.42 ms); running sums for the journals' sizes
+    (0.20 -> 0.01 ms of every seek);
+  - cost: the recording folder 535.9 -> 569.3 MB (+6.2 %: uncompressed piece
+    records +24 MB, the anchor differences +9 MB, tables and index 0.1 %);
+    engine heap 1,233.8 -> 1,228.0 MB. Recording cost: see
+    [DONE.md](DONE.md), P1.S10 seek format.
+  - the tails on a quiet machine (M3 Ultra at load 3-7, 200 seeks per kind,
+    3 rounds, the A/A within 0.06 ms), before -> after, p50 / p99: evicted,
+    frame-aligned 3.14 / 4.49 -> 0.81 / 1.09 ms; evicted, inside a frame
+    3.35 / 4.88 -> 1.28 / 1.75 ms (1.30 / 1.86 with coverage, 3.54 / 5.17
+    before); inside the window 0.82 / 1.06 -> 0.50 / 0.59 ms; stepping back
+    0.49 / 0.63 -> 0.40 / 0.48 ms. PR-5 and PR-6 hold with their tails.
+
 ### 3.3 Storage efficiency
 
 - **PR-9 (MUST)** v2 is **more efficient than v1** on every reference workload

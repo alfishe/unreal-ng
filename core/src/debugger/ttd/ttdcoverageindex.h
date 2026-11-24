@@ -309,6 +309,15 @@ public:
     /// the compressed blocks
     size_t CompressedSlackBytes() const;
 
+private:
+    /// Counts every change of the blocks' and run unions' storage; HeapBytes walks them again only after one
+    mutable uint64_t _storageEdits = 0;
+    mutable uint64_t _heapMemoEdits = UINT64_MAX;
+    mutable size_t _heapMemoBlocks = 0;
+    mutable size_t _heapMemoSlack = 0;
+
+public:
+
     /// @brief Compressed bytes actually held for a kind (sealed blocks plus the
     /// block still being filled). This is the number that matters for sizing a
     /// session and for what persistence would have to write.

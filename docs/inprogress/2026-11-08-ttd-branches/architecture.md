@@ -338,6 +338,27 @@ change record, and a baseline (which stores every piece) keeps the list of piece
 before it, computed at capture (`TTDSegmentInfo::baselineDiff`), so the frames where the picture changed are known
 without the segment (`TTDSeekScaling_Folder_Test.TheTimelineReadsNoEvictedSegmentBack`).
 
+A restore reads back one stretch through the file's seek index (2026-11-23, P1.S10 seek format). The prefix still
+decoded, imported and rebuilt half a segment on average, 4 ms of a 5 ms seek. A segment file now carries a piece
+table at every checkpoint with full reference tables and a seek index
+([storage.md §5.3](storage.md#53-as-built-2026-11-23-a-segment-file-read-in-part)), and the loader asks for the
+checkpoint alone:
+
+- `TimeTravelEngine::ReadBackSegmentWindow` takes the stretch from the last checkpoint with full tables at or before
+  the one wanted to the next such checkpoint (at most 65 checkpoints of a segment of up to 3,000; the checkpoint
+  after the one wanted is inside, for the next frame's restore and a seek check).
+  `TTDSessionFile::ReadSegmentWindow` reads the table, the stretch's checkpoint records and the piece records of the
+  parts that hold a version the stretch needs, and imports only those versions.
+- The stretch becomes resident (`TTDSegmentInfo::residentParts`). Another restore elsewhere in the segment adds its
+  stretch; the stretches in memory keep their versions, so a query that holds versions of one checkpoint while it
+  asks for another of the same segment is safe (the prefix read evicted and read the segment again there).
+  Neighbouring stretches join, and a segment whose stretches cover it is whole.
+- The whole segment is read when the capture head moves into it (`EnsureWhole`: a truncate, a switch of line; the
+  head's segment cannot leave memory to be read again), for a save (`ReadBackAll`) and when the memory window covers
+  it again. A file without a seek index (unfinished, joined) is read as before: a prefix first, whole at the second
+  restore in it.
+- The read-back cache counts segments as before (4); a segment's stretches leave with it.
+
 The read back runs on the thread of the operation that needs it (an operation parks a recording machine first);
 read-only queries never load the emulation thread. A failed read back counts `read_back_failures` and the restore
 reports the checkpoint damaged.

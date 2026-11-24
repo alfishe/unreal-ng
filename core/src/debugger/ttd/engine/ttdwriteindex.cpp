@@ -1,11 +1,28 @@
 #include "ttdwriteindex.h"
 
 #include <algorithm>
+#include <atomic>
 
 #include "debugger/ttd/ttdcompression.h"
 
 namespace ttd
 {
+
+namespace
+{
+std::atomic<bool> g_walkBlocks{false};
+}
+
+void TTDWriteIndex::SetWalkBlocksForMeasurement(bool on)
+{
+    g_walkBlocks = on;
+}
+
+bool TTDWriteIndex::WalkBlocksForMeasurement()
+{
+    return g_walkBlocks.load(std::memory_order_relaxed);
+}
+
 
 void TTDWriteIndex::Append(const TTDWriteRecord& rec)
 {
@@ -31,6 +48,7 @@ void TTDWriteIndex::Seal()
     b.rawSize = static_cast<uint32_t>(raw.size());
     b.payload = codec::Compress(raw.data(), raw.size());
     b.payload.shrink_to_fit();
+    _payloadHeap += b.payload.capacity();
     _blocks.push_back(std::move(b));
     _open.clear();
 }
@@ -177,6 +195,7 @@ void TTDWriteIndex::ForEachInRange(uint64_t fromT, uint64_t toT,
 void TTDWriteIndex::Clear()
 {
     _blocks.clear();
+    _payloadHeap = 0;
     _open.clear();
     _segments.clear();
     _size = 0;
@@ -194,6 +213,7 @@ void TTDWriteIndex::DropBefore(uint64_t globalT)
     {
         droppedUpTo = _blocks[count].lastT;
         _size -= _blocks[count].count;
+        _payloadHeap -= _blocks[count].payload.capacity();
         ++count;
     }
     if (count == 0)
@@ -230,6 +250,7 @@ void TTDWriteIndex::DropAfter(uint64_t globalT)
         {
             _size -= _blocks.back().count;
             _memSealed = _blocks.back().memBefore;
+            _payloadHeap -= _blocks.back().payload.capacity();
             _blocks.pop_back();
         }
         if (!_blocks.empty() && _blocks.back().lastT > globalT)
@@ -237,6 +258,7 @@ void TTDWriteIndex::DropAfter(uint64_t globalT)
             std::vector<TTDWriteRecord> records = Decode(_blocks.size() - 1);
             _size -= _blocks.back().count;
             _memSealed = _blocks.back().memBefore;
+            _payloadHeap -= _blocks.back().payload.capacity();
             _blocks.pop_back();
             for (const TTDWriteRecord& r : records)
                 if (r.globalT <= globalT)
@@ -272,11 +294,16 @@ void TTDWriteIndex::SetSegments(std::vector<TTDJournalSegment> segments)
 
 size_t TTDWriteIndex::HeapBytes() const
 {
-    size_t bytes = _blocks.capacity() * sizeof(Block) + _open.capacity() * sizeof(TTDWriteRecord) +
-                   _segments.capacity() * sizeof(TTDJournalSegment) + _cached.capacity() * sizeof(TTDWriteRecord);
-    for (const Block& b : _blocks)
-        bytes += b.payload.capacity();
-    return bytes;
+    if (WalkBlocksForMeasurement())
+    {
+        size_t walked = 0;
+        for (const Block& b : _blocks)
+            walked += b.payload.capacity();
+        if (walked != _payloadHeap)
+            return SIZE_MAX;   // the sum went wrong: a measurement run shows it at once
+    }
+    return _blocks.capacity() * sizeof(Block) + _open.capacity() * sizeof(TTDWriteRecord) +
+           _segments.capacity() * sizeof(TTDJournalSegment) + _cached.capacity() * sizeof(TTDWriteRecord) + _payloadHeap;
 }
 
 }  // namespace ttd
