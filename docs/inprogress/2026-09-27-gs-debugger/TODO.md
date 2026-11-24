@@ -508,6 +508,30 @@ what an agent reads):
     tab uses the port trace history, which covers the MultiSound's GS too). Left in the UI: no X20 time-series graph
     (a table of the newest 32 frames); the MultiSound's GS not exercised by a test of these tabs; a click on a
     routine / range does not move the card disassembly.
+  - Analysis tabs Profiler / Events / Coverage / Heat map in the eCat debugger (`unreal-debugger`; A5.2a; X2, X8,
+    X9, X10, X11, X20), as built 2026-11-24, branch `gs-ui-ecat`, uncommitted:
+    `debuggers/qt/ecat/dialogs/debugger/gsprofiling.{h,cpp}` (`GsReportTab` over `GsCardTab`; `GsProfilerView`
+    with `GsBudgetBar` / `GsActivityGraph`, `GsEventsView` / `GsEventsCanvas`, `GsCoverageView`, `GsHeatmapView` /
+    `GsHeatCanvas`), `shimapi/ecatshim.h` (`GsJson`, `read_gs_report`, `gs_profiler`, `gs_analysis`, default "not
+    available"), `adapter/unrealmachine.cpp` (the core reports `DeviceState::Gs*` as `StateNodeToJsonText` under
+    `LeaseContext`, the controls `GSProfileControl` / `GSAnalysisControl`), `adapter/remotemachine.cpp` (`GET
+    /state/audio/gs/{profile,events,analysis,coverage,heatmap}`, a 404 with a message read as not available; `POST
+    /control/audio/gs` `profile_*`, `POST /control/audio/gs/analysis`), `debuggerwindow.{h,cpp}` (the four after
+    GS writers, in `m_gs_analysis`), `main.cpp` (`gs_profiling_check`), README "The profiler and analysis tabs".
+    Decisions: one report a read, as JSON, the same in process and over REST; refresh only while the tab is in
+    front and the machine runs (250 ms in process, 1 s remote) and at the window's stops, nothing parks; the empty
+    states said in words (interrupts off with the `lost` requests, no routine yet, no ISR bars while idle, analysis
+    off, the LW GS has no card CPU); labels by the card CPU's own disassembler at the exact address; Events draws
+    the last complete host frame, a row an interrupt period (2 px), the ISR as a bar, the other events as dots
+    with a tooltip; the heat map is read as base64 at 16384 cells, composite or one channel, decay from a spin box.
+    Checks: `tools/build/build.sh unreal-debugger` zero warnings; `--self-check` in process gs, neogs, gs-lw,
+    multisound rc 0; `--connect` (offscreen unreal-qt, PENTAGON) neogs rc 0, gs rc 0 (a first run had one flake in
+    the existing Writers check: `run_program`'s 3 s wait for the stop over REST, rows right; not reproduced).
+    Left: "Break on new code" shown disabled (no core breakpoint for first new code or never-written reads); the
+    port trace route has no `cpu=ms`, so remote MultiSound gets no event dots and no trace start; never-written
+    rows show a label only at the exact PC; not-executed handlers come with the command only (no name / handler in
+    the report); the stock firmware's idle gives empty ISR bars; a GS reset runs the memory test ~2.5 s before
+    routines show.
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

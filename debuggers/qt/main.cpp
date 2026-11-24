@@ -81,6 +81,7 @@
 #include "dialogs/debugger/disasmview.h"
 #include "dialogs/debugger/gsanalysis.h"
 #include "dialogs/debugger/gsmonitor.h"
+#include "dialogs/debugger/gsprofiling.h"
 #include "dialogs/debugger/ttdcontrols.h"
 #include "dialogs/debugger/memoryview.h"
 #include "dialogs/debugger/nextviews.h"
@@ -1193,9 +1194,7 @@ void gs_analysis_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
     int last_card_tab = -1;
     for (int i = 0; i < side->count(); i++) {
         if (side->tabText(i) == "GS log") log_view = qobject_cast<NextReportView *>(side->widget(i));
-        if (side->widget(i)->objectName().startsWith("card:") && !side->widget(i)->objectName().startsWith("card:gs-dispatch") &&
-            !side->widget(i)->objectName().startsWith("card:gs-unknown") && !side->widget(i)->objectName().startsWith("card:gs-objects") &&
-            !side->widget(i)->objectName().startsWith("card:gs-writers"))
+        if (side->widget(i)->objectName().startsWith("card:") && qobject_cast<GsCardTab *>(side->widget(i)) == nullptr)
             last_card_tab = std::max(last_card_tab, i);
     }
     const bool card = log_view != nullptr && log_view->present();
@@ -1377,6 +1376,201 @@ void gs_analysis_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
     for (const std::string &n : names)
         if (host_regs[n] != ~0u) cpu->set_context_value(n, host_regs[n]);
     if (log_before.log_mode != "ring") m->gs_command_log(which, false);
+    side->setCurrentWidget(was);
+}
+
+// The GS analysis tabs on the card CPU's profiler and analysis (gui-card-debugger A5.2a): GS profiler, GS events,
+// GS coverage, GS heat map after GS writers, shown with the card; on the lightweight player each says "not available".
+// Profiler: Start, a card reset (#33 bit 7; the MultiSound's GS has no #33: command #F3, warm restart): routines, and
+// the idle firmware's interrupts off said; Events: the periods of a profiled frame; Coverage: On, executed ranges;
+// Heat map: hot cells. Everything switched on here is switched off again
+void gs_profiling_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * cpu, const std::function<void(bool, const char *)> &check)
+{
+    auto * dw = dynamic_cast<DebuggerWindow *>(window);
+    QTabWidget * side = tabs_with(window, "Devices");
+    if (dw == nullptr || side == nullptr) return;
+    GsProfilerView * profiler = dw->gs_profiler();
+    GsEventsView * events = dw->gs_events();
+    GsCoverageView * coverage = dw->gs_coverage();
+    GsHeatmapView * heatmap = dw->gs_heatmap();
+    NextReportView * log_view = nullptr;
+    for (int i = 0; i < side->count(); i++)
+        if (side->tabText(i) == "GS log") log_view = qobject_cast<NextReportView *>(side->widget(i));
+    const bool card = log_view != nullptr && log_view->present();
+    const std::vector<std::pair<QWidget *, QString>> tabs = {
+        {profiler, "GS profiler"}, {events, "GS events"}, {coverage, "GS coverage"}, {heatmap, "GS heat map"}};
+    bool placed = profiler != nullptr && events != nullptr && coverage != nullptr && heatmap != nullptr && dw->gs_writers() != nullptr;
+    const int writers_at = placed ? side->indexOf(dw->gs_writers()) : -1;
+    for (size_t i = 0; placed && i < tabs.size(); i++) {
+        const int at = side->indexOf(tabs[i].first);
+        placed = at == writers_at + 1 + (int)i && side->tabText(at) == tabs[i].second && side->isTabVisible(at) == card;
+    }
+    check(placed, card ? "gs profiling: Profiler, Events, Coverage, Heat map after Writers" : "gs profiling: the tabs hidden without a card");
+    if (!placed || !card) return;
+    ecatshim::CPU * front = dw->card_cpu();
+    const std::string which = CardTabsCard(m, front != nullptr ? front->name : std::string());
+    QWidget * was = side->currentWidget();
+
+    // The lightweight player: no card CPU, every tab says so
+    side->setCurrentWidget(profiler);
+    profiler->refresh();
+    if (!profiler->report().value("available").toBool()) {
+        bool said = true;
+        for (GsCardTab * t : std::vector<GsCardTab *>{profiler, events, coverage, heatmap}) {
+            side->setCurrentWidget(t);
+            t->refresh();
+            said = said && t->line()->text().contains("not available");
+        }
+        printf("  (profiler: %s)\n", profiler->line()->text().toUtf8().constData());
+        check(said && !profiler->start_button()->isVisibleTo(profiler) && profiler->routines()->rowCount() == 0,
+              "gs profiling: no card CPU: every tab says not available");
+        side->setCurrentWidget(was);
+        return;
+    }
+
+    // The host's program at #8000, put back afterwards
+    std::vector<std::pair<unsigned int, unsigned int>> host_bytes;
+    for (unsigned int i = 0; i < 0x20; i++) host_bytes.emplace_back(0x8000 + i, cpu->peek_mem(0x8000 + i));
+    const std::vector<std::string> names = {"PC", "AF", "BC", "DE", "HL", "IFF1", "IFF2"};
+    std::map<std::string, unsigned int> host_regs;
+    for (const std::string &n : names) host_regs[n] = reg(cpu, n);
+    auto run_program = [m, cpu](const std::vector<uint8_t> &bytes) {
+        for (size_t i = 0; i < bytes.size(); i++) cpu->poke_mem(0x8000 + (unsigned int)i, bytes[i]);
+        cpu->set_context_value("PC", 0x8000);
+        m->debug_run_to(cpu, 0x8000 + (unsigned int)bytes.size() - 2);  // the JR $ at the end
+        return wait_for([m, cpu, &bytes]() {
+            return m->debug_paused() && !m->debug_stepping() && reg(cpu, "PC") == 0x8000 + bytes.size() - 2;
+        }, 3000);
+    };
+    // A few frames of the machine (the JR $ of the last program keeps the host still)
+    auto run_a_while = [m](int ms) {
+        m->debug_run(true);
+        wait_for([]() { return false; }, ms);
+        m->debug_pause();
+        wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    };
+    auto table_row = [](QTableWidget * t, int r) {
+        QStringList cells;
+        for (int k = 0; t != nullptr && r < t->rowCount() && k < t->columnCount(); k++) cells << (t->item(r, k) ? t->item(r, k)->text() : QString());
+        return cells.join(" | ");
+    };
+    auto flat = [](const QString &s) { return QString(s).replace('\n', " / ").toUtf8(); };
+
+    // Profiler: off at first (Start offered), then Start, a frame, a card reset, a while
+    m->gs_profiler(which, "stop");
+    m->gs_profiler(which, "clear");
+    profiler->refresh();
+    check(profiler->start_button()->isVisibleTo(profiler) && profiler->line()->text().contains("off: Start"),
+          "gs profiling: Profiler off: said, Start offered");
+    profiler->start_button()->click();
+    const bool started = profiler->stop_button()->isVisibleTo(profiler) && profiler->report().value("on").toBool();
+    // DI : JR $ (the card idles a while: its interrupts off)
+    run_program({0xF3, 0x18, 0xFE});
+    run_a_while(200);
+    profiler->refresh();
+    const QString idle_state = profiler->state()->text();
+    const bool idle_said = idle_state.contains("Interrupts off");
+    printf("  (profiler idle: %s)\n  (state: %s)\n", flat(profiler->budget()->text()).constData(), flat(idle_state).constData());
+    // The card reset: #33 bit 7 (GS, NeoGS); the MultiSound's GS: command #F3 (warm restart)
+    if (which == "ms")
+        run_program({0xF3, 0x01, 0xBB, 0x00, 0x3E, 0xF3, 0xED, 0x79, 0x18, 0xFE});  // DI : LD BC,#00BB : LD A,#F3 : OUT (C),A : JR $
+    else
+        run_program({0xF3, 0x3E, 0x80, 0xD3, 0x33, 0xAF, 0xD3, 0x33, 0x18, 0xFE});  // DI : LD A,#80 : OUT (#33),A : XOR A : OUT (#33),A : JR $
+    // The stock GS's memory test after a reset runs a while before its set-up CALLs: up to 3 s of the machine, then a
+    // warm restart (#F3) as the MultiSound's
+    QTableWidget * rt = profiler->routines();
+    for (int i = 0; i < 10 && rt->rowCount() == 0; i++) {
+        run_a_while(300);
+        profiler->refresh();
+    }
+    if (rt->rowCount() == 0) {
+        printf("  (no routine 3 s after the reset: a warm restart, #F3)\n");
+        run_program({0xF3, 0x01, 0xBB, 0x00, 0x3E, 0xF3, 0xED, 0x79, 0x18, 0xFE});
+        run_a_while(300);
+        profiler->refresh();
+    }
+    printf("  (profiler: %s)\n  (budget: %s)\n  (state: %s)\n  (%d routines, %d commands, %d activity rows)\n",
+           profiler->line()->text().toUtf8().constData(), flat(profiler->budget()->text()).constData(),
+           flat(profiler->state()->text()).constData(), rt->rowCount(), profiler->commands()->rowCount(), profiler->activity()->rowCount());
+    for (int r = 0; r < std::min(3, rt->rowCount()); r++) printf("  (routine: %s)\n", table_row(rt, r).toUtf8().constData());
+    if (profiler->activity()->rowCount() > 0) printf("  (activity: %s)\n", table_row(profiler->activity(), 0).toUtf8().constData());
+    check(started && idle_said, "gs profiling: Profiler: Start; the idle card's interrupts off said");
+    check(rt->rowCount() > 0 && profiler->activity()->rowCount() > 0, "gs profiling: Profiler: routines after a card reset, activity rows");
+
+    // Events: the periods of the last profiled frame; the trace off said (and started)
+    side->setCurrentWidget(events);
+    events->refresh();
+    const bool trace_was = !events->trace_button()->isVisibleTo(events);
+    const size_t periods = events->canvas()->rows().size();
+    const bool trace_said = trace_was || events->hint()->text().contains("port trace is off");
+    if (!trace_was) {
+        events->trace_button()->click();
+        printf("  (trace: %s)\n", events->answer()->text().toUtf8().constData());
+        run_a_while(200);
+        events->refresh();
+    }
+    size_t bars = 0, dots = 0, example = SIZE_MAX;
+    for (size_t i = 0; i < events->canvas()->rows().size(); i++) {
+        const GsEventsCanvas::Row &r = events->canvas()->rows()[i];
+        bars += r.bars.size();
+        dots += r.dots.size();
+        if (example == SIZE_MAX && (!r.bars.empty() || !r.dots.empty())) example = i;
+    }
+    printf("  (events: %s)\n  (hint: %s)\n  (%zu periods, %zu bars, %zu dots)\n", events->line()->text().toUtf8().constData(),
+           flat(events->hint()->text()).constData(), events->canvas()->rows().size(), bars, dots);
+    if (example != SIZE_MAX) {
+        const QPoint at(events->canvas()->rows()[example].bars.empty() ? 0 : 1, (int)example * 2);
+        printf("  (tooltip: %s)\n", flat(events->canvas()->describe(at)).constData());
+    }
+    check(periods > 0 && events->canvas()->rows().size() > 0 && trace_said, "gs profiling: Events: the frame's periods; the trace off said");
+    if (!trace_was) m->gs_port_trace(which, "stop");
+
+    // Coverage: off said, On, a card reset, a while: executed ranges
+    side->setCurrentWidget(coverage);
+    m->gs_analysis(which, "release", -1);
+    coverage->refresh();
+    check(coverage->on_button()->isVisibleTo(coverage) && coverage->line()->text().contains("no data") &&
+              !coverage->break_new_button()->isEnabled(),
+          "gs profiling: Coverage off: said, On offered, break on new code unavailable");
+    coverage->on_button()->click();
+    run_a_while(100);
+    if (which == "ms") run_program({0xF3, 0x01, 0xBB, 0x00, 0x3E, 0xF3, 0xED, 0x79, 0x18, 0xFE});
+    else run_program({0xF3, 0x3E, 0x80, 0xD3, 0x33, 0xAF, 0xD3, 0x33, 0x18, 0xFE});
+    run_a_while(300);
+    coverage->refresh();
+    QTableWidget * pt = coverage->pages();
+    int code_rows = 0;
+    for (int r = 0; r < pt->rowCount(); r++)
+        if (pt->item(r, GsCoverageView::PColCodeRanges) && !pt->item(r, GsCoverageView::PColCodeRanges)->text().isEmpty()) code_rows++;
+    printf("  (coverage: %s)\n  (%d page rows, %d with code ranges)\n", coverage->line()->text().toUtf8().constData(), pt->rowCount(), code_rows);
+    for (int r = 0, shown = 0; r < pt->rowCount() && shown < 3; r++)
+        if (pt->item(r, GsCoverageView::PColCodeRanges) && !pt->item(r, GsCoverageView::PColCodeRanges)->text().isEmpty()) {
+            printf("  (page: %s)\n", table_row(pt, r).left(220).toUtf8().constData());
+            shown++;
+        }
+    printf("  (handlers: %s; %d rows)\n", coverage->handlers_line()->text().toUtf8().constData(), coverage->handlers()->rowCount());
+    if (coverage->handlers()->rowCount() > 0) printf("  (handler: %s)\n", table_row(coverage->handlers(), 0).toUtf8().constData());
+    printf("  (never written: %d rows)\n", coverage->never_written()->rowCount());
+    if (coverage->never_written()->rowCount() > 0) printf("  (never written: %s)\n", table_row(coverage->never_written(), 0).toUtf8().constData());
+    check(code_rows > 0 && coverage->off_button()->isVisibleTo(coverage), "gs profiling: Coverage: On, executed code ranges");
+
+    // Heat map: the same analysis, its grid
+    side->setCurrentWidget(heatmap);
+    heatmap->refresh();
+    printf("  (heat map: %s)\n  (%d recent DAC ranges)\n", heatmap->line()->text().toUtf8().constData(), heatmap->recent()->rowCount());
+    check(heatmap->hot_cells() > 0 && !heatmap->canvas()->image().isNull() && heatmap->channel()->count() > 1,
+          "gs profiling: Heat map: hot cells in the grid, the channels to pick");
+
+    // Put back: the profiler off, the analysis released, the host's bytes and registers
+    m->gs_profiler(which, "stop");
+    m->gs_profiler(which, "clear");
+    m->gs_analysis(which, "release", -1);
+    m->debug_run(true);
+    m->debug_pause();
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    for (const auto &b : host_bytes) cpu->poke_mem(b.first, b.second);
+    for (const std::string &n : names)
+        if (host_regs[n] != ~0u) cpu->set_context_value(n, host_regs[n]);
     side->setCurrentWidget(was);
 }
 
@@ -1772,6 +1966,7 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
 
     gs_monitor_check(m, window, cpu, check);
     gs_analysis_check(m, window, cpu, check);
+    gs_profiling_check(m, window, cpu, check);
 
     // Event breakpoints (gs-debugger P5.3): the card's side on the card CPU, the host's side on the main CPU, added
     // through the shim, listed with their CPU (in the breakpoint list too), switched off, removed

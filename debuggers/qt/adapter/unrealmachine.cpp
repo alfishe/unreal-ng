@@ -58,7 +58,9 @@
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gsanalysisreport.h"
 #include "emulator/sound/chips/gs/gscommandlog.h"
+#include "emulator/sound/chips/gs/gsprofilereport.h"
 #include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicecatalog.h"
@@ -1910,6 +1912,63 @@ private:
             a = {true, "port trace " + action + (action == "stop" ? "ped" : "ed")};
         });
         return a;
+    }
+
+    // The profiler and analysis reports in process: the core's report on this thread under a lease of the context
+    // (the reads never park the machine: the WebAPI's handlers call the same on theirs)
+    GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query) override
+    {
+        auto get = [&query](const std::string &key) {
+            const auto it = query.find(key);
+            return it == query.end() ? std::string() : it->second;
+        };
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        std::string error;
+        StateNode n;
+        if (report == "profile") {
+            GSProfileQuery q;
+            if (!GSProfileQueryFromStrings(get("cpu"), get("routines"), get("activity"), q, error)) return {false, std::string(), error};
+            n = DeviceState::GsProfile(ctx, q);
+        } else if (report == "events") {
+            GSEventsQuery q;
+            if (!GSEventsQueryFromStrings(get("cpu"), get("first"), get("count"), get("rows"), q, error))
+                return {false, std::string(), error};
+            n = DeviceState::GsEvents(ctx, q);
+        } else if (report == "analysis") {
+            n = DeviceState::GsAnalysisStatus(ctx, get("cpu"));
+        } else if (report == "coverage" || report == "heatmap") {
+            GSAnalysisQuery q;
+            if (!GSAnalysisQueryFromParams(get, q, error)) return {false, std::string(), error};
+            n = report == "coverage" ? DeviceState::GsCoverage(ctx, q) : DeviceState::GsHeatmap(ctx, q);
+        } else {
+            return {false, std::string(), "Unknown GS report '" + report + "'"};
+        }
+        return {true, StateNodeToJsonText(n), std::string()};
+    }
+    GsJson gs_profiler(const std::string &card, const std::string &action) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        const GSProfileControlReply r = GSProfileControl(ctx, action, card);
+        return {r.status == 200, StateNodeToJsonText(r.body), r.text};
+    }
+    GsJson gs_analysis(const std::string &card, const std::string &action, int decay) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        GSAnalysisControlRequest request;
+        request.action = action;
+        request.cpu = card;
+        request.decay = decay;
+        const GSAnalysisReply r = GSAnalysisControl(ctx, request);
+        std::string message;
+        if (const StateNode * error = r.body.find("error")) message = error->s;
+        else if (const StateNode * text = r.body.find("text")) message = text->s;
+        return {r.status == 200, StateNodeToJsonText(r.body), message};
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads
