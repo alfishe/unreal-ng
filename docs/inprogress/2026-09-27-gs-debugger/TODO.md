@@ -405,6 +405,25 @@ what an agent reads):
     protocol" in both adapters (shim `read_gs_monitor`, `gs_command_log`; remote plain GETs), 4 Hz in process, 1 Hz
     remote; self-check `gs monitor:` on every card, in process and --connect. Left: the log row actions (A5.4); rows lost when more than 200 records arrive
     between two refreshes (the history read has no since cursor).
+  - Analysis tabs prototype, embedded debugger, as built (2026-11-23; A5.2a rows Objects, Dispatch, Unknown, Writers):
+    `unreal-qt/src/debugger/gsanalysispane.h` (one widget, four views), every card (`Card::Any`, the MultiSound's GS
+    through the follow). "GS firmware" became **GS objects** (same place; the design's "replaces the Firmware tab"): a
+    profile picker (active or any known profile), an object picker, one table per struct instance (columns from the
+    schema, a row per instance), the profile's variables, the window variables (LW: its mirror). After GS player:
+    **GS dispatch** (the `gs-firmware` dispatch of the nearest profile on the stack that declares one: command, name,
+    handler, label from the profile's handler else the card CPU's labels, ROM baseline, patched rows tinted with the
+    patching profile and its upload; the stack "gs105a ▸ ..." rebuilt from the ROM's profile, the started uploads and
+    the log's top; LW says it has no table), **GS unknown** (`unknown_commands` since the tab's own Clear: no core verb
+    clears the counts, only a new recording; Turn on), **GS writers** (card OUTs from the port trace with the card PC +
+    label; host #B3 / #BB from the command log with the main PC + label; #33 from the trace, its host PC only for a
+    bit-7 reset marker; Turn on rings both histories). No View ▸ Card menu in the window: shown with the card, after
+    the other tabs. Live through the card panes' timer while in front, marked at stops. Tests
+    `CardPanes_Test.TheDispatch*`, `TheUnknownTab*`, `TheObjectsTab*`, `TheWritersTab*`. Gaps: the port trace's host
+    events keep the card's PC (no host PC for #33), no CPU / DMA writer kind, no profile stack accessor in the core,
+    LW's missing commands not tracked (AU6), the uploads of a block's bytes not per byte, the core's dispatch read
+    takes COMTABH (#20-#EF) through window 3 as mapped now (junk while the firmware keeps a RAM page there: the tab
+    then shows the baseline handler) and its ROM baseline from card pages 0-1 (wrong on NeoGS, whose firmware runs
+    from a RAM copy of flash: every word reads "patched", the tab drops the baseline).
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

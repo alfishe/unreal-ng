@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTableView>
+#include <QComboBox>
 #include <QTableWidget>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -28,6 +29,7 @@
 #include "debugger/cardpanes.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80mcycles.h"
+#include "debugger/gsanalysispane.h"
 #include "debugger/gslwpane.h"
 #include "debugger/gsmonitorpane.h"
 #include "debugger/history/historycontrol.h"
@@ -42,6 +44,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotcontrol.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gshostdriver.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
@@ -87,13 +90,17 @@ protected:
 TEST_F(CardPanes_Test, PanesInTabOrder)
 {
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    ASSERT_EQ(panes.size(), 11u);
-    const char* titles[] = {"GS log",    "GS protocol", "GS monitor", "GS firmware",           "GS hardware", "NeoGS hardware",
-                            "NeoGS DMA", "NeoGS SD · MP3 · Flash", "GS stats", "GS interpreter", "GS player"};
+    ASSERT_EQ(panes.size(), 14u);
+    const char* titles[] = {"GS log",    "GS protocol", "GS monitor", "GS objects",           "GS hardware", "NeoGS hardware",
+                            "NeoGS DMA", "NeoGS SD · MP3 · Flash", "GS stats", "GS interpreter", "GS player",
+                            "GS dispatch", "GS unknown", "GS writers"};
     const CardPanes::Card cards[] = {CardPanes::Card::Any,   CardPanes::Card::Any,   CardPanes::Card::Any, CardPanes::Card::Any,
                                      CardPanes::Card::NotNeoGS, CardPanes::Card::NeoGS, CardPanes::Card::NeoGS,
                                      CardPanes::Card::NeoGS, CardPanes::Card::Any, CardPanes::Card::Lightweight,
-                                     CardPanes::Card::Lightweight};
+                                     CardPanes::Card::Lightweight, CardPanes::Card::Any, CardPanes::Card::Any,
+                                     CardPanes::Card::Any};
+    const GsAnalysisPane::View views[] = {GsAnalysisPane::View::Dispatch, GsAnalysisPane::View::Unknown,
+                                          GsAnalysisPane::View::Writers};
     for (size_t i = 0; i < panes.size(); i++)
     {
         EXPECT_EQ(panes[i].title, QString::fromUtf8(titles[i]));
@@ -102,8 +109,12 @@ TEST_F(CardPanes_Test, PanesInTabOrder)
         EXPECT_EQ(panes[i].board != nullptr, panes[i].card == CardPanes::Card::NeoGS) << titles[i];
         EXPECT_EQ(panes[i].inspector != nullptr, panes[i].card == CardPanes::Card::Lightweight) << titles[i];
         EXPECT_EQ(panes[i].monitor != nullptr, i == 2) << titles[i];
+        EXPECT_EQ(panes[i].analysis != nullptr, i == 3 || i >= 11) << titles[i];
         EXPECT_FALSE(panes[i].tooltip.isEmpty());
     }
+    EXPECT_EQ(panes[3].analysis->view(), GsAnalysisPane::View::Objects);
+    for (size_t i = 11; i < panes.size(); i++)
+        EXPECT_EQ(panes[i].analysis->view(), views[i - 11]) << titles[i];
 }
 
 /// The card fitted: every pane has its report; the hardware pane lists the DAC channels, the log the host's command
@@ -193,6 +204,13 @@ TEST_F(CardPanes_Test, WithoutTheCardEachSaysWhy)
         {
             pane.monitor->refresh(_context, false);
             EXPECT_FALSE(pane.monitor->status().isEmpty()) << pane.title.toStdString();
+            continue;
+        }
+        if (pane.analysis)
+        {
+            pane.analysis->refresh(_context, false);
+            EXPECT_FALSE(pane.analysis->status().isEmpty()) << pane.title.toStdString();
+            EXPECT_EQ(pane.analysis->table()->rowCount(), 0) << pane.title.toStdString();
             continue;
         }
         pane.pane->refresh(_context, false);
@@ -583,11 +601,15 @@ TEST_F(CardPanes_Test, TheLightweightPanesOnlyWithTheLightweightPlayer)
 
     // The firmware objects answer from the player's mirror
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    ReportPane* firmware = panes[3].pane;
-    firmware->refresh(_context, false);
-    EXPECT_TRUE(firmware->status().isEmpty()) << firmware->status().toStdString();
-    ASSERT_NE(firmware->table(), nullptr);
-    EXPECT_GE(firmware->table()->rowCount(), 1) << "the window variables";
+    GsAnalysisPane* objects = panes[3].analysis;
+    objects->refresh(_context, false);
+    EXPECT_TRUE(objects->status().isEmpty()) << objects->status().toStdString();
+    EXPECT_GE(objects->table()->rowCount(), 1) << "the window variables";
+    EXPECT_TRUE(objects->headline().contains("mirror")) << objects->headline().toStdString();
+    // No firmware code: no dispatch table, and the tab says why
+    GsAnalysisPane* dispatch = panes[11].analysis;
+    dispatch->refresh(_context, false);
+    EXPECT_TRUE(dispatch->status().contains("lightweight")) << dispatch->status().toStdString();
     EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
     _emulator.reset();
 
@@ -686,12 +708,11 @@ TEST_F(CardPanes_Test, TheMultiSoundsGsFillsThePanes)
     EXPECT_TRUE(protocol->status().isEmpty()) << protocol->status().toStdString();
     EXPECT_NE(Field(protocol->fields(), "protocol"), nullptr);
 
-    ReportPane* firmware = panes[3].pane;
-    firmware->refresh(_context, false);
-    ASSERT_TRUE(firmware->status().isEmpty()) << firmware->status().toStdString();
-    QTreeWidgetItem* cpu = Field(firmware->fields(), "cpu");
-    ASSERT_NE(cpu, nullptr);
-    EXPECT_EQ(cpu->text(1), "ms");
+    GsAnalysisPane* objects = panes[3].analysis;
+    objects->refresh(_context, false);
+    ASSERT_TRUE(objects->status().isEmpty()) << objects->status().toStdString();
+    EXPECT_TRUE(objects->headline().contains(" · cpu ms · ")) << objects->headline().toStdString();
+    EXPECT_GT(objects->table()->rowCount(), 0) << "the window variables";
 
     ReportPane* stats = panes[8].pane;
     stats->refresh(_context, false);
@@ -1054,10 +1075,11 @@ TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)
         monitor->refresh(lease.get(), true);
     };
     QScrollBar* bar = monitor->table()->verticalScrollBar();
-    // Sends until the log is taller than its view, the view at its end
+    // Sends until the log is taller than its view, the view at its end. The loops end at their condition; the 5 s
+    // bound only covers a loaded host
     QElapsedTimer clock;
     clock.start();
-    while ((monitor->table()->rowCount() < 40 || bar->maximum() == 0) && clock.elapsed() < 900)
+    while ((monitor->table()->rowCount() < 40 || bar->maximum() == 0) && clock.elapsed() < 5000)
     {
         GSSendRequest send;
         send.command = 0x23;
@@ -1075,7 +1097,7 @@ TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)
     EXPECT_FALSE(monitor->followButton()->isChecked());
     const int rows = monitor->table()->rowCount();
     clock.restart();
-    while (monitor->table()->rowCount() == rows && clock.elapsed() < 500)
+    while (monitor->table()->rowCount() == rows && clock.elapsed() < 5000)
     {
         GSSendRequest send;
         send.command = 0x23;
@@ -1090,4 +1112,183 @@ TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)
     EXPECT_TRUE(monitor->following());
     EXPECT_EQ(bar->value(), bar->maximum());
     _emulator->Stop();
+}
+
+/// A5.2a Dispatch (M4): the command table as the card holds it, a row per command with its handler and the handler's
+/// label (the card CPU's firmware symbols), the ROM baseline; the profile stack above it. The classic card and a NeoGS
+TEST_F(CardPanes_Test, TheDispatchShowsTheHandlersWithTheirLabels)
+{
+    for (const char* kind : {"gs", "neogs"})
+    {
+        ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", kind}}));
+        _emulator->RunNFrames(3);  // the firmware boots (a NeoGS dispatches through its RAM copy of the flash)
+        const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+        GsAnalysisPane* dispatch = panes[11].analysis;
+        ASSERT_NE(dispatch, nullptr);
+        EXPECT_TRUE(CardPanes::Shown(panes[11].card, _context));
+        dispatch->refresh(_context, false);
+        ASSERT_TRUE(dispatch->status().isEmpty()) << kind << ": " << dispatch->status().toStdString();
+        const GSFirmwareProfile* rom = GSFirmwareProfileOf(*_context->pSoundManager->getGeneralSound());
+        ASSERT_NE(rom, nullptr);
+        EXPECT_TRUE(dispatch->headline().startsWith(QStringLiteral("Profiles: ") + QString::fromLatin1(rom->id)))
+            << dispatch->headline().toStdString();
+        EXPECT_TRUE(dispatch->headline().contains(" patched · ")) << dispatch->headline().toStdString();
+        ASSERT_EQ(dispatch->table()->rowCount(), 256) << kind;
+        const int row = dispatch->findRow("Cmd", "#23");
+        ASSERT_GE(row, 0);
+        EXPECT_FALSE(dispatch->cell(row, "Name").isEmpty()) << "the profile names #23";
+        EXPECT_TRUE(dispatch->cell(row, "Handler").startsWith('#')) << dispatch->cell(row, "Handler").toStdString();
+        const bool neogs = std::string(kind) == "neogs";
+        // The handlers carry the firmware's labels. The classic card: all 256, the COMTAB words (window 0) as read,
+        // the COMTABH entries (#20-#EF, window 3) from the ROM's table while the firmware has a RAM page there. A NeoGS
+        // runs a RAM copy of its flash: the words as read, no ROM baseline (the core reads ROM pages 0-1, erased there)
+        int words = 0, labelled = 0;
+        for (int r = 0; r < dispatch->table()->rowCount(); r++)
+        {
+            const bool word = r < 0x20 || r >= 0xF0;
+            words += word ? 1 : 0;
+            labelled += dispatch->cell(r, "Label").isEmpty() || (neogs && !word) ? 0 : 1;
+        }
+        EXPECT_EQ(labelled, neogs ? words : 256) << kind << ": " << dispatch->headline().toStdString();
+        if (neogs)
+        {
+            EXPECT_TRUE(dispatch->headline().contains("no ROM baseline")) << dispatch->headline().toStdString();
+            EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << "nothing patched without a baseline";
+        }
+        else
+        {
+            EXPECT_FALSE(dispatch->cell(row, "ROM").isEmpty()) << "the stock split: the ROM's baseline";
+            EXPECT_FALSE(dispatch->cell(row, "Label").isEmpty()) << kind << ": #23 handler " << dispatch->cell(row, "Handler").toStdString();
+            EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << "the stock ROM: nothing patched";
+        }
+        const int reset = dispatch->findRow("Cmd", "#00");
+        ASSERT_GE(reset, 0);
+        EXPECT_FALSE(dispatch->cell(reset, "Label").isEmpty()) << kind;
+        EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
+        _emulator.reset();
+    }
+}
+
+/// A5.2a Unknown (AU6): a command the firmware's profile does not name, sent twice, is listed with its count; Clear
+/// empties the view (the log keeps its own counts), the next one counts from there
+TEST_F(CardPanes_Test, TheUnknownTabCountsUntilClear)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsAnalysisPane* unknown = panes[12].analysis;
+    ASSERT_NE(unknown, nullptr);
+    unknown->refresh(_context, false);
+    ASSERT_TRUE(unknown->status().isEmpty()) << unknown->status().toStdString();
+    EXPECT_TRUE(unknown->turnOnButton()->isVisibleTo(unknown)) << "the command log is off by default";
+    ASSERT_TRUE(unknown->turnOn(_context));
+    unknown->refresh(_context, false);
+    EXPECT_FALSE(unknown->turnOnButton()->isVisibleTo(unknown));
+    EXPECT_EQ(unknown->table()->rowCount(), 0);
+
+    const GSFirmwareProfile* profile = GSFirmwareProfileOf(*_context->pSoundManager->getGeneralSound());
+    ASSERT_NE(profile, nullptr);
+    int code = -1;
+    for (int c = 0x50; c < 0xF0 && code < 0; c++)
+        if (!profile->Command(static_cast<uint8_t>(c)).name)
+            code = c;
+    ASSERT_GE(code, 0) << "a command the profile does not name";
+    const QString hex = QStringLiteral("#%1").arg(code, 2, 16, QLatin1Char('0')).toUpper();
+    _context->pPortDecoder->DecodePortOut(0x00BB, static_cast<uint8_t>(code), 0);
+    _context->pPortDecoder->DecodePortOut(0x00BB, static_cast<uint8_t>(code), 0);
+    unknown->refresh(_context, false);
+    const int row = unknown->findRow("Cmd", hex);
+    ASSERT_GE(row, 0) << hex.toStdString() << " listed";
+    EXPECT_EQ(unknown->cell(row, "Since Clear"), "2");
+    EXPECT_EQ(unknown->cell(row, "Total"), "2");
+    EXPECT_TRUE(unknown->cell(row, "Handler").startsWith('#')) << "the stub it lands in";
+    EXPECT_TRUE(unknown->headline().startsWith("2 unknown commands")) << unknown->headline().toStdString();
+
+    unknown->clearButton()->click();
+    EXPECT_EQ(unknown->table()->rowCount(), 0);
+    unknown->refresh(_context, false);
+    EXPECT_EQ(unknown->table()->rowCount(), 0) << "read again: nothing since Clear";
+
+    _context->pPortDecoder->DecodePortOut(0x00BB, static_cast<uint8_t>(code), 0);
+    unknown->refresh(_context, false);
+    ASSERT_EQ(unknown->table()->rowCount(), 1);
+    EXPECT_EQ(unknown->cell(0, "Since Clear"), "1");
+    EXPECT_EQ(unknown->cell(0, "Total"), "3");
+}
+
+/// A5.2a Objects (M3): the active profile's window variables; a profile with a struct (NeoTracker's `smp`) shows a
+/// table with the struct's fields as columns and a row per instance
+TEST_F(CardPanes_Test, TheObjectsTabShowsAStructTable)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsAnalysisPane* objects = panes[3].analysis;
+    ASSERT_NE(objects, nullptr);
+    objects->refresh(_context, false);
+    ASSERT_TRUE(objects->status().isEmpty()) << objects->status().toStdString();
+    EXPECT_TRUE(objects->headline().contains(" · cpu gs · ")) << objects->headline().toStdString();
+    EXPECT_GT(objects->table()->rowCount(), 0) << "the window variables";
+    EXPECT_GT(objects->profiles()->count(), 1) << "the profiles to pick";
+
+    const GSFirmwareProfile* tracker = FindGSFirmwareProfileById("nedoos-neotracker");
+    ASSERT_NE(tracker, nullptr) << "the shipped profile (symbols/gs/profiles)";
+    ASSERT_FALSE(tracker->instances.empty());
+    objects->selectProfile("nedoos-neotracker");
+    objects->refresh(_context, false);
+    ASSERT_TRUE(objects->status().isEmpty()) << objects->status().toStdString();
+    EXPECT_TRUE(objects->headline().startsWith("nedoos-neotracker")) << objects->headline().toStdString();
+    EXPECT_EQ(objects->objects()->currentData().toString().toStdString(), tracker->instances.front().name)
+        << "the first instance shown";
+    EXPECT_EQ(objects->table()->rowCount(), tracker->instances.front().count) << "a row per instance";
+    const GSStructInfo* smp = tracker->Struct(tracker->instances.front().structName);
+    ASSERT_NE(smp, nullptr);
+    ASSERT_EQ(objects->table()->columnCount(), static_cast<int>(smp->fields.size()) + 2) << "#, At, the fields";
+    EXPECT_EQ(objects->table()->horizontalHeaderItem(2)->text().toStdString(), smp->fields.front().name);
+    EXPECT_EQ(objects->cell(1, "#"), "1");
+    EXPECT_FALSE(objects->cell(1, QString::fromStdString(smp->fields.front().name)).isEmpty()) << "a value read";
+
+    // Back to the active profile: its fixed window's variables
+    objects->selectProfile("");
+    objects->selectObject(":window");
+    objects->refresh(_context, false);
+    EXPECT_GT(objects->table()->rowCount(), 0);
+    EXPECT_EQ(objects->cell(0, "Name").isEmpty(), false);
+}
+
+/// A5.2a Writers (X7): the host's #B3 / #BB writes with the main CPU's PC and frame (the command log), #33 from the
+/// port trace; the card's own port writes with its PC once the firmware runs
+TEST_F(CardPanes_Test, TheWritersTabShowsTheHostsWritesWithTheirPc)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsAnalysisPane* writers = panes[13].analysis;
+    ASSERT_NE(writers, nullptr);
+    writers->refresh(_context, false);
+    ASSERT_TRUE(writers->status().isEmpty()) << writers->status().toStdString();
+    EXPECT_TRUE(writers->turnOnButton()->isVisibleTo(writers)) << "the histories are off by default";
+    ASSERT_GE(writers->findRow("Port", "host #BB"), 0);
+    EXPECT_TRUE(writers->cell(writers->findRow("Port", "host #BB"), "Value").isEmpty()) << "nothing recorded yet";
+
+    ASSERT_TRUE(writers->turnOn(_context));
+    _emulator->RunNFrames(3);  // the firmware starts: its port writes
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->m1_pc = 0x8003;
+    _context->pPortDecoder->DecodePortOut(0x00B3, 0x01, 0);
+    _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    const int64_t frame = static_cast<int64_t>(_context->emulatorState.frame_counter);
+    writers->refresh(_context, false);
+    EXPECT_FALSE(writers->turnOnButton()->isVisibleTo(writers));
+    const int command = writers->findRow("Port", "host #BB");
+    ASSERT_GE(command, 0);
+    EXPECT_EQ(writers->cell(command, "Value"), "#23");
+    EXPECT_EQ(writers->cell(command, "PC"), "#8003");
+    EXPECT_EQ(writers->cell(command, "Frame"), QString::number(frame));
+    const int data = writers->findRow("Port", "host #B3");
+    ASSERT_GE(data, 0);
+    EXPECT_EQ(writers->cell(data, "Value"), "#01");
+    EXPECT_EQ(writers->cell(data, "PC"), "#8003");
+    int cardRows = 0;
+    for (int r = 0; r < writers->table()->rowCount(); r++)
+        if (!writers->cell(r, "Port").startsWith("host") && writers->cell(r, "PC").startsWith('#'))
+            cardRows++;
+    EXPECT_GT(cardRows, 0) << "the firmware's own port writes with its PC";
 }

@@ -32,6 +32,11 @@ class DevicesView;
 class AddressRouter;
 class TtdControls;
 class GsMonitorView;
+class GsCardTab;
+class GsDispatchView;
+class GsUnknownView;
+class GsObjectsView;
+class GsWritersView;
 
 //One window for the whole machine. Each processor has a tab with its listing,
 //registers and flags; below are the memory dumps (each processor's address
@@ -103,6 +108,11 @@ public:
     TtdControls * ttd() { return m_ttd; }
     //The GS monitor tab (gs-debugger P5.6), among the card tabs
     GsMonitorView * gs_monitor() const { return m_gs_monitor; }
+    //The GS analysis tabs (gui-card-debugger A5.2a), after the card tabs
+    GsDispatchView * gs_dispatch() const { return m_gs_dispatch; }
+    GsUnknownView * gs_unknown() const { return m_gs_unknown; }
+    GsObjectsView * gs_objects() const { return m_gs_objects; }
+    GsWritersView * gs_writers() const { return m_gs_writers; }
 
 signals:
     //The views were read again: after a stop, and while the machine runs
@@ -147,6 +157,13 @@ private:
     std::vector<NextTab> m_card_tabs;
     //The GS monitor (gui-card-debugger A5.3): after GS protocol, shown with the card tabs, following their card
     GsMonitorView * m_gs_monitor = nullptr;
+    //The analysis tabs (A5.2a Dispatch, Unknown, Objects, Writers): after the card tabs (eCat has no View menu to
+    //open them from), shown with the card tabs, following their card
+    GsDispatchView * m_gs_dispatch = nullptr;
+    GsUnknownView * m_gs_unknown = nullptr;
+    GsObjectsView * m_gs_objects = nullptr;
+    GsWritersView * m_gs_writers = nullptr;
+    std::vector<GsCardTab *> m_gs_analysis;
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
     QLabel * m_state;

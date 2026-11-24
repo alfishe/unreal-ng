@@ -14,6 +14,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/disassembler/z80mcycles.h"
+#include "debugger/gsanalysispane.h"
 #include "debugger/gslwpane.h"
 #include "debugger/gsmonitorpane.h"
 #include "debugger/reportpane.h"
@@ -149,11 +150,14 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
     monitor.monitor = new GsMonitorPane(follow, parent);
     panes.push_back(monitor);
 
-    ReportPane* firmware = new ReportPane([follow](EmulatorContext* c) { return CatalogedOf(c, follow, "gs-firmware"); }, "window_variables",
-                                          {"name", "at", "size", "value", "meaning"}, parent);
-    panes.push_back({QObject::tr("GS firmware"),
-                     QObject::tr("The firmware's objects by its profile: instances, variables, the dispatch table, the unknown commands"),
-                     firmware, nullptr, Card::Any, nullptr});
+    // A5.2a Objects: the profile's structs as tables (a row per instance), its variables, the fixed window's variables
+    // (the `gs-firmware` read); it replaced the fixed GS firmware tab, which showed the window variables only
+    Pane objects{QObject::tr("GS objects"),
+                 QObject::tr("The firmware's objects by its profile: a table per struct instance (columns from the schema, a "
+                             "row per instance), the profile's variables, the fixed RAM window's variables"),
+                 nullptr, nullptr, Card::Any, nullptr};
+    objects.analysis = new GsAnalysisPane(GsAnalysisPane::View::Objects, follow, parent);
+    panes.push_back(objects);
 
     ReportPane* hardware =
         new ReportPane([follow](EmulatorContext* c) { return GsReport(c, Shows(c, follow)); }, "channels", {}, parent);
@@ -211,6 +215,22 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
                      QObject::tr("The lightweight player's MOD player: song position, pattern, row, tick, speed, BPM, the four "
                                  "channels, the module, the samples"),
                      nullptr, nullptr, Card::Lightweight, player});
+
+    // A5.2a: the analysis tabs whose data the core has (requirements M4, AU6, X7). The window has no View ▸ Card menu
+    // to open them from: they are shown with the card, after the others
+    const auto add = [&](GsAnalysisPane::View view, const QString& title, const QString& tooltip) {
+        Pane pane{title, tooltip, nullptr, nullptr, Card::Any, nullptr};
+        pane.analysis = new GsAnalysisPane(view, follow, parent);
+        panes.push_back(pane);
+    };
+    add(GsAnalysisPane::View::Dispatch, QObject::tr("GS dispatch"),
+        QObject::tr("The command table as the card holds it: the handler and its label per command, the ROM baseline, "
+                    "patched entries with the upload that patched them; the profile stack"));
+    add(GsAnalysisPane::View::Unknown, QObject::tr("GS unknown"),
+        QObject::tr("The commands the firmware does not know, with their counts since Clear and the handler they land in"));
+    add(GsAnalysisPane::View::Writers, QObject::tr("GS writers"),
+        QObject::tr("The last writer of each card port and of the host's #B3 / #BB / #33: the value, the writer's PC and "
+                    "label, the frame"));
     return panes;
 }
 
@@ -474,6 +494,8 @@ QWidget* Pane::widget() const
         return board;
     if (monitor)
         return monitor;
+    if (analysis)
+        return analysis;
     return inspector;
 }
 }  // namespace CardPanes

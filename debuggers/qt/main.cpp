@@ -79,6 +79,7 @@
 #include "dialogs/debugger/debuggerwindow.h"
 #include "dialogs/debugger/debugstyle.h"
 #include "dialogs/debugger/disasmview.h"
+#include "dialogs/debugger/gsanalysis.h"
 #include "dialogs/debugger/gsmonitor.h"
 #include "dialogs/debugger/ttdcontrols.h"
 #include "dialogs/debugger/memoryview.h"
@@ -1173,6 +1174,212 @@ void gs_monitor_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * 
     side->setCurrentWidget(was);
 }
 
+// The GS analysis tabs (gui-card-debugger A5.2a): GS dispatch, GS unknown, GS objects, GS writers after the card tabs,
+// shown with the card. Dispatch: rows with the handlers' labels, a patched entry tinted (where the table is in RAM);
+// Unknown: a command the profile does not name, sent twice, shows x2, Clear empties it; Objects: a struct table with
+// rows (read as a profile that declares structs); Writers: the host's #B3 / #BB writes with their PC
+void gs_analysis_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * cpu, const std::function<void(bool, const char *)> &check)
+{
+    auto * dw = dynamic_cast<DebuggerWindow *>(window);
+    QTabWidget * side = tabs_with(window, "Devices");
+    if (dw == nullptr || side == nullptr) return;
+    GsDispatchView * dispatch = dw->gs_dispatch();
+    GsUnknownView * unknown = dw->gs_unknown();
+    GsObjectsView * objects = dw->gs_objects();
+    GsWritersView * writers = dw->gs_writers();
+    const std::vector<std::pair<QWidget *, QString>> tabs = {
+        {dispatch, "GS dispatch"}, {unknown, "GS unknown"}, {objects, "GS objects"}, {writers, "GS writers"}};
+    NextReportView * log_view = nullptr;
+    int last_card_tab = -1;
+    for (int i = 0; i < side->count(); i++) {
+        if (side->tabText(i) == "GS log") log_view = qobject_cast<NextReportView *>(side->widget(i));
+        if (side->widget(i)->objectName().startsWith("card:") && !side->widget(i)->objectName().startsWith("card:gs-dispatch") &&
+            !side->widget(i)->objectName().startsWith("card:gs-unknown") && !side->widget(i)->objectName().startsWith("card:gs-objects") &&
+            !side->widget(i)->objectName().startsWith("card:gs-writers"))
+            last_card_tab = std::max(last_card_tab, i);
+    }
+    const bool card = log_view != nullptr && log_view->present();
+    bool placed = dispatch != nullptr && unknown != nullptr && objects != nullptr && writers != nullptr;
+    for (size_t i = 0; placed && i < tabs.size(); i++) {
+        const int at = side->indexOf(tabs[i].first);
+        placed = at == last_card_tab + 1 + (int)i && side->tabText(at) == tabs[i].second && side->isTabVisible(at) == card;
+    }
+    check(placed, card ? "gs analysis: Dispatch, Unknown, Objects, Writers after the card tabs, shown with the card"
+                       : "gs analysis: the tabs hidden without a card");
+    if (!placed || !card) return;
+    ecatshim::CPU * front = dw->card_cpu();
+    const std::string which = CardTabsCard(m, front != nullptr ? front->name : std::string());
+    QWidget * was = side->currentWidget();
+    // The command log records (Unknown counts with it, Writers takes the host's PC from it)
+    const ecatshim::Emulator::GsMonitor log_before = m->read_gs_monitor(which, 1);
+    m->gs_command_log(which, true);
+
+    // Dispatch
+    side->setCurrentWidget(dispatch);
+    dispatch->refresh();
+    QTableWidget * dt = dispatch->table();
+    int labelled = 0, readable = 0;
+    for (int r = 0; r < dt->rowCount(); r++) {
+        if (dt->item(r, GsDispatchView::ColHandler) && dt->item(r, GsDispatchView::ColHandler)->text().startsWith("#")) readable++;
+        if (dt->item(r, GsDispatchView::ColLabel) && !dt->item(r, GsDispatchView::ColLabel)->text().isEmpty()) labelled++;
+    }
+    printf("  (dispatch: %s / %s; %d rows, %d readable, %d labelled)\n", dispatch->stack()->text().toUtf8().constData(),
+           dispatch->line()->text().toUtf8().constData(), dt->rowCount(), readable, labelled);
+    for (int r = 0, shown = 0; r < dt->rowCount() && shown < 3; r++)
+        if (dt->item(r, GsDispatchView::ColLabel) && !dt->item(r, GsDispatchView::ColLabel)->text().isEmpty()) {
+            QStringList row;
+            for (int k = 0; k < GsDispatchView::ColCount; k++) row << (dt->item(r, k) ? dt->item(r, k)->text() : QString());
+            printf("  (dispatch row: %s)\n", row.join(" | ").toUtf8().constData());
+            shown++;
+        }
+    const ecatshim::Emulator::GsFirmware fw = m->read_gs_firmware(which, std::string());
+    bool any_readable = false;
+    for (const auto &d : fw.entries) any_readable = any_readable || d.readable;
+    if (any_readable)
+        check(dispatch->stack()->text().startsWith("Profile stack: ") && dt->rowCount() >= 32 && labelled >= 8,
+              "gs analysis: Dispatch rows with the handlers' labels, the profile stack over them");
+    else
+        check(dispatch->stack()->text().startsWith("Profile stack: ") && dispatch->line()->text().contains("no memory") && dt->rowCount() == 0,
+              "gs analysis: Dispatch says why there is no table (no card memory to read)");
+    // A handler word of the table written over (the table in card RAM: NeoGS's copy): the entry patched and tinted
+    ecatshim::CPU * card_cpu = nullptr;
+    for (ecatshim::CPU * c : m->dm->get_cpus())
+        if (c->name == which) card_cpu = c;
+    unsigned int comtab = 0;
+    const bool word_table = fw.table.size() > 1 && fw.table[0] == '#' && !fw.table_high.empty();
+    if (word_table) comtab = (unsigned int)std::stoul(fw.table.substr(1), nullptr, 16);
+    if (card_cpu != nullptr && word_table) {
+        const unsigned int slot = comtab + 2 * 0x01;  // command #01's handler word
+        const unsigned int old = card_cpu->peek_mem(slot);
+        card_cpu->poke_mem(slot, old ^ 0x01);
+        dispatch->refresh();
+        bool tinted = false;
+        QString by;
+        for (int r = 0; r < dt->rowCount(); r++)
+            if (dt->item(r, GsDispatchView::ColCommand)->text() == "#01") {
+                tinted = dt->item(r, GsDispatchView::ColCommand)->data(Qt::UserRole).toBool();
+                by = dt->item(r, GsDispatchView::ColPatched)->text();
+            }
+        if (card_cpu->peek_mem(slot) == (old ^ 0x01)) {
+            check(tinted && !by.isEmpty(), "gs analysis: Dispatch: a handler written over is patched, tinted, its upload said");
+            printf("  (patched #01: %s)\n", by.toUtf8().constData());
+        } else {
+            printf("  (the dispatch table is in ROM here: no entry to patch)\n");
+        }
+        card_cpu->poke_mem(slot, old);
+        dispatch->refresh();
+    }
+
+    // The host's program at #8000, put back afterwards
+    std::vector<std::pair<unsigned int, unsigned int>> host_bytes;
+    for (unsigned int i = 0; i < 0x20; i++) host_bytes.emplace_back(0x8000 + i, cpu->peek_mem(0x8000 + i));
+    const std::vector<std::string> names = {"PC", "AF", "BC", "DE", "HL", "IFF1", "IFF2"};
+    std::map<std::string, unsigned int> host_regs;
+    for (const std::string &n : names) host_regs[n] = reg(cpu, n);
+    auto run_program = [m, cpu](const std::vector<uint8_t> &bytes) {
+        for (size_t i = 0; i < bytes.size(); i++) cpu->poke_mem(0x8000 + (unsigned int)i, bytes[i]);
+        cpu->set_context_value("PC", 0x8000);
+        m->debug_run_to(cpu, 0x8000 + (unsigned int)bytes.size() - 2);  // the JR $ at the end
+        return wait_for([m, cpu, &bytes]() {
+            return m->debug_paused() && !m->debug_stepping() && reg(cpu, "PC") == 0x8000 + bytes.size() - 2;
+        }, 3000);
+    };
+
+    // Unknown: a command the profile does not name (the first one its dispatch sends to the stub; else #99), twice
+    side->setCurrentWidget(unknown);
+    unknown->refresh();
+    unknown->clear_button()->click();
+    check(unknown->table()->rowCount() == 0, "gs analysis: Unknown empty after Clear");
+    int code = 0x99;
+    for (const auto &d : fw.entries)
+        if (d.name.empty()) {
+            code = d.command;
+            break;
+        }
+    // DI : LD BC,#00BB : LD A,code : OUT (C),A : OUT (C),A : JR $
+    const bool sent = run_program({0xF3, 0x01, 0xBB, 0x00, 0x3E, (uint8_t)code, 0xED, 0x79, 0xED, 0x79, 0x18, 0xFE});
+    unknown->refresh();
+    char hex[8];
+    std::snprintf(hex, sizeof(hex), "#%02X", code);
+    QString count;
+    for (int r = 0; r < unknown->table()->rowCount(); r++)
+        if (unknown->table()->item(r, GsUnknownView::ColCommand)->text() == hex)
+            count = unknown->table()->item(r, GsUnknownView::ColSince)->text();
+    printf("  (unknown: %s; %s %s, %s)\n", unknown->line()->text().toUtf8().constData(), hex, count.toUtf8().constData(),
+           unknown->table()->rowCount() > 0 && unknown->table()->item(0, GsUnknownView::ColDispatch)
+               ? unknown->table()->item(0, GsUnknownView::ColDispatch)->text().toUtf8().constData() : "");
+    check(sent && count == QString::fromUtf8("\xC3\x97") + "2", "gs analysis: Unknown: the command sent twice shows x2");
+    unknown->clear_button()->click();
+    check(unknown->table()->rowCount() == 0, "gs analysis: Unknown: Clear empties it");
+
+    // Objects: the active profile's, then read as a profile that declares structs
+    side->setCurrentWidget(objects);
+    objects->refresh();
+    printf("  (objects, active: %s)\n", objects->line()->text().toUtf8().constData());
+    std::string with_structs;
+    for (const auto &p : m->gs_firmware_profiles())
+        if (p.instances > 0 && with_structs.empty()) with_structs = p.id;
+    const bool picked = !with_structs.empty() && objects->read_as(with_structs);
+    QTableWidget * st = objects->struct_tables().empty() ? nullptr : objects->struct_tables().front();
+    check(picked && st != nullptr && st->rowCount() > 0 && st->columnCount() > 4 && st->isVisibleTo(objects),
+          "gs analysis: Objects: a struct table with rows, columns from the schema");
+    if (st != nullptr && st->rowCount() > 0) {
+        QStringList head, row;
+        for (int k = 0; k < std::min(st->columnCount(), 8); k++) {
+            head << st->horizontalHeaderItem(k)->text();
+            row << (st->item(0, k) ? st->item(0, k)->text() : QString());
+        }
+        printf("  (objects as %s: %s; %d rows x %d columns: %s / %s)\n", with_structs.c_str(), objects->line()->text().toUtf8().constData(),
+               st->rowCount(), st->columnCount(), head.join(" ").toUtf8().constData(), row.join(" ").toUtf8().constData());
+    }
+    objects->read_as(std::string());
+
+    // Writers: data #3F to #B3 at #8006, command #2A to #BB at #800C
+    side->setCurrentWidget(writers);
+    // DI : LD BC,#00B3 : LD A,#3F : OUT (C),A : LD C,#BB : LD A,#2A : OUT (C),A : JR $
+    const bool wrote = run_program({0xF3, 0x01, 0xB3, 0x00, 0x3E, 0x3F, 0xED, 0x79, 0x0E, 0xBB, 0x3E, 0x2A, 0xED, 0x79, 0x18, 0xFE});
+    writers->refresh();
+    QTableWidget * wt = writers->table();
+    auto row_text = [wt](int r) {
+        QStringList cells;
+        for (int k = 0; r >= 0 && k < GsWritersView::ColCount; k++) cells << (wt->item(r, k) ? wt->item(r, k)->text() : QString());
+        return cells.join(" | ");
+    };
+    const int b3 = writers->row_of(true, 0xB3), bb = writers->row_of(true, 0xBB);
+    const bool data_ok = b3 >= 0 && wt->item(b3, GsWritersView::ColValue)->text() == "#3F" && wt->item(b3, GsWritersView::ColPc)->text() == "#8006";
+    const bool command_ok = bb >= 0 && wt->item(bb, GsWritersView::ColValue)->text() == "#2A" && wt->item(bb, GsWritersView::ColPc)->text() == "#800C";
+    printf("  (writers: %s)\n  (#B3: %s)\n  (#BB: %s)\n", writers->line()->text().toUtf8().constData(), row_text(b3).toUtf8().constData(),
+           row_text(bb).toUtf8().constData());
+    check(wrote && data_ok && command_ok, "gs analysis: Writers: the host's #B3 and #BB writes with their PC");
+    // The card's own writes: the port trace on for a few frames (off again after, if it was)
+    if (writers->start_button()->isVisibleTo(writers)) {
+        writers->start_button()->click();
+        m->debug_run(true);
+        wait_for([]() { return false; }, 300);
+        m->debug_pause();
+        wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+        writers->refresh();
+        int card_rows = 0;
+        for (int r = 0; r < wt->rowCount(); r++)
+            if (wt->item(r, GsWritersView::ColSide)->text() == "card" && wt->item(r, GsWritersView::ColPc)->text().startsWith("#")) {
+                if (card_rows < 3) printf("  (card port: %s)\n", row_text(r).toUtf8().constData());
+                card_rows++;
+            }
+        printf("  (writers, trace on: %s; %d card ports with a writer)\n", writers->line()->text().toUtf8().constData(), card_rows);
+        m->gs_port_trace(which, "stop");
+    }
+
+    // Put back: the host's bytes and registers, the log as it was
+    m->debug_run(true);
+    m->debug_pause();
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    for (const auto &b : host_bytes) cpu->poke_mem(b.first, b.second);
+    for (const std::string &n : names)
+        if (host_regs[n] != ~0u) cpu->set_context_value(n, host_regs[n]);
+    if (log_before.log_mode != "ring") m->gs_command_log(which, false);
+    side->setCurrentWidget(was);
+}
+
 int self_check(ecatshim::Emulator * m, QWidget * window)
 {
     int failed = 0;
@@ -1564,6 +1771,7 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
     }
 
     gs_monitor_check(m, window, cpu, check);
+    gs_analysis_check(m, window, cpu, check);
 
     // Event breakpoints (gs-debugger P5.3): the card's side on the card CPU, the host's side on the main CPU, added
     // through the shim, listed with their CPU (in the breakpoint list too), switched off, removed
