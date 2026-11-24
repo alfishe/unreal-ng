@@ -76,6 +76,7 @@
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gszxdmatrace.h>
+#include <emulator/sound/chips/gs/gsprofilereport.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../temporalstatus.h"
@@ -6077,6 +6078,34 @@ public:
             query.last = static_cast<size_t>(last.value_or(query.last));
             query.since = since.value_or(0);
             return StateNodeToLua(s, DeviceState::GsZxDmaTrace(ctx, query));
+        });
+        // The card CPU's profiler (gsprofilereport.h, gs-debugger X9 / X20): the report (cpu "gs" / "ms", the top
+        // `routines`, the newest `activity` frames); {available = false, description} without a card CPU
+        lua.set_function("gs_profile", [this](sol::this_state s, sol::optional<std::string> cpu,
+                                              sol::optional<uint64_t> routines, sol::optional<uint64_t> activity) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSProfileQuery query;
+            query.cpu = cpu.value_or("");
+            query.routines = static_cast<size_t>(routines.value_or(query.routines));
+            query.activity = static_cast<size_t>(activity.value_or(query.activity));
+            return StateNodeToLua(s, DeviceState::GsProfile(ctx, query));
+        });
+        // "start" (cleared, then on), "stop", "clear": {action, cpu, card, on} or {error}
+        lua.set_function("gs_profile_control", [this](sol::this_state s, const std::string& action,
+                                                      sol::optional<std::string> cpu) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, GSProfileControl(ctx, action, cpu.value_or("")).body);
+        });
+        // The last complete host frame per card interrupt period (X2): rows `first` .. `first + count` (0: to the end)
+        lua.set_function("gs_events", [this](sol::this_state s, sol::optional<std::string> cpu, sol::optional<uint64_t> first,
+                                             sol::optional<uint64_t> count, sol::optional<uint64_t> rows) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSEventsQuery query;
+            query.cpu = cpu.value_or("");
+            query.first = static_cast<size_t>(first.value_or(0));
+            query.count = static_cast<size_t>(count.value_or(0));
+            query.rows = static_cast<size_t>(rows.value_or(query.rows));
+            return StateNodeToLua(s, DeviceState::GsEvents(ctx, query));
         });
         // The GS slot's statistics (gsslotstats.h, gs-debugger N7): the block or one section, counters since a
         // baseline; a running machine answers from the next frame end (at most 500 ms; {error} after that)

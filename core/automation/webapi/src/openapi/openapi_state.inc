@@ -909,7 +909,9 @@
         "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
         "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame. "
         "reset_counters stores the statistics counters as a baseline and returns its id ('baseline'; read with "
-        "GET state/audio/gs/stats?since=<baseline>); nothing on the card changes.";
+        "GET state/audio/gs/stats?since=<baseline>); nothing on the card changes. profile_start / profile_stop / "
+        "profile_clear ('cpu': gs | ms) drive the card CPU's profiler (read with GET state/audio/gs/profile and "
+        "state/audio/gs/events): start clears and switches it on, stop keeps the data; 404 without a card CPU.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -934,6 +936,12 @@
                                                                ["properties"]["action"]["enum"].append("read_data");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("reset_counters");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("profile_start");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("profile_stop");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("profile_clear");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["value"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]

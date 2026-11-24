@@ -394,6 +394,8 @@ private:
         if (_portTrace.isCapturing()) [[unlikely]]
             traceIdle(head, start, iterations);
         recordExecIdle(head, iterations);
+        if (_runProfile) [[unlikely]]
+            _profiler.Idle(start, _runner.now());
     }
     bool sleepQuietEventsBefore(int64_t end);
     // Forced: the fast and the debug loop both call it, and an outlined call per instruction costs the fast one 4 %
@@ -435,7 +437,7 @@ private:
         syncExecHistory();
         if (_debugHooks) [[unlikely]]
             runToDebug(target);
-        else if (execRecording()) [[unlikely]]
+        else if (recordLoopWanted()) [[unlikely]]
             runToRecord(target);
         else
             _runner.runTo(target);
@@ -443,6 +445,11 @@ private:
     /// Out of line: the debug loop's and the execution history's code stay away from the fast loop's
     void runToDebug(int64_t target);
     void runToRecord(int64_t target);
+    /// The profiler's part (generalsoundcard.h): SP, the code bytes and the HALT latch before the step at `pc`; an
+    /// acknowledge with its return address; the run's start with the timer's grid
+    void profileStep(uint16_t pc) override;
+    void profileInterrupt(bool nmi, int64_t ackUnits) override;
+    void beginRun();
 
     uint8_t readMem(uint16_t addr)
     {
