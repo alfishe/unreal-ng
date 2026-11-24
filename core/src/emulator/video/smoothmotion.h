@@ -267,6 +267,9 @@ public:
     /// pictures come late (Mode::InterpolateLite is the same, chosen outright)
     void SetLite(bool on) { _stepLite = on; }
     bool Lite() const { return _stepLite || _mode == Mode::InterpolateLite; }
+    /// false: no threads of its own, every step on the caller's (many engines side by side, a video wall's tiles: the
+    /// caller spreads the engines over its threads). Before the first picture
+    void SetOwnThreads(bool own) { _ownThreads = own; }
     /// nullptr: the CPU. Not owned; the caller keeps its context current while it renders
     void SetDevice(Device* device) { _device = device; }
     Device* GetDevice() const { return _device; }
@@ -328,6 +331,8 @@ private:
     /// FindFlicker's per-block counts and verdicts, kept from call to call
     std::vector<int> _flickerChanged, _flickerAlternating;
     std::vector<uint8_t> _flickerHeld;
+    /// MovesBy's answer per block (-1: not asked) at this call of FindFlicker, the one before and the one before that
+    std::vector<int8_t> _movesNow, _movesBefore, _movesTwoAgo;
     static constexpr std::ptrdiff_t kFlickerParallelBlocks = 64;  ///< changing blocks past which FindFlicker uses the pool
     void BuildMask();
     int64_t FramePeriodNs() const;
@@ -351,7 +356,8 @@ private:
     /// its own pixels), made on the first picture that needs them
     static constexpr size_t kMaxThreads = 8;
     std::unique_ptr<ThreadPool> _pool;
-    ThreadPool* Pool();
+    bool _ownThreads = true;
+    ThreadPool* Pool();  ///< nullptr: the caller's thread alone
     size_t _nextField = 0;
     Stats _stats;
 };
