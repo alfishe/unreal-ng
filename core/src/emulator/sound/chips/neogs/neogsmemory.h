@@ -104,6 +104,8 @@ public:
 
     /// Physical location of a CPU address: flash or RAM, byte offset
     bool isFlash(int window) const { return _windowFlash[window & 3]; }
+    /// A CPU write in `window` lands in RAM (a RAM window not write-protected)
+    bool ramWritable(int window) const { return _writePtr[window & 3] != nullptr; }
     uint32_t physical(uint16_t addr) const;
 
     uint8_t* ram() { return _ram.data(); }

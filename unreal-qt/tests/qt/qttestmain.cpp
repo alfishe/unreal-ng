@@ -5,6 +5,10 @@
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
+#ifdef UNREAL_VULKAN
+#include "sharedvulkandevice.h"
+#endif
+
 int main(int argc, char** argv)
 {
     // UNREAL_QT_TEST_PLATFORM=cocoa (or xcb, windows) runs the suites on the real platform: real fonts and metrics,
@@ -20,5 +24,9 @@ int main(int argc, char** argv)
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsFolder.path());
     ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    const int result = RUN_ALL_TESTS();
+#ifdef UNREAL_VULKAN
+    testgpu::ReleaseSharedVulkanDevices();  // the run's devices, while the QApplication is still there
+#endif
+    return result;
 }

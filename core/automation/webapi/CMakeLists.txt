@@ -188,6 +188,7 @@ set(COMMON_SOURCES
     src/api/video_temporal_api.cpp
     src/api/video_window_api.cpp
     src/api/state_audio_api.cpp
+    src/api/gs_analysis_api.cpp
     src/api/state_device_api.cpp
     src/api/memory_region_api.cpp
     src/api/tape_disk_api.cpp

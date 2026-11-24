@@ -1,5 +1,6 @@
-// Tools > Video Synchronization (ui/videosyncwindow.h): every value sits in a cell of its own, so the cells keep their
-// places while the values change, and a machine with other numbers, another mode or a long reason moves nothing.
+// Tools > Video Synchronization (ui/videosyncwindow.h): a head card over tiles. Every value sits in a cell of its own,
+// so the cells keep their places while the values change; the tiles and lines shown follow the mode in effect (VRR has
+// no beat, display rate or interpolation; low latency no lead and no "late").
 // UNREAL_VIDEOSYNC_UI_PNG=<dir> saves the window as drawn; UNREAL_QT_TEST_PLATFORM=cocoa (xcb, windows) draws it with
 // the platform's real fonts.
 
@@ -23,6 +24,7 @@ WindowDisplaySettings Quiet()
     s.emulatorId = "test";
     WindowPresentStats& p = s.present;
     p.presenter = "dxgi";
+    p.timedAt = "screen";
     p.sync = "vrr";
     p.vrr = true;
     p.fixedDisplay = false;
@@ -83,7 +85,12 @@ void Grab(QWidget& widget, const char* name)
 
 TEST(VideoSyncWindow_Test, TheCellsStayPutWhileTheValuesChange)
 {
-    WindowDisplaySettings now = Quiet();
+    WindowDisplaySettings now = Busy();
+    now.present.shown = 100;
+    now.present.dropped = now.present.late = now.present.offBeat = 0;
+    now.present.errorP50Ms = 0.4;
+    now.present.soundOffsetP50Ms = 0.6;
+    now.present.soundOffsetP99Ms = 3.9;
     VideoSyncWindow window([&now]() { return now; });
     window.show();
     QApplication::processEvents();
@@ -92,40 +99,100 @@ TEST(VideoSyncWindow_Test, TheCellsStayPutWhileTheValuesChange)
     for (const QLabel* label : window.findChildren<QLabel*>())
         before[label] = label->geometry();
     const QSize size = window.size();
-    EXPECT_EQ(window.readout("clock").left(5), "audio");
-    EXPECT_EQ(window.readout("off_beat"), "0");
+    EXPECT_EQ(window.readout("clock").left(8), "emulated");
+    EXPECT_EQ(window.readout("off_beat"), "0 (0.00 %)");
     EXPECT_EQ(window.readout("sound_p99"), "3.90 ms");
     Grab(window, "videosync-quiet.png");
 
+    // The same mode with the widest numbers: nothing moves
     now = Busy();
     window.refresh();
     QApplication::processEvents();
     EXPECT_EQ(window.size(), size);
     for (QLabel* label : window.findChildren<QLabel*>())
-        EXPECT_EQ(label->geometry(), before[label])
-            << label->text().toStdString();
-    EXPECT_EQ(window.readout("clock").left(8), "emulated");
-    EXPECT_EQ(window.readout("off_beat"), QLocale().toString(54321));
+        EXPECT_EQ(label->geometry(), before[label]) << label->text().toStdString();
+    EXPECT_EQ(window.readout("off_beat"), QLocale().toString(54321) + " (2.72 %)");
     EXPECT_EQ(window.readout("sound_p50"), "-150.25 ms");
     // The widest numbers fit their cells: nothing cut
     for (QLabel* label : window.findChildren<QLabel*>())
-        if (label->alignment() & Qt::AlignRight && !label->text().isEmpty() && label->isEnabled())
+        if (label->alignment() & Qt::AlignRight && !label->text().isEmpty() && !label->isHidden())
             EXPECT_LE(label->fontMetrics().horizontalAdvance(label->text()), label->width())
                 << label->text().toStdString();
     Grab(window, "videosync-busy.png");
 
-    // No machine: the cells empty, still in place
+    // No machine: the display tile alone, its values empty
     now = WindowDisplaySettings();
     window.refresh();
     QApplication::processEvents();
-    EXPECT_EQ(window.size(), size);
     EXPECT_EQ(window.readout("off_beat"), "");
+    EXPECT_FALSE(window.tileShown("frames"));
+    EXPECT_TRUE(window.tileShown("display"));
+}
+
+TEST(VideoSyncWindow_Test, VrrShowsOnlyWhatJudgesIt)
+{
+    WindowDisplaySettings now = Quiet();
+    VideoSyncWindow window([&now]() { return now; });
+    window.show();
+    QApplication::processEvents();
+
+    // Each frame at its own time: no beat with the display, no display rate to fit, no interpolation
+    EXPECT_TRUE(window.readout("mode").startsWith("VRR")) << window.readout("mode").toStdString();
+    EXPECT_EQ(window.readout("why"), "");
+    for (const char* tile : {"display", "frames", "timing", "sound"})
+        EXPECT_TRUE(window.tileShown(tile)) << tile;
+    for (const char* tile : {"smooth", "motion"})
+        EXPECT_FALSE(window.tileShown(tile)) << tile;
+    EXPECT_FALSE(window.lineShown("off_beat"));
+    EXPECT_FALSE(window.lineShown("display_rate"));
+    EXPECT_EQ(window.readout("off_beat"), "—");
+    EXPECT_TRUE(window.lineShown("late"));
+    EXPECT_TRUE(window.lineShown("lead"));
+    EXPECT_EQ(window.readout("lead"), "6.00 ms");
+    EXPECT_EQ(window.readout("refresh"), "48 – 144 Hz");
+    Grab(window, "videosync-vrr.png");
+
+    // Interpolation on a fixed display: the beat, the display rate and the interpolation's tiles come
+    now = Busy();
+    window.refresh();
+    QApplication::processEvents();
+    for (const char* tile : {"display", "frames", "timing", "sound", "smooth", "motion"})
+        EXPECT_TRUE(window.tileShown(tile)) << tile;
+    EXPECT_TRUE(window.lineShown("off_beat"));
+    EXPECT_TRUE(window.lineShown("display_rate"));
+    EXPECT_NE(window.readout("why"), "");
+
+    // Low latency: each frame at once, nothing to be late against, no lead, no beat
+    now = Quiet();
+    now.present.lowLatency = true;
+    now.present.clock = "latch";
+    window.refresh();
+    QApplication::processEvents();
+    EXPECT_FALSE(window.lineShown("late"));
+    EXPECT_FALSE(window.lineShown("lead"));
+    EXPECT_EQ(window.readout("late"), "—");
+    Grab(window, "videosync-lowlatency.png");
+}
+
+TEST(VideoSyncWindow_Test, TheTimedGlSwapHasScreenTimesToo)
+{
+    // Linux X11: the presenter is "gl-timed", its times the screen's (it read as not measured)
+    WindowDisplaySettings now = Quiet();
+    now.present.presenter = "gl-timed";
+    now.present.timedAt = "screen";
+    now.present.dropped = 7;
+    VideoSyncWindow window([&now]() { return now; });
+    window.refresh();
+    EXPECT_TRUE(window.tileShown("timing"));
+    EXPECT_EQ(window.readout("dropped"), "7");
+    EXPECT_EQ(window.readout("error_p99"), "1.20 ms");
 }
 
 TEST(VideoSyncWindow_Test, TheDisplayRateSaysHowManyRefreshesAFrameTakes)
 {
     WindowDisplaySettings now = Quiet();
     now.present.sync = "display_rate";
+    now.present.vrr = false;
     now.present.displayHz = 50.0;
     now.present.machineHz = 50.0;
     VideoSyncWindow window([&now]() { return now; });
@@ -137,7 +204,7 @@ TEST(VideoSyncWindow_Test, TheDisplayRateSaysHowManyRefreshesAFrameTakes)
     EXPECT_TRUE(window.readout("mode").endsWith("each frame for 2 refreshes")) << window.readout("mode").toStdString();
 }
 
-TEST(VideoSyncWindow_Test, TheSoftwareScreensLongTextsWrapAndItsScreenTimesShowAsNotMeasured)
+TEST(VideoSyncWindow_Test, TheSoftwareScreenShowsItsPaintsAndNoScreenTimes)
 {
     WindowDisplaySettings now = Quiet();
     WindowPresentStats& p = now.present;
@@ -147,6 +214,7 @@ TEST(VideoSyncWindow_Test, TheSoftwareScreensLongTextsWrapAndItsScreenTimesShowA
     p.vrr = false;
     p.fixedDisplay = true;
     p.minRefreshHz = p.maxRefreshHz = 60.0;
+    p.displayState = "unchanged";
     p.displayReason = "the software screen does not switch the display's rate (gpu on does)";
     p.presented = p.shown = 500;
     p.dropped = 13;
@@ -154,23 +222,14 @@ TEST(VideoSyncWindow_Test, TheSoftwareScreensLongTextsWrapAndItsScreenTimesShowA
     window.show();
     window.refresh();
     QApplication::processEvents();
-
-    // Display rate and presenter run on to a second line inside their cells: nothing cut at the window's width
-    for (const char* key : {"display_rate", "presenter"})
-    {
-        const QLabel* label = window.findChildren<QLabel*>().value(0);
-        for (QLabel* l : window.findChildren<QLabel*>())
-            if (l->text() == window.readout(key))
-                label = l;
-        ASSERT_EQ(label->text(), window.readout(key));
-        EXPECT_TRUE(label->wordWrap()) << key;
-        EXPECT_LE(label->heightForWidth(label->width()), label->height()) << key << ": " << label->text().toStdString();
-    }
     Grab(window, "videosync-software.png");
 
-    // A paint is not a refresh: no grid to be late or off the beat on, no lead
+    // A paint is not a refresh: no grid to be late or off the beat on, no lead, no screen-to-sound offset
+    EXPECT_TRUE(window.tileShown("timing"));
+    EXPECT_FALSE(window.tileShown("sound"));
     EXPECT_EQ(window.readout("late"), "—");
     EXPECT_EQ(window.readout("off_beat"), "—");
     EXPECT_EQ(window.readout("lead"), "—");
     EXPECT_EQ(window.readout("dropped"), "13");
+    EXPECT_EQ(window.readout("display_rate"), "unchanged");
 }

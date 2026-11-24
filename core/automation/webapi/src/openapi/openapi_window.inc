@@ -19,14 +19,15 @@
             op["responses"]["404"]["description"] = "Emulator not found";
             op["responses"]["409"]["description"] =
                 "{error, kind}: kind no-window (headless, or the GUI did not answer) or unavailable (gpu on a host "
-                "without OpenGL)";
+                "without OpenGL, a renderer not offered)";
         };
 
         Json::Value& get = paths[kPath]["get"];
         get["summary"] = "GUI window display settings";
         get["tags"].append("Screen State");
         get["description"] =
-            "How the GUI window draws the picture: backend (gpu / software), gpu_available, gpu, crt, crt_profile and "
+            "How the GUI window draws the picture: backend (gpu / software), gpu_available, gpu, renderer (gl / vulkan), "
+            "renderers offered, renderer_active, crt, crt_profile and "
             "the crt_profiles offered, blending (temporal blending, gigascreen smoothing), blending_frames, "
             "blending_weights, blending_decay, smooth motion (smooth_motion, effects_device: the shown instance's "
             "[VIDEO] settings), present_policy, display_rate and lip_sync_offset_ms (the shown instance's [VIDEO] "
@@ -56,6 +57,9 @@
                 body["properties"][name]["description"] = description;
             };
             field("gpu", "boolean", "GPU acceleration (OpenGL) on / off");
+            field("renderer", "string",
+                  "gl or vulkan, one of renderers: what the GPU screen draws with; re-creates it (the other settings "
+                  "carry over) and is kept across sessions. Not offered: 409 unavailable");
             field("crt", "boolean", "CRT effects on / off");
             field("crt_profile", "string",
                   "A CRT profile from crt_profiles (the window offers them: none, basic, ..., shader:<name> for a "
@@ -65,7 +69,7 @@
             field("blending_weights", "string", "equal or exponential (newer frames stronger)");
             field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
             field("smooth_motion", "string",
-                  "off, blend, interpolate or auto (View > Video Synchronization): the shown instance's smooth "
+                  "off, blend, interpolate, interpolate-lite or auto (View > Video Synchronization): the shown instance's smooth "
                   "motion until it restarts ([VIDEO] SmoothMotion keeps the default)");
             field("effects_device", "string", "gpu or cpu: where smooth motion's steps run (the same bits)");
             field("present_policy", "string",

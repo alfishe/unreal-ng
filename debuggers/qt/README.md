@@ -24,8 +24,10 @@ the core's classes of the same names would clash.
 
 ## Card tabs
 
-With a sound card fitted the side tabs add GS log, GS protocol, GS firmware, GS hardware and GS stats (the catalog
-reports `gs-commands`, `gs`, `gs-firmware`, `gs-stats`; a line over each names the card read). On a NeoGS ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+With a sound card fitted the side tabs add GS log, GS protocol, GS monitor, GS firmware, GS hardware and GS stats (the catalog
+reports `gs-commands`, `gs`, `gs-firmware`, `gs-stats`; a line over each names the card read), and after the card's
+own tabs the analysis tabs GS dispatch, GS unknown, GS objects, GS writers, GS profiler, GS events, GS coverage and
+GS heat map (below). On a NeoGS ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
 B3; gs-debugger TODO P5.5) the NeoGS tabs show the core's device boards, the same data as unreal-qt's Embedded
 debugger (`DebugBoards::Read`, `Emulator::read_board` in the shim; over the WebAPI `GET /debug/boards/{board}`), with
 the `gs_stats` board's counters:
@@ -39,6 +41,66 @@ the `gs_stats` board's counters:
 The last two come only with a NeoGS. Insert image..., Insert folder..., Eject and Save flash are the boards' actions
 (`Emulator::board_action`; over the WebAPI `POST /debug/boards/{board}/actions/{action} {arg}`). A machine whose
 boards cannot be read falls back on the `gs` report's `neogs` part. On a GS, GS hardware is the report as it is.
+
+**The GS monitor** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A5.3, C10; gs-debugger P5.6): a card tab after GS protocol, with every card that carries a General Sound (GS, NeoGS,
+the lightweight player, the MultiSound's GS), to watch next to the game while it plays. Top to bottom: the protocol
+strip (`#2A Set module master volume: not taken yet, then reply 1 of 1 due` / `status #01 (cmd) · mailbox: command
+#2A, data #3F, to host #FF · last send #2C -> #01 (done)`) with the machine's **Pause** / **Continue** (the toolbar's
+F12 / F9); the error tile, the command log's anomalies and the firmware's unknown commands counted since its
+**Clear** (which resets the tab's counters only), the last anomaly's text and frame, tinted while not zero; the
+command log's newest records (Frame, T, Kind, Command, Name, Text; anomalies tinted), following the tail: scrolled up
+it stops, **Follow** resumes. The history read has no since cursor: each read takes the newest 200 records and
+appends the ones after the last row shown (matched by frame, T, card cycle, kind and text; more than 200 between two
+reads are counted as not read). With the command log off the tab says so, and **Turn on** sets history
+`<slot>.commands` mode ring. Read once at every stop and, only while the tab is in sight and the machine runs, every
+250 ms in process (`Emulator::read_gs_monitor` where the machine stands still) and every second over the WebAPI
+(plain GETs of `state/audio/gs` or `state/audio/multisound`, `history/<device>?last=200`,
+`state/audio/gs/firmware?object=unknown_commands`); nothing pauses. Turn on is `Emulator::gs_command_log` (over the
+WebAPI `POST history/<device>/config {mode}`).
+
+**The analysis tabs** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A5.2a; gs-debugger requirements M3, M4, M5, AU6, X7): GS dispatch, GS unknown, GS objects and GS writers, after the
+card tabs (eCat has no View menu to keep them hidden until opened: they come with the card, as the other card tabs),
+with every card that carries a General Sound; each reads its card (the General Sound's or the MultiSound's GS):
+
+| Tab | What |
+|-----|------|
+| GS dispatch | the profile stack (`Profile stack: GS v1.05a ▸ GP gscode.bin`: the ROM's profile, the uploaded code's the command log's decoder took on top), the table's place and counts; a row an entry: Command, Name, Handler, Label (the card's symbol there), ROM (the stock COMTAB's baseline), Patched by. A patched entry is tinted and bold, with the #14 upload that wrote its slot (`GP gscode.bin upload @#4000, 3,212 B, sha 3fa1..., frame 412`; the upload whose profile names the command, else the newest that covers the slot; `no upload seen`); the stub's entries dimmed, **Named and patched only** hides them |
+| GS unknown | the commands the decoding profile does not name (AU6), a row a command: Since Clear (`×3`), Total, Dispatch (the handler and label, `the unknown-command stub`). **Clear** sets the tab's baseline (the core has no verb to clear the counts: the command log keeps them from its start); with the log off the tab says so, with **Turn on** |
+| GS objects | **Read as** the active profile or a profile that declares structs; a table per struct instance (columns the schema's fields, rows the instances: `smp: struct smp, 32 x 64 bytes @#xxxx`), then the profile's variables (memory, register, operand); a value changed since the last read in the changed colour. The built-in tables' window variables stay in GS firmware, which now shows only the profile and the variables (no instances, dispatch or unknown commands: these tabs have them) |
+| GS writers | a row a port: the host's `#B3` / `#BB` / `#33` and the card's `#00`, `#03`, `#05`, `#06-#09` (and any other port written): Register, Side, Value, Writer PC, Label, Frame (and the host's T), Source, Writes read. The host's #B3 / #BB from the command log (its records carry the main CPU's PC; #33 bit 7 its reset marker); the card's own OUTs and the host's #33 from the GS port trace (the card CPU's PC; the host's writer of #33 is not kept, said in the cell's tooltip). **Turn on the log**, **Start the trace** when off |
+
+Read once at every stop and, only while in sight and the machine runs, every 250 ms in process and every second over
+the WebAPI; nothing pauses. In process at a coherent moment: `Emulator::read_gs_firmware` (GSFirmwareObjectsRead, the
+card's report for the profile and the uploads, the card's label manager), `read_gs_writes` (the command log history,
+the port trace's host and card sides apart: `getPortTraceSide`), `gs_firmware_profiles`, `gs_port_trace`. Over the
+WebAPI plain GETs: `state/audio/gs/firmware[?profile=][&cpu=ms]`, `state/audio/gs` (or `state/audio/multisound`),
+`labels?cpu=&active=true` (kept 30 s), `labels/resolve?address=` (the writers' PCs, kept 30 s),
+`history/<device>?last=400`, `state/audio/gs/porttrace?events=3000` (no side filter on the route: the DAC fetches
+crowd the card's port writes out; the GS slot's card only, not the MultiSound's), `state/audio/gs/firmware/profiles`.
+
+**The profiler and analysis tabs** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A5.2a rows Profiler, Events, Coverage, Heat map; gs-debugger requirements X2, X8, X9, X10, X11, X20): GS profiler,
+GS events, GS coverage and GS heat map after GS writers, on the card CPU's profiler (`gs profile`, `gs events`) and
+analysis (`gs coverage`, `gs heatmap`). Both are off by default and slow the card while on (the profiler about x1.9,
+the analysis about x2.5): each tab says so and offers its switch. The lightweight player has no card CPU: each tab
+says `not available`.
+
+| Tab | What |
+|-----|------|
+| GS profiler | the ISR budget as a bar (filled the average, a red mark the most) and two lines, last frame and since start: `212 / 320 avg · 301 max · 34% headroom · ISRs · overruns · latency avg, max · lost`; why a part is empty (`Interrupts off: the firmware idles with interrupts disabled ... N interrupt requests lost`, `No routine called yet: the idle loop calls nothing ...`, the command in progress); the host commands' cost (Command, Name, Handler, Count, Avg, Min, Max, Total); the routines by inclusive cycles (Address, Page `ROM 0` / `RAM 3`, Label, Calls, Inclusive, Exclusive, Avg, Max, %; the interrupt entries marked); the activity per frame as a graph (busy %, ISR %; 128 frames) over a table of the newest 64 (ISR / idle / halt / busy %, commands, INT, overruns, lost, ISR max). **Start** (a new session) / **Stop** / **Clear** |
+| GS events | the last complete host frame on a canvas: a row an interrupt period (2 px), a column a card cycle of it scaled to the width; the ISR as a bar from its accept to its end (NMI purple, still running lighter, past its period a red tail), dots for the host's #B3 write / read, #BB command / status, #33, DAC fetches (hue by channel), page and volume writes, ZX-DMA reads and writes; a legend; a tooltip with the period, the cycle, the bar and the dots there. Hints: the profiler off (**Start the profiler**), the port trace off (**Start the trace**: no dots without it), no ISR bar (interrupts off) |
+| GS coverage | per space (ROM / flash, RAM) a total row and a row a marked page: Exec, Code, Read, Write, DAC, Written bytes, the code / data / DAC ranges (offsets in the 16 KB page, 16 each, `…` when cut); the command handlers executed (Command, Name, Handler, Where) and the ones not (dimmed); the reads of RAM never written (Address, Place `ram 2:#0100`, PC, Label, Frame, Kind; the written stamps start at On). **On** / **Off** / **Reset** / **Release**; **Break on new code** shown disabled (the core has no such breakpoint yet) |
+| GS heat map | the card RAM as a grid (16,384 cells at most, square, cells of 16 B or more), each channel in its colour (fetch blue, read green, write red, DAC amber, SD-DMA purple, ZX-DMA teal), **Channel** all (added) or one; **Decay** (heat lost per frame, applied on edit); a tooltip with the cell's RAM range and each channel's heat; the DAC ranges of the last 50 frames (the samples playing). **On** when off (shared with GS coverage) |
+
+One read is one core report as JSON (`Emulator::read_gs_report`): in process `DeviceState::GsProfile` / `GsEvents` /
+`GsCoverage` / `GsHeatmap` on the window's thread (they never park the machine); over the WebAPI `GET
+state/audio/gs/{profile,events,coverage,heatmap}?cpu=&...` (heat map `cells=16384&format=base64&recent=dac`). The
+switches: `Emulator::gs_profiler` (`GSProfileControl`; `POST control/audio/gs {action: profile_start|profile_stop|
+profile_clear, cpu}`) and `gs_analysis` (`GSAnalysisControl`; `POST control/audio/gs/analysis {action, cpu, decay}`).
+The never-written reads' labels are the card CPU's own symbols (its disassembler, exact address). Same cadence as the
+other analysis tabs: at stops, and while in sight and running every 250 ms in process, every second over the WebAPI.
 
 **The ZX-DMA trace** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md) B3.2;
 gs-debugger N6): the DMA tab's **Trace ▸** expands, in place, a table of the bytes the Spectrum moved through the

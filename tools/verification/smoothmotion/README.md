@@ -127,6 +127,9 @@ settings off), loads each clip through the WebAPI, warms it up, records the fram
 - `replay` (built from `replay.cpp`) pushes the same frames and plans the same refresh times through the core on the
   CPU: every plan and picture must be the window's (which may have drawn on the GPU), and it prints the timing
   (refreshes skipped, the frames' target jitter, the look-ahead);
+- `replay <trace dir> --time [rounds]` times the trace on the CPU instead: every `Push` and every `Draw` by its
+  kind (p50 / p95 / max ms; `UNREAL_SMOOTH_THREADS` sets the pool) and a sum of all the pictures' pixels, the check
+  that a change for speed left the bits alone;
 - `smoothness.py` scores the window's pictures at their own times, `off` and `blend` on the same refreshes, and the
   same mode on a perfect clock (what the timing costs).
 

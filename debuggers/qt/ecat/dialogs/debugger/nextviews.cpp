@@ -863,7 +863,10 @@ std::vector<NextTab> CreateCardTabs(Emulator * e, QWidget *parent)
     NextReportView * protocol = new NextReportView(e, "gs", {"protocol", "last_send", "firmware_profile", "status", "command_pending",
                                                            "data_pending", "command_from_host", "data_from_host", "data_to_host"},
                                                    std::string(), {}, parent);
-    NextReportView * firmware = new NextReportView(e, "gs-firmware", {}, "window_variables", {"name", "at", "size", "value", "meaning"}, parent);
+    //The firmware's variables (the profile's and the built-in tables' fixed window, the lightweight player's mirror);
+    //its struct instances, dispatch table and unknown commands are the GS objects, GS dispatch and GS unknown tabs
+    NextReportView * firmware = new NextReportView(e, "gs-firmware", {"profile", "title", "source", "cpu", "variables", "window_variables"},
+                                                   "window_variables", {"name", "at", "size", "value", "meaning"}, parent);
     NextReportView * stats = new NextReportView(e, "gs-stats", {}, std::string(), {}, parent);
     std::vector<NextTab> tabs = named({
         {QObject::tr("GS log"), log},

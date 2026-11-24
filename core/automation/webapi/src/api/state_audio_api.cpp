@@ -23,6 +23,7 @@
 #include <emulator/sound/chips/gs/firmware/gsfirmwareobjects.h>
 #include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/gszxdmatrace.h>
+#include <emulator/sound/chips/gs/gsprofilereport.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
 
@@ -685,6 +686,50 @@ void EmulatorAPI::getStateAudioGSZxDma(const HttpRequestPtr& req, std::function<
     ReplyDeviceState(DeviceState::GsZxDmaTrace(emulator->GetContext(), query), callback);
 }
 
+namespace
+{
+void ReplyBadQuery(const std::function<void(const HttpResponsePtr&)>& callback, const std::string& message)
+{
+    Json::Value body;
+    body["error"] = "Bad Request";
+    body["message"] = message;
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(HttpStatusCode::k400BadRequest);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+}  // namespace
+
+void EmulatorAPI::getStateAudioGSProfile(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound(callback, "Emulator not found with ID: " + id);
+    GSProfileQuery query;
+    std::string error;
+    if (!GSProfileQueryFromStrings(req->getParameter("cpu"), req->getParameter("routines"),
+                                   req->getParameter("activity"), query, error))
+        return ReplyBadQuery(callback, error);
+    // One report for every plane (DeviceState::GsProfile); its `text` the lines of CLI 'gs profile'
+    ReplyDeviceState(DeviceState::GsProfile(emulator->GetContext(), query), callback);
+}
+
+void EmulatorAPI::getStateAudioGSEvents(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound(callback, "Emulator not found with ID: " + id);
+    GSEventsQuery query;
+    std::string error;
+    if (!GSEventsQueryFromStrings(req->getParameter("cpu"), req->getParameter("first"), req->getParameter("count"),
+                                  req->getParameter("rows"), query, error))
+        return ReplyBadQuery(callback, error);
+    // One report for every plane (DeviceState::GsEvents); its `text` the lines of CLI 'gs events'
+    ReplyDeviceState(DeviceState::GsEvents(emulator->GetContext(), query), callback);
+}
+
 void EmulatorAPI::getStateAudioGSFirmwareProfiles(const HttpRequestPtr& req,
                                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                                   const std::string& id) const
@@ -931,6 +976,27 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
             }
             respond(waiter->callback, reply);
         });
+        return;
+    }
+
+    // profile_start / profile_stop / profile_clear: the card CPU's profiler (gscardprofiler.h), applied at the card's
+    // next run; any thread, nothing parked
+    if (action == "profile_start" || action == "profile_stop" || action == "profile_clear")
+    {
+        const GSProfileControlReply r =
+            GSProfileControl(context, action.substr(8), json->get("cpu", "").asString());
+        Json::Value body = StateNodeToJson(r.body);
+        if (r.status != 200)
+        {
+            body["message"] = body["error"];
+            body["error"] = r.status == 404 ? "Not Found" : "Bad Request";
+        }
+        else
+            body["text"] = r.text;
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(static_cast<HttpStatusCode>(r.status));
+        addCorsHeaders(resp);
+        callback(resp);
         return;
     }
 
@@ -1195,7 +1261,8 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         error["message"] =
             "Unknown action '" + action +
             "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data, switch_personality, "
-            "dump_module, sd_insert, sd_eject, flash_save, stereo_mode, send, conversation or reset_counters)";
+            "dump_module, sd_insert, sd_eject, flash_save, stereo_mode, send, conversation, reset_counters, profile_start, "
+            "profile_stop or profile_clear)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);

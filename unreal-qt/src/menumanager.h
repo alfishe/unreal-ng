@@ -90,6 +90,9 @@ public:
     void setAutostartDisksChecked(bool checked);
     void setGpuAccelerationChecked(bool checked);
     void setGpuAccelerationAvailable(bool available);
+    /// View > Renderer: checks `wanted` ("gl" / "vulkan") without emitting rendererChanged; Vulkan enabled when
+    /// offered; the submenu shown only in a build with Vulkan
+    void setRenderer(const QString& wanted, bool vulkanOffered, bool vulkanBuilt);
     void setCrtEffectsChecked(bool checked);
     void setCrtEffectsEnabled(bool enabled);
     void setCrtProfile(int profileIndex);
@@ -198,6 +201,8 @@ signals:
     void statusBarToggled(bool visible);
     void hudOverlayToggled(bool visible);
     void gpuAccelerationToggled(bool enabled);
+    /// View > Renderer: "gl" / "vulkan"
+    void rendererChanged(const QString& renderer);
     void crtEffectsToggled(bool enabled);
     void crtProfileChanged(int profileIndex);
     void crtShaderChanged(const QString& name);  ///< a custom shader (GPU only)
@@ -308,6 +313,9 @@ private:
     QAction* _statusBarAction;
     QAction* _hudOverlayAction = nullptr;
     QAction* _gpuAccelerationAction = nullptr;
+    QMenu* _rendererMenu = nullptr;
+    QAction* _rendererGlAction = nullptr;
+    QAction* _rendererVulkanAction = nullptr;
     QAction* _crtEffectsAction = nullptr;
     QMenu* _crtProfileMenu = nullptr;
     QActionGroup* _crtProfileGroup = nullptr;

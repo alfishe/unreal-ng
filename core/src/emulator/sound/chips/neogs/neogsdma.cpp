@@ -103,6 +103,7 @@ void NeoGSDma::start(Module m, int64_t now)
             const uint32_t base = address(MP3);
             for (int i = 0; i < BLOCK; i++)
                 _mp3Buffer[i] = _mem.ram()[(base + static_cast<uint32_t>(i)) % _mem.ramSize()];
+            _host.dmaRamRead(base, static_cast<uint32_t>(BLOCK));
             advanceAddress(MP3, BLOCK);
             const int64_t burst = static_cast<int64_t>(BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS) * _host.dmaUnitsPerCycle();
             _counters[MP3].stallClocks += BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS;

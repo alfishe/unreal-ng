@@ -116,6 +116,9 @@ void DeviceScreen::setFrameSource(ScreenFrames source)
     _syncReason.clear();
     _smooth.Reset();
     _smooth.SetMode(mode);
+    _smooth.SetLite(false);
+    _smoothGuard.Reset();
+    _smoothSteppedDown = _smoothTooSlow = false;
     _smoothShown = {};
     updateVideoSync();
 }
@@ -151,6 +154,7 @@ WindowPresentStats DeviceScreen::presentStats() const
     const QScreen* display = screen();
     out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
     FillSmoothStats(_smooth, smoothActive(), false, out);
+    FillSmoothStep(_smoothSteppedDown, _smoothTooSlow, out);
     out.sync = VideoSyncName(_sync);
     out.syncReason = _syncReason;
     out.machineHz = _frameRate.Hz();
@@ -309,14 +313,47 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
     if (drawImage == &_latchedFrame && smoothActive() && _smooth.Width() == drawImage->width() &&
         _smooth.Height() == drawImage->height())
     {
-        const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(SteadyNowNs());
+        using Kind = smoothmotion::SmoothMotion::Kind;
+        smoothmotion::SmoothMotion::Result plan = _smooth.Plan(SteadyNowNs());
         if (_smoothFrame.size() != drawImage->size())
         {
             _smoothFrame = QImage(drawImage->size(), QImage::Format_RGBX8888);
             _smoothShown = {};
         }
-        if (plan.kind != smoothmotion::SmoothMotion::Kind::None &&
-            (plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()))))
+        // Too slow here even by the cheap interpolation: the blend of the same two frames; a game's cadence
+        // picture: the frame
+        const bool interpolates = plan.kind == Kind::Interpolate || plan.kind == Kind::Cadence || plan.kind == Kind::Carry;
+        if (_smoothTooSlow && plan.kind == Kind::Interpolate)
+            plan.kind = Kind::Blend;
+        else if (_smoothTooSlow && interpolates)
+            plan = {Kind::Frame, plan.serial, plan.serial, plan.serial, 0};
+        bool ready = plan.kind != Kind::None && plan == _smoothShown;
+        if (plan.kind != Kind::None && !ready)
+        {
+            const auto drawStart = std::chrono::steady_clock::now();
+            ready = _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()));
+            const int64_t drawNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       std::chrono::steady_clock::now() - drawStart)
+                                       .count();
+            const QScreen* display = screen();
+            const double hz = display && display->refreshRate() > 0.0 ? display->refreshRate() : 60.0;
+            if (ready && interpolates && !_smoothTooSlow &&
+                _smoothGuard.Note(0, drawNs, static_cast<int64_t>(1e9 / hz)))
+            {
+                if (!_smooth.Lite())
+                {
+                    _smoothSteppedDown = true;
+                    _smooth.SetLite(true);
+                }
+                else
+                    _smoothTooSlow = true;
+                qWarning() << "DeviceScreen: smooth motion's interpolation is too slow here ("
+                           << _smoothGuard.ClosedSlow() << "of its last" << SmoothGuard::kWindow
+                           << "pictures drawn in most of a refresh) -"
+                           << (_smoothTooSlow ? "blended from now on" : "the cheap interpolation from now on");
+            }
+        }
+        if (ready)
         {
             _smoothShown = plan;
             drawImage = &_smoothFrame;

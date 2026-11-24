@@ -285,10 +285,15 @@ public:
 
     void SetPolicy(PresentPolicy policy) override
     {
+        // The same policy again (the window sets it with every settings change): what CheckVrr found stays
+        const bool changed = policy != Policy();
         _policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(_statsMutex);
-        _engaged = true;
-        _vrrNote.clear();
+        if (changed)
+        {
+            _engaged = true;
+            _vrrNote.clear();
+        }
         ApplyMode();
         _decidedNs = 0;  // _VARIABLE_REFRESH follows at the next frame
     }
@@ -301,6 +306,7 @@ public:
     }
 
     int64_t LeadNs(int64_t refreshPeriodNs) const override { return _lead.Margin(refreshPeriodNs); }
+    uint64_t LatePresents() const override { return _lead.Late(); }
 
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override
     {
@@ -529,7 +535,7 @@ private:
                     break;
                 item = _queue.front();
                 _queue.pop_front();
-                nextAtNs = _queue.empty() ? 0 : _queue.front().atNs;
+                nextAtNs = linuxpresent::NextForPlan(_queue.size(), _queue.empty() ? 0 : _queue.front().atNs);
             }
             int64_t wakeNs = 0;
             if (linuxpresent::PlanSwap(item.atNs, nextAtNs, SteadyNowNs(), kSwapCostNs, wakeNs) ==
@@ -631,8 +637,9 @@ private:
             _shown++;
             const int64_t asked = std::max(item.atNs, submitted);
             _errors.Add(static_cast<double>(screenNs - asked) / 1e6);
-            const int64_t own = item.atNs > 0 ? item.atNs : asked;
-            _lead.Shown(screenNs - own, item.number, std::max(own, item.handedNs) - item.handedNs);
+            // A present at once has no time of its own to be late against (PresentLead)
+            if (item.atNs > 0)
+                _lead.Shown(screenNs - item.atNs, item.number, std::max(item.atNs, item.handedNs) - item.handedNs);
             const double hz = linuxpresent::FixedRefreshHz(_refreshHz.load(std::memory_order_relaxed),
                                                            _vblankPeriodNs.load(std::memory_order_relaxed),
                                                            _vrr.load(std::memory_order_relaxed));
