@@ -278,6 +278,35 @@ boundary is the instruction at its PC.
 | REST | `POST /step?cpu=gs`, `POST /steps?cpu=gs {count}` | `POST /stepover?cpu=gs`, `POST /stepout?cpu=gs` | `POST /skip_until?cpu=gs {pc}` |
 | WebSocket | the REST routes as `call`s | the same | the same |
 
+**Runs to a moment** (gs-debugger TODO P5.4, the card debugger's Run to; `RunControl::CardRunTo`,
+`GSCardTarget::ArmUntil`). From a card CPU's view, the machine paused:
+
+- **cycle** `value`: at the first card instruction boundary at or after card cycle `value` of the ZX frame (the count
+  of the `gs` report's `cpu.frame_cycle`: `cardCycles(cardFrameTime())`); a cycle the card already stands at or passed
+  is the next frame's. A frame start is seen as the card's frame time dropping, so a cycle between the frame's last
+  boundary and its end parks at the next frame's first boundary. `value` from 0 to the frame's card cycles - 1;
+- **int**: at the first instruction of the handler of the card's next accepted interrupt (where an `int` event
+  breakpoint parks; the INT is noted by the card's event hook, the park is at the next boundary);
+- **command**: the host's next command write (OUT #BB, the main CPU; `GSReportHostEvent`): the machine pauses after
+  that main instruction (the loop parks at its next instruction boundary), the card has not run since, so it has not
+  taken the command. The card runs its fast loop meanwhile, no tight mode. The reply names the byte (`command`);
+- **main_t** `value`: the main CPU runs to T-state `value` of the frame (the next frame's when at or past it), a direct
+  run of at most a frame (`RunTStates` with breakpoints), the card following as on any main run.
+
+A breakpoint of any CPU on the way ends a run (`hit` false); no end of cycle, int or command within 5 s pauses the
+machine with the reason `timeout`. The reply is the card step's plus `until`, `hit`, `target_cycle` (cycle) /
+`target_t` (main_t), `command`; every card step's and run's reply has `card_cycle`, `main_t` and `frame`, where both
+CPUs stand. The main CPU's own step from a card view is the main CPU's step (`POST /step` without `cpu`).
+
+| Plane | Runs to a moment |
+| :--- | :--- |
+| CLI | `card_run_to cycle <N> \| int \| command \| main_t <T> [--cpu gs\|ms]` |
+| Lua | `card_run_to(until, [value], [cpu])` |
+| Python | `emu.card_run_to(until, value=0, cpu="gs")` |
+| MCP | `control_execution` `card_run_to` `until`, `value`, `cpu` |
+| REST | `POST /card_run_to {cpu, until, value}` |
+| WebSocket | the REST route as a `call` |
+
 Lua and Python return the reply as a table / dict with `ok` (`ok` false and `error` when refused: not paused, a step
 already under way). A card's run to the cursor always stops at a breakpoint on the way and does not take a t-state
 budget (`max_tstates`, `breakpoints` are the main CPU's). The other runs (frames, t-states) stay the machine's: MCP

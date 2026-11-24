@@ -458,9 +458,14 @@ bool Emulator::Init()
         }
     }
 
-    // The labels of the known ROMs the machine runs (symbol bundles)
+    // The labels of the known ROMs the machine runs (symbol bundles), and of the firmware of the sound cards it was
+    // built with: those cards were made before the debug manager, so nothing told their targets
     if (result)
+    {
         ApplySymbolBundles();
+        if (_context->pDebugManager && !SymbolBundleFolder().empty())
+            _context->pDebugManager->ApplyCardSymbolBundles();
+    }
 
     // Create the time travel controller (per parent TDD §10.2). Always constructed; the
     // per-frame capture cost is gated by the cached _feature_ttd_enabled
@@ -3342,18 +3347,20 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
     ParkInsideCardRun();
 }
 
-void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
+void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc, bool parkHere)
 {
     BreakpointStop stop;
     stop.step = true;
     stop.address = cpuPc;
     stop.cpu = cpu;
     stop.cpuPc = cpuPc;
-    stop.main = MainPositionAt(cpu);
+    if (parkHere)
+        stop.main = MainPositionAt(cpu);
     _pendingPauseCause = stop;
     Pause();
     _pendingPauseCause = BreakpointStop{};
-    ParkInsideCardRun();
+    if (parkHere)
+        ParkInsideCardRun();
 }
 
 MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
@@ -3375,6 +3382,7 @@ MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
     if (position.frameEnd || !(z80->isDebugMode || z80->execTapHold || z80->cardTight) || z80->t < z80->instrStartT)
         return position;
     position.tInInstruction = z80->t - z80->instrStartT;
+    position.waitT = std::min(z80->InstructionWaitT(), position.tInInstruction);
     position.onBoundary = _context->pDebugManager->CatchingUp();
     FillInstructionProgress(position);
     return position;
@@ -3410,7 +3418,7 @@ void Emulator::FillInstructionProgress(MainPosition& position) const
     position.elapsedT = static_cast<uint32_t>(elapsed);
     position.totalT = way->total;
     position.cycles = *way;
-    position.contended = position.onBoundary && position.tInInstruction > way->total;
+    position.contended = position.onBoundary && position.tInInstruction - position.waitT > way->total;
     const Z80MCyclePosition at = Z80MCycleDecoder::Locate(*way, position.elapsedT);
     if (at.inside)
         position.busCycle = static_cast<int8_t>(at.index);

@@ -150,11 +150,12 @@ def capture(args):
         subprocess.run([sys.executable, os.path.join(HERE, 'scr2png.py'), os.path.join(work, 'screens.png'), *picked])
     if explorer_start and os.path.exists(explorer_start):
         os.remove(explorer_start)
-    built = s.call('analysis', {'action': 'build', 'path': os.path.join(work, 'l1.json'), 'wait': 30000})
+    # The build as a job (PLAN #122 S2): its id at once, then the jobs tool's long-poll until it ends (no sleep)
+    built = s.call('analysis', {'action': 'build', 'path': os.path.join(work, 'l1.json'), 'async': True})
+    job = (built.structured or {}).get('job')
+    if job:
+        s.wait_job(job, timeout=3600)
     state = s.call('analysis', {'action': 'status'}).text
-    while ': running' in state:
-        time.sleep(5)
-        state = s.call('analysis', {'action': 'status'}).text
     report['status'] = state.splitlines()
     if args.record_load:
         # The recording starts at power-on, the build replays from there: start.bin is the memory at its first
@@ -400,7 +401,7 @@ def build(args):
         shared['instance_of'] = shared.get('instance_of', work)
         with open(os.path.join(out, 'session.json'), 'w') as f:
             json.dump(shared, f)
-    body = {'action': 'build', 'path': os.path.join(out, 'l1.json'), 'wait': 30000}
+    body = {'action': 'build', 'path': os.path.join(out, 'l1.json'), 'async': True}
     frame, tinframe = 0, 0
     if args.stage is not None:
         with open(os.path.join(work, 'l1.json')) as f:
@@ -418,10 +419,8 @@ def build(args):
     r = s.call('analysis', body, ok=False)
     if r.is_error:
         raise SystemExit(r.text)
-    state = s.call('analysis', {'action': 'status'}).text
-    while ': running' in state:
-        time.sleep(2)
-        state = s.call('analysis', {'action': 'status'}).text
+    if (r.structured or {}).get('job'):
+        s.wait_job(r.structured['job'], timeout=3600)  # the jobs long-poll (PLAN #122 S2), no sleep
     if frame or tinframe:
         write_memory(s, os.path.join(out, 'start.bin'), frame, tinframe)
     else:

@@ -19,6 +19,7 @@
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/screen.h"
 
@@ -201,6 +202,8 @@ void EveHostCard::AdvanceTo(uint64_t absoluteRaster)
         ConfigureOutput();
     if (_async != AsyncWanted())
         ConfigureAsync();
+    if (_async)
+        StampNextFrame();
 
     while (_time.position < absoluteRaster)
     {
@@ -232,7 +235,11 @@ void EveHostCard::AdvanceTo(uint64_t absoluteRaster)
             EveAdvance(_chip, step);
             done += step;
             if (EveCompletedFrames(_chip) != _chipFrames)
+            {
                 OnChipFrame();
+                if (_async)
+                    StampNextFrame();  // a later step of this advance may end the next one
+            }
             const uint64_t need = done * kRasterHz;
             const uint64_t tacts = need > startRemainder ? (need - startRemainder + hz - 1) / hz : 0;
             SampleInt(start + tacts);
@@ -399,6 +406,26 @@ void EveHostCard::OnChipFrame()
         KeepPresentedMetrics(false);  // the FT812 Debug window shows what the monitor shows
 }
 
+void EveHostCard::StampNextFrame()
+{
+    // The CPU does not move while the chip advances: a frame this advance ends ends at this position
+    const Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint64_t length = _context ? _context->config.frame : 0;
+    FrameStamp& slot = _frameStamps[(_chipFrames + 1) % kFrameStamps];
+    slot.frameNumber.store(_context ? _context->emulatorState.frame_counter : 0, std::memory_order_relaxed);
+    slot.position.store(z80 ? (length << 32) | static_cast<uint32_t>(z80->t) : 0, std::memory_order_relaxed);
+}
+
+void EveHostCard::BeforeRelease()
+{
+    _params.drawThread = false;  // AdvanceTo does not turn it on again
+    if (_async)
+    {
+        EveSetAsyncDrawing(_chip, 0, nullptr, nullptr);
+        _async = false;
+    }
+}
+
 bool EveHostCard::AsyncWanted() const
 {
     return _params.drawThread && _chip && !_capture.IsOpen() && !(_context && _context->ttdReplayActive);
@@ -416,14 +443,18 @@ void EveHostCard::ConfigureAsync()
     _async = want;
 }
 
-void EveHostCard::OnRendererFrame(void* user, uint64_t /*frame*/, int drawn)
+void EveHostCard::OnRendererFrame(void* user, uint64_t frame, int drawn)
 {
     // OnChipFrame's presentation, on the renderer thread once the frame's last line is drawn. The buffers are
     // not resized meanwhile (ConfigureOutput waits for the renderer first)
     auto* card = static_cast<EveHostCard*>(user);
     if (!drawn || !card->_asyncPresent.load())
         return;
-    card->PresentPicture();
+    const FrameStamp& slot = card->_frameStamps[frame % kFrameStamps];
+    const uint64_t position = slot.position.load(std::memory_order_relaxed);
+    const uint32_t length = static_cast<uint32_t>(position >> 32);
+    const float fraction = length ? std::min(static_cast<float>(static_cast<uint32_t>(position)) / length, 1.0f) : 1.0f;
+    card->PresentPicture(slot.frameNumber.load(std::memory_order_relaxed), fraction);
     card->_latchedFrames++;
     if (card->_measureAlways.load())
         card->KeepPresentedMetrics(false);  // the library answers the renderer without waiting
@@ -455,6 +486,20 @@ void EveHostCard::ConvertFrame(uint8_t* out, uint8_t* copy, size_t pixels) const
 
 void EveHostCard::PresentPicture()
 {
+    PresentPicture(nullptr);
+}
+
+void EveHostCard::PresentPicture(uint64_t frameNumber, float fraction)
+{
+    Screen::ExternalFrameStamp stamp;
+    stamp.frameNumber = frameNumber;
+    stamp.fraction = fraction;
+    PresentPicture(&stamp);
+}
+
+void EveHostCard::PresentPicture(const void* stampPointer)
+{
+    const auto* stamp = static_cast<const Screen::ExternalFrameStamp*>(stampPointer);
     Screen* screen = _context ? _context->pScreen : nullptr;
     if (!screen || (_context && _context->ttdReplayActive))
     {
@@ -474,7 +519,7 @@ void EveHostCard::PresentPicture()
         card->ConvertFrameToPicture();
         std::memcpy(slot, card->_picture.data(), std::min(bytes, card->_picture.size()));
     };
-    if (!screen->LatchExternalFrame(fill, this))
+    if (!screen->LatchExternalFrame(fill, this, stamp))
         ConvertFrameToPicture();
 }
 

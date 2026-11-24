@@ -7,11 +7,15 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QKeyEvent>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
@@ -19,6 +23,7 @@
 #include <QVBoxLayout>
 
 #include <set>
+#include <stdexcept>
 
 #include "addressmenu.h"
 #include "debugstyle.h"
@@ -213,46 +218,277 @@ static void tight_list(QListWidget * w)
 
 //---------------------------- BreakpointsView -----------------------------//
 
-BreakpointsView::BreakpointsView(QWidget *parent):
-    QListWidget(parent)
+namespace {
+
+//The event kinds the editor offers, in its groups (gui-card-debugger A4 `W.bp kinds`, A6 S5), by the core's names
+//(gsdebughooks.h); a processor offers those of them it takes (CPU::event_kinds)
+struct EventKindInfo {
+    const char * name;
+    const char * group;
+    const char * label;
+};
+
+const char * const kGroupCard = QT_TRANSLATE_NOOP("BreakpointsView", "Card");
+const char * const kGroupCardSide = QT_TRANSLATE_NOOP("BreakpointsView", "Protocol, card side");
+const char * const kGroupHostSide = QT_TRANSLATE_NOOP("BreakpointsView", "Protocol, host side");
+const char * const kGroupMachine = QT_TRANSLATE_NOOP("BreakpointsView", "Machine");
+
+const EventKindInfo kEventKinds[] = {
+    {"int", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "the card takes an interrupt")},
+    {"nmi", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "the card takes an NMI")},
+    {"reset", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "the card is reset")},
+    {"page", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "the card switches a page")},
+    {"dac_fetch", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "the card fetches a DAC sample")},
+    {"clock_change", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "the card's clock changes")},
+    {"dma_start", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "a card DMA starts")},
+    {"dma_done", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "a card DMA ends")},
+    {"gscfg0", kGroupCard, QT_TRANSLATE_NOOP("BreakpointsView", "the card writes GSCFG0")},
+    {"card_command", kGroupCardSide, QT_TRANSLATE_NOOP("BreakpointsView", "the card takes a command")},
+    {"card_data", kGroupCardSide, QT_TRANSLATE_NOOP("BreakpointsView", "the card takes a data byte")},
+    {"card_reply", kGroupCardSide, QT_TRANSLATE_NOOP("BreakpointsView", "the card writes its reply")},
+    {"host_command", kGroupHostSide, QT_TRANSLATE_NOOP("BreakpointsView", "the host sends a command")},
+    {"host_data", kGroupHostSide, QT_TRANSLATE_NOOP("BreakpointsView", "the host sends a data byte")},
+    {"host_reply", kGroupHostSide, QT_TRANSLATE_NOOP("BreakpointsView", "the host reads the card's reply")},
+    {"int_accept", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the CPU accepts an interrupt")},
+    {"int_return", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "an interrupt handler returns")},
+    {"cpu_int", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "an interrupt source is accepted")},
+    {"cpu_reti", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "RETI ends an interrupt source")},
+    {"cpu_nmi", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "an NMI is requested")},
+    {"cpu_retn", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "RETN ends an NMI")},
+    {"machine_reset", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the machine is reset")},
+    {"divmmc_map", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the DivMMC maps in")},
+    {"divmmc_unmap", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the DivMMC maps out")},
+    {"esxdos_call", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "a program calls esxDOS")},
+    {"zxndma_start", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the zxnDMA starts")},
+    {"zxndma_done", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the zxnDMA stops")},
+    {"tsdma_start", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the TS-Conf DMA starts")},
+    {"tsdma_done", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the TS-Conf DMA stops")},
+    {"pld_read", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the PLD decodes a port read")},
+    {"pld_write", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the PLD decodes a port write")},
+    {"pld_event", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the PLD logs an event")},
+    {"fdc_command", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the disk controller takes a command")},
+    {"fdc_done", kGroupMachine, QT_TRANSLATE_NOOP("BreakpointsView", "the disk controller ends a command")},
+};
+
+const EventKindInfo * event_kind_info(const std::string &kind)
 {
-    tight_list(this);
-    connect(this, &QListWidget::itemActivated, this, [this](QListWidgetItem * item) {
-        emit activated(item->data(Qt::UserRole).toUInt());
+    for (const EventKindInfo &k : kEventKinds)
+        if (kind == k.name) return &k;
+    return nullptr;
+}
+
+//The event's byte as the list writes it: nothing for any value
+QString event_value_text(const EventBreakpoint &b)
+{
+    if (b.mask == 0) return QString();
+    if (b.mask == 0xFF) return " = #" + fmt_num(b.value, 16, 2);
+    return " = #" + fmt_num(b.value, 16, 2) + " / #" + fmt_num(b.mask, 16, 2);
+}
+
+//The rows' roles: an execution row keeps its address, an event row its id
+enum { RoleAddress = Qt::UserRole, RoleEventId, RoleIsEvent, RoleCpu };
+
+} // namespace
+
+QString breakpoint_cpu_name(CPU * cpu)
+{
+    if (cpu == nullptr) return QString();
+    //The main processor is "cpu" among the devices
+    return cpu->name == "cpu" ? QStringLiteral("main") : QString::fromStdString(cpu->name);
+}
+
+QString event_kind_label(const std::string &kind)
+{
+    const EventKindInfo * k = event_kind_info(kind);
+    return k ? QCoreApplication::translate("BreakpointsView", k->label) : QString::fromStdString(kind);
+}
+
+void add_event_breakpoint_actions(QMenu * menu, Emulator * e, QWidget * from, const std::function<void()> &added)
+{
+    const std::vector<CPU *> cpus = e->dm->get_cpus();
+    //Two card CPUs (a General Sound and a MultiSound) name theirs in the section titles
+    int card_cpus = 0;
+    for (CPU * c : cpus)
+        for (const std::string &k : c->event_kinds())
+            if (const EventKindInfo * info = event_kind_info(k); info && info->group == kGroupCard) {
+                card_cpus++;
+                break;
+            }
+    const bool read_only = AddressRouter::read_only_at(from);
+    for (const char * group : {kGroupCard, kGroupCardSide, kGroupHostSide, kGroupMachine})
+        for (CPU * c : cpus) {
+            bool titled = false;
+            for (const std::string &kind : c->event_kinds()) {
+                const EventKindInfo * info = event_kind_info(kind);
+                if (info == nullptr || info->group != group) continue;
+                if (!titled) {
+                    QString title = QCoreApplication::translate("BreakpointsView", group);
+                    if (card_cpus > 1 && (group == kGroupCard || group == kGroupCardSide))
+                        title += " (" + breakpoint_cpu_name(c) + ")";
+                    menu->addSection(title);
+                    titled = true;
+                }
+                const QString label = QCoreApplication::translate("BreakpointsView", info->label);
+                QAction * a = menu->addAction(label);
+                a->setEnabled(!read_only && e->loaded);
+                QObject::connect(a, &QAction::triggered, from, [e, c, kind, label, from, added]() {
+                    bool ok = false;
+                    const QString text = QInputDialog::getText(from, QCoreApplication::translate("BreakpointsView", "Event breakpoint"),
+                        label + "\n" + QCoreApplication::translate("BreakpointsView",
+                            "The event's byte: empty for any, a value (#0F), or a value and a mask (#80/#E0)"),
+                        QLineEdit::Normal, QString(), &ok);
+                    if (!ok) return;
+                    unsigned int value = 0, mask = 0;
+                    try {
+                        const QStringList parts = text.split('/');
+                        if (!text.trimmed().isEmpty()) {
+                            value = parse_input(parts[0], 16);
+                            mask = parts.size() > 1 ? parse_input(parts[1], 16) : 0xFF;
+                        }
+                        if (parts.size() > 2 || value > 0xFF || mask > 0xFF) throw std::runtime_error("range");
+                    } catch (const std::exception &) {
+                        QMessageBox::critical(from, QCoreApplication::translate("BreakpointsView", "Error"),
+                            QCoreApplication::translate("BreakpointsView", "The value and the mask are bytes: #0F, #80/#E0"));
+                        return;
+                    }
+                    std::string error;
+                    bool done = false;
+                    e->invoke([&]() { done = c->add_event_breakpoint(kind, value & (mask ? mask : 0xFF), mask, error); });
+                    if (!done) {
+                        QMessageBox::critical(from, QCoreApplication::translate("BreakpointsView", "Event breakpoint"),
+                                              QString::fromStdString(error));
+                        return;
+                    }
+                    if (added) added();
+                });
+            }
+        }
+}
+
+BreakpointsView::BreakpointsView(Emulator * e, QWidget *parent):
+    QTreeWidget(parent),
+    e(e)
+{
+    setColumnCount(2);
+    setHeaderLabels({tr("CPU"), tr("Breakpoint")});
+    setRootIsDecorated(false);
+    setUniformRowHeights(true);
+    setFont(dbg::font());
+    //The breakpoint as the code lists draw it; the CPU column keeps the event rows' on / off box
+    setItemDelegateForColumn(1, new CodeDelegate(this));
+    header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    header()->setStretchLastSection(true);
+    connect(this, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem * item, int) {
+        if (!item->data(0, RoleIsEvent).toBool()) emit activated(row_cpu(item), item->data(0, RoleAddress).toUInt());
+    });
+    connect(this, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem * item, int column) {
+        if (m_filling || column != 0 || !item->data(0, RoleIsEvent).toBool()) return;
+        CPU * c = row_cpu(item);
+        if (c == nullptr) return;
+        const unsigned int id = item->data(0, RoleEventId).toUInt();
+        const bool on = item->checkState(0) == Qt::Checked;
+        //The list is filled again after this signal, never inside it: the item is still being changed
+        if (!AddressRouter::read_only_at(this)) this->e->invoke([c, id, on]() { c->enable_event_breakpoint(id, on); });
+        QMetaObject::invokeMethod(this, [this]() {
+            if (AddressRouter::read_only_at(this)) relist();
+            else emit changed();
+        }, Qt::QueuedConnection);
     });
 }
 
-void BreakpointsView::refresh(CPU * cpu, const CodeFormatter &fmt)
+CPU * BreakpointsView::row_cpu(QTreeWidgetItem * item) const
 {
-    const int row = currentRow();
+    return item ? static_cast<CPU *>(item->data(0, RoleCpu).value<void *>()) : nullptr;
+}
+
+void BreakpointsView::refresh(const CpuCodeFormatter &fmt)
+{
+    m_fmt = fmt;
+    relist();
+}
+
+void BreakpointsView::relist()
+{
+    QTreeWidgetItem * current = currentItem();
+    const int row = current ? indexOfTopLevelItem(current) : -1;
+    m_filling = true;
     clear();
-    m_cpu = cpu;
-    if (cpu == nullptr) return;
-    for (unsigned int a : cpu->get_breakpoints()) {
-        QListWidgetItem * item = new QListWidgetItem(fmt(a), this);
-        item->setData(Qt::UserRole, a);
+    if (e->loaded)
+        for (CPU * c : e->dm->get_cpus()) {
+            const QString cpu = breakpoint_cpu_name(c);
+            for (unsigned int a : c->get_breakpoints()) {
+                QTreeWidgetItem * item = new QTreeWidgetItem(this, {cpu, m_fmt ? m_fmt(c, a) : QString::number(a)});
+                item->setData(0, RoleCpu, QVariant::fromValue<void *>(c));
+                item->setData(0, RoleAddress, a);
+            }
+            for (const EventBreakpoint &b : c->get_event_breakpoints()) {
+                QTreeWidgetItem * item = new QTreeWidgetItem(this,
+                    {cpu, QString::fromStdString(b.kind) + "  " + event_kind_label(b.kind) + event_value_text(b)});
+                item->setData(0, RoleCpu, QVariant::fromValue<void *>(c));
+                item->setData(0, RoleIsEvent, true);
+                item->setData(0, RoleEventId, b.id);
+                item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+                item->setCheckState(0, b.enabled ? Qt::Checked : Qt::Unchecked);
+            }
+        }
+    m_filling = false;
+    if (row >= 0 && row < topLevelItemCount()) setCurrentItem(topLevelItem(row));
+}
+
+void BreakpointsView::remove_row(QTreeWidgetItem * item)
+{
+    CPU * c = row_cpu(item);
+    if (c == nullptr || AddressRouter::read_only_at(this)) return;
+    if (!item->data(0, RoleIsEvent).toBool()) {
+        emit remove(c, item->data(0, RoleAddress).toUInt());
+        return;
     }
-    if (row >= 0 && row < count()) setCurrentRow(row);
+    const unsigned int id = item->data(0, RoleEventId).toUInt();
+    e->invoke([c, id]() { c->remove_event_breakpoint(id); });
+    emit changed();
 }
 
 void BreakpointsView::keyPressEvent(QKeyEvent *event)
 {
     if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) && currentItem() != nullptr) {
-        emit remove(currentItem()->data(Qt::UserRole).toUInt());
+        remove_row(currentItem());
         return;
     }
-    QListWidget::keyPressEvent(event);
+    QTreeWidget::keyPressEvent(event);
 }
 
-//The address is taken before the menu: removing the breakpoint fills the
-//list again
+//The row is taken before the menu: removing the breakpoint fills the list
+//again. Every row's menu (and the empty list's) can add an event breakpoint
 void BreakpointsView::contextMenuEvent(QContextMenuEvent *event)
 {
-    QListWidgetItem * item = itemAt(event->pos());
-    if (item == nullptr) return;
+    QTreeWidgetItem * item = itemAt(viewport()->mapFromGlobal(event->globalPos()));
+    auto add_events = [this](QMenu * menu) {
+        QMenu * sub = menu->addMenu(tr("Add an event breakpoint"));
+        add_event_breakpoint_actions(sub, e, this, [this]() { emit changed(); });
+        sub->setEnabled(!sub->isEmpty());
+    };
+    if (item == nullptr || item->data(0, RoleIsEvent).toBool()) {
+        QMenu menu(this);
+        if (item != nullptr) {
+            setCurrentItem(item);
+            const bool live = !AddressRouter::read_only_at(this);
+            QAction * remove = menu.addAction(tr("Remove the breakpoint"));
+            remove->setEnabled(live);
+            const bool on = item->checkState(0) == Qt::Checked;
+            QAction * toggle = menu.addAction(on ? tr("Disable") : tr("Enable"));
+            toggle->setEnabled(live);
+            connect(remove, &QAction::triggered, this, [this, item]() { remove_row(item); });
+            connect(toggle, &QAction::triggered, this, [item, on]() { item->setCheckState(0, on ? Qt::Unchecked : Qt::Checked); });
+            menu.addSeparator();
+        }
+        add_events(&menu);
+        menu.exec(event->globalPos());
+        return;
+    }
     setCurrentItem(item);
-    const unsigned int address = item->data(Qt::UserRole).toUInt();
-    exec_address_menu(this, event->globalPos(), AddressTarget{m_cpu, address, tr("breakpoint")});
+    QMenu own(this);
+    add_events(&own);
+    exec_address_menu(this, event->globalPos(), AddressTarget{row_cpu(item), item->data(0, RoleAddress).toUInt(), tr("breakpoint")}, &own);
 }
 
 //------------------------------ HistoryView -------------------------------//

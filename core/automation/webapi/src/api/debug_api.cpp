@@ -4906,6 +4906,69 @@ void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const 
     LongCallPool::Instance().Run([this, req, answer, id]() { skipUntilNow(req, std::move(*answer), id); });
 }
 
+void EmulatorAPI::cardRunTo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator || RunControlHeldReply(req, emulator, callback))
+        return;
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { cardRunToNow(req, std::move(*answer), id); });
+}
+
+/// @brief POST /api/v1/emulator/{id}/card_run_to
+/// @brief A card CPU's run to a moment (RunControl::CardRunTo): {"cpu": "gs" (default) | "ms", "until": "cycle" |
+/// @brief "int" | "command" | "main_t", "value": N (cycle: the card cycle of the frame; main_t: the main CPU's T)}
+void EmulatorAPI::cardRunToNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    auto badRequest = [&callback](const std::string& message) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    try
+    {
+        auto json = req->getJsonObject();
+        if (!json || !json->isObject() || !(*json)["until"].isString())
+        {
+            badRequest("Request body must contain 'until': cycle, int, command or main_t");
+            return;
+        }
+        uint32_t value = 0;
+        if (json->isMember("value") && !ParseJsonUInt((*json)["value"], 0xFFFFFFFFu, value))
+        {
+            badRequest("'value' must be a number (or a string: decimal, \"0x..\", \"#..\" or \"$..\")");
+            return;
+        }
+        // The card's view: gs unless the query or the body names another CPU
+        DebugCpuId cpu = DebugCpuId::GS;
+        const bool named = !req->getParameter("cpu").empty() || (*json)["cpu"].isString();
+        if (named && !webapi_cpu::CpuOrError(emulator, req, callback, cpu))
+            return;
+        ReplyRun(execution::RunControl(emulator).CardRunTo(webapi_session::RequesterOf(req, emulator->GetContext()),
+                                                           cpu, (*json)["until"].asString(), value),
+                 callback);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "Card run failed";
+        error["message"] = e.what();
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
 void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                      const std::string& id) const
 {

@@ -116,6 +116,9 @@ public:
     void OnGeneralSoundCardCreated();
     /// The slot cards were built or released (SlotManager): the MultiSound GS's hooks follow its card
     void OnSlotCardsChanged();
+    /// The firmware symbols of the cards the machine was built with (Emulator::Init: those cards were made before this
+    /// manager, so OnGeneralSoundCardCreated / OnSlotCardsChanged never ran for them)
+    void ApplyCardSymbolBundles();
     /// Tight mode on while any card CPU is debugged with a stop (GSCardTarget::WantsTight) or is the selected CPU
     /// during a direct run, off when none is: the main CPU catches the card up at every instruction start
     /// (FeatureManager::setCardTightHold). Called from a target's changes (breakpoint demand, step armed or

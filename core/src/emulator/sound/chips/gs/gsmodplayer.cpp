@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 /// region <ProTracker tables>
@@ -77,6 +78,9 @@ bool GSModPlayer::parse(const uint8_t* data, size_t size, const char** reason)
         if (reason) *reason = "missing M.K./M!K! signature at offset 1080";
         return false;
     }
+
+    std::memcpy(_title, data, 20);
+    _title[20] = '\0';
 
     _sampleCount = 31;
     size_t sampleBytes = 0;
@@ -154,6 +158,28 @@ bool GSModPlayer::parse(const uint8_t* data, size_t size, const char** reason)
     return true;
 }
 
+size_t GSModPlayer::expectedModuleSize(const uint8_t* data, size_t size)
+{
+    // The same header checks as parse(): the tag, the song length, the order table's highest pattern
+    if (!data || size < 1084)
+        return 0;
+    const char* tag = reinterpret_cast<const char*>(data + 1080);
+    const bool mk = std::memcmp(tag, "M.K.", 4) == 0 || std::memcmp(tag, "M!K!", 4) == 0
+        || std::memcmp(tag, "4CHN", 4) == 0 || std::memcmp(tag, "FLT4", 4) == 0;
+    const uint8_t songLength = data[950];
+    if (!mk || songLength == 0 || songLength > 128)
+        return 0;
+    uint8_t highestPattern = 0;
+    for (size_t i = 0; i < songLength; i++)
+        highestPattern = std::max(highestPattern, data[952 + i]);
+    if (highestPattern > 127)
+        return 0;
+    size_t sampleBytes = 0;
+    for (size_t i = 0; i < 31; i++)
+        sampleBytes += static_cast<size_t>(readBe16(data + 20 + i * 30 + 22)) * 2;
+    return 1084 + (static_cast<size_t>(highestPattern) + 1) * 1024 + sampleBytes;
+}
+
 /// endregion </Parsing>
 
 /// region <Note/effect math>
@@ -194,6 +220,40 @@ uint32_t GSModPlayer::incrementForPeriod(uint16_t period)
     const uint64_t num = 3546895ull * 65536ull;
     const uint64_t den = static_cast<uint64_t>(period) * kQuantumRate;
     return static_cast<uint32_t>(num / den);
+}
+
+int GSModPlayer::noteForPeriod(uint16_t period)
+{
+    // The ProTracker finetune-0 periods C-1..B-3: kPeriodTable halved per octave (856 .. 113); the nearest one, in
+    // integers (the same note on every platform)
+    if (period == 0)
+        return -1;
+    int best = 0;
+    int bestDistance = 0x7FFFFFFF;
+    for (int note = 0; note < 36; note++)
+    {
+        const int reference = kPeriodTable[note % 12] >> (1 + note / 12);
+        const int distance = std::abs(static_cast<int>(period) - reference);
+        if (distance < bestDistance)
+        {
+            best = note;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+std::string GSModPlayer::noteName(int note)
+{
+    static const char* const kNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
+    if (note < 0 || note >= 36)
+        return std::string();
+    return kNames[note % 12] + std::to_string(1 + note / 12);
+}
+
+double GSModPlayer::rateForPeriod(uint16_t period)
+{
+    return period == 0 ? 0.0 : 3546895.0 / period;
 }
 
 /// endregion </Note/effect math>

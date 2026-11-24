@@ -43,6 +43,11 @@ Each interface has its own detailed documentation file:
 - Adds to REST, replaces nothing; async I/O, no thread per client
 - **Best for**: UIs, companions, control surfaces
 
+✅ **[jobs.md](./jobs.md)** - Jobs: the long verbs with `async=true`  
+- A job id at once (HTTP 202), the result later; states, lanes, cancel, retention
+- Long-poll `GET /api/v1/jobs/{job}?wait_ms=` without a server thread; topics `jobs.progress`, `jobs.done`
+- **Best for**: scripts and agents that must not lose an answer to a timeout or sleep-poll
+
 Every capability is on every plane: [automation planes guidelines](../../../guidelines/automation-planes-guidelines.md).
 
 ✅ **[python-interface.md](./python-interface.md)** - Python Bindings (pybind11)  

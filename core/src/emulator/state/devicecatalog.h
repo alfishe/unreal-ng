@@ -34,6 +34,9 @@ struct ReportEntry
     bool (*present)(const StateNode& report);
     /// The one-line summary of the report; null: ReportSummary
     std::string (*summary)(const StateNode& report);
+    /// The commands that read it, when they depend on the machine (a history named by the card's slot): fills the
+    /// catalog entry's route, cli, script and mcp from the built report; null: the fixed ones above
+    void (*commands)(const StateNode& report, StateNode& entry) = nullptr;
 };
 
 /// Every report the catalog knows, in the order it lists them

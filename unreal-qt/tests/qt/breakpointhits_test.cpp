@@ -212,7 +212,7 @@ TEST_F(BreakpointHits_Test, ACountingRowExpandsToItsHitsAndTheDropped)
     EXPECT_EQ(hits->item(4, 6)->text(), "write");
     EXPECT_TRUE(hits->isColumnHidden(7)) << "the main CPU: no card time";
     EXPECT_TRUE(summary->text().contains("12 recorded, 5 held, 7 overwritten")) << summary->text().toStdString();
-    EXPECT_EQ(row->data(5, Qt::DisplayRole).toULongLong(), 12u) << "the row's count follows";
+    EXPECT_EQ(row->data(6, Qt::DisplayRole).toULongLong(), 12u) << "the row's count follows (column 6: after ID, CPU)";
     const uint64_t t12 = hits->item(4, 2)->text().toULongLong();
 
     // A rebuild of the list keeps the row open

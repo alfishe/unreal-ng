@@ -22,6 +22,96 @@ and is adapted freely.
 The views and the adapter never share a translation unit: ecat's Emulator / CPU / Memory (namespace `ecatshim`) and
 the core's classes of the same names would clash.
 
+## Card tabs
+
+With a sound card fitted the side tabs add GS log, GS protocol, GS firmware, GS hardware and GS stats (the catalog
+reports `gs-commands`, `gs`, `gs-firmware`, `gs-stats`; a line over each names the card read). On a NeoGS ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+B3; gs-debugger TODO P5.5) the NeoGS tabs show the core's device boards, the same data as unreal-qt's Embedded
+debugger (`DebugBoards::Read`, `Emulator::read_board` in the shim; over the WebAPI `GET /debug/boards/{board}`), with
+the `gs_stats` board's counters:
+
+| Tab | Boards | What |
+|-----|--------|------|
+| GS hardware | `neogs` | Config (GSCFG0), Paging (windows, MPAG), Clock with its switch count, DAC mode (the channels in the table), Output (DAC levels, listening mode), Interrupts, SPI (SCTRL), Status (SSTAT), LED, Mailbox, Firmware; the mailbox, interrupt and SPI counters |
+| NeoGS DMA | `neogs_dma` | the ZX / SD / MP3 modules as rows (selected, running, address, page, starts, done, bytes, errors, aborts, stall clocks, last), the ZX-DMA block, the DMA rates and errors; under them the ZX-DMA trace (Trace ▸) |
+| SD · MP3 · Flash | `neogs_sd`, `neogs_mp3`, `neogs_flash` | the SD card of slot `sd.ngs` (medium, protocol), the decoder and its SCI registers, the flash chip; each with its counters |
+
+The last two come only with a NeoGS. Insert image..., Insert folder..., Eject and Save flash are the boards' actions
+(`Emulator::board_action`; over the WebAPI `POST /debug/boards/{board}/actions/{action} {arg}`). A machine whose
+boards cannot be read falls back on the `gs` report's `neogs` part. On a GS, GS hardware is the report as it is.
+
+**The ZX-DMA trace** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md) B3.2;
+gs-debugger N6): the DMA tab's **Trace ▸** expands, in place, a table of the bytes the Spectrum moved through the
+ZX-DMA window, a row a byte: Frame, Host T, Card cycle, Dir (`read` / `write`, `dropped` in red), Card address
+(`#013FF9, page 4`), Value, Wait (T), Host PC. Over it a header line (capturing or not, the bytes kept, the module's
+read / written / dropped / wait totals, the note when the ring evicted events; not capturing, how to start) with
+**Start**, **Stop** and **Clear**: the GS port trace's capture, which records them (the DAC fetches share its ring).
+Each refresh of the tab (at a stop, once a second while running) appends the rows after the last one seen (`since`),
+keeps the newest 4,000 and follows the tail unless scrolled up. Double-click a Host PC: the main CPU's listing there;
+a card address: its page of `neogs.ram` in the pages tab. The core's report `gs-zxdma` (`Emulator::read_zxdma_trace`,
+`zxdma_trace_capture` in the shim; over the WebAPI `GET state/audio/gs/zxdma?last=&since=` and `POST
+control/audio/gs/porttrace {action}`). Not there without a NeoGS.
+
+**The lightweight player** (`--card gs-lw`; [gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A10, requirements W2-W3) has no CPU: no card CPU tab, no card run controls. Its two tabs, read-only, come only with it
+(the `gs` report's `interpreter` and `player` parts); Log, Protocol, Firmware (the window variables the interpreter
+mirrors), Hardware and Stats stay:
+
+| Tab | What |
+|-----|------|
+| GS interpreter | the state diagram `Idle Command Params Upload Reply` with the current state marked `●`, the ready line (`Upload, 2,000 of 3,196 bytes`); the command and its name, bytes expected / received, the selector; the params and replies queues of 16, the reply pending and the next byte; the upload (module or FX, received of total, %) |
+| GS player | the song (state, playing, position / length, pattern of patterns, row, tick, speed, BPM, MTSTAT), the module row (`1 (P)` or `(S)`, its name and length), the FX; the four channels as a table (sample, volume, period, note, rate Hz); the samples as a table (number, name, volume, note, priority, rate Hz, channel, length, the current effect `*`, the loop `(L)`) |
+
+**The MultiSound's GS** (`--card multisound`, CPU `ms`): the card tabs read its reports: GS log `ms-gs-commands`, GS
+protocol and GS hardware the `multisound` report's `gs` part, GS firmware `ms-gs-firmware` and GS stats `ms-gs-stats`
+(the core reads them with `cpu=ms`: over the WebAPI `state/audio/gs/firmware?cpu=ms`, `state/audio/gs/stats?cpu=ms`);
+a line over each tab names the card, and the state's card line reads `MultiSound GS Z80 ...`. With a General Sound and
+a MultiSound's GS both, the tabs follow the card CPU's tab in front; with the main CPU in front, the first card CPU (the
+same card the card runs act on); with one of them, that one.
+
+**The main CPU with a card** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A6 S1-S4; gs-debugger P5.2, P5.5):
+
+| Where | What |
+|-------|------|
+| State label | the card line (`GS Z80 12 MHz · PC #0C32 · cycle 119,985 · MPAG #03 · Symbols: GS v1.05a`) at every stop and, while the machine runs, `Running · <card line>` read again every 250 ms in process and every second over the WebAPI (a plain `GET state/audio/gs`; nothing pauses); after a card's stop also where the main CPU stands inside its instruction (`main #8003: T 17 of 16 + 1 T wait, memory write; ...`, the wait a device's /WAIT such as ZX-DMA) |
+| Card CPU's registers | row `T`: the card's cycle in the ZX frame and the change since the value shown before, `c119985 Δ12` (`CPU::card_cycle`: in process `GeneralSoundCard::cardCycles`; over the WebAPI the `gs` report's `cpu.frame_cycle`, the change then taken within one frame) |
+| Main CPU's listing and dump | the ZX-DMA banner, a line over each while the NeoGS's ZX module is on (`ZX-DMA active: reads at #0000-#3FFF return card RAM @#012345; next byte #A7`, the RAM-paged and Watch wordings too); in Divert with the ROM paged the listing's rows `#0000-#3FFF` have their bytes in amber, `card bytes at run time` on the first and the top row, the reason in the tooltip. `Emulator::zxdma_banner` (in process `DeviceState::ZxDmaBanner` at a coherent moment; over the WebAPI the `gs` report's `neogs.dma.zx`), read at the stops and with the card line |
+| GS hardware (NeoGS) | the board's Paging group has `MPAGEX` and `extended paging` (the header `MPAG=#03 MPAGEX=#05` while EXPAG is on) |
+
+## Breakpoints
+
+The Breakpoints tab lists every processor's breakpoints, a row each with its CPU (`main`, `gs`, `ms`): the
+execution ones (F2 at the cursor), then the event ones with an on / off box. The toolbar's **Events** menu (and the
+tab's context menu) adds an event breakpoint ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A4 `W.bp kinds`, A6 S5), its kinds in plain words in four groups: **Card** (the card takes an interrupt, an NMI, is
+reset, switches a page, fetches a DAC sample; the NeoGS's clock, DMA and GSCFG0) and **Protocol, card side** (the
+card takes a command, a data byte, writes its reply) on the card's CPU, only with a card; **Protocol, host side** (the
+host sends a command, a data byte, reads the reply) and **Machine** (the interrupts, the WD1793; the Next's, TS-Conf's
+and the Sprinter's own events) on the main CPU. Each asks for the event's byte: empty for any, `#0F`, or `#80/#E0`
+(value / mask). They are the core's `BRK_EVENT` breakpoints (`CPU::add_event_breakpoint` and its kin in the shim;
+over the WebAPI `POST /breakpoints {"type": "event", "event", "value", "value_mask", "cpu"}`).
+
+## Run control of a card
+
+With a sound card fitted ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A4 `Toolbar`, `Menu / shortcut`, A6 S6; gs-debugger TODO P5.4) the toolbar adds, after Run to cursor:
+
+| Control | Key | What |
+|---------|-----|------|
+| Step other (`Step main` on a card's tab, `Step gs` / `Step ms` on main's) | Alt+F11 | one instruction of the CPU not in front: the main CPU's own step, or the card's (`RunControl::CardStep`); the tab in front stays |
+| Run to ▾ Card cycle... | - | the card to its cycle N of the frame (asked; plain digits decimal, `#`, `$` or `0x` hex), parked at the next card instruction boundary |
+| Run to ▾ Main T... | - | the main CPU to T N of the frame, the card following it (it catches up lazily: its own cycle may lag) |
+| Run to ▾ Next card interrupt | - | the card to the first instruction of its next interrupt handler |
+| Run to ▾ Next host command | - | the machine to the host's next command write (OUT #BB), the card not having taken it yet |
+| - | Ctrl+1 / Ctrl+2 | the main CPU's tab / the card CPU's tab in front |
+
+The menu also holds Run to cursor (F4). The card runs act on the card in front, else the first card; they are
+`RunControl::CardRunTo` (`Emulator::debug_card_run_to` in the shim; over the WebAPI `POST /card_run_to {cpu, until,
+value}`), end at any CPU's breakpoint, and time out after 5 s (an idle card takes no interrupt and gets no command:
+that is said, not a failure). The core's message (where it stopped, a refusal, a timeout) joins the state label until
+the next command. Without a card none of them is shown.
+
 ## Time travel
 
 > TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
@@ -74,7 +164,7 @@ a step, brings its tab forward).
 ## Run
 
 ```text
-unreal-debugger [--model PENTAGON] [--card neogs|multisound | --no-gs] [file.sna|.z80|.tap|.trd|...]
+unreal-debugger [--model PENTAGON] [--card neogs|gs|gs-lw|multisound | --no-gs] [file.sna|.z80|.tap|.trd|...]
 unreal-debugger --connect 127.0.0.1:8090 [--emulator id]   a running emulator (unreal-qt) through its WebAPI
 unreal-debugger --zoom 1.5                                  the window's scale (Ctrl+= / Ctrl+- / Ctrl+0)
 unreal-debugger --self-check                                the debugger API and the window's editors; exit 2 on a failure

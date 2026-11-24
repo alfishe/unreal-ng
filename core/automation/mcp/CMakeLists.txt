@@ -47,6 +47,7 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-streamdeck.cpp
     src/mcp-bus.cpp
     src/mcp-history.cpp
+    src/mcp-jobs.cpp
     src/mcp-audio.h
     src/mcp-audio.cpp
     src/mcp-vdac4.h

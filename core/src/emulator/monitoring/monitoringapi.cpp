@@ -30,6 +30,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/jobs/jobcontrol.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/controllers/controllertypes.h"
@@ -1024,7 +1025,7 @@ const std::vector<std::string>& InstanceNames()
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
                                                    "game.events",     "debug.watches",     "analysis.progress",
                                                    "analysis.ready",  "devices.access",    "debug.markup",
-                                                   "debug.cpuprofile"};
+                                                   "debug.cpuprofile", "jobs.progress",    "jobs.done"};
     return names;
 }
 
@@ -1090,6 +1091,10 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
     if (name == "analysis.ready")
         return analysis::L1Jobs::Instance().View(emulator.GetId()).ReadyNode();
+    if (name == "jobs.progress")
+        return jobs::ProgressTopic(emulator.GetId());
+    if (name == "jobs.done")
+        return jobs::DoneTopic(emulator.GetId());
     return {};
 }
 

@@ -151,6 +151,8 @@ private:
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args);
+    /// card_run_to <until> [value] [--cpu gs|ms]: a card CPU's run to a moment (RunControl::CardRunTo)
+    void HandleCardRunTo(const ClientSession& session, const std::vector<std::string>& args);
     // Device boards: board list | board <id> [values] | board <id> <action> [arg] (core DebugBoards)
     void HandleBoard(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
@@ -220,6 +222,7 @@ private:
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args);  // analysis layers (L0 facts)
+    void HandleJobs(const ClientSession& session, const std::vector<std::string>& args);  // long verbs as jobs (S2)
     void HandleMarkup(const ClientSession& session, const std::vector<std::string>& args);    // memory markup
     void HandleCpuProfile(const ClientSession& session, const std::vector<std::string>& args);  // CPU time profile (profilecontrol.h)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);

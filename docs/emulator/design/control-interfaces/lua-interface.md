@@ -542,6 +542,7 @@ ay0 = audio_ay_state(0)     -- one chip: registers, latched_register (+ name), s
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
 gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
+zx  = gs_zxdma(256, 0)      -- NeoGS ZX-DMA trace (while gsporttrace captures): rows[i] = {seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}; last_seq for the next 'since'
 cv  = audio_covox_state()   -- Covox / SoundDrive: fitment, ports, shared_with_beta128, channels[4]
 zm  = multisound_state()   -- ZX-MultiSound: options, shadowed built-ins, CPLD, ym.chips[2] {ssg, fm}, saa, gs, dac, midi
 md  = midi_state()         -- its MIDI line + SAM2695: parts[16] {program, preset, volume, pan, active_voices, notes}, counters
@@ -720,6 +721,9 @@ w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"
 -- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
 -- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
 r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
+-- Its runs to a moment (cpu "gs" by default): card cycle 120000 of the frame, its next interrupt, the host's next
+-- command, the main CPU's T 30000; adds until, hit, target_cycle / target_t, card_cycle, main_t, frame (command: command)
+r = card_run_to("cycle", 120000);  r = card_run_to("int");  r = card_run_to("command", 0, "gs");  r = card_run_to("main_t", 30000)
 -- The CPU the front-ends show: a card shown follows the main CPU's steps of the paused machine; {cpu, follows}
 c = select_cpu("gs");  c = selected_cpu();  select_cpu("main")
 
@@ -1837,6 +1841,22 @@ emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem
 -- keep_branch: replayed as a TTD branch of this machine afterwards (result.branch {created, guid, reproduced})
 emu.analysis("experiment", {spec = '{"poke": {"$8100": 5}, "frames": 50, "keep_branch": "mode 5"}', run = "r7"})
 emu.analysis("cover", "32")                          -- a string: the budget
+```
+
+### Jobs
+
+The long verbs as jobs ([jobs.md](./jobs.md), PLAN #122 S2) through `jobs::Execute`: `emu.jobs(action, opts)`; the
+answer is a table of the reply's fields plus `text`, a refusal `{ ok = false, error = <why> }`. `wait` blocks the
+script until the job ends or `wait_ms` is up.
+
+```lua
+local j = emu.jobs("start", {domain = "ttd", verb = "dump", path = "/tmp/a.ttd"})   -- {job, state, status_url, text}
+local r = emu.jobs("wait", {job = j.job, wait_ms = 60000})   -- {state, ended, status, result, text}
+print(r.state, r.result.bytes)
+emu.jobs("status", j.job)                     -- a number or string: the job id
+emu.jobs("list")                              -- the selected instance's; {instance = "all", state = "active"}
+emu.jobs("cancel", j.job)
+local b = emu.analysis("build", {async = true})   -- the build as a job: b.job (trace, experiment, cover too)
 ```
 
 ### Memory markup

@@ -1161,6 +1161,55 @@ TEST_F(McpTools_Test, EmulatorManage_CreateWithSlots_PassesTheSet)
     EXPECT_EQ(call->body["slots"]["ay-socket"].asString(), "none");
 }
 
+// The lightweight player's inspector (gs-debugger A10) reaches the text: the interpreter's state and the player
+TEST_F(McpTools_Test, InspectState_GsLightweightInterpreterAndPlayer)
+{
+    Json::Value gs;
+    gs["available"] = true;
+    gs["device"] = "General Sound (lightweight mod player, 4 x 8-bit DAC)";
+    gs["page"] = 0;
+    gs["ram_kb"] = 512;
+    gs["rom_loaded"] = false;
+    gs["interpreter"]["text"] = "Upload, 2,000 of 3,196 bytes";
+    gs["interpreter"]["state"] = "upload";
+    gs["interpreter"]["command"] = 0x30;
+    gs["interpreter"]["command_name"] = "Load module";
+    gs["interpreter"]["params_queued"] = 0;
+    gs["interpreter"]["replies_queued"] = 0;
+    gs["player"]["state"] = "playing";
+    gs["player"]["loaded"] = true;
+    gs["player"]["modules"][0]["name"] = "demo";
+    gs["player"]["position"] = 1;
+    gs["player"]["song_length"] = 2;
+    gs["player"]["pattern"] = 1;
+    gs["player"]["row"] = 12;
+    gs["player"]["tick"] = 3;
+    gs["player"]["speed"] = 6;
+    gs["player"]["bpm"] = 125;
+    gs["player"]["samples"] = Json::Value(Json::arrayValue);
+    Json::Value voice;
+    voice["channel"] = 0;
+    voice["sample"] = 1;
+    voice["volume"] = 63;
+    voice["period"] = 428;
+    voice["note"] = "C-2";
+    gs["player"]["channels"].append(voice);
+    gs["player"]["fx"]["count"] = 0;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs"] = {200, gs};
+
+    Json::Value args;
+    args["aspects"].append("audio_gs");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("interpreter: Upload, 2,000 of 3,196 bytes (state upload, last command #30 Load module"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("player: playing 'demo', pos 1/2 pattern 1 row 12 tick 3, speed 6, 125 BPM"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("voice0: sample 1 vol 63 period 428 C-2"), std::string::npos) << result.text;
+}
+
 // The ZX-MultiSound aspects read their WebAPI reports and summarize them; a card that is not fitted is a line, not an
 // error
 TEST_F(McpTools_Test, InspectState_MultiSoundAndMidiAspects)
@@ -1173,6 +1222,9 @@ TEST_F(McpTools_Test, InspectState_MultiSoundAndMidiAspects)
     card["logic"]["fm_muted"] = false;
     card["saa"]["sound_enabled"] = true;
     card["gs"]["firmware_ready"] = true;
+    card["gs"]["device"] = "General Sound (ZX-MultiSound)";
+    card["gs"]["strip"] = "GS Z80 16 MHz · PC #0C32";
+    card["gs"]["ram_kb"] = 1024;
     card["midi"]["bytes_received"] = 3;
     card["midi"]["active_voices"] = 1;
     _caller->routes["GET /api/v1/emulator/emu-1/state/audio/multisound"] = {200, card};
@@ -1201,6 +1253,11 @@ TEST_F(McpTools_Test, InspectState_MultiSoundAndMidiAspects)
                                "FM on, SAA on, GS ready, MIDI 3 byte(s), 1 voice(s)"),
               std::string::npos)
         << result.text;
+    // Its General Sound (the debugger's `ms` CPU): the strip and where its card panes are read
+    EXPECT_NE(result.text.find("gs (cpu ms): GS Z80 16 MHz · PC #0C32; General Sound (ZX-MultiSound), ram 1024 KB"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("device_history zxbus.1.gs.commands"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[audio_midi] bank loaded, voices 1/38"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("ch1 prog 1 Grand Piano: C4"), std::string::npos) << result.text;
 
@@ -2253,6 +2310,39 @@ TEST_F(McpTools_Test, InspectState_BoardAspect_ShowsEveryControlInTheText)
     EXPECT_NE(result.text.find("Board neogs_sd insert /sd: done"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_GsZxDmaAspect_ForwardsLastAndSinceAndPrintsTheLines)
+{
+    // The NeoGS ZX-DMA trace (gs-debugger N6): last and since are the route's query, the text is the server's lines
+    Json::Value trace;
+    trace["available"] = true;
+    trace["capturing"] = true;
+    trace["rows"] = Json::Value(Json::arrayValue);
+    trace["text"] = "ZX-DMA trace (NeoGS, capturing): 1 byte(s) kept, 1 shown\n  #42 f9 T1234 c5678 read  #012000 p04 "
+                    "#03 wait 2 PC #8009\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/zxdma?last=8&since=41"] = {200, trace};
+
+    Json::Value args;
+    args["aspects"].append("audio_gs_zxdma");
+    args["gs_zxdma_last"] = 8;
+    args["gs_zxdma_since"] = 41;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/gs/zxdma?last=8&since=41"));
+    EXPECT_NE(result.text.find("[audio_gs_zxdma] ZX-DMA trace (NeoGS, capturing)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("#012000 p04 #03 wait 2 PC #8009"), std::string::npos) << result.text;
+
+    // No NeoGS: the server's 404 message
+    Json::Value missing;
+    missing["error"] = "Not Found";
+    missing["message"] = "No NeoGS fitted (slots plug zxbus.next neogs)";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/zxdma"] = {404, missing};
+    Json::Value plain;
+    plain["aspects"].append("audio_gs_zxdma");
+    result = RunTool(*_registry, "inspect_state", plain, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[audio_gs_zxdma] No NeoGS fitted"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline)
 {
     // The GS slot's statistics (gs-debugger N7): the section is the route's last part, the baseline and fresh its
@@ -2282,6 +2372,13 @@ TEST_F(McpTools_Test, InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline)
     result = RunTool(*_registry, "emulator_manage", manage, *_caller);
     ASSERT_FALSE(result.isError) << result.text;
     EXPECT_NE(result.text.find("GS statistics baseline 4 at frame 12"), std::string::npos) << result.text;
+    EXPECT_FALSE(_caller->calls.back().body.isMember("cpu")) << "the slot's card by default";
+
+    // The ZX-MultiSound's GS: gs_cpu goes to the body's cpu
+    manage["gs_cpu"] = "ms";
+    result = RunTool(*_registry, "emulator_manage", manage, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(_caller->calls.back().body["cpu"].asString(), "ms");
 }
 
 TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
@@ -6639,4 +6736,146 @@ TEST_F(McpTools_Test, TimeTravel_AnalysisListsAreInTheText)
     ASSERT_FALSE(result.isError) << result.text;
     EXPECT_NE(result.text.find("0xC000 RAM 1"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("F30E"), std::string::npos) << result.text;
+}
+
+// ===========================================================================
+// jobs (PLAN #122 S2): async on the long verbs, the jobs tool's routes and its text
+// ===========================================================================
+
+TEST_F(McpTools_Test, TimeTravel_AsyncDump_AnswersTheJobInTheText)
+{
+    Json::Value accepted;
+    accepted["job"] = 12;
+    accepted["state"] = "queued";
+    accepted["kind"] = "ttd.dump";
+    accepted["text"] = "Job 12 (ttd.dump: dump path=/tmp/a.ttd) queued on emu-1. Its end: jobs action=wait job=12";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/dump"] = {202, accepted};
+
+    Json::Value args;
+    args["action"] = "dump";
+    args["path"] = "/tmp/a.ttd";
+    args["async"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Job 12 (ttd.dump"), std::string::npos) << "not the dump's summary: " << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/dump");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["async"].asBool());
+
+    args["action"] = "status";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "async on a short action";
+    args["action"] = "dump";
+    args["async"] = "yes";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "async is a boolean";
+}
+
+TEST_F(McpTools_Test, Analysis_AsyncBuild_SendsNoWait)
+{
+    Json::Value accepted;
+    accepted["job"] = 7;
+    accepted["state"] = "queued";
+    accepted["text"] = "Job 7 (analysis.build) queued";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/build"] = {202, accepted};
+    Json::Value args;
+    args["action"] = "build";
+    args["async"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analysis", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/build");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["async"].asBool());
+    EXPECT_FALSE(call->body.isMember("wait")) << "async and the default wait would be refused together";
+    EXPECT_NE(result.text.find("Job 7"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("Job 7"), result.text.rfind("Job 7")) << "the job text once: " << result.text;
+}
+
+TEST_F(McpTools_Test, Jobs_WaitLongPollsAndAnswersTheText)
+{
+    Json::Value done;
+    done["job"] = 12;
+    done["state"] = "done";
+    done["ended"] = true;
+    done["text"] = "job 12 ttd.dump on emu-1 (dump path=/tmp/a.ttd): done in 41 ms\nSession written";
+    _caller->routes["GET /api/v1/jobs/12?wait_ms=45000"] = {200, done};
+    Json::Value args;
+    args["action"] = "wait";
+    args["job"] = 12;
+    args["wait_ms"] = 45000;
+    mcp::ToolResult result = RunTool(*_registry, "jobs", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("job 12 ttd.dump"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("done"), std::string::npos) << result.text;
+
+    // The default wait, status without the result, cancel, list of every instance and of one
+    args.removeMember("wait_ms");
+    RunTool(*_registry, "jobs", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/jobs/12?wait_ms=30000"));
+    Json::Value status;
+    status["action"] = "status";
+    status["job"] = "#12";
+    status["result"] = false;
+    RunTool(*_registry, "jobs", status, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/jobs/12?result=false"));
+    Json::Value cancel;
+    cancel["action"] = "cancel";
+    cancel["job"] = 12;
+    RunTool(*_registry, "jobs", cancel, *_caller);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/jobs/12/cancel"));
+    Json::Value list;
+    list["action"] = "list";
+    list["state"] = "active";
+    RunTool(*_registry, "jobs", list, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/jobs?state=active"));
+    list["target"] = "auto";
+    RunTool(*_registry, "jobs", list, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/jobs?state=active"));
+}
+
+TEST_F(McpTools_Test, Jobs_StartPostsTheVerbAndRefusesBadArguments)
+{
+    Json::Value accepted;
+    accepted["job"] = 3;
+    accepted["text"] = "Job 3 (ttd.find-event) queued on emu-1";
+    _caller->routes["POST /api/v1/emulator/emu-1/jobs"] = {202, accepted};
+    Json::Value args;
+    args["action"] = "start";
+    args["domain"] = "ttd";
+    args["verb"] = "find-event";
+    args["options"]["find"] = "exec";
+    args["options"]["address"] = "0x8000";
+    mcp::ToolResult result = RunTool(*_registry, "jobs", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Job 3"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/jobs");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["domain"].asString(), "ttd");
+    EXPECT_EQ(call->body["verb"].asString(), "find-event");
+    EXPECT_EQ(call->body["find"].asString(), "exec");
+
+    const size_t before = _caller->calls.size();
+    Json::Value bad;
+    bad["action"] = "wait";
+    EXPECT_TRUE(RunTool(*_registry, "jobs", bad, *_caller).isError) << "wait needs a job";
+    bad["action"] = "sleep";
+    bad["job"] = 1;
+    EXPECT_TRUE(RunTool(*_registry, "jobs", bad, *_caller).isError);
+    Json::Value noDomain;
+    noDomain["action"] = "start";
+    noDomain["verb"] = "dump";
+    EXPECT_TRUE(RunTool(*_registry, "jobs", noDomain, *_caller).isError);
+    for (size_t i = before; i < _caller->calls.size(); ++i)
+        EXPECT_NE(_caller->calls[i].path.find("/api/v1/emulator"), std::string::npos)
+            << "a refused call sends nothing but the target lookup: " << _caller->calls[i].path;
+
+    // A refusal from the server carries its reason
+    Json::Value notFound;
+    notFound["error"] = "Not Found";
+    notFound["message"] = "no job 99";
+    _caller->routes["GET /api/v1/jobs/99"] = {404, notFound};
+    Json::Value status;
+    status["action"] = "status";
+    status["job"] = 99;
+    result = RunTool(*_registry, "jobs", status, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("no job 99"), std::string::npos) << result.text;
 }

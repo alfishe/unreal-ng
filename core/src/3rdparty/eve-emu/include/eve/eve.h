@@ -99,7 +99,8 @@ uint64_t EveCompletedFrames(const EveChip* chip); /* frames fully scanned out */
    draws it into the frame buffer. The picture, the line costs, the metrics and REG_TAG are those of the
    drawing on the caller's thread, whatever the renderer's pace (the producer runs at most two frames ahead).
    onFrame (may be NULL) is called on the renderer thread at each frame end, after the frame's last line is
-   drawn and its metrics folded; the frame buffer holds that frame until it returns. `drawn` = 0: the frame
+   drawn and its metrics folded; the frame buffer holds that frame until it returns. `frame`: the frame's
+   EveCompletedFrames count (what the chip's own call returns right after that frame). `drawn` = 0: the frame
    was passed without drawing (EveSetOutput drawing = 0). The calls that read the drawing's state
    (EveSaveState, EveGetLineCost, EveGetFrameMetrics, EveProbePixel, a host read of REG_TAG) wait for the
    renderer; EveSetOutput with another buffer or size waits too, so the old buffer is free when it returns.

@@ -93,7 +93,8 @@ void GSCardTarget::Attach()
 {
     GeneralSoundCard* card = Card();
     // A waiting edit is made at a boundary of the debug loop too, and an armed step parks at one
-    GeneralSoundCard* want = _wanted || !_live.empty() || !_replay.empty() || StepArmed() || Scanning() ? card : nullptr;
+    GeneralSoundCard* want =
+        _wanted || !_live.empty() || !_replay.empty() || CardStepArmed() || Scanning() ? card : nullptr;
     if (want == _attached)
         return;
     if (_attached && _attached == card)
@@ -240,6 +241,8 @@ std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count, uint16_t target
         return "a step of cpu " + std::string(Name()) + " is already under way";
     if (kind == StepKind::None)
         return "no step";
+    if (kind == StepKind::Cycle || kind == StepKind::Int || kind == StepKind::Command)
+        return ArmUntil(kind, target);
     // Parked inside the card's run, the instruction at PC runs first and the next boundary is after it; else the
     // next boundary is that instruction's own
     const bool inside = ParkedInside();
@@ -274,6 +277,66 @@ std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count, uint16_t target
     Attach();
     UpdateTight();
     return {};
+}
+
+std::string GSCardTarget::ArmUntil(StepKind kind, uint32_t value)
+{
+    GeneralSoundCard* card = Card();
+    Z80CpuRegisters regs{};
+    if (!card || !card->cardRegisters(regs))
+        return std::string("cpu ") + Name() + " not available: no card with a CPU in its slot";
+    if (StepArmed())
+        return "a step of cpu " + std::string(Name()) + " is already under way";
+    if (kind == StepKind::Cycle)
+    {
+        const int64_t frameCycles = card->cardCycles(card->cardFrameLength());
+        if (frameCycles > 0 && static_cast<int64_t>(value) >= frameCycles)
+            return "card cycle " + std::to_string(value) + " is past the frame's last one (" +
+                   std::to_string(frameCycles - 1) + ")";
+        // A cycle the card already stands at or passed: the next frame's (a frame start is a drop of the frame time)
+        _stepCycle = value;
+        _stepFrameTime = card->cardFrameTime();
+        _stepWraps = card->cardCycles(_stepFrameTime) >= static_cast<int64_t>(value) ? 1u : 0u;
+    }
+    else if (kind == StepKind::Int)
+        _stepIntSeen = false;
+    else if (kind != StepKind::Command)
+        return "not a run to a moment";
+    _stepKind.store(kind, std::memory_order_release);
+    // Command: the host side ends it, the card runs its fast loop and no tight mode
+    Attach();
+    UpdateTight();
+    return {};
+}
+
+void GSCardTarget::OnHostCommand(const GeneralSoundCard* card, uint8_t value)
+{
+    if (!HostStepArmed() || (card && card != Card()))
+        return;
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    // A direct run of the main CPU takes the card along (its step waits for the machine's own run); a replay or a
+    // move in time is not the live run
+    if (!emulator || emulator->IsDirectStepping() || emulator->LeavingCardRun())
+        return;
+    if (ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && ttd->IsReplayActive())
+        return;
+    GeneralSoundCard* own = Card();
+    Z80CpuRegisters regs{};
+    const uint16_t pc = own && own->cardRegisters(regs) ? regs.pc : 0;
+    Stop stop;
+    stop.step = true;
+    stop.stepKind = StepKind::Command;
+    stop.kind = BreakpointHitKind::Event;
+    stop.address = static_cast<uint16_t>(GSCardEvent::HostCommandWrite);
+    stop.value = value;
+    stop.pc = pc;
+    stop.boundaryPc = pc;
+    stop.cardTime = own ? own->cardTime() : 0;
+    _lastStop = stop;
+    _stopCount++;
+    _stepKind.store(StepKind::None, std::memory_order_release);
+    // Inside the main CPU's OUT: the loop parks at its next instruction boundary, the card has not run since the write
+    emulator->OnTargetStep(_id, pc, false);
 }
 
 void GSCardTarget::CancelStep()
@@ -366,11 +429,34 @@ bool GSCardTarget::StepBoundary(uint16_t pc)
             if (pc != _stepTarget)
                 return false;
             break;
+        case StepKind::Cycle:
+        {
+            if (!card)
+                return false;
+            const int64_t now = card->cardFrameTime();
+            const bool frameStarted = now < _stepFrameTime;
+            _stepFrameTime = now;
+            if (frameStarted)
+            {
+                // The frame ended between its last boundary and the cycle: this boundary is the first after it
+                if (_stepWraps == 0)
+                    break;
+                _stepWraps--;
+            }
+            if (_stepWraps > 0 || card->cardCycles(now) < static_cast<int64_t>(_stepCycle))
+                return false;
+            break;
+        }
+        case StepKind::Int:
+            if (!_stepIntSeen)
+                return false;
+            break;
         default:
             return false;
     }
     Stop stop;
     stop.step = true;
+    stop.stepKind = kind;
     stop.address = pc;
     stop.pc = pc;
     Park(stop, pc);
@@ -433,7 +519,7 @@ void GSCardTarget::endRun(uint16_t pc)
         Park(stop, pc);
     }
     // Out of the card's loop: the hooks a step alone asked for come off
-    if (!StepArmed() && !_wanted && _attached && _live.empty() && _replay.empty()) [[unlikely]]
+    if (!CardStepArmed() && !_wanted && _attached && _live.empty() && _replay.empty()) [[unlikely]]
         Attach();
 }
 
@@ -470,6 +556,9 @@ void GSCardTarget::onPortOut(uint16_t pc, uint16_t port, uint8_t value)
 
 void GSCardTarget::onEvent(GSCardEvent kind, uint16_t port, uint8_t value)
 {
+    // A run to the next interrupt: it parks at the next boundary, the handler's first instruction
+    if (kind == GSCardEvent::Int && _stepKind.load(std::memory_order_relaxed) == StepKind::Int) [[unlikely]]
+        _stepIntSeen = true;
     // The card hardware's events carry their detail in `port` (gsdebughooks.h)
     const uint16_t id = _breakpoints->HandleEvent(kind, value, kind >= GSCardEvent::DacFetch ? port : -1);
     if (id == BRK_INVALID)
@@ -702,11 +791,17 @@ bool GSCardTarget::SetRegister(Z80CpuRegisters& r, std::string name, uint16_t va
     return false;
 }
 
-void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value, int arg)
+void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value, int arg, const GeneralSoundCard* card)
 {
     DebugManager* debug = context ? context->pDebugManager : nullptr;
     if (!debug || !context->pEmulator || !context->pCore)
         return;
+    // A card's run to the host's next command (GSCardTarget::StepKind::Command): a host port write, never per
+    // instruction
+    if (kind == GSCardEvent::HostCommandWrite) [[unlikely]]
+        for (const DebugCpuId cpu : {DebugCpuId::GS, DebugCpuId::MultiSoundGS})
+            if (GSCardTarget* target = debug->GetCardTarget(cpu); target && target->HostStepArmed())
+                target->OnHostCommand(card, value);
     // Out of the debug mode only the taps hear it (a tap never needs the debug mode)
     BreakpointManager* breakpoints = debug->GetBreakpointsManager();
     const bool stops = context->pCore->GetZ80()->isDebugMode;

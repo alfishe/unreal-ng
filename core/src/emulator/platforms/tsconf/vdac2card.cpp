@@ -2,6 +2,9 @@
 
 #include "vdac2card.h"
 
+#include <cstdlib>
+#include <cstring>
+
 #include "emulator/emulatorcontext.h"
 
 namespace
@@ -18,7 +21,11 @@ EveHostCard::Params Vdac2Params(const EmulatorContext* context)
         params.romPath = context->config.vdac2_rom_path;
         params.capturePath = context->config.vdac2_capture_path;
         params.lineBudgetMargin = context->config.vdac2_line_budget_margin;
+        params.drawThread = context->config.vdac2_ft_draw_thread;
     }
+    // UNREAL_VDAC2_FT_DRAW_THREAD=0/1 overrides [VDAC2] FtDrawThread (A/B runs of one build)
+    if (const char* env = std::getenv("UNREAL_VDAC2_FT_DRAW_THREAD"); env && *env)
+        params.drawThread = std::strcmp(env, "0") != 0;
     return params;
 }
 }  // namespace

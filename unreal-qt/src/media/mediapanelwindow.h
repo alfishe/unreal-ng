@@ -67,6 +67,12 @@ public:
     /// False (with `reason`) while another folder is still being built
     bool insertFolder(const std::string& slot, const QString& path, QString* reason = nullptr);
 
+    /// The row of `slot` selected and scrolled to (the debugger's "Open media panel" on the NeoGS SD card: `sd.ngs`);
+    /// false when the machine has no such slot
+    bool focusSlot(const std::string& slot);
+    /// The slot of the selected row, "" without one (for the tests)
+    std::string selectedSlot() const;
+
 signals:
     /// Visibility changed via the window's own close box (keeps the menu in sync)
     void visibilityChanged(bool visible);

@@ -61,9 +61,9 @@ bool ChangesMachine(const std::string& method, const std::string& subpath)
 
 bool CliCommandChangesMachine(const std::string& command, const std::vector<std::string>& args)
 {
-    static const std::array<std::string_view, 50> kAlways = {
+    static const std::array<std::string_view, 51> kAlways = {
         "reset", "nmi", "mni", "switch", "resume", "step", "stepin", "steps", "stepover", "stepout", "skip_until",
-        "run_until",
+        "card_run_to", "run_until",
         "run_tstates", "run_to_scanline", "run_scanlines", "run_to_pixel", "run_to_interrupt", "run_frame",
         "run_frames", "run_ncycles", "out", "romflash", "open", "assemble",
         "bp", "break", "breakpoint", "wp", "bport", "bnextreg", "bbeam", "bmagic", "bcopper", "bpclear",
@@ -289,7 +289,8 @@ bool CompanionNeedsPause(const std::string& subpath)
     std::string_view path(subpath);
     if (const size_t query = path.find('?'); query != std::string_view::npos)
         path = path.substr(0, query);
-    for (std::string_view stepping : {"/step", "/steps", "/stepover", "/stepout", "/skip_until", "/run_until", "/run_frame",
+    for (std::string_view stepping : {"/step", "/steps", "/stepover", "/stepout", "/skip_until", "/card_run_to",
+                                      "/run_until", "/run_frame",
                                       "/run_frames", "/run_tstates", "/run_scanlines", "/run_to_scanline",
                                       "/run_to_pixel", "/run_to_interrupt", "/listing/step_line", "/listing/run_to_line",
                                       "/ttd/step-instruction", "/ttd/reverse-step", "/ttd/reverse-step-over",
@@ -301,7 +302,8 @@ bool CompanionNeedsPause(const std::string& subpath)
 
 bool CompanionCliNeedsPause(const std::string& command, const std::vector<std::string>& args)
 {
-    if (OneOf(command, {"step", "stepin", "steps", "stepover", "stepout", "skip_until", "run_until", "run_tstates",
+    if (OneOf(command, {"step", "stepin", "steps", "stepover", "stepout", "skip_until", "card_run_to", "run_until",
+                        "run_tstates",
                         "run_to_scanline", "run_scanlines", "run_to_pixel", "run_to_interrupt", "run_frame",
                         "run_frames", "run_ncycles"}))
         return true;

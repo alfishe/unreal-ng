@@ -29,6 +29,10 @@ namespace
 
 constexpr uint32_t kMaxFramesAhead = 2;   // frame ends queued before the producer waits
 constexpr size_t kMaxQueuedOps = 1024;    // operations queued before the producer waits
+// A sleeping renderer is woken once this many operations wait (or at a frame end, or when the producer waits for
+// it), not for every one: a wake-up is a system call on the producer's thread, and a catch-up of a few lines is
+// less work than waking for it. The operations and their order stay the same, only when they are drawn moves
+constexpr size_t kWakeOps = 8;
 constexpr uint32_t kBlockBytes = 1u << kChangeBlockShift;
 
 enum class OpKind : uint8_t
@@ -57,6 +61,7 @@ struct Op
     uint8_t sync = 0; // SyncFlags
     uint32_t due = 0;
     uint64_t frame = 0;
+    uint64_t completed = 0; // EveCompletedFrames as of the operation: a frame end's own count
 
     // The inputs as of the operation
     uint8_t registers[kRamRegSize];
@@ -110,6 +115,7 @@ struct AsyncDrawing
     // REG_TAG as the host sees it: the shadow's after the last operation that is not drawn ahead
     uint32_t tagSeen = 0;
     bool busy = false;
+    bool sleeping = false; // the renderer waits for `work` and nobody woke it since
     bool stop = false;
     std::thread thread;
     std::thread::id rendererId;
@@ -212,21 +218,35 @@ void CaptureInputs(EveChip& chip, AsyncDrawing& a, Op& op)
     }
 }
 
+// Under `lock`, before the producer waits for the renderer: the operations queued get drawn
+void WakeRenderer(AsyncDrawing& a)
+{
+    if (a.sleeping && !a.queue.empty())
+    {
+        a.sleeping = false;
+        a.work.notify_one();
+    }
+}
+
 void Queue(AsyncDrawing& a, std::unique_ptr<Op> op)
 {
     const bool frameEnd = op->kind == OpKind::FrameEnd;
+    std::unique_lock<std::mutex> guard(a.lock);
+    // Back-pressure: the producer runs at most a couple of frames ahead of the picture
+    const auto room = [&] {
+        return a.stop || (a.queue.size() < kMaxQueuedOps && (!frameEnd || a.framesQueued < kMaxFramesAhead));
+    };
+    if (!room())
     {
-        std::unique_lock<std::mutex> guard(a.lock);
-        // Back-pressure: the producer runs at most a couple of frames ahead of the picture
-        a.done.wait(guard, [&] {
-            return a.stop || (a.queue.size() < kMaxQueuedOps && (!frameEnd || a.framesQueued < kMaxFramesAhead));
-        });
-        if (frameEnd)
-            ++a.framesQueued;
-        ++a.opsQueued;
-        a.queue.push_back(std::move(op));
+        WakeRenderer(a);
+        a.done.wait(guard, room);
     }
-    a.work.notify_one();
+    if (frameEnd)
+        ++a.framesQueued;
+    ++a.opsQueued;
+    a.queue.push_back(std::move(op));
+    if (frameEnd || a.queue.size() >= kWakeOps)
+        WakeRenderer(a);
 }
 
 void QueueOp(EveChip& chip, OpKind kind, uint32_t due = 0, uint8_t flag = 0, bool ahead = false)
@@ -238,6 +258,7 @@ void QueueOp(EveChip& chip, OpKind kind, uint32_t due = 0, uint8_t flag = 0, boo
     op->flag = flag;
     op->ahead = ahead;
     op->frame = chip.state.scan.frames;
+    op->completed = chip.state.scan.completedFrames;
     CaptureInputs(chip, a, *op);
     if (kind == OpKind::Swapped && flag && !op->hasList)
     {
@@ -331,7 +352,7 @@ void Apply(AsyncDrawing& a, const Op& op)
     case OpKind::FrameEnd:
         FoldFrameMetrics(s);
         if (a.onFrame)
-            a.onFrame(a.user, op.frame, s.drawing);
+            a.onFrame(a.user, op.completed, s.drawing);
         break;
     case OpKind::Swapped:
         DisplayListSwapped(s, op.flag != 0);
@@ -348,7 +369,12 @@ void RendererLoop(AsyncDrawing* a)
         std::unique_ptr<Op> op;
         {
             std::unique_lock<std::mutex> guard(a->lock);
-            a->work.wait(guard, [&] { return a->stop || !a->queue.empty(); });
+            while (!a->stop && a->queue.empty())
+            {
+                a->sleeping = true; // woken by WakeRenderer (a spurious wake-up finds the queue as it is)
+                a->work.wait(guard);
+            }
+            a->sleeping = false;
             if (a->queue.empty())
                 return; // stopped with nothing left
             op = std::move(a->queue.front());
@@ -419,6 +445,7 @@ void AsyncWait(const EveChip& chip)
     if (!a || !chip.asyncDrawing || std::this_thread::get_id() == a->rendererId)
         return;
     std::unique_lock<std::mutex> guard(a->lock);
+    WakeRenderer(*a);
     a->done.wait(guard, [&] { return a->queue.empty() && !a->busy; });
 }
 
@@ -447,6 +474,7 @@ void AsyncFramesBarrier(EveChip& chip)
         return;
     AsyncResolveTag(chip); // the last barrier's: the renderer is past it once it is past the frames after it
     std::unique_lock<std::mutex> guard(a->lock);
+    WakeRenderer(*a);
     a->done.wait(guard, [&] { return a->framesQueued == 0; });
     if (a->opsApplied == a->opsQueued)
     {
@@ -466,6 +494,7 @@ void AsyncStorePendingTag(const EveChip& chip)
     if (!a)
         return;
     std::unique_lock<std::mutex> guard(a->lock);
+    WakeRenderer(*a);
     a->done.wait(guard, [&] { return a->opsApplied >= a->tagMark; });
     a->tagMark = 0;
     RegSet(writable, Reg::Tag, a->tagAtMark);

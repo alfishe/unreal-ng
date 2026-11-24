@@ -640,6 +640,36 @@ public:
         return copy;
     }
 
+    /// The kept records `keep` accepts numbered after `since`, the newest `last` of them (0: all), oldest first with
+    /// their sequence numbers (1 for the first record written since the last clear; a record keeps its number while it
+    /// is kept: a ring evicts the oldest, a capture keeps the first `limit`), so a poller asks for the records after
+    /// the last number it saw. @p matched: every kept record `keep` accepts; @p lastSeq: the newest record's number
+    /// (0: none). One walk in the lock; only the selected records are copied
+    template <typename Keep>
+    std::vector<std::pair<uint64_t, Record>> Select(Keep keep, uint64_t since, size_t last, size_t& matched,
+                                                    uint64_t& lastSeq) const
+    {
+        std::lock_guard lock(_mutex);
+        DrainLocked();
+        const size_t size = _records.size();
+        const uint64_t oldest = _config.mode == Mode::Ring && _written >= size ? _written - size + 1 : 1;
+        lastSeq = size == 0 ? 0 : oldest + size - 1;
+        matched = 0;
+        std::vector<std::pair<uint64_t, Record>> selected;
+        for (size_t i = size; i-- > 0;)
+        {
+            const Record& record = _records[(_head + i) % size];
+            if (!keep(record))
+                continue;
+            matched++;
+            const uint64_t seq = oldest + i;
+            if (seq > since && (last == 0 || selected.size() < last))
+                selected.emplace_back(seq, record);
+        }
+        std::reverse(selected.begin(), selected.end());
+        return selected;
+    }
+
 private:
     /// The kept records in time order from index 0 (a wrapped ring rotated, _head 0), and how many come before the
     /// newest run `after` is true for

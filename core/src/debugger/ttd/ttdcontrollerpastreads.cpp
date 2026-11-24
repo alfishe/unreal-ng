@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/jobs/jobregistry.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 #include "emulator/video/screen.h"
@@ -352,8 +353,20 @@ TTDSeriesResult TimeTravelController::ReadMemorySeries(const TTDSeriesQuery& ask
     std::array<WindowSource, 4> windows;
     FrameCursor frames(query);
     uint64_t frame = 0;
+    jobs::Context* job = jobs::Current();  // run as a job (S2): rows are its progress, a cancel truncates here
     while (!failed && frames.Next(frame))
     {
+        if (job != nullptr)
+        {
+            job->Progress(result.framesRead, 0, "frames read");
+            if (job->CancelRequested() && result.framesRead != 0)
+            {
+                result.truncated = true;
+                result.cancelled = true;
+                result.nextFrame = frame;
+                break;
+            }
+        }
         const int64_t index = ViewLineageIndexAtOrBefore({frame, 0});
         const TTDCheckpoint* cp = index >= 0 ? ViewLineageCheckpoint(size_t(index)) : nullptr;
         if (!cp)

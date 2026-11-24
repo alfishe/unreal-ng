@@ -40,6 +40,7 @@
 
 class EmulatorContext;
 class GeneralSoundCard;
+class GSStatsPublisher;
 struct StateNode;
 namespace ttd
 {
@@ -137,6 +138,13 @@ public:
     /// The General Sound the card carries (the MultiSound's): the debugger's `ms` CPU (gs-debugger design §3.1);
     /// nullptr for a card without one
     virtual GeneralSoundCard* DebugGeneralSound()
+    {
+        return nullptr;
+    }
+
+    /// The statistics of that General Sound (gsslotstats.h), published at the card's frame ends while read: the
+    /// `gs stats --cpu ms` read; nullptr for a card without one
+    virtual GSStatsPublisher* DebugGeneralSoundStats()
     {
         return nullptr;
     }

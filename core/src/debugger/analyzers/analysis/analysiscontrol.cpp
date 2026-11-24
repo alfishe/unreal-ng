@@ -24,6 +24,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/jobs/jobcontrol.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/memoryaccesstracker.h"
 
@@ -92,7 +93,8 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
 {
     static const std::vector<std::string> none;
     static const std::vector<std::string> start = {"level", "mode", "record"};
-    static const std::vector<std::string> build = {"frames", "path", "wait", "from_frame", "from_tinframe", "to_frame"};
+    static const std::vector<std::string> build = {"frames",     "path",          "wait",     "from_frame",
+                                                   "from_tinframe", "to_frame",   "async"};
     static const std::vector<std::string> explain = {"address", "page", "what"};
     static const std::vector<std::string> query = {"kind", "range", "limit"};
     static const std::vector<std::string> exportOptions = {"format", "path", "ranges", "width"};
@@ -102,10 +104,12 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
     static const std::vector<std::string> review = {"op",     "id",     "verdict", "label",      "title",
                                                     "comment", "kind",  "names",   "by",         "experiment",
                                                     "ranges", "reason", "offset",  "limit"};
-    static const std::vector<std::string> experiment = {"spec", "path", "parallel", "finding", "keep_branches", "run"};
+    static const std::vector<std::string> experiment = {"spec",          "path", "parallel", "finding",
+                                                        "keep_branches", "run",  "async"};
     static const std::vector<std::string> trace = {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "path",
-                                                   "max_cycles"};
-    static const std::vector<std::string> cover = {"budget", "per_branch", "frames", "parallel", "limit", "ranges"};
+                                                   "max_cycles", "async"};
+    static const std::vector<std::string> cover = {"budget", "per_branch", "frames", "parallel", "limit", "ranges",
+                                                   "async"};
     if (action == "start")
         return start;
     if (action == "build")
@@ -480,7 +484,7 @@ std::string DistinctName(uint8_t distinct)
     }
 }
 
-Reply Build(Emulator& emulator, const Options& options)
+Reply Build(Emulator& emulator, const Options& options, bool async)
 {
     ReplayOptions replay;
     if (const auto it = options.find("frames"); it != options.end() && !ParseCount(it->second, 100000000, replay.maxFrames))
@@ -500,13 +504,15 @@ Reply Build(Emulator& emulator, const Options& options)
     uint64_t wait = 0;
     if (const auto it = options.find("wait"); it != options.end() && !ParseCount(it->second, 30000, wait))
         return Refuse(Error::BadRequest, "wait: milliseconds to wait for the build, 0 to 30000");
+    if (async && wait != 0)
+        return Refuse(Error::BadRequest, "give async (answer at once, then jobs wait) or wait (block up to N ms), not both");
     const auto pathIt = options.find("path");
     const std::string path = pathIt != options.end() ? pathIt->second : std::string();
 
     const std::string id = emulator.GetId();
     L1Jobs& jobs = L1Jobs::Instance();
-    if (const JobView view = jobs.View(id); view.state == "running")
-        return Refuse(Error::Conflict, "a build is running (job " + std::to_string(view.id) +
+    if (const JobView view = jobs.View(id); view.state == "running" || view.state == "queued")
+        return Refuse(Error::Conflict, "a build is " + view.state + " (job " + std::to_string(view.id) +
                                            "): wait for analysis.ready, or cancel it");
     TraceBundle bundle;
     std::string error;
@@ -529,6 +535,12 @@ Reply Build(Emulator& emulator, const Options& options)
 
     const JobView view = jobs.View(id);
     Reply reply;
+    if (async)
+    {
+        // The job model (S2): 202 with {job, state, status_url, ...}; jobs wait / GET /jobs/{id}?wait_ms= for its end
+        reply.accepted = true;
+        reply.body = jobs::AcceptedBody(job);
+    }
     reply.body["job"] = job;
     reply.body["state"] = view.state;
     reply.body["bundle"] = bundleNode;
@@ -536,8 +548,11 @@ Reply Build(Emulator& emulator, const Options& options)
     reply.body["ready"] = view.ReadyNode();
     reply.text = "L1 build job " + std::to_string(job) + ": replaying " + std::to_string(frames) +
                  " recorded frames on an analysis instance";
-    if (view.state == "running")
-        reply.text += "; follow analysis.progress, the result comes with analysis.ready (or 'analysis status')";
+    if (async)
+        reply.text += ". " + jobs::AcceptedText(job);
+    else if (view.state == "running" || view.state == "queued")
+        reply.text += "; " + view.state + ": follow analysis.progress (or jobs.progress), the result comes with "
+                      "analysis.ready (or 'analysis status', 'jobs wait " + std::to_string(job) + "')";
     else if (view.state == "done")
         reply.text += "; done: " + std::to_string(view.routines) + " routines, " + std::to_string(view.blocks) +
                       " blocks, " + std::to_string(view.loops) + " loops, " + std::to_string(view.instructions) +
@@ -581,8 +596,9 @@ Reply Trace(Emulator& emulator, const Options& options)
 
     const std::string id = emulator.GetId();
     L1Jobs& jobs = L1Jobs::Instance();
-    if (const JobView view = jobs.View(id); view.state == "running")
-        return Refuse(Error::Conflict, "a build is running (job " + std::to_string(view.id) + "): wait for it, or cancel it");
+    if (const JobView view = jobs.View(id); view.state == "running" || view.state == "queued")
+        return Refuse(Error::Conflict, "a build is " + view.state + " (job " + std::to_string(view.id) +
+                                           "): wait for it, or cancel it");
     TraceBundle bundle;
     std::string error;
     bool captured = false;
@@ -1201,6 +1217,33 @@ bool ParseZ80Ranges(const std::string& text, std::vector<ExportRange>& ranges)
     return ParseRanges(text, ranges);
 }
 
+/// trace, experiment, cover as a job of the instance's analysis lane (after a build queued before them)
+static Reply SubmitJob(Emulator& emulator, const std::string& action, const Options& options)
+{
+    std::string error;
+    const uint64_t id = jobs::SubmitOnInstance(
+        emulator.GetId(), "analysis." + action, "analysis@" + emulator.GetId(), jobs::Summary(action, options), false,
+        [action, options](Emulator& e, jobs::Context&) {
+            const Reply reply = Execute(e, action, options);
+            jobs::Outcome outcome;
+            outcome.ok = reply.Ok();
+            outcome.status = reply.HttpStatus();
+            outcome.error = reply.message;
+            outcome.text = reply.Ok() ? reply.text : reply.message;
+            outcome.result = reply.ToValue();
+            return outcome;
+        },
+        {}, error);
+    if (id == 0)
+        return Refuse(Error::Conflict, "the job was not queued: " + error);
+    Reply reply;
+    reply.accepted = true;
+    reply.body = jobs::AcceptedBody(id);
+    reply.body["action"] = action;
+    reply.text = jobs::AcceptedText(id);
+    return reply;
+}
+
 Reply Execute(Emulator& emulator, const std::string& action, const Options& options)
 {
     const std::vector<std::string>& actions = Actions();
@@ -1222,6 +1265,25 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
         }
     }
 
+    // A long action as a job (PLAN #122 S2): async=true answers {job, state} at once (HTTP 202)
+    bool async = false;
+    if (const auto it = options.find("async"); it != options.end() && !jobs::ParseAsync(it->second, async))
+        return Refuse(Error::BadRequest, "async must be true or false (got '" + it->second + "')");
+    if (options.count("async") != 0)
+    {
+        Options inner = options;
+        inner.erase("async");
+        if (async && action != "build")
+            return SubmitJob(emulator, action, inner);
+        if (action == "build")
+        {
+            if (TrackerOf(emulator) == nullptr)
+                return Refuse(Error::NotAvailable, "no memory tracker on this machine");
+            return Build(emulator, inner, async);
+        }
+        return Execute(emulator, action, inner);
+    }
+
     MemoryAccessTracker* tracker = TrackerOf(emulator);
     if (tracker == nullptr)
         return Refuse(Error::NotAvailable, "no memory tracker on this machine");
@@ -1233,7 +1295,7 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
     if (action == "status")
         return Status(emulator, *tracker);
     if (action == "build")
-        return Build(emulator, options);
+        return Build(emulator, options, false);
     if (action == "cancel")
         return Cancel(emulator, *tracker);
     if (action == "query")

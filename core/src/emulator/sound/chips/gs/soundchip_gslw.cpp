@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <iterator>
 
 #include "3rdparty/blip_buf/blip_buf.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -11,6 +13,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/mixerchannel.h"
 #include "gshostclock.h"
 
@@ -304,8 +307,15 @@ void SoundChip_GSLightweight::acceptHostData(uint8_t value)
         // bound. Dropping past the cap isn't a byte-exact wrap, but it is
         // memory-safe, and a load that overflows the card's own RAM was never
         // going to parse as a valid module anyway.
-        if (!_discardLoad && _store.size() < _ramKB * 1024)
+        if (_discardLoad)
+            _fxUploadReceived++;
+        else if (_store.size() < _ramKB * 1024)
+        {
             _store.push_back(value);
+            // The header is in: the module's full size for the inspector's progress (W2)
+            if (_store.size() == 1084)
+                _uploadTotal = static_cast<uint32_t>(GSModPlayer::expectedModuleSize(_store.data(), _store.size()));
+        }
         return;
     }
 
@@ -365,6 +375,10 @@ void SoundChip_GSLightweight::enterLoad(bool discard)
 {
     _loading = true;
     _discardLoad = discard;
+    if (discard)
+        _fxUploadReceived = 0;
+    else
+        _uploadTotal = 0;
 }
 
 void SoundChip_GSLightweight::finishLoad()
@@ -964,6 +978,264 @@ void SoundChip_GSLightweight::triggerNMI()
 
 /// endregion </Host port interface>
 
+/// region <Inspector (gs-debugger A10, W2-W3)>
+
+namespace
+{
+std::string lwGrouped(uint64_t value)
+{
+    std::string digits = std::to_string(value);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3)
+        digits.insert(static_cast<size_t>(i), ",");
+    return digits;
+}
+
+std::string lwPlural(uint64_t count, const char* one)
+{
+    return lwGrouped(count) + " " + one + (count == 1 ? "" : "s");
+}
+
+/// A name from module bytes as printable ASCII, the trailing blanks cut
+std::string lwPrintable(const char* text, size_t size)
+{
+    std::string out;
+    for (size_t i = 0; i < size && text[i] != '\0'; i++)
+    {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        out += c >= 0x20 && c < 0x7F ? static_cast<char>(c) : ' ';
+    }
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+    return out;
+}
+
+/// The v1.05a profile's name of a command (the card emulates that firmware, W1); "" when it names none
+std::string lwCommandName(uint8_t command)
+{
+    const std::vector<const GSFirmwareProfile*>& profiles = GSFirmwareProfiles();
+    if (profiles.size() < 2 || !profiles[1])
+        return std::string();
+    const char* name = profiles[1]->Command(command).name;
+    return name ? std::string(name) : std::string();
+}
+} // namespace
+
+StateNode SoundChip_GSLightweight::interpreterState() const
+{
+    // One snapshot of the scalars (the machine thread may move on between two reads: each field is one load)
+    const bool loading = _loading;
+    const bool discard = _discardLoad;
+    const bool covox = _covox;
+    const bool selector = _subCommandExpected;
+    const uint8_t command = _mb.commandFromHost;
+    // The reply bytes the host has to read: the one visible in the #B3 latch (status bit 7) and the queue behind it
+    const bool visible = (_mb.status & 0x80) != 0;
+    const uint8_t queued = _replyCount;
+    const uint8_t replies = static_cast<uint8_t>(queued + (visible ? 1 : 0));
+    const uint8_t params = _paramCount;
+    const size_t stored = _store.size();
+    const uint32_t uploadReceived = discard ? _fxUploadReceived : static_cast<uint32_t>(stored);
+    const uint32_t uploadTotal = discard ? 0 : (stored >= 1084 ? _uploadTotal : 0);
+
+    StateNode node = StateNode::Object();
+    std::string state = "idle";
+    int64_t expected = 0;
+    int64_t received = 0;
+    std::string text = "Idle";
+    if (loading)
+    {
+        state = "upload";
+        expected = uploadTotal;
+        received = uploadReceived;
+        text = std::string(discard ? "FX upload (discarded)" : "Upload") + ", " +
+               (uploadTotal ? lwGrouped(uploadReceived) + " of " + lwGrouped(uploadTotal) + " bytes"
+                            : lwPlural(uploadReceived, "byte"));
+    }
+    else if (covox)
+    {
+        state = "covox";
+        text = "Covox stream: data bytes go to DAC 0 and 2 until a command";
+    }
+    else if (selector)
+    {
+        state = "command";
+        expected = 1;
+        char hex[8];
+        std::snprintf(hex, sizeof(hex), "#%02X", command);
+        text = std::string("Command ") + hex + ", waiting for the selector";
+    }
+    else if (replies)
+    {
+        state = "reply";
+        expected = replies;
+        text = "Reply, " + lwPlural(replies, "byte") + " pending";
+    }
+    else if (params)
+    {
+        state = "params";
+        received = params;
+        text = "Params, " + lwPlural(params, "byte") + " ahead of the command";
+    }
+    node["state"] = state;
+    node["text"] = text;
+    node["command"] = static_cast<int64_t>(command);
+    if (const std::string name = lwCommandName(command); !name.empty())
+        node["command_name"] = name;
+    node["expected"] = expected;
+    node["received"] = received;
+    node["reply_pending"] = replies != 0;
+    if (replies)
+        node["reply_next"] = static_cast<int64_t>(visible ? _mb.dataToHost
+                                                          : _replyQueue[_replyHead & (REPLY_QUEUE_CAPACITY - 1)]);
+    node["replies_queued"] = static_cast<int64_t>(replies);
+    node["params_queued"] = static_cast<int64_t>(params);
+    node["queue_capacity"] = static_cast<int64_t>(REPLY_QUEUE_CAPACITY);
+    node["selector_expected"] = selector;
+
+    StateNode upload = StateNode::Object();
+    upload["active"] = loading;
+    upload["kind"] = std::string(loading && discard ? "fx" : "module");
+    upload["received"] = static_cast<int64_t>(uploadReceived);
+    upload["total"] = static_cast<int64_t>(uploadTotal);
+    node["upload"] = upload;
+    return node;
+}
+
+StateNode SoundChip_GSLightweight::playerState() const
+{
+    const bool parsed = _player.isParsed();
+    const bool playing = parsed && _player.isPlaying();
+
+    StateNode node = StateNode::Object();
+    node["loaded"] = parsed;
+    node["playing"] = playing;
+    node["state"] = std::string(!parsed ? "empty" : playing ? "playing" : "stopped");
+    node["position"] = static_cast<int64_t>(_player.songPosition());
+    node["pattern"] = static_cast<int64_t>(parsed ? _player.currentPattern() : 0);
+    node["row"] = static_cast<int64_t>(_player.patternPosition());
+    node["tick"] = static_cast<int64_t>(_player.tick());
+    node["speed"] = static_cast<int64_t>(_player.speed());
+    node["bpm"] = static_cast<int64_t>(_player.bpm());
+    node["song_length"] = static_cast<int64_t>(parsed ? _player.songLength() : 0);
+    node["pattern_count"] = static_cast<int64_t>(parsed ? _player.patternCount() : 0);
+    node["mtstat"] = static_cast<int64_t>(_mtStat);
+
+    // The four channels, and which channel sounds each sample now (the lowest one)
+    int sounding[32];
+    std::fill(std::begin(sounding), std::end(sounding), -1);
+    StateNode channels = StateNode::Array();
+    for (int ch = 0; ch < GSModPlayer::kChannels; ch++)
+    {
+        const uint8_t sample = _player.channelSample(ch);
+        const uint16_t period = _player.channelPeriod(ch);
+        StateNode c = StateNode::Object();
+        c["channel"] = static_cast<int64_t>(ch);
+        c["sample"] = static_cast<int64_t>(sample);
+        c["volume"] = static_cast<int64_t>(_player.channelVolume(ch));
+        c["period"] = static_cast<int64_t>(period);
+        c["note"] = GSModPlayer::noteName(GSModPlayer::noteForPeriod(period));
+        c["rate_hz"] = GSModPlayer::rateForPeriod(period);
+        channels.push(c);
+        if (playing && sample > 0 && sample < 32 && period != 0 && sounding[sample] < 0)
+            sounding[sample] = ch;
+    }
+    node["channels"] = channels;
+
+    // The module row of the Unreal Speccy GS dialog: (P) playing / (S) stopped, its name
+    StateNode modules = StateNode::Array();
+    StateNode samples = StateNode::Array();
+    if (parsed)
+    {
+        size_t length = 1084 + _player.patternCount() * 1024;
+        for (size_t i = 0; i < _player.sampleCount(); i++)
+            length += _player.sampleInfo(i).dataLength;
+        StateNode m = StateNode::Object();
+        m["number"] = static_cast<int64_t>(1);
+        m["name"] = lwPrintable(_player.title(), 20);
+        m["playing"] = playing;
+        m["marker"] = std::string(playing ? "(P)" : "(S)");
+        m["length"] = static_cast<int64_t>(length);
+        m["current"] = _curMod == 1;
+        modules.push(m);
+
+        // Its samples with the dialog's columns: number, volume, note, priority, rate, length, `*`, `(L)`
+        for (size_t i = 0; i < _player.sampleCount(); i++)
+        {
+            const GSModPlayer::SampleInfo& info = _player.sampleInfo(i);
+            if (info.dataLength == 0)
+                continue;
+            const int number = static_cast<int>(i) + 1;
+            const int ch = sounding[number];
+            const uint16_t period = ch >= 0 ? _player.channelPeriod(ch) : 0;
+            const int finetune = (info.finetune & 0x0F) >= 8 ? (info.finetune & 0x0F) - 16 : (info.finetune & 0x0F);
+            StateNode smp = StateNode::Object();
+            smp["number"] = static_cast<int64_t>(number);
+            smp["name"] = lwPrintable(info.name, 22);
+            smp["volume"] = static_cast<int64_t>(info.volume);
+            smp["finetune"] = static_cast<int64_t>(finetune);
+            smp["note"] = GSModPlayer::noteName(GSModPlayer::noteForPeriod(period));
+            smp["priority"] = static_cast<int64_t>(0);
+            smp["rate_hz"] = GSModPlayer::rateForPeriod(period);
+            smp["channel"] = static_cast<int64_t>(ch);
+            smp["length"] = static_cast<int64_t>(info.dataLength);
+            smp["loop"] = info.loopLength != 0;
+            smp["loop_start"] = static_cast<int64_t>(info.loopStart);
+            smp["loop_length"] = static_cast<int64_t>(info.loopLength);
+            smp["effect"] = number == _curSmp;
+            samples.push(smp);
+        }
+    }
+    node["modules"] = modules;
+    node["samples"] = samples;
+
+    // FX: counted and selected as the firmware does, nothing stored on this card (v1)
+    StateNode fx = StateNode::Object();
+    fx["count"] = static_cast<int64_t>(_cntFx);
+    fx["current"] = static_cast<int64_t>(_curFx);
+    fx["stored"] = false;
+    node["fx"] = fx;
+    return node;
+}
+
+bool SoundChip_GSLightweight::mirroredVariable(const std::string& name, uint32_t& value) const
+{
+    const struct
+    {
+        const char* name;
+        uint32_t value;
+    } table[] = {
+        {"NUMPG", static_cast<uint32_t>(_ramKB / 32 > 0 ? _ramKB / 32 - 1 : 0)},
+        {"CNTMOD", _cntMod},
+        {"CNTSMP", _cntSmp},
+        {"CNTFX", _cntFx},
+        {"CURMOD", _curMod},
+        {"CURSMP", _curSmp},
+        {"CURFX", _curFx},
+        {"MODULE", _module},
+        {"MODVOL", _modVol},
+        {"FXVOL", _fxVol},
+        {"FXMVOL", _fxMvol},
+        {"MODFADE", _modFade},
+        {"FXFADE", _fxFade},
+        {"ERRCODE", _errCode},
+        {"MTSTAT", _mtStat},
+        {"MTBPM", _player.bpm()},
+        {"MTSPEED", _player.speed()},
+        {"MTPATPS", _player.patternPosition()},
+        {"MTSNGPS", _player.songPosition()},
+        {"MTVOL", _mtVol},
+    };
+    for (const auto& entry : table)
+        if (name == entry.name)
+        {
+            value = entry.value;
+            return true;
+        }
+    return false;
+}
+
+/// endregion </Inspector>
+
 /// region <Runtime personality switch (SoundManager::switchGeneralSoundCard)>
 
 GSForwardMailbox SoundChip_GSLightweight::snapshotMailbox() const
@@ -1430,6 +1702,8 @@ void SoundChip_GSLightweight::TTDLoadState(const uint8_t* src)
     // never carries it in its own blob)
     if (!_store.empty())
         _player.parse(_store.data(), _store.size(), nullptr);
+    _uploadTotal = static_cast<uint32_t>(GSModPlayer::expectedModuleSize(_store.data(), _store.size()));
+    _fxUploadReceived = 0;
 
     // Host-side pipeline follows the restored levels without emitting a
     // step (the seek position already produced its own audio)

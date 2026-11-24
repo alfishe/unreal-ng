@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class GSModPlayer
@@ -95,6 +96,19 @@ public:
     size_t songLength() const { return _songLength; }
     const SampleInfo& sampleInfo(size_t index) const { return _samples[index]; }
     const std::vector<uint8_t>& moduleBytes() const { return _module; }
+    /// The module's title (bytes 0-19, NUL-terminated, kept apart from the image: any thread may read it); "" before
+    /// the first parse
+    const char* title() const { return _title; }
+
+    /// The full size of the ProTracker module whose first `size` bytes are `data` (header + patterns + sample data),
+    /// from its 1084-byte header; 0 while shorter, or for a header parse() would refuse
+    static size_t expectedModuleSize(const uint8_t* data, size_t size);
+    /// The ProTracker note nearest a period (finetune 0): 0..35 = C-1..B-3, -1 for period 0
+    static int noteForPeriod(uint16_t period);
+    /// "C-1".."B-3" for noteForPeriod's 0..35, "" for -1
+    static std::string noteName(int note);
+    /// The Amiga PAL playback rate of a period in Hz (3546895 / period), 0 for period 0
+    static double rateForPeriod(uint16_t period);
 
     // Playback control (firmware COM31/COM32/COM33/COM65 semantics)
     void start(uint8_t songPosition);
@@ -154,6 +168,7 @@ private:
     static uint32_t incrementForPeriod(uint16_t period);
 
     bool _parsed = false;
+    char _title[21] = {};
     std::vector<uint8_t> _module; // raw module image (sample data lives here)
     SampleInfo _samples[31];
     size_t _sampleCount = 0;

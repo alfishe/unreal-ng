@@ -1365,6 +1365,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// the line period (line-budget-model.md §2); 0..50, default 10
 	config.vdac2_line_budget_margin =
 		static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac2, "LineBudgetMargin", 10), 0, 50));
+	// [VDAC2] FtDrawThread: the FT812's drawing on the eve-emu renderer thread (1, default) or on the emulation
+	// thread (0); the same picture either way (eve-async-drawing.md)
+	config.vdac2_ft_draw_thread = inimanager.GetLongValue(vdac2, "FtDrawThread", 1) != 0;
 	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
 	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
 	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,

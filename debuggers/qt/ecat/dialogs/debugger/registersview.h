@@ -30,12 +30,16 @@ public:
     //The values now are what the next stop compares against
     void mark_stop();
     QSize sizeHint() const override;
+    //Not in ecat (gs-debugger A4, P5.2): a card CPU's row T, its cycle in the ZX frame and the change since the value
+    //shown before ("c119985 Δ12"); empty for a CPU without a card clock
+    QString cycle_text() const { return m_cycle_text; }
 
 signals:
     void changed();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    bool viewportEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     //A register's value as an address: its menu
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -70,6 +74,16 @@ private:
     PaintedRows m_painted;
     //What a row of the view shows, for PaintedRows
     QString row_key(int row) const;
+
+    //The card CPU's cycle row (the last of m_regs, -1: none) and what its Δ is taken against
+    int m_cycle_row = -1;
+    QString m_cycle_text;
+    QString m_cycle_tip;
+    CPU::CardCycle m_cycle_shown;
+    bool m_cycle_known = false;
+    int64_t m_cycle_delta = 0;
+    qint64 m_cycle_read_ms = -1;    //While the machine runs: read at most every Emulator::live_card_ms
+    void add_cycle_row();
 };
 
 //The flags as a row of letters: the letter when set, a dash when clear. A

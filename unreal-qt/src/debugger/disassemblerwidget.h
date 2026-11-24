@@ -51,6 +51,7 @@ struct DisassemblyLine
     bool breakpoint = false;
     bool pc = false;
     bool cursor = false;
+    bool runTime = false;  ///< in the range whose bytes come from elsewhere at run time (ZX-DMA Divert): a tinted margin
     QChar mark;  ///< '1'..'5' (the lowest mark of the row), null without one
     QString bytes;
     QString label;
@@ -126,6 +127,9 @@ signals:
     void resized();
 
 protected:
+    /// Ctrl / Alt+1..5 are the marks while the view has the focus: they win over the window's shortcuts (the CPU
+    /// switch's Ctrl+1 / Ctrl+2 with a card fitted)
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -207,6 +211,14 @@ public:
     /// The cursor row on `address`, without a jump of the history; the view scrolls only when the row is not shown
     void setCursorAddress(uint16_t address);
     /// endregion </The GUI control plane's disassembly>
+
+    /// The main CPU's rows whose bytes come from elsewhere at run time (gui-card-debugger.md A6 S4: #0000-#3FFF while
+    /// the NeoGS ZX-DMA diverts the reads): a tinted margin and `note` in their tooltip. `first` > `last`: none
+    void setRunTimeRange(uint16_t first, uint16_t last, const QString& note);
+    void clearRunTimeRange() { setRunTimeRange(1, 0, QString()); }
+    bool hasRunTimeRange() const { return m_runTimeFirst <= m_runTimeLast; }
+    /// The rows shown (for the tests)
+    const std::vector<DisassemblyLine>& shownLines() const;
 
     // Helper methods
 protected:
@@ -301,6 +313,10 @@ private:
     int m_rowsShown = 0;  ///< rows (not label lines) wholly visible in the last layout
     std::optional<uint16_t> m_cursorAddress;
     DebugCpuId m_cpu = DebugCpuId::Main;
+    /// setRunTimeRange: the main CPU's rows marked (first > last: none) and their tooltip's note
+    uint16_t m_runTimeFirst = 1;
+    uint16_t m_runTimeLast = 0;
+    QString m_runTimeNote;
     /// A card CPU's registers as last read (getZ80Registers on a card's tab)
     Z80Registers m_cardRegisters{};
     /// What each CPU not in front left: its place, address history and marks
