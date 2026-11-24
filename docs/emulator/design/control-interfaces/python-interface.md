@@ -139,6 +139,20 @@ class Emulator:
         wait, host_pc, dropped}], last_seq (pass as since), counters, text. available=False without
         a NeoGS"""
 
+    def gs_profile(self, cpu: str = "", routines: int = 32, activity: int = 256) -> dict:
+        """The card CPU's profiler (cpu 'gs' / 'ms'): isr {last_frame, since_start} with count,
+        min, avg, max, headroom_pct, overruns, latency, lost; commands[] per host command code;
+        routines[] by inclusive cycles with labels; activity[] per frame; text. available=False
+        without a card CPU (the lightweight player)"""
+
+    def gs_profile_control(self, action: str, cpu: str = "") -> dict:
+        """'start' (cleared, then on), 'stop' (the data kept), 'clear'; ValueError on another
+        action, KeyError without a card CPU"""
+
+    def gs_events(self, cpu: str = "", first: int = 0, count: int = 0, rows: int = 16) -> dict:
+        """The last complete host frame per card interrupt period: rows[{period, start, isr[{accept,
+        end, length, entry, nmi}], events[[cycle, kind, value, detail]]}], totals, text"""
+
     def audio_covox_state(self) -> dict:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""

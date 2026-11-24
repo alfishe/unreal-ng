@@ -151,4 +151,67 @@
         zxdma["responses"]["200"]["description"] = "{available, card, capturing, total_bytes_kept, last_seq, rows, text}";
         zxdma["responses"]["400"]["description"] = "last or since is not a number";
         zxdma["responses"]["404"]["description"] = "Emulator not found, or no NeoGS fitted (the classic GS has no ZX-DMA)";
+
+        // The card CPU's profiler (gsprofilereport.h, gs-debugger X9 / X2 / X20); CLI 'gs profile' / 'gs events', MCP
+        // inspect_state aspects audio_gs_profile / audio_gs_events, Lua / Python gs_profile / gs_events
+        Json::Value& profile = paths["/api/v1/emulator/{id}/state/audio/gs/profile"]["get"];
+        profile["summary"] = "General Sound card CPU profiler";
+        profile["description"] =
+            "The card CPU's profiler (classic GS, the ZX-MultiSound's GS, NeoGS; off by default, POST "
+            "control/audio/gs {action: profile_start}). Card CPU cycles throughout. isr.last_frame / isr.since_start: "
+            "count, min, avg, max of the ISR length (INT acknowledge start to the boundary after its return, nested "
+            "interrupts included), used_pct / headroom_pct of period_cycles, overruns (ended after the period's end), "
+            "latency_avg / latency_max (period start to acknowledge), nmis, lost (requests merged). commands: per host "
+            "command code count / avg / min / max / total of the card's busy cycles (from its read of the command or a "
+            "data byte to its next status poll, interrupts apart, summed until the next command); current_command. "
+            "routines: the top N by inclusive cycles (address, page_kind, page, label from the card CPU's symbols, "
+            "calls, interrupts, inclusive, exclusive, avg, min, max, inclusive_pct); an interrupt handler is its own "
+            "root, interrupts never count in a routine's time. activity: per host frame cycles, isr_pct, idle_pct "
+            "(the idle poll loop slept through), halt_pct, busy_pct, commands, interrupts, overruns, lost, isr_max. text";
+        profile["tags"].append("Audio State");
+        idParameter(profile);
+        for (const char* name : {"cpu", "routines", "activity"})
+        {
+            Json::Value& param = profile["parameters"][profile["parameters"].size()];
+            param["name"] = name;
+            param["in"] = "query";
+            param["required"] = false;
+            param["schema"]["type"] = std::string(name) == "cpu" ? "string" : "integer";
+            param["description"] = std::string(name) == "cpu"        ? "gs (default): the GS slot's card; ms: the ZX-MultiSound's"
+                                   : std::string(name) == "routines" ? "The top N routines (default 32, 0: all)"
+                                                                     : "The newest N frames of activity (default 256, 0: none)";
+        }
+        profile["responses"]["200"]["description"] =
+            "{available, card, cpu, on, frames, cycles, clock_hz, period_cycles, isr, commands, current_command, "
+            "routines, routines_total, activity, stack_overflows, routines_dropped, resyncs, text}";
+        profile["responses"]["400"]["description"] = "routines or activity is not a number";
+        profile["responses"]["404"]["description"] = "Emulator not found, no card, or a card without a CPU (the lightweight player)";
+
+        Json::Value& events = paths["/api/v1/emulator/{id}/state/audio/gs/events"]["get"];
+        events["summary"] = "General Sound frame event map";
+        events["description"] =
+            "The last complete host frame, one row per card interrupt period (period, start in cycles from the "
+            "frame's start): isr bars [{accept, end, length, entry, nmi}] in cycles from the period's start (end null: "
+            "still running at the frame's end) and events [[cycle, kind, value, detail]] (columns), kinds "
+            "host_data_write, host_data_read, host_command, host_status, host_control, dac (detail: channel), page "
+            "(detail: port), volume (detail: channel), zxdma_read, zxdma_write. The ISR bars need the profiler on, the "
+            "other events the GS port trace capturing. Also frame, card_start, cycles, period_cycles, periods, first, "
+            "count, totals, truncated, text";
+        events["tags"].append("Audio State");
+        idParameter(events);
+        for (const char* name : {"cpu", "first", "count", "rows"})
+        {
+            Json::Value& param = events["parameters"][events["parameters"].size()];
+            param["name"] = name;
+            param["in"] = "query";
+            param["required"] = false;
+            param["schema"]["type"] = std::string(name) == "cpu" ? "string" : "integer";
+            param["description"] = std::string(name) == "cpu"     ? "gs (default) or ms"
+                                   : std::string(name) == "first" ? "The first period row (default 0)"
+                                   : std::string(name) == "count" ? "Rows from first (default 0: to the frame's end)"
+                                                                  : "Rows in the text (default 16)";
+        }
+        events["responses"]["200"]["description"] = "{available, frame, period_cycles, periods, rows, totals, text}";
+        events["responses"]["400"]["description"] = "first, count or rows is not a number";
+        events["responses"]["404"]["description"] = "Emulator not found, no card, or a card without a CPU";
     }

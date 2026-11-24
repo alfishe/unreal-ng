@@ -424,6 +424,24 @@ what an agent reads):
     takes COMTABH (#20-#EF) through window 3 as mapped now (junk while the firmware keeps a RAM page there: the tab
     then shows the baseline handler) and its ROM baseline from card pages 0-1 (wrong on NeoGS, whose firmware runs
     from a RAM copy of flash: every word reads "patched", the tab drops the baseline).
+  - Analysis tabs, the core data for Events and Profiler (A5.2a; X2, X9, X20), as built 2026-11-23, branch
+    `gs-an-isr` (not landed): `GSCardProfiler` (`core/src/emulator/sound/chips/gs/gscardprofiler.h`) in every card
+    with a CPU (classic GS, the MultiSound's GS, NeoGS), reports `gs profile` / `gs events`
+    (`gsprofilereport.h`) on every plane (REST `state/audio/gs/profile`, `state/audio/gs/events`, `control/audio/gs`
+    `profile_start | profile_stop | profile_clear`; CLI; Lua / Python `gs_profile`, `gs_profile_control`,
+    `gs_events`; MCP aspects `audio_gs_profile`, `audio_gs_events`, `emulator_manage gs_profile_*`; catalog
+    `gs-profile`, `gs-events`, `ms-gs-*`). The ISR budget (min / avg / max / headroom / overruns / latency / lost,
+    last frame and since start), each host command's cost, routines inclusive / exclusive with labels (interrupts
+    never leak in; the ISR its own root), the frame map per interrupt period (ISR bars from the profiler, host / DAC
+    / page / volume / ZX-DMA dots from the port trace), activity per frame (256). Off by default: the fast loop
+    untouched; on, the record loop. Rules in design §8A.3 / §8A.6 "as built", the planes in command-interface.md.
+    Tests `GSCardProfiler*`, `McpTools_Test.*GsProfile*`; live `tools/verification/mcp/test_gs_debugger.py`
+    (profile block). Left: the Qt tabs themselves (Events, Profiler) on this data; X9's per-label grouping of
+    routines entered by JP (only CALL / RST / interrupts open a frame). The stock firmware (gs105a, NeoGS) idles
+    with interrupts off: its ISR budget is empty until it plays (the requests show as `lost`). A/B (18 interleaved
+    rounds, cpu time, base c5e98c931): off within noise (GS playing -1.1 %, NeoGS playing -0.4 %, idle 0 %); on, GS
+    playing x1.9 (251 -> 475 us a frame), NeoGS playing x1.7, GS idle 1.3 -> 3.2 us
+    (`BM_*Frame_*_Profiled`).
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

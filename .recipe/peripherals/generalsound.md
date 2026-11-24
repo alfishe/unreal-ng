@@ -138,6 +138,19 @@ address and page, value, wait T, host PC, `DROPPED` for a byte lost to mixed dir
 kept), `"gs_zxdma_since": <last_seq>` for only the new rows. WebAPI `GET .../state/audio/gs/zxdma?last=&since=`, CLI
 `gs zxdma`, Lua / Python `gs_zxdma(last, since)`. The bytes have a ring of their own (65,536): on a long transfer read sooner or stop the trace after it.
 
+Card CPU budget (is the ISR too long, which command or routine eats the card): `emulator_manage {"action":
+"gs_profile_start"}` (`"gs_cpu": "ms"` for the ZX-MultiSound's GS), run some frames, then `inspect_state
+{"aspects":["audio_gs_profile"]}`: the ISR's min / avg / max cycles against the period (320 on the classic GS) with
+headroom, overruns and latency over the last frame and since the start; each host command's cost (count / avg / max
+cycles from the card's read to its next status poll, interrupts apart); the top routines by inclusive cycles with
+firmware labels (interrupts never inside a routine's time; the ISR its own root); per-frame ISR / idle / halted %.
+`"gs_profile_routines": N` for more rows. Where the time goes inside a frame: also start the port trace (above) and
+read `audio_gs_events` (`gs_events_first` / `gs_events_count` pick period rows): per interrupt period the ISR bar
+(accept / end) and the host #B3 / #BB accesses, DAC fetches by channel, page and volume writes, in card cycles.
+`gs_profile_stop` when done (on, the card runs its slower record loop). WebAPI `GET .../state/audio/gs/profile`,
+`.../state/audio/gs/events`, `POST .../control/audio/gs {"action":"profile_start"}`; CLI `gs profile start`,
+`gs profile`, `gs events`; Lua / Python `gs_profile`, `gs_profile_control`, `gs_events`.
+
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on
 activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`

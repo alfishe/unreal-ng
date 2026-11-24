@@ -123,7 +123,7 @@ struct Card
     }
 };
 
-void RunGeneralSoundFrames(benchmark::State& state, bool playing, bool neoGS = false)
+void RunGeneralSoundFrames(benchmark::State& state, bool playing, bool neoGS = false, bool profiled = false)
 {
     Card card(neoGS);
     if (!card.chip->isROMLoaded() || !card.boot() || (playing && !card.play()))
@@ -131,6 +131,8 @@ void RunGeneralSoundFrames(benchmark::State& state, bool playing, bool neoGS = f
         state.SkipWithError("firmware did not boot / play");
         return;
     }
+    if (profiled)
+        card.chip->profiler().Start();
 
     const uint64_t stepsBefore = card.chip->getActivityCounters().cpuSteps;
     for (auto _ : state)
@@ -156,6 +158,20 @@ static void BM_GeneralSoundFrame_Playing(benchmark::State& state)
 }
 BENCHMARK(BM_GeneralSoundFrame_Playing)->Iterations(2000)->Unit(benchmark::kMicrosecond);
 
+/// The card CPU's profiler on (gscardprofiler.h): the record loop with a step per instruction, against the rows
+/// above (off: the fast loop, the cost a per-run flag test)
+static void BM_GeneralSoundFrame_Idle_Profiled(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, false, false, true);
+}
+BENCHMARK(BM_GeneralSoundFrame_Idle_Profiled)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
+static void BM_GeneralSoundFrame_Playing_Profiled(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, true, false, true);
+}
+BENCHMARK(BM_GeneralSoundFrame_Playing_Profiled)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
 /// NeoGS with its v1.11 flash (main ROM at 20 MHz). Budgets (neogs-tdd.md
 /// §5.9): idle within 2x and playback within 2.5x of the classic card.
 static void BM_NeoGSFrame_Idle(benchmark::State& state)
@@ -169,3 +185,9 @@ static void BM_NeoGSFrame_Playing(benchmark::State& state)
     RunGeneralSoundFrames(state, true, true);
 }
 BENCHMARK(BM_NeoGSFrame_Playing)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
+static void BM_NeoGSFrame_Playing_Profiled(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, true, true, true);
+}
+BENCHMARK(BM_NeoGSFrame_Playing_Profiled)->Iterations(2000)->Unit(benchmark::kMicrosecond);

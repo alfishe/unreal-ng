@@ -382,6 +382,8 @@ private:
         if (_portTrace.isCapturing()) [[unlikely]]
             traceIdle(head, start, iterations);
         recordExecIdle(head, iterations);
+        if (_runProfile) [[unlikely]]
+            _profiler.Idle(start, _runner.now());
     }
     bool sleepQuietEventsBefore(int64_t end);
 
@@ -446,7 +448,12 @@ private:
     void flush();                      // run GS to the current ZX tact
     bool hostTarget(int64_t& target) const;  // the card time of the current ZX tact; false without a base
     void runToDebug(int64_t targetGsCycles);  // out of line: the debug loop's code stays away from the fast loop's
-    void runToRecord(int64_t targetGsCycles);  // out of line too: the execution history's loop
+    void runToRecord(int64_t targetGsCycles);  // out of line too: the execution history's and the profiler's loop
+    /// The profiler's part (generalsoundcard.h): SP, the code bytes and the HALT latch before the step at `pc`; an
+    /// acknowledge with its return address
+    void profileStep(uint16_t pc) override;
+    void profileInterrupt(bool nmi, int64_t ackUnits) override;
+    void beginRun();  // the run's start with the period grid
     void runTo(int64_t targetGsCycles)
     {
         syncExecHistory();
@@ -457,7 +464,7 @@ private:
             runToDebug(targetGsCycles);
             return;
         }
-        if (execRecording()) [[unlikely]]
+        if (recordLoopWanted()) [[unlikely]]
         {
             runToRecord(targetGsCycles);
             return;

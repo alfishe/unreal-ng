@@ -543,6 +543,9 @@ fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
 gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
 zx  = gs_zxdma(256, 0)      -- NeoGS ZX-DMA trace (while gsporttrace captures): rows[i] = {seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}; last_seq for the next 'since'
+gs_profile_control("start", "gs")  -- the card CPU's profiler: "start" (cleared, then on) / "stop" / "clear"; "ms": the ZX-MultiSound's GS
+pf  = gs_profile("gs", 32, 256)      -- isr.last_frame / since_start {count, min, avg, max, headroom_pct, overruns, latency_max, lost}, commands[], routines[] (top 32), activity[] (256 frames)
+ev  = gs_events("gs", 0, 0, 16)     -- the last frame per interrupt period: rows[i] = {period, start, isr[] {accept, end, length}, events[] {cycle, kind, value, detail}}
 cv  = audio_covox_state()   -- Covox / SoundDrive: fitment, ports, shared_with_beta128, channels[4]
 zm  = multisound_state()   -- ZX-MultiSound: options, shadowed built-ins, CPLD, ym.chips[2] {ssg, fm}, saa, gs, dac, midi
 md  = midi_state()         -- its MIDI line + SAM2695: parts[16] {program, preset, volume, pan, active_voices, notes}, counters

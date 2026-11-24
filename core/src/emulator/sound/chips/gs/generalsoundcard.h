@@ -36,6 +36,7 @@
 #include "emulator/sound/chips/gs/gsmailbox.h"  // GSForwardMailbox (switch snapshots)
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
 #include "emulator/sound/chips/gs/gsdebughooks.h"
+#include "emulator/sound/chips/gs/gscardprofiler.h"
 #include "debugger/history/exechistory.h"
 #include "3rdparty/unreal-z80/z80cpu.h"     // Z80CpuRegisters
 
@@ -457,8 +458,25 @@ public:
     {
         return _execHistory;
     }
-    /// The instruction at `pc` into the execution history (the runner's record loop, the recorder)
-    void recordExecStep(uint16_t pc);
+    /// Before the instruction at `pc` in the record or the debug loop (the runner, the recorder): the profiler's step
+    /// while this run profiles, the execution history's record while it records
+    void recordExecStep(uint16_t pc)
+    {
+        if (_runProfile) [[unlikely]]
+            profileStep(pc);
+        if (_runExec)
+            pushExecStep(pc);
+    }
+    /// An INT or NMI acknowledged in the record or the debug loop (`ackUnits` its length): the profiler's
+    void recordExecInterrupt(bool nmi, int64_t ackUnits)
+    {
+        if (_runProfile) [[unlikely]]
+            profileInterrupt(nmi, ackUnits);
+    }
+    /// The card CPU's profiler (gscardprofiler.h): off by default; start / stop / clear and its snapshot from any
+    /// thread. Cards without a CPU never run it
+    GSCardProfiler& profiler() { return _profiler; }
+    const GSCardProfiler& profiler() const { return _profiler; }
     /// The idle loop at `head` slept through `iterations` times: one record (ExecRecord::idle) while recording
     void recordExecIdle(uint16_t head, uint64_t iterations);
     /// The 16K page behind a card CPU address now (as the emulation maps it, not a table). Flash and ROM count as
@@ -700,9 +718,45 @@ protected:
     /// its recorder in or takes it out. One load and a compare a run, never per instruction
     void syncExecHistory()
     {
-        if (_execHistory && _execHistory->On() != _execBound) [[unlikely]]
+        if (((_execHistory && _execHistory->On()) || _profiler.On()) != _execBound) [[unlikely]]
             bindHooks();
     }
+    /// The record loop's test (after the hooks' one): the execution history records or the profiler is on
+    bool recordLoopWanted() const { return _profiler.On() || execRecording(); }
+    /// Around a run in the record or the debug loop, the card on a boundary at `now`: what this run records
+    /// (_runExec, _runProfile) and the profiler's period grid (`anchor` a period start, `period`, in card units).
+    /// `replay`: a TTD replay (never profiled)
+    void beginRecordedRun(int64_t now, int64_t anchor, int64_t period, int64_t unitsPerCycle, bool replay)
+    {
+        _runExec = execRecording();
+        _runProfile = _profiler.On() && !replay;
+        if (_runProfile)
+            _profiler.RunStart(now, anchor, period, unitsPerCycle);
+    }
+    void endRecordedRun(int64_t now)
+    {
+        if (_runProfile)
+            _profiler.RunEnd(now);
+        _runExec = false;
+        _runProfile = false;
+    }
+    /// The host frame ended (after its catch-up), the card at `now`: the profiler's frame
+    void profileFrameEnd(int64_t now, uint64_t hostFrame)
+    {
+        if (_profiler.On()) [[unlikely]]
+            _profiler.FrameEnd(now, hostFrame);
+    }
+    /// The card's part of the profiler's step and interrupt (its CPU's SP, the code bytes, the time now)
+    virtual void profileStep(uint16_t pc) { (void)pc; }
+    virtual void profileInterrupt(bool nmi, int64_t ackUnits)
+    {
+        (void)nmi;
+        (void)ackUnits;
+    }
+
+    GSCardProfiler _profiler;
+    bool _runExec = false;     ///< this run records into the execution history
+    bool _runProfile = false;  ///< this run profiles
     /// The run records its instructions without a debugger's hooks: the record loop (GSCardRunner::runToRecord).
     /// Only asked after the hooks' test, so the fast loop pays one more test a run
     bool execRecording() const;
@@ -759,6 +813,8 @@ private:
     /// The debugger's hooks alone, or the recorder in front of them while the history is on; the result of
     /// setDebugHooks
     bool bindHooks();
+    /// The instruction into the execution history
+    void pushExecStep(uint16_t pc);
 
     history::DeviceHistory<ExecRecord>* _execHistory = nullptr;
     const EmulatorContext* _execContext = nullptr;

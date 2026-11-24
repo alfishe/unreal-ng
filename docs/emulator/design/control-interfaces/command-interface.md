@@ -727,6 +727,43 @@ WebAPI `GET /state/audio/gs/zxdma?last=&since=` (and its WebSocket `call`); MCP 
 `audio_gs_zxdma` (`gs_zxdma_last`, `gs_zxdma_since`); Lua and Python `gs_zxdma(last, since)`; the device catalog's
 `gs-zxdma` ([neogs-zxdma-design §6.4](../../../inprogress/2026-09-19-general-sound/neogs-zxdma-design.md)).
 
+`gs profile [start|stop|clear] [--cpu gs|ms] [--routines N] [--activity N]` drives and reads the card CPU's profiler
+(classic GS, the ZX-MultiSound's GS, NeoGS; the lightweight player has no CPU: "not available"). Off by default;
+`start` clears and switches it on from the card's next run, `stop` keeps the data, `clear` zeroes them. All figures
+are card CPU cycles (NeoGS by its clock at the time):
+- `isr.last_frame` / `isr.since_start`: `count`, `min`, `avg`, `max` of the ISR length (from the INT acknowledge's
+  start to the boundary after the instruction that popped its return address, nested interrupts included),
+  `used_pct` / `headroom_pct` of `period_cycles` (320 on the classic GS, the NeoGS timer's period), `overruns` (an ISR
+  that ended after its period's end), `latency_avg` / `latency_max` (the period start to the acknowledge), `nmis`,
+  `lost` (requests merged into a pending one).
+- `commands[]`: per host command code `count`, `avg`, `min`, `max`, `total` of the card's busy cycles on it (from its
+  read of the command, COMRG, and from each data byte it takes, DATRG, to its next status poll, FLAGS: the firmware
+  back in a wait loop; interrupt time apart; summed until the next command), with `name` / `handler` from the
+  firmware profile; `current_command` the one still running.
+- `routines[]`: the top N by inclusive cycles (`address`, `page_kind`, `page`, `label` from the card CPU's symbols,
+  `calls`, `interrupts`, `inclusive`, `exclusive`, `avg`, `min`, `max`, `inclusive_pct`). A routine starts at a taken
+  CALL / RST, an accepted interrupt starts its handler's frame; a frame ends when SP goes above its return address's
+  slot. Interrupt time never counts in a routine's time; the handler is its own root.
+- `activity[]`: per host frame (up to 256) `cycles`, `isr_pct`, `idle_pct` (the idle poll loop the runner slept
+  through), `halt_pct`, `busy_pct`, `commands`, `interrupts`, `overruns`, `lost`, `isr_max`.
+- `stack_overflows`, `routines_dropped`, `resyncs` (the stack dropped after a time jump: TTD seek, a run not
+  profiled).
+
+`gs events [--cpu gs|ms] [--first N] [--count N] [--rows N]` maps the last complete host frame per card interrupt
+period: `rows[]` {`period`, `start` (cycles from the frame's start), `isr[]` {`accept`, `end`, `length`, `entry`, `nmi`}
+(cycles from the period's start; `end` null: still running at the frame's end), `events[]` `[cycle, kind, value,
+detail]`} with kinds `host_data_write`, `host_data_read`, `host_command`, `host_status`, `host_control`, `dac` (detail:
+the channel), `page` (detail: the port), `volume` (detail: the channel), `zxdma_read`, `zxdma_write`; `totals` per
+kind. The ISR bars come from the profiler, the dots from the GS port trace (`gsporttrace start`). Every plane: WebAPI
+`GET /state/audio/gs/profile?cpu=&routines=&activity=`, `GET /state/audio/gs/events?cpu=&first=&count=&rows=` (and
+their WebSocket `call`), `POST /control/audio/gs` `{action: profile_start | profile_stop | profile_clear, cpu}`; MCP
+`inspect_state` aspects `audio_gs_profile` (`gs_cpu`, `gs_profile_routines`) and `audio_gs_events` (`gs_cpu`,
+`gs_events_first`, `gs_events_count`), `emulator_manage` `gs_profile_start` / `gs_profile_stop` / `gs_profile_clear`
+(`gs_cpu`); Lua and Python `gs_profile(cpu, routines, activity)`, `gs_profile_control(action, cpu)`,
+`gs_events(cpu, first, count, rows)`; the device catalog's `gs-profile`, `gs-events`, `ms-gs-profile`, `ms-gs-events`
+([gs-debugger design §8A.3](../../../inprogress/2026-09-27-gs-debugger/design.md)). The cost: while it is on the card
+runs its record loop (a call per instruction, about the execution history's price); off, one test per card run.
+
 #### 3.1 Memory Commands
 
 The `memory` command provides unified access to emulator memory with two addressing modes:

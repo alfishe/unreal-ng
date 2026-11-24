@@ -82,6 +82,7 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
 {
     _logger = _context ? _context->pModuleLogger : nullptr;
     _mb.counters = &_activityCounters;
+    _profiler.Bind(this, &_activityCounters);
     _stereoMode = _config.stereoMode;
     _couplingL.configure(static_cast<double>(sampleRate), OUTPUT_HIGHPASS_HZ);
     _couplingR.configure(static_cast<double>(sampleRate), OUTPUT_HIGHPASS_HZ);
@@ -1259,6 +1260,7 @@ void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
     _frameEndCatchUp = true;
     runTo(_frameStartTicks + _frameTicks);
     _frameEndCatchUp = false;
+    profileFrameEnd(_runner.now(), currentFrameNumber());
     _zx.onFrameEnd();
 
     int samples = expectedSamples > 0
@@ -1694,12 +1696,37 @@ uint8_t SoundChip_NeoGS::intVectorCb(Z80CPU* /*cpu*/, void* userData)
 
 void SoundChip_NeoGS::runToDebug(int64_t target)
 {
+    beginRun();
     _runner.runToDebug(target, _debugHooks);
+    endRecordedRun(_runner.now());
 }
 
 void SoundChip_NeoGS::runToRecord(int64_t target)
 {
+    beginRun();
     _runner.runToRecord(target);
+    endRecordedRun(_runner.now());
+}
+
+void SoundChip_NeoGS::beginRun()
+{
+    // The timer's grid: its next strobe and its period now (ticks)
+    const int64_t period = NeoGSInterrupts::tickPeriodCrystal(_irq.timFreq()) * TICKS_PER_CRYSTAL;
+    beginRecordedRun(_runner.now(), _timerStrobeAt, period, _ticksPerCycle, _context && _context->ttdReplayActive);
+}
+
+void SoundChip_NeoGS::profileStep(uint16_t pc)
+{
+    const Z80CpuRegisterFile* r = Z80CpuRegisterFilePtr(_cpu);
+    _profiler.Step(pc, r->sp, _mem.peek(pc), _mem.peek(static_cast<uint16_t>(pc + 1)), _runner.now(),
+                   (r->halted & 1) != 0, _ticksPerCycle);
+}
+
+void SoundChip_NeoGS::profileInterrupt(bool nmi, int64_t ackUnits)
+{
+    const Z80CpuRegisterFile* r = Z80CpuRegisterFilePtr(_cpu);
+    const uint16_t ret = static_cast<uint16_t>(_mem.peek(r->sp) | (_mem.peek(static_cast<uint16_t>(r->sp + 1)) << 8));
+    _profiler.Interrupt(nmi, _runner.now(), ackUnits, r->pc, r->sp, ret, _ticksPerCycle);
 }
 
 bool SoundChip_NeoGS::setDebugHooks(IGSDebugHooks* hooks)

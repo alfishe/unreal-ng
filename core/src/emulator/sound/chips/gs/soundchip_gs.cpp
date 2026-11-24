@@ -37,6 +37,7 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
 
     // Mailbox overflow drops land in this card's activity counters
     _mb.counters = &_activityCounters;
+    _profiler.Bind(this, &_activityCounters);
 
     // RAM is banked in 32 KB pairs; the original GS card range is 128-512 KB
     // (NeoGS lifts the cap - P2), the MultiSound's 1 or 2 MB (profile range).
@@ -449,6 +450,7 @@ void SoundChip_GeneralSound::handleFrameEnd(size_t expectedSamples)
     _frameEndCatchUp = true;
     runTo(_frameStartGsCycles + _frameGsCycles);
     _frameEndCatchUp = false;
+    profileFrameEnd(totalGsCycles(), currentFrameNumber());
 
     // Actual samples for this frame - must match what SoundManager mixes
     // (accumulator count preferred, local rounding as fallback)
@@ -1092,18 +1094,49 @@ void SoundChip_GeneralSound::bindBus()
 
 void SoundChip_GeneralSound::runToDebug(int64_t targetGsCycles)
 {
+    beginRun();
     if (_classicTiming)
         _runner.runToDebug<ClassicRunPolicy>(targetGsCycles, _debugHooks);
     else
         _runner.runToDebug(targetGsCycles, _debugHooks);
+    endRecordedRun(totalGsCycles());
 }
 
 void SoundChip_GeneralSound::runToRecord(int64_t targetGsCycles)
 {
+    beginRun();
     if (_classicTiming)
         _runner.runToRecord<ClassicRunPolicy>(targetGsCycles);
     else
         _runner.runToRecord(targetGsCycles);
+    endRecordedRun(totalGsCycles());
+}
+
+void SoundChip_GeneralSound::beginRun()
+{
+    beginRecordedRun(totalGsCycles(), _gsCyclesAbs, _intPeriodUnits, _unitsPerCycle,
+                     _context && _context->ttdReplayActive);
+}
+
+void SoundChip_GeneralSound::profileStep(uint16_t pc)
+{
+    const Z80CpuRegisterFile* r = Z80CpuRegisterFilePtr(_cpu);
+    uint8_t op0 = 0;
+    uint8_t op1 = 0;
+    peekCardMemory(pc, op0);
+    peekCardMemory(static_cast<uint16_t>(pc + 1), op1);
+    _profiler.Step(pc, r->sp, op0, op1, totalGsCycles(), (r->halted & 1) != 0, _unitsPerCycle);
+}
+
+void SoundChip_GeneralSound::profileInterrupt(bool nmi, int64_t ackUnits)
+{
+    const Z80CpuRegisterFile* r = Z80CpuRegisterFilePtr(_cpu);
+    uint8_t lo = 0;
+    uint8_t hi = 0;
+    peekCardMemory(r->sp, lo);
+    peekCardMemory(static_cast<uint16_t>(r->sp + 1), hi);
+    _profiler.Interrupt(nmi, totalGsCycles(), ackUnits, r->pc, r->sp, static_cast<uint16_t>(lo | (hi << 8)),
+                        _unitsPerCycle);
 }
 
 bool SoundChip_GeneralSound::setDebugHooks(IGSDebugHooks* hooks)
