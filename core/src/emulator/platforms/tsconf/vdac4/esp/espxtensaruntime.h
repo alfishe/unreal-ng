@@ -87,6 +87,15 @@ public:
     void StopApp() override;
     int Command(uint8_t command, const uint8_t* data, size_t size) override;
     void Poll(uint32_t nowMs) override;
+    /// The host's state is not part of the firmware's (Vdac4Esp::Save): TTD keeps it apart, as the device
+    /// vdac4-esp-cpu (ttdvdac4.h), restored after the firmware
+    void SaveState(std::vector<uint8_t>& out) const override { out.clear(); }
+    /// The app goes on: the host is restored apart (vdac4-esp-cpu)
+    bool LoadState(const std::string& module, const Vdac4AppInfo& info, IVdac4AppHost& host,
+                   const std::vector<uint8_t>& state) override;
+    /// A restore: wait for a job in flight and drop what it and the jobs before it would hand over (the
+    /// machine they would reach is restored apart). Main thread
+    void DropJobs();
 
     EspAppHost& Host() { return *_host; }
 

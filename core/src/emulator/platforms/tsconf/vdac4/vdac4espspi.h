@@ -78,6 +78,9 @@ public:
 
     // SpiDevice
     void select(bool selected) override;
+    /// The level only: the window position, the DMA queue and this flag come with Vdac4Esp's own restore, and
+    /// the ESP's time does not move (a restore of the Z-Controller, the SD card's TTD state, runs no ESP code)
+    void restoreSelect(bool selected) override { _selected = selected; }
     uint8_t exchange(uint8_t mosi) override;
 
     /// The driver is running (after boot) or not (power-on, restart)

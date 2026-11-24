@@ -1066,7 +1066,13 @@ void Vdac4EspFirmware::Save(Vdac4EspStateWriter& out) const
 
 bool Vdac4EspFirmware::Load(Vdac4EspStateReader& in)
 {
-    StopApp();
+    // The firmware's view of the app only: the runtime keeps its own state (the Xtensa host is restored apart,
+    // after this), so it is not stopped (no app->stop, no LINK writes to a Tang that is restored already)
+    _appRunning = false;
+    _media.Clear();
+    _ftDetachState = 0;
+    _appModule.clear();
+    _appInfo = Vdac4AppInfo{};
     DropDelivery();
     _resources.clear();
     _nowMs = in.U32();

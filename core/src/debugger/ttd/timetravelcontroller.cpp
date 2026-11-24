@@ -1743,7 +1743,13 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
 
     // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
     // device whose state also carries the memory it offers as regions (General Sound)
-    // gives its state without that memory; the registry does not serialize it whole ---
+    // gives its state without that memory; the registry does not serialize it whole.
+    // A region source first learns whether this capture offers every piece (a rescan) ---
+    {
+        const bool rescan = _shadowRescan || ShadowSessionDue(_line->timeline.empty());
+        for (ITTDRegionSource* source : _peripherals.RegionSources())
+            source->TTDCaptureBegins(rescan);
+    }
     _peripherals.CaptureStates();
     _captureWork.deviceStateBytes += _peripherals.LastCaptureStateBytes();
 
@@ -1972,6 +1978,9 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
 
 TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
 {
+    // A device whose memory moved on without marks marks it now (the VDAC4 ESP between keyframes)
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDBeforeRestore();
     // A device that tracks writes its own way (MoonSound's wave memory) moves them into its trackers first
     for (ITTDRegionSource* source : _peripherals.RegionSources())
         source->TTDBeforeCapture();
@@ -5316,12 +5325,21 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
         MLOGWARNING("TimeTravelController::SetReplaySource — not bound to this machine: %s", unbound.c_str());
 }
 
+bool TimeTravelController::ShadowSessionDue(bool baseline) const
+{
+    if (!_shadowEngine)
+        return false;
+    const TimeTravelEngine& engine = *_shadowEngine;
+    const uint32_t pieces = static_cast<uint32_t>(_modelRamPages) * 4;
+    return baseline || !engine.IsSessionOpen() || engine.Regions().empty() || engine.Regions()[0].pieces != pieces;
+}
+
 bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
 {
     TimeTravelEngine& engine = *_shadowEngine;
     std::string error;
     const uint32_t pieces = static_cast<uint32_t>(_modelRamPages) * 4;
-    if (baseline || !engine.IsSessionOpen() || engine.Regions().empty() || engine.Regions()[0].pieces != pieces)
+    if (ShadowSessionDue(baseline))
     {
         TTDRegionDesc ram;
         ram.id = TTDRegionId::MachineRam;

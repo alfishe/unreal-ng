@@ -2594,6 +2594,8 @@ private:
     bool _writtenHeld = false;                        ///< PeekWrittenSinceRestore: the next take merges
     std::vector<uint16_t> _writtenPages;              ///< TakeWrittenSinceRestore: the dirty tracker's pages
     std::vector<uint32_t> _writtenScratch;
+    /// The next shadow capture opens a session (its first, or the machine's RAM size changed): a rescan
+    bool ShadowSessionDue(bool baseline) const;
     /// Hand this capture to the shadow engine
     bool FeedShadow(const TTDCheckpoint& out, bool baseline);
     /// Per registry entry: its index in the shadow engine's device table, -1 when it has none (no state). The

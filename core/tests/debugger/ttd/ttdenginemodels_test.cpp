@@ -348,6 +348,10 @@ TEST_F(TTDEngineModels_Fixture, Vdac2MemoryWrittenWhileRecording)
         vdac2Regions += Engine().Regions()[r].ownerType == static_cast<uint16_t>(ttd::PeripheralId::Vdac2Memory) &&
                         !Engine().IsDeviceStateRegion(r);
     ASSERT_EQ(vdac2Regions, 7u) << "RAM_G, DL0, DL1, REG, CMD, SPECIAL, INFLIGHT";
+    // The chip's memory is in those regions only: its device blob is the 8-byte header, not a copy of it all
+    for (uint32_t r = 0; r < Engine().Regions().size(); ++r)
+        if (Engine().IsDeviceStateRegion(r) && Engine().Regions()[r].name.find("vdac2memory") != std::string::npos)
+            EXPECT_LE(Engine().Regions()[r].bytes, ttd::kTTDPieceSize) << Engine().Regions()[r].name;
     uint32_t ramG = 0;
     while (Engine().Regions()[ramG].name != "vdac2.RAM_G")
         ++ramG;
