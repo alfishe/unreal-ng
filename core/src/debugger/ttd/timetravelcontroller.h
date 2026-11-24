@@ -268,6 +268,15 @@ public:
     void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes);
     /// Two tiers: the read-back cache's capacity in segments (default 4, at least 1)
     void SetReadBackCapacity(size_t segments);
+    /// Two tiers: a restore reads the stretch of an evicted segment it needs through the file's seek index (the
+    /// default); false reads the file from its start up to the checkpoint, as a file without the index is read
+    /// (tests compare the two, measurements have both sides)
+    void SetSegmentWindowReads(bool on) { _segmentWindowReads = on; }
+    /// Two tiers: the segment files written from now on get their piece tables and seek index (the default); false
+    /// writes them as before (tests of a file without them, a measurement's other side)
+    void SetSegmentSeekIndex(bool on) { _segmentSeekIndex = on; }
+    /// Read backs that took one stretch through a seek index (of GetSessionInfo().readBackLoads)
+    uint64_t ReadBackWindowLoads() const { return _readBackWindowLoads; }
     /// Tests (T-C10): completed segment files are held back from the eviction while @p hold is set; clearing it
     /// offers them
     void HoldSegmentFilesForTesting(bool hold);
@@ -2659,6 +2668,9 @@ private:
     std::vector<uint8_t> _readBackFileBytes;   ///< LoadSegmentFromFile: the last file read (its capacity reused)
     bool _readBackUnbounded = false;           ///< Save, Check: every segment read back for the call
     uint64_t _readBackLoads = 0;               ///< segments read back from their files
+    uint64_t _readBackWindowLoads = 0;         ///< of them: one stretch read through the file's seek index
+    bool _segmentWindowReads = true;           ///< SetSegmentWindowReads
+    bool _segmentSeekIndex = true;             ///< SetSegmentSeekIndex
     uint64_t _readBackFailures = 0;            ///< read backs that failed (the restore reported it)
     bool _holdSegmentFiles = false;            ///< test hook: completed files are noted, not offered for eviction
     std::vector<std::pair<std::pair<uint32_t, size_t>, std::string>> _heldSegmentFiles;

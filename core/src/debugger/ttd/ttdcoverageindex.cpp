@@ -8,6 +8,7 @@
 #include <iterator>
 #include <ostream>
 
+#include "debugger/ttd/engine/ttdwriteindex.h"
 #include "ttdcompression.h"
 
 namespace ttd
@@ -153,6 +154,7 @@ size_t TTDCoverageIndex::RawPrefixBytes(const std::vector<uint8_t>& raw, uint32_
 
 void TTDCoverageIndex::DropFramesFrom(uint64_t frame, bool partialFirstFrame)
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     // The query cache may hold a block that is about to change
     _blockCache.clear();
     _blockCacheKind = SIZE_MAX;
@@ -495,6 +497,7 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
 
 void TTDCoverageIndex::CloseOpenBlock(size_t kindIdx)
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     std::vector<uint8_t>& raw = _openBlock[kindIdx];
     if (raw.empty())
     {
@@ -522,6 +525,7 @@ void TTDCoverageIndex::CloseOpenBlock(size_t kindIdx)
 
 void TTDCoverageIndex::AccumulateGroups(size_t kindIdx, uint32_t index)
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     // A run is united when its last block seals: from the unions of its parts (the blocks of a run of 4, the runs of 4
     // of a run of 32), each sorted, merged pairwise. Nothing is kept between seals
     const std::vector<Block>& blocks = _blocks[kindIdx];
@@ -602,6 +606,7 @@ void TTDCoverageIndex::AccumulateGroups(size_t kindIdx, uint32_t index)
 
 void TTDCoverageIndex::DropGroups(size_t kindIdx, uint64_t frame)
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     for (GroupLevel& run : _groups[kindIdx])
         while (!run.groups.empty() && (!run.groups.back().valid || run.groups.back().lastFrame >= frame))
             run.groups.pop_back();
@@ -730,6 +735,7 @@ void RadixSort31(std::vector<uint32_t>& values, std::vector<uint32_t>& scratch)
 
 void TTDCoverageIndex::SealSummary(size_t kindIdx, Block& block)
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     const std::vector<uint32_t>& counts = _blockCounts[kindIdx];
     if (!_blockSummaryValid[kindIdx] || counts.size() != block.frameCount)
     {
@@ -899,6 +905,7 @@ void TTDCoverageIndex::DecodeFrameFromCache(uint32_t frameIndexInBlock,
 
 void TTDCoverageIndex::Clear()
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     // Invalidate the query cache too, or a stale decompressed block would be
     // served for a session it does not belong to.
     _blockCache.clear();
@@ -1032,6 +1039,7 @@ uint32_t TTDCoverageIndex::FirstBlockReaching(size_t kindIdx, uint64_t first) co
 
 bool TTDCoverageIndex::SummarizeBlock(size_t kindIdx, uint32_t blockIdx) const
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     const Block& block = _blocks[kindIdx][blockIdx];
     if (block.summarized)
         return true;
@@ -1277,11 +1285,8 @@ size_t TTDCoverageIndex::RawEncodedBytes(TTDCoverageKind kind) const
 
 size_t TTDCoverageIndex::CompressedSlackBytes() const
 {
-    size_t total = 0;
-    for (size_t k = 0; k < kKindCount; ++k)
-        for (const Block& b : _blocks[k])
-            total += b.compressed.capacity() - b.compressed.size();
-    return total;
+    (void)HeapBytes();   // counts the blocks when their storage changed
+    return _heapMemoSlack;
 }
 
 size_t TTDCoverageIndex::HeapBytes() const
@@ -1295,17 +1300,34 @@ size_t TTDCoverageIndex::HeapBytes() const
         total += _openBlock[k].capacity();
         total += _blockSeen[k].HeapBytes() +
                  _blockCounts[k].capacity() * sizeof(uint32_t);
-        for (const Block& b : _blocks[k])
-            total += b.compressed.capacity() + sizeof(Block) + b.unionKeys.capacity() +
-                     b.frameKeyCounts.capacity() * sizeof(uint32_t) + b.pieceMask.capacity() * sizeof(uint64_t) +
-                     b.frameRows.capacity() + b.unionSpans.capacity();
-        for (const GroupLevel& run : _groups[k])
-        {
-            total += run.groups.capacity() * sizeof(Group);
-            for (const Group& g : run.groups)
-                total += g.keys.capacity();
-        }
     }
+    // The blocks and their run unions: counted once per change of their storage. A seek publishes the session's
+    // status, which asks for this; walking 11,000 blocks each time was a tenth of a millisecond at 240,000 frames
+    // (P1.S10 seek format)
+    if (_heapMemoEdits != _storageEdits || TTDWriteIndex::WalkBlocksForMeasurement())
+    {
+        size_t blocks = 0, slack = 0;
+        for (size_t k = 0; k < kKindCount; ++k)
+        {
+            for (const Block& b : _blocks[k])
+            {
+                blocks += b.compressed.capacity() + sizeof(Block) + b.unionKeys.capacity() +
+                          b.frameKeyCounts.capacity() * sizeof(uint32_t) + b.pieceMask.capacity() * sizeof(uint64_t) +
+                          b.frameRows.capacity() + b.unionSpans.capacity();
+                slack += b.compressed.capacity() - b.compressed.size();
+            }
+            for (const GroupLevel& run : _groups[k])
+            {
+                blocks += run.groups.capacity() * sizeof(Group);
+                for (const Group& g : run.groups)
+                    blocks += g.keys.capacity();
+            }
+        }
+        _heapMemoBlocks = blocks;
+        _heapMemoSlack = slack;
+        _heapMemoEdits = _storageEdits;
+    }
+    total += _heapMemoBlocks;
     total += _decodeScratch.capacity() * sizeof(TTDCoverageKey);
     total += _unionSeen.capacity() * sizeof(uint64_t) + _unionScratch.capacity() * sizeof(TTDCoverageKey) +
              _unionRaw.capacity() + _sealRaw.capacity() + _blockRows.capacity() + _spansRaw.capacity() +
@@ -1361,6 +1383,7 @@ uint64_t TTDCoverageIndex::RepeatFrom() const
 
 void TTDCoverageIndex::AppendLater(TTDCoverageIndex&& later, uint64_t fromFrame)
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     _blockCache.clear();
     _blockCacheKind = SIZE_MAX;
     _blockCacheIndex = UINT32_MAX;
@@ -1381,6 +1404,7 @@ void TTDCoverageIndex::AppendLater(TTDCoverageIndex&& later, uint64_t fromFrame)
 
 void TTDCoverageIndex::RebuildFromBlocks()
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     for (size_t k = 0; k < kKindCount; ++k)
     {
         DropGroups(k);   // joined or loaded blocks: their runs are not known
@@ -1478,6 +1502,7 @@ bool TTDCoverageIndex::Serialize(std::ostream& out, uint64_t fromFrame) const
 
 bool TTDCoverageIndex::Deserialize(std::istream& in)
 {
+    ++_storageEdits;   // the blocks' storage may change: HeapBytes counts it again
     Clear();
 
     uint32_t magic = 0;

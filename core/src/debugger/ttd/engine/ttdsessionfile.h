@@ -50,6 +50,7 @@
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdregion.h"
+#include "debugger/ttd/engine/ttdseekindex.h"
 
 namespace ttd
 {
@@ -65,6 +66,10 @@ constexpr uint8_t kPartFileStart = 1;
 namespace sessionstream
 {
 constexpr uint16_t kPieces = 1;
+/// A recording folder's segment file (ancillary): every piece's version at each checkpoint of the part that holds
+/// full reference tables, as numbers of the file's versions. With the seek index (TTDSeekIndex) a read back starts
+/// at such a checkpoint instead of the file's first one (TTDSessionFile::ReadSegmentWindow)
+constexpr uint16_t kPieceTables = 2;
 constexpr uint16_t kCheckpoints = 3;
 constexpr uint16_t kEvents = 5;
 constexpr uint16_t kConfiguration = 6;
@@ -152,6 +157,9 @@ struct TTDSessionSaveParams
     std::map<uint32_t, std::vector<TTDHolderStream>> lineHolderStreams;
     /// Tests: the container's record limit (0: kMaxRecordRaw, 1 GiB), so a chunked stream takes milliseconds
     uint32_t recordLimit = 0;
+    /// A folder file (fileLine set) gets its piece tables and its seek index (TTDSeekIndex); false: written as
+    /// before them (a measurement's other side, a test's file without them)
+    bool seekIndex = true;
     /// A folder file after a pause: the paused file ended at the pause, this one starts at the next baseline, and
     /// the records between (the rest of the frame recorded after the resume) open this file's first part. Where the
     /// paused file's journals ended (TTDSessionWriter::JournalEnds); unset: the file's first checkpoint
@@ -244,6 +252,9 @@ public:
     /// Write the lineage ending at line @p tip as one linear file (TTDSessionSaveParams::lineageOf), after Begin
     bool WriteLineage(TimeTravelEngine& e, uint32_t tip);
 
+    /// A measurement's switch: a recording folder's files store their piece records uncompressed
+    static void SetRawPieceRecords(bool on);
+
     bool Failed() const { return _failed.load(); }
     std::string Error() const;
     /// What kind of failure Error() names (TTDWriteFailure::None while none)
@@ -262,6 +273,9 @@ private:
         TTDPartEnd end;
         bool finalize = false;
         uint64_t bytes = 0;
+        /// A folder file's part for the seek index: the offsets are filled in as its records are written
+        bool seekable = false;
+        TTDSeekIndexPart seek;
     };
     bool BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job);
     /// The stream a record of the line being written goes to
@@ -309,6 +323,9 @@ private:
     uint32_t _local = 0;
     uint32_t _linePart = 0;   ///< parts written for the line so far
     bool _lineage = false;    ///< WriteLineage: every line on trunk streams, no write journal (derived, per line)
+    /// A folder file's seek index, built by the writer as the parts go out (the thread that writes: Write)
+    TTDSeekIndex _seekIndex;
+    bool _seekIndexWhole = true;   ///< every part so far gave its records' places
     /// A version's number in the file: on the line being written, else on its nearest ancestor that has it
     bool FindItem(uint32_t storeId, uint32_t& local, uint32_t& item, uint32_t& part) const;
 
@@ -353,6 +370,16 @@ public:
     /// @p upToFrame: only the parts from the file's start to the one holding that frame and one more are read
     static bool ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
                                   std::string& error, uint64_t upToFrame = UINT64_MAX);
+    /// The same for the checkpoints of frames @p fromFrame .. @p toFrame alone, of a file with a seek index and a
+    /// piece table at @p fromFrame: the table's versions (TTDSegmentPieces::table), the versions those checkpoints
+    /// name, and the versions they build on are read, nothing else (TTDSeekIndex). False with the reason, nothing
+    /// held: "no seek index" for a file without one (an unfinished file, a joined one): the caller reads it with
+    /// ReadSegmentPieces
+    /// @p withTable false: no table is read (the caller has the versions before @p fromFrame: a stretch that goes on
+    /// from one in memory)
+    static bool ReadSegmentWindow(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
+                                  std::string& error, uint64_t fromFrame, uint64_t toFrame,
+                                  TTDSegmentWindowScratch& scratch, bool withTable = true);
     static void ReleaseSegmentPieces(TTDPieceStore& store, TTDSegmentPieces& pieces);
 
     /// The copy frame-boundary stream @p stream (the engine's id) took at

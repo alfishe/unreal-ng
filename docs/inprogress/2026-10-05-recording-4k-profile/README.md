@@ -47,6 +47,13 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
 
 ## TODO
 
+- ~~Window recorder: hand ffmpeg the frame at the target size as NV12~~ done 2026-11-23: `transfer` = `picture`
+  (default) / `nv12` on every plane; worth it with the picture drawn at the frame's height (measurements in
+  [POC 054](../../../tools/poc/054-ffmpeg-frame-transport/README.md#the-window-recorders-transfer-switch-2026-11-23)).
+- ~~`transfer nv12`: build the frame in NV12 (no 4K B,G,R,A compose and conversion)~~ done 2026-11-24: the picture
+  converted at its own size and scaled in its planes (`FrameScaler::PackedToYuv` + `PlaneScaler`, bicubic), the
+  writer 1.2-1.8x faster per changed frame on `.238` / `.20`, the stages 2-13x on `.40`
+  ([POC 054](../../../tools/poc/054-ffmpeg-frame-transport/README.md#transfer-nv12-built-in-nv12-2026-11-24)).
 - ~~SIMD for `PackedToNv12`; benchmark `FrameScaler` at 3840x2160 and decide on SIMD / threads~~ done 2026-11-20: NEON
   (arm64) and SSE2 (x86-64) row kernels for luma, per-pixel chroma and the 2x2 chroma blocks, byte-identical to the
   scalar formula (`PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth`). `core-benchmarks
@@ -104,7 +111,9 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   2.4 / 3.1 ms; filling a reused image 2.0 ms against 4.1 fresh (MSVC). Live on Linux (xvfb, stepped 4K libx264,
   5 interleaved rounds of 200 frames): the same decoded frames (framemd5) in both builds, no slower; the stepped
   call runs at the real-time pace either way. Transport to ffmpeg measured apart: POC 054 (the macOS FIFO is the
-  4K limit, a unix socket moves 10x more).
+  4K limit, a unix socket moves 10x more). The window recorder writes to ffmpeg's stdin, an anonymous pipe 2.6x
+  faster than the FIFO on macOS: at the 4K CRT size (2640x2160) 58-131 fps against 115-283 through a socket, with
+  the encoders the limit before either; no socket (2026-11-23, POC 054 "Window recorder").
 - ~~ffmpeg (software and `-c:v` hardware through the pipe) with a fixed profile: the 33 MB 4K frame through the FIFO
   and ffmpeg's RGB conversion of 8.3 M pixels~~ done 2026-11-22 (POC 054). The pipe carries the source picture
   (352x288 RGBA, 0.4 MB) and ffmpeg builds the frame at the target size given explicitly: the colour conversion at
@@ -128,6 +137,37 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   (6 of 6); the new path's sound is one AAC track of the whole recording. Overscan toggled twice mid-recording:
   3 segments, 443 frames, no frame lost. Side fix: `FFmpegProbe::searchPath` looked for `ffmpeg.exe.exe` on Windows,
   ffmpeg on PATH was never found there.
+- ~~The fixed-profile ffmpeg graph: `remap` over the whole 4K frame (~40-60 ms of ffmpeg CPU per frame), the bars
+  padded before 4:2:0~~ done 2026-11-23. swscale's nearest (`neighbor`) takes FrameScaler's source pixel at some
+  factors (7.5x: 352x288 into 4K, 256x192 into 1440p) and is one pixel off at others (3.75x, 4.5x, 5.625x, 11.25x,
+  8.4375x), the same on ffmpeg 8.0.1, 9.0.2 and master: so each segment asks its ffmpeg
+  (`FFmpegPipeEncoder::NeighborIsFrameScaler`: two thin pictures holding their column / row index, cached) and uses
+  `neighbor` where it agrees, `remap` tables of the picture only (not the frame) elsewhere. The bars come after
+  4:2:0 when the picture sits on whole chroma blocks (even size and offsets). Every variant is the same bytes as
+  before (yuv420p md5, 9 source / target pairs, three ffmpeg builds). ffmpeg CPU per frame, the graph alone,
+  3 interleaved rounds:
+
+  | Case | Windows (64 threads) | Linux i7-11850H | macOS M1 Ultra |
+  |:--|--:|--:|--:|
+  | 352x288 -> 4K, `neighbor` instead of `remap` | 41 -> 17 ms | 61 -> 22 ms | |
+  | 256x192 -> 4K, `remap` of the picture | 44 -> 38 ms | 61 -> 52 ms | |
+  | 352x288 -> 1080p, `remap` of the picture | 14 -> 10 ms | 16 -> 13 ms | |
+  | 352x288 -> 4K, bars after 4:2:0 | 16.5 -> 10.7 ms | -17 % | 18.6 -> 13.3 ms |
+
+  The `remap` of the picture costs Windows wall time (1.2 -> 1.5 s per 300 frames, still 200 fps). Live on macOS
+  (windowless unreal-qt, `video/record` libx264, 9 s): 4K 447 frames, 1080p 445, the picture and bars in place.
+- ~~VA-API in `FFmpegPipeEncoder`: never worked~~ fixed 2026-11-23. The encoder chose `h264_vaapi` / `hevc_vaapi`
+  whenever the build listed them (every Ubuntu ffmpeg does) and gave ffmpeg neither the device nor the upload:
+  ffmpeg refused the graph ("Impossible to convert between the formats"), so with acceleration `auto` (the default)
+  every core recording failed on a Linux machine with an Intel driver. Now a trial encode per render node finds the
+  device (none: NVENC / software as before), the frame goes up as NV12 (`format=nv12,hwupload`) and the bars are
+  added on the GPU (`pad_vaapi`, ffmpeg 7.0 and later; before that on the CPU). Tiger Lake, 4K from 352x288, 500
+  frames: 4K frame uploaded 36 ms CPU per frame at 34 fps; the picture uploaded and padded on the GPU 25 % less
+  CPU at ~60 fps; same bytes after `hwdownload`. Live on Linux (windowless unreal-qt, `video/record`, 9 s): 4K
+  `auto` (VA-API, High profile) 444 frames with 10 s of ffmpeg CPU against libx264's 445 frames with 18 s, 1080p
+  `auto` 450 frames; the picture and bars in place. Scaling on the GPU (`scale_vaapi`, the POC 054 plan) was dropped:
+  2.6 ms CPU per frame, but every mode blurs the pixels (no nearest) and the colour drifts (PSNR 15 dB against
+  the CPU frame).
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
@@ -145,6 +185,24 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   the recorder takes the last frame; the screenshot uses `grabFramebuffer()`. The CPU grid is painted with `render()`
   into a reused RGB32 image instead of a new pixmap per tick (16 tiles, 2048x1536 into the 4K profile, three
   interleaved rounds: 8.7-10.3 ms against 10.6-15.2 ms; painting into RGBA8888 directly was 2-2.5x slower, the
-  raster engine's slow path). Open: an asynchronous read (two pixel-pack buffers) would take the 3.5 ms stall off the
-  GUI thread; the CPU grid's cost is the tiles' own painting.
+  raster engine's slow path). The CPU grid's cost is the tiles' own painting.
+- ~~Videowall GL grid: the synchronous `glReadPixels` after each paint~~ done 2026-11-22. `GLFrameReader` queues the
+  copy into a pixel-pack buffer at the paint and maps it at the recorder's tick (`TileGridGL::capturedFrame`), the
+  newest frame, no extra latency. A software renderer (llvmpipe, softpipe, SwiftShader, GDI Generic) and contexts
+  without the buffers (ES 2, GL < 2.1) keep the synchronous read. GUI-thread time per frame (paint + take, median of
+  interleaved rounds; offscreen bench: 16 tiles of 352x288 uploaded and drawn per frame, 50 Hz, the tick 10 ms after
+  the paint), frames byte-identical to the old read on every driver:
+
+  | GPU / driver | 2048x1536 old -> new | 3840x2160 old -> new |
+  |--------------|----------------------|----------------------|
+  | M3 Ultra (idle) | 2.5 -> 0.35 ms | 3.6 -> 1.1 ms |
+  | M1 Ultra (load 160-300) | 11-82 -> 1.1-27 ms (9 of 9 pairs better) | 10-25 -> 6-36 ms (7 of 9 better) |
+  | RTX 4090, Windows | 8.8 -> 1.4 ms | 17.4 -> 3.4 ms |
+  | Intel UHD (TGL), Mesa 26, Wayland | 12.1 -> 2.3 ms | 20.1 -> 5.9 ms |
+  | T1200 (PRIME offload), Linux | 14.9 -> 5.5 ms | 30.9 -> 21.2 ms |
+  | llvmpipe (Mesa 26; Qt's opengl32sw on Windows) | unchanged (synchronous) | unchanged |
+
+  The buffer on Qt's Windows llvmpipe was 4.3 -> 5.0 ms (one more copy in memory), hence the software exclusion.
+  Live wall recording through the wall's menu and dialog (2026-11-23, macOS, `--gpu`, 5 tiles): 403 frames in
+  8 s at 800x600, the picture upright, colours right, AAC sound.
 - Qt toolbar widget offers h264 only (the dialog also h265).

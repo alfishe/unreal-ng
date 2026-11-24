@@ -10,10 +10,11 @@ testdata/ttd/branches/expected.json, testdata/ttd/v2/chunked/chunked.json):
 - the header: flags, UUID, creation time, zstd version, stream table, the session
   tables (regions, device table);
 - every record header in file order, every part end (frames, branch, record
-  offsets, dependencies, extra), the index (part table, stream totals, extra) and
-  the trailer;
+  offsets, dependencies, extra), the index (part table, stream totals, extra; a
+  recording folder's seek index against the records it names) and the trailer;
 - every payload decompressed (Kaitai has no zstd) and parsed with the payload type
-  of its stream, to its last byte: pieces (trunk and branch), checkpoints, events,
+  of its stream, to its last byte: pieces (trunk and branch), piece tables (each
+  against the versions the checkpoints before it give every piece), checkpoints, events,
   configuration, write journal, bus and media journals, frame-boundary streams,
   the branch table, the branch state; holder streams other than 18 are opaque;
 - the session: checkpoint frames, piece versions (with their content CRCs),
@@ -106,7 +107,7 @@ def payload_type(Ttd, sid: int):
         base, branch = 0x0100 + sid - 0x0240, True
     if base == 1:
         return (Ttd.PayloadBranchPieces if branch else Ttd.PayloadPieces), base, branch
-    types = {3: Ttd.PayloadCheckpoints, 5: Ttd.PayloadEvents, 6: Ttd.PayloadConfiguration,
+    types = {2: Ttd.PayloadPieceTables, 3: Ttd.PayloadCheckpoints, 5: Ttd.PayloadEvents, 6: Ttd.PayloadConfiguration,
              7: Ttd.PayloadWriteJournal, 13: Ttd.PayloadPorts, 14: Ttd.PayloadPorts, 15: Ttd.PayloadPorts,
              16: Ttd.PayloadMediaReads, BRANCH_STATE: Ttd.PayloadBranchState}
     if sid == BRANCH_TABLE:
@@ -215,6 +216,7 @@ def check_file(Ttd, KaitaiStream, path: Path, expected: Dict[str, dict]) -> Tupl
         tt[1] += rec.stored_size
         tt[2] += rec.raw_size
     chk.eq("trailer magic", t.trailer.magic, b"TTDX")
+    seek = None
     if index is None:
         chk.problems.append("no index in a finished file")
     else:
@@ -222,7 +224,10 @@ def check_file(Ttd, KaitaiStream, path: Path, expected: Dict[str, dict]) -> Tupl
                [(ends[p.index][0], p.first_frame, p.frame_count, p.branch) for p in ref.parts if p.index in ends])
         chk.eq("index stream totals", {s.id: [s.records, s.stored_bytes, s.raw_bytes] for s in index.streams},
                totals)
-        chk.eq("index extra", index.extra, ref.index_extra)
+        chk.eq("index extra", index._raw_extra, ref.index_extra)
+        seek = index.extra.seek
+        if seek is None and ref.index_extra[:1] == b"S":
+            chk.problems.append("the index extra starts like a seek index and is not parsed as one")
         chk.eq("index offset", t.trailer.index_offset, offset)
 
     # Payloads: each decompressed, chunked twins joined, parsed to its last byte
@@ -255,6 +260,20 @@ def check_file(Ttd, KaitaiStream, path: Path, expected: Dict[str, dict]) -> Tupl
                 pending = None
             continue
         by_part.setdefault(rec.part_index, []).append((rec.stream_id, raw_of(rec), 1))
+
+    # A recording folder's segment file: the seek index against the records it names, the piece tables against the
+    # versions the checkpoints give each piece (numbered from the file's start, per line)
+    seek_parts = {i: sp for i, sp in enumerate(seek.parts)} if seek is not None else {}
+    if seek is not None:
+        chk.eq("seek index: index offset", seek.index_offset, t.trailer.index_offset)
+        chk.eq("seek index: parts", len(seek.parts), len(ref.parts))
+    offsets_of: Dict[int, Dict[int, Tuple[int, int]]] = {}    # part -> trunk stream -> (offset, stored)
+    for off, rec in members:
+        base_sid = rec.stream_id - 0x0200 if 0x0201 <= rec.stream_id <= 0x023F else rec.stream_id
+        offsets_of.setdefault(rec.part_index, {})[base_sid] = (off, rec.stored_size)
+    next_item: Dict[int, int] = {}                             # line -> the next version's number
+    live: Dict[int, Dict[Tuple[int, int], int]] = {}           # line -> (region, piece) -> version number
+    tables_seen = 0
 
     count = {"checkpoints": 0, "versions": 0, "events": 0, 13: 0, 14: 0, 15: 0, 16: 0, "writes": 0}
     frames: List[int] = []
@@ -289,6 +308,38 @@ def check_file(Ttd, KaitaiStream, path: Path, expected: Dict[str, dict]) -> Tupl
         for cp in cps.checkpoints:
             frame += cp.frame_delta.value
             part_frames.append(frame)
+        # Piece tables and the part's place in the seek index
+        if part.extra and part.extra[0] & 1:
+            next_item[part.branch] = 0
+            live[part.branch] = {}
+        first_item = next_item.setdefault(part.branch, 0)
+        now = live.setdefault(part.branch, {})
+        tables = {tb.checkpoint.value: tb for tb in parsed[2].tables} if 2 in parsed else {}
+        for ordinal, cp in enumerate(cps.checkpoints):
+            for rc in cp.regions:
+                for piece in rc.pieces:
+                    now[(rc.region.value, piece.value)] = next_item[part.branch]
+                    next_item[part.branch] += 1
+            if ordinal in tables:
+                tables_seen += 1
+                for tr in tables[ordinal].regions:
+                    chk.eq(f"part {part.index} table at checkpoint {ordinal}, region {tr.region.value}",
+                           [v.value for v in tr.versions_plus_one],
+                           [now.get((tr.region.value, p), -1) + 1 for p in range(tr.piece_count.value)])
+        if part.index in seek_parts:
+            sp = seek_parts[part.index]
+            at = offsets_of.get(part.index, {})
+            table_frames, prev = [], sp.first_frame.value
+            for d in sp.table_frame_deltas:
+                prev += d.value
+                table_frames.append(prev)
+            chk.eq(f"part {part.index} seek entry",
+                   ((sp.pieces_offset.value, sp.pieces_stored.value), (sp.checkpoints_offset.value,
+                    sp.checkpoints_stored.value), (sp.tables_offset.value, sp.tables_stored.value),
+                    sp.first_item.value, sp.items.value, sp.first_frame.value, table_frames),
+                   (at.get(1, (0, 0)), at.get(3, (0, 0)), at.get(2, (0, 0)), first_item,
+                    len(pieces.versions) if pieces else 0, part.first_frame,
+                    [part_frames[o] for o in sorted(tables)]))
         if part.branch == 0:
             frames += part_frames
             crcs += [v.content_crc for v in pieces.versions] if pieces else []
@@ -304,6 +355,9 @@ def check_file(Ttd, KaitaiStream, path: Path, expected: Dict[str, dict]) -> Tupl
             chk.eq(f"part {part.index} create line", create.line.value, part.branch)
             line.update(parent=create.parent.value, fork_frame=create.fork_frame.value, fork_t=create.fork_t.value)
         line["frames"] += part_frames
+
+    if seek is not None and tables_seen == 0:
+        chk.problems.append("a seek index without a piece table")
 
     # The session against the reader's trunk and the C++ expectations
     if not trunk.stopped_at:

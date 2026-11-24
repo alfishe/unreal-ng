@@ -1,6 +1,6 @@
 // POC 054: frames into ffmpeg through a FIFO / a bigger FIFO / a unix socket / TCP loopback. Prints frames per second
 // ingested by `ffmpeg -f rawvideo ... -c copy -f null -`.
-// transport MODE WIDTH HEIGHT BYTES_PER_PIXEL FRAMES   (MODE: fifo | fifobig | unix | tcp)
+// transport MODE WIDTH HEIGHT BYTES_PER_PIXEL FRAMES   (MODE: fifo | fifobig | stdin | unix | tcp)
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
@@ -48,10 +48,11 @@ static void BigBuffers(int s)
 
 int main(int argc, char** argv)
 {
-    if (argc < 6) { std::fprintf(stderr, "transport MODE W H BPP FRAMES\n"); return 2; }
+    if (argc < 6) { std::fprintf(stderr, "transport MODE(fifo|fifobig|stdin|unix|tcp) W H BPP FRAMES\n"); return 2; }
     const std::string mode = argv[1];
     const int w = std::atoi(argv[2]), h = std::atoi(argv[3]), bpp = std::atoi(argv[4]), frames = std::atoi(argv[5]);
-    const char* pixfmt = bpp == 4 ? "rgba" : "nv12";
+    // POC_PIXFMT=bgra: the window recorder's layout (the 4-byte default is rgba)
+    const char* pixfmt = bpp == 4 ? (std::getenv("POC_PIXFMT") ? std::getenv("POC_PIXFMT") : "rgba") : "nv12";
     const size_t frameBytes = static_cast<size_t>(w) * h * (bpp == 4 ? 4 : 3) / (bpp == 4 ? 1 : 2);
     std::vector<uint8_t> frame(frameBytes);
     for (size_t i = 0; i < frameBytes; i++) frame[i] = static_cast<uint8_t>(i * 7);
@@ -108,12 +109,16 @@ int main(int argc, char** argv)
         getsockname(listenFd, reinterpret_cast<sockaddr*>(&a), &len);
         url = "tcp://127.0.0.1:" + std::to_string(ntohs(a.sin_port));
     }
+    else if (mode == "stdin")
+        url = "pipe:0";
     else { std::fprintf(stderr, "unknown mode\n"); return 2; }
 
     const std::string size = std::to_string(w) + "x" + std::to_string(h);
-    std::vector<std::string> words = {"ffmpeg", "-nostdin", "-v", "error", "-probesize", "32", "-analyzeduration", "0", "-f", "rawvideo",
+    // stdin: an anonymous pipe as ffmpeg's standard input, as QProcess hands it (the window recorder)
+    std::vector<std::string> words = {"ffmpeg", "-v", "error", "-probesize", "32", "-analyzeduration", "0", "-f", "rawvideo",
                                       "-pix_fmt", pixfmt, "-s", size, "-r", "50", "-i", url};
     // POC_OUT: the output side, space separated (default: ingest only)
+    if (mode != "stdin") words.insert(words.begin() + 1, "-nostdin");
     const std::string out = std::getenv("POC_OUT") ? std::getenv("POC_OUT") : "-c copy -f null -";
     for (size_t at = 0; at < out.size();)
     {
@@ -125,16 +130,27 @@ int main(int argc, char** argv)
     for (auto& word : words) args.push_back(word.data());
     args.push_back(nullptr);
     pid_t pid;
-    if (posix_spawnp(&pid, "ffmpeg", nullptr, nullptr, args.data(), environ) != 0) { perror("spawn"); return 1; }
-
     int fd = -1;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    int pipeFds[2] = {-1, -1};
+    if (mode == "stdin")
+    {
+        if (pipe(pipeFds) != 0) { perror("pipe"); return 1; }
+        posix_spawn_file_actions_adddup2(&actions, pipeFds[0], 0);
+        posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
+    }
+    if (posix_spawnp(&pid, "ffmpeg", &actions, nullptr, args.data(), environ) != 0) { perror("spawn"); return 1; }
+    posix_spawn_file_actions_destroy(&actions);
+    if (mode == "stdin") { ::close(pipeFds[0]); fd = pipeFds[1]; }
+
     if (listenFd >= 0)
     {
         fd = accept(listenFd, nullptr, nullptr);
         BigBuffers(fd);
         if (mode == "tcp") { int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)); }
     }
-    else
+    else if (fd < 0)
         fd = ::open(base.c_str(), O_WRONLY);  // blocks until ffmpeg opens it
     int granted = 0;
 #ifdef F_SETPIPE_SZ

@@ -1,5 +1,6 @@
 #include "windowrecorder.h"
 
+#include <QByteArrayView>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -34,6 +35,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "osdkeyboard/osdkeyboardwindow.h"
+#include "common/framescaler.h"
 #include "ffmpeg_probe.h"
 #ifdef __APPLE__
 #include "common/encoderconfig.h"
@@ -103,9 +105,10 @@ QByteArray EbmlUint(uint32_t id, uint64_t value)
     return EbmlElement(id, payload);
 }
 
-/// The file's start: one video track of width x height B,G,R,A frames, times in microseconds, the segment's size
+/// The file's start: one video track of width x height frames in `colourSpace` (the FourCC of uncompressed video:
+/// "BGRA", or "NV12": the Y plane, then U,V interleaved at half resolution), times in microseconds, the segment's size
 /// unknown (it is a stream)
-QByteArray MatroskaStreamHeader(int width, int height)
+QByteArray MatroskaStreamHeader(int width, int height, const char* colourSpace)
 {
     const QByteArray ebml = EbmlElement(0x1A45DFA3, EbmlUint(0x4286, 1) + EbmlUint(0x42F7, 1) + EbmlUint(0x42F2, 4) +
                                                         EbmlUint(0x42F3, 8) + EbmlElement(0x4282, "matroska") +
@@ -114,7 +117,7 @@ QByteArray MatroskaStreamHeader(int width, int height)
         EbmlElement(0x1549A966, EbmlUint(0x2AD7B1, 1000) + EbmlElement(0x4D80, "unreal-ng") + EbmlElement(0x5741, "unreal-ng"));
     const QByteArray video = EbmlElement(0xE0, EbmlUint(0xB0, static_cast<uint64_t>(width)) +
                                                    EbmlUint(0xBA, static_cast<uint64_t>(height)) +
-                                                   EbmlElement(0x2EB524, "BGRA"));
+                                                   EbmlElement(0x2EB524, colourSpace));
     const QByteArray track = EbmlElement(0xAE, EbmlUint(0xD7, 1) + EbmlUint(0x73C5, 1) + EbmlUint(0x83, 1) +
                                                    EbmlElement(0x86, "V_UNCOMPRESSED") + video);
     const QByteArray segment = QByteArray::fromHex("18538067") + QByteArray::fromHex("01FFFFFFFFFFFFFF");
@@ -141,11 +144,12 @@ struct HardwareEncoder
     bool lowPower = false;   ///< VA-API: the fixed-function encoder (Intel VDENC): the fast one, and HEVC 4:4:4 only there
 };
 
-HardwareEncoder FfmpegHardwareEncoder(const QString& ffmpeg, bool h265)
+/// `only420`: the frames come as NV12 (transfer nv12): the 4:4:4 ways are not tried
+HardwareEncoder FfmpegHardwareEncoder(const QString& ffmpeg, bool h265, bool only420)
 {
     static std::mutex cacheMutex;
     static std::map<QString, HardwareEncoder> cache;
-    const QString key = ffmpeg + (h265 ? "|h265" : "|h264");
+    const QString key = ffmpeg + (h265 ? "|h265" : "|h264") + (only420 ? "|420" : "");
     {
         std::lock_guard<std::mutex> lock(cacheMutex);
         const auto found = cache.find(key);
@@ -196,7 +200,7 @@ HardwareEncoder FfmpegHardwareEncoder(const QString& ffmpeg, bool h265)
     HardwareEncoder chosen;
     for (const HardwareEncoder& way : ways)
     {
-        if (!FFmpegProbe::isEncoderAvailable(way.name.toStdString(), path))
+        if ((only420 && way.full) || !FFmpegProbe::isEncoderAvailable(way.name.toStdString(), path))
             continue;
         QStringList args{"-v", "error", "-f", "lavfi", "-i", "color=size=256x256:rate=10", "-frames:v", "3"};
         if (!way.device.isEmpty())
@@ -293,8 +297,12 @@ struct WindowRecorder::Writer
     QSize size;
     QRect screenRect, keyboardRect;
     int scale = 1;
+    // transfer nv12: the frame built in NV12 itself (composeNv12), the writer thread's alone
+    FrameScaler::PlaneScaler lumaScaler, chromaScaler;
+    std::vector<uint8_t> pictureYuv;  ///< the picture's Y, U, V planes at its own size (scaled from)
     MuxJob mux;
     bool native = false;   ///< the macOS hardware encoder writes the file itself (no ffmpeg, no muxing)
+    bool nv12 = false;     ///< transfer nv12: the composed frame goes to ffmpeg as NV12 (else B,G,R,A)
     double fps = 50;
     int nativeQuality = 8;
     std::string nativeCodec = "h264";
@@ -489,6 +497,178 @@ struct WindowRecorder::Writer
             painter.drawImage(keyboardRect.topLeft(), job.keyboard);
     }
 
+    /// The composed B,G,R,A frame as NV12 into `out` (width x height Y bytes, then the U,V rows): FrameScaler's
+    /// conversion (BT.601 limited, the arithmetic of the NVENC converter), in bands of rows on a few threads as
+    /// composeFast does. The frame's sides are even (the layout makes them so)
+    static void ToNv12(const QImage& frame, uint8_t* out)
+    {
+        const int width = frame.width();
+        const int height = frame.height();
+        const size_t stride = static_cast<size_t>(frame.bytesPerLine());
+        uint8_t* yPlane = out;
+        uint8_t* uvPlane = out + static_cast<size_t>(width) * height;
+        constexpr int kParts = 4;
+        const auto band = [&](int part)
+        {
+            const int first = height / 2 * part / kParts * 2;
+            const int last = height / 2 * (part + 1) / kParts * 2;
+            FrameScaler::PackedToNv12(frame.constBits() + static_cast<size_t>(first) * stride, stride,
+                                      static_cast<uint32_t>(width), static_cast<uint32_t>(last - first),
+                                      yPlane + static_cast<size_t>(first) * width, static_cast<size_t>(width),
+                                      uvPlane + static_cast<size_t>(first / 2) * width, static_cast<size_t>(width), true);
+        };
+        std::thread helpers[kParts - 1];
+        for (int part = 1; part < kParts; ++part)
+            helpers[part - 1] = std::thread(band, part);
+        band(0);
+        for (std::thread& helper : helpers)
+            helper.join();
+    }
+
+    /// One NV12 frame of transfer nv12 built in place: the background is written once per buffer, then only the
+    /// picture's rectangle every frame and the keyboard's when it changes
+    struct Nv12Frame
+    {
+        std::vector<uint8_t> bytes;  ///< Y plane (width x height), then the U,V pairs (width x height / 2)
+        bool background = false;     ///< the background is in
+        QImage keyboard;             ///< the keyboard drawn into it (a shared copy: compared with the next)
+    };
+
+    static bool Bgra(QImage::Format format)
+    {
+        return format == QImage::Format_RGB32 || format == QImage::Format_ARGB32 ||
+               format == QImage::Format_ARGB32_Premultiplied;
+    }
+
+    static bool Even(const QRect& rect)
+    {
+        return ((rect.x() | rect.y() | rect.width() | rect.height()) & 1) == 0;
+    }
+
+    /// Same pixels: the same image, or equal bytes
+    static bool SameImage(const QImage& a, const QImage& b)
+    {
+        if (a.isNull() || b.isNull())
+            return a.isNull() == b.isNull();
+        return a.size() == b.size() && a.format() == b.format() && a.bytesPerLine() == b.bytesPerLine() &&
+               (a.cacheKey() == b.cacheKey() ||
+                std::memcmp(a.constBits(), b.constBits(), static_cast<size_t>(a.sizeInBytes())) == 0);
+    }
+
+    /// Whether composeNv12 takes this job: even rectangles (NV12's 2x2 chroma blocks), a 32-bit picture no larger
+    /// than its place (a smaller one is scaled up; Qt's area averaging stays for the rare one to scale down)
+    bool canComposeNv12(const Job& job) const
+    {
+        const QImage& picture = job.picture;
+        const QImage::Format format = picture.format();
+        if (scale != 1 || !(Bgra(format) || format == QImage::Format_RGBA8888) || picture.width() < 4 ||
+            picture.height() < 4 || picture.width() > screenRect.width() || picture.height() > screenRect.height() ||
+            !Even(screenRect) || !QRect(QPoint(0, 0), size).contains(screenRect))
+            return false;
+        return job.keyboard.isNull() || (Even(keyboardRect) && QRect(QPoint(0, 0), size).contains(keyboardRect));
+    }
+
+    /// The frame of transfer nv12 straight in NV12, no B,G,R,A frame: the picture converted at its own size and
+    /// scaled in its planes (Y at the place's size, U,V at half: a third of the samples of a 4K B,G,R,A frame), a
+    /// picture of its place's size converted into it. The layout's rectangles are even (canComposeNv12)
+    void composeNv12(Nv12Frame& out, const Job& job)
+    {
+        const int width = size.width();
+        const int height = size.height();
+        const size_t ySize = static_cast<size_t>(width) * height;
+        uint8_t* yPlane;
+        uint8_t* uvPlane;
+        if (out.bytes.size() != ySize * 3 / 2 || (job.keyboard.isNull() && !out.keyboard.isNull()))
+            out.background = false;
+        if (!out.background)
+        {
+            out.bytes.resize(ySize * 3 / 2);
+            // The background's Y and U,V: PackedToNv12 of a 2x2 block of it
+            const uint32_t argb = kBackground.rgb();
+            const uint8_t pixel[4] = {static_cast<uint8_t>(argb), static_cast<uint8_t>(argb >> 8),
+                                      static_cast<uint8_t>(argb >> 16), 255};
+            uint8_t block[16], y[4], uv[2];
+            for (int i = 0; i < 4; ++i)
+                std::memcpy(block + i * 4, pixel, 4);
+            FrameScaler::PackedToNv12(block, 8, 2, 2, y, 2, uv, 2, true);
+            std::memset(out.bytes.data(), y[0], ySize);
+            for (size_t at = ySize; at < out.bytes.size(); at += 2)
+            {
+                out.bytes[at] = uv[0];
+                out.bytes[at + 1] = uv[1];
+            }
+            out.background = true;
+            out.keyboard = QImage();
+        }
+        yPlane = out.bytes.data();
+        uvPlane = yPlane + ySize;
+        const size_t stride = static_cast<size_t>(width);
+
+        const QImage& picture = job.picture;
+        const bool bgra = Bgra(picture.format());
+        const uint32_t pw = static_cast<uint32_t>(picture.width());
+        const uint32_t ph = static_cast<uint32_t>(picture.height());
+        const uint32_t rw = static_cast<uint32_t>(screenRect.width());
+        const uint32_t rh = static_cast<uint32_t>(screenRect.height());
+        uint8_t* yAt = yPlane + static_cast<size_t>(screenRect.y()) * stride + screenRect.x();
+        uint8_t* uvAt = uvPlane + static_cast<size_t>(screenRect.y() / 2) * stride + screenRect.x();
+        const size_t srcStride = static_cast<size_t>(picture.bytesPerLine());
+        constexpr int kParts = 4;
+        std::function<void(int)> band;
+        if (pw == rw && ph == rh)
+        {
+            band = [&](int part)
+            {
+                const uint32_t first = rh / 2 * part / kParts * 2;
+                const uint32_t last = rh / 2 * (part + 1) / kParts * 2;
+                FrameScaler::PackedToNv12(picture.constBits() + first * srcStride, srcStride, rw, last - first,
+                                          yAt + first * stride, stride, uvAt + first / 2 * stride, stride, bgra);
+            };
+        }
+        else
+        {
+            // Converted at its own size (a few hundred thousand pixels), then each plane scaled: Y to the place,
+            // U and V to half of it, written as NV12's pairs
+            const size_t planeSize = static_cast<size_t>(pw) * ph;
+            pictureYuv.resize(planeSize * 3);
+            FrameScaler::PackedToYuv(picture.constBits(), srcStride, pw, ph, bgra, pictureYuv.data(),
+                                     pictureYuv.data() + planeSize, pictureYuv.data() + planeSize * 2, pw);
+            lumaScaler.Prepare(pw, ph, rw, rh);
+            chromaScaler.Prepare(pw, ph, rw / 2, rh / 2);
+            // By value: the band runs after this block (planeSize is its own)
+            const uint8_t* planes = pictureYuv.data();
+            band = [this, planes, planeSize, pw, rh, yAt, uvAt, stride](int part)
+            {
+                lumaScaler.Rows(planes, pw, yAt, stride, rh * part / kParts, rh * (part + 1) / kParts);
+                chromaScaler.RowsInterleaved(planes + planeSize, planes + planeSize * 2, pw, uvAt, stride,
+                                             rh / 2 * part / kParts, rh / 2 * (part + 1) / kParts);
+            };
+        }
+        std::thread helpers[kParts - 1];
+        for (int part = 1; part < kParts; ++part)
+            helpers[part - 1] = std::thread(band, part);
+        band(0);
+        for (std::thread& helper : helpers)
+            helper.join();
+
+        // The keyboard over the background, as QPainter draws it (its corners are transparent), when it changed
+        if (!job.keyboard.isNull() && !SameImage(job.keyboard, out.keyboard))
+        {
+            QImage drawn(keyboardRect.size(), QImage::Format_ARGB32_Premultiplied);
+            drawn.fill(kBackground);
+            {
+                QPainter painter(&drawn);
+                painter.drawImage(QPoint(0, 0), job.keyboard);
+            }
+            FrameScaler::PackedToNv12(drawn.constBits(), static_cast<size_t>(drawn.bytesPerLine()),
+                                      static_cast<uint32_t>(drawn.width()), static_cast<uint32_t>(drawn.height()),
+                                      yPlane + static_cast<size_t>(keyboardRect.y()) * stride + keyboardRect.x(), stride,
+                                      uvPlane + static_cast<size_t>(keyboardRect.y() / 2) * stride + keyboardRect.x(),
+                                      stride, true);
+            out.keyboard = job.keyboard;
+        }
+    }
+
 #ifdef __APPLE__
     /// The macOS hardware encoder (AVAssetWriter / VideoToolbox) writes picture and sound into one file itself. The
     /// picture goes straight into the encoder's own pixel buffer; a picture is held until the next one's time, so
@@ -628,7 +808,7 @@ struct WindowRecorder::Writer
         if (!failure.empty())
             failed = true;
         else
-            process.write(MatroskaStreamHeader(size.width(), size.height()));
+            process.write(MatroskaStreamHeader(size.width(), size.height(), nv12 ? "NV12" : "BGRA"));
         ready = true;  // a failed start is told by `failed`
         encoderReadyUs = std::max<int64_t>(1, sinceCreatedUs());  // after `ready`: > 0 tells a recorded step it may run
 
@@ -637,8 +817,13 @@ struct WindowRecorder::Writer
         // Two frame buffers, reused: one is composed into, the other holds the last picture sent (filling a fresh 4K
         // QImage took 4.1 ms on Windows, a reused one 2.0; the same on Linux and macOS). lastSent points at one of them
         QImage frames[2];
+        std::vector<uint8_t> converted[2];  // transfer nv12: the frame of the same index as NV12
+        Nv12Frame nv12Frames[2];            // transfer nv12 built in NV12 itself (composeNv12)
+        bool lastDirect = false;            // the last frame sent was built by composeNv12 (lastSent is a stand-in)
+        QImage lastPicture, lastKeyboard;   // its picture and keyboard (compared with the next)
         int composing = 0;
-        const QImage* lastSent = nullptr;
+        const QImage* lastSent = nullptr;   // the composed frame last sent (compared with the next one)
+        QByteArrayView lastSentBytes;       // its bytes as ffmpeg got them (the frame's, or its NV12)
         uint64_t lastSentFrame = 0;
         const uint64_t resendFrames = std::max<uint64_t>(1, static_cast<uint64_t>(fps / 4));
         // The sound queued behind this picture goes to ffmpeg ahead of it, and again while it waits (see
@@ -665,10 +850,10 @@ struct WindowRecorder::Writer
         // and ffmpeg's pace is the pace. Wait in short slices, the sound flowing meanwhile, until the whole frame is
         // in the pipe. A slow ffmpeg keeps taking bytes; one that took nothing for 15 s is stuck (the sound it waits
         // for is fed here, so that is not a lack of it): the recording fails instead of hanging
-        auto sendFrame = [&](const QImage& frame, uint64_t frameIndex) {
+        auto sendFrame = [&](const QImage* frame, QByteArrayView bytes, uint64_t frameIndex) {
             const uint64_t timeUs = static_cast<uint64_t>(std::llround(static_cast<double>(frameIndex) * 1e6 / fps));
-            process.write(MatroskaFrameHeader(timeUs, frame.sizeInBytes()));
-            process.write(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
+            process.write(MatroskaFrameHeader(timeUs, bytes.size()));
+            process.write(bytes.data(), bytes.size());
             int stalledMs = 0;
             bool taken = false;
             while (process.state() == QProcess::Running && stalledMs < 15000)
@@ -685,7 +870,8 @@ struct WindowRecorder::Writer
             }
             if (!taken || process.state() != QProcess::Running)
                 fail("ffmpeg stopped taking frames: " + process.errorString().toStdString());
-            lastSent = &frame;
+            lastSent = frame;
+            lastSentBytes = bytes;
             lastSentFrame = frameIndex;
         };
 
@@ -727,16 +913,49 @@ struct WindowRecorder::Writer
             // B,G,R,A bytes on a little-endian host: the stream's order. Premultiplied, QPainter's own format (the
             // keyboard drawn into plain ARGB32 took most of a frame's time at 1080p); the frame is opaque, so the bytes
             // are the same
+            if (nv12 && canComposeNv12(job))
+            {
+                // Compared by the picture and the keyboard (a few hundred KB, not the 4K frame), built only when sent
+                const bool same = lastSent && lastDirect && job.frameStart < lastSentFrame + resendFrames &&
+                                  SameImage(job.picture, lastPicture) && SameImage(job.keyboard, lastKeyboard);
+                if (feedSound() && !same)
+                {
+                    Nv12Frame& out = nv12Frames[composing];
+                    composeNv12(out, job);
+                    lastPicture = job.picture;
+                    lastKeyboard = job.keyboard;
+                    sendFrame(&frames[composing],
+                              QByteArrayView(reinterpret_cast<const char*>(out.bytes.data()),
+                                             static_cast<qsizetype>(out.bytes.size())),
+                              job.frameStart);
+                    lastDirect = true;
+                    composing ^= 1;
+                }
+                framesDone = job.frameStart + job.repeat;
+                if (!pumpSound())
+                    fail("ffmpeg stopped taking the sound");
+                pictureHandled(pictureStartUs);
+                continue;
+            }
             QImage& frame = frames[composing];
             if (frame.size() != size)
                 frame = QImage(size, QImage::Format_ARGB32_Premultiplied);
             composeInto(frame, job);
-            const bool same = lastSent && job.frameStart < lastSentFrame + resendFrames &&
+            const bool same = lastSent && !lastDirect && job.frameStart < lastSentFrame + resendFrames &&
                               std::memcmp(frame.constBits(), lastSent->constBits(),
                                           static_cast<size_t>(frame.sizeInBytes())) == 0;
             if (feedSound() && !same)
             {
-                sendFrame(frame, job.frameStart);
+                QByteArrayView bytes(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
+                if (nv12)
+                {
+                    std::vector<uint8_t>& out = converted[composing];
+                    out.resize(static_cast<size_t>(size.width()) * size.height() * 3 / 2);
+                    ToNv12(frame, out.data());
+                    bytes = QByteArrayView(reinterpret_cast<const char*>(out.data()), static_cast<qsizetype>(out.size()));
+                }
+                sendFrame(&frame, bytes, job.frameStart);
+                lastDirect = false;
                 composing ^= 1;  // the frame sent is kept; the next one goes into the other buffer
             }
             framesDone = job.frameStart + job.repeat;
@@ -746,7 +965,7 @@ struct WindowRecorder::Writer
         }
         // The last picture once more at the last frame's time: the picture lasts to the end of the sound
         if (failure.empty() && lastSent && mux.frames > lastSentFrame + 1)
-            sendFrame(*lastSent, mux.frames - 1);
+            sendFrame(lastSent, lastSentBytes, mux.frames - 1);
 
         sound.close();
         std::string result = failure;
@@ -1039,6 +1258,14 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         _screenRect = QRect(QPoint(0, 0), picture);
         _keyboardRect = QRect(0, picture.height(), width, height);
     }
+    if (request.transfer == "nv12")
+    {
+        // NV12 colours 2x2 blocks: the frame is built in place only on even rectangles (a pixel off the centre)
+        const auto even = [](const QRect& rect)
+        { return rect.isEmpty() ? rect : QRect(rect.x() & ~1, rect.y() & ~1, rect.width() & ~1, rect.height() & ~1); };
+        _screenRect = even(_screenRect);
+        _keyboardRect = even(_keyboardRect);
+    }
 
     // The machine's frame rate, exact (3500000/71680 on a Pentagon): the sound's clock is the same frames
     const unsigned tstatesPerFrame = context->config.frame;
@@ -1084,11 +1311,15 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // size, scaled to the frame and bordered by ffmpeg. A 1080p frame is 8 MB, a pipe takes about a hundred MB a
     // second on a loaded machine: the frames themselves did not fit through, the native picture does (four to
     // twelve times less). The keyboard is drawn at its size there, so it is scaled with the picture
+    // With transfer nv12 the frame is composed here at the file's size and goes as NV12: ffmpeg only encodes (a GPU
+    // encoder takes NV12 as it is; 4K BGRA was too much for ffmpeg in front of Intel's encoder, POC 054)
+    const bool nv12 = !native && request.transfer == "nv12";
+    _transfer = native ? "native" : (nv12 ? "nv12" : "picture");
     QSize pipeSize = _size;
     QRect pipeScreen = _screenRect;
     QRect pipeKeyboard = _keyboardRect;
     QString pipeFilter;
-    if (!native)
+    if (!native && !nv12)
     {
         QRect content = _keyboardRect.isEmpty() ? _screenRect : _screenRect.united(_keyboardRect);
         content = content.intersected(QRect(QPoint(0, 0), _size));
@@ -1137,14 +1368,18 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
              << "-map" << "0:v:0" << "-map" << "1:a:0";
     const bool h265 = request.codec == "h265";
     const HardwareEncoder hardware =
-        request.codec != "prores" && request.hardware ? FfmpegHardwareEncoder(ffmpeg, h265) : HardwareEncoder{};
+        request.codec != "prores" && request.hardware ? FfmpegHardwareEncoder(ffmpeg, h265, nv12) : HardwareEncoder{};
     if (!hardware.device.isEmpty())
     {
         // VA-API encodes from the card's memory: the picture goes up after the scaling, in the encoder's layout
+        // (NV12 frames go up as they come)
         args << "-vaapi_device" << hardware.device;
         pipeFilter += QString(pipeFilter.isEmpty() ? "" : ",") +
-                      (hardware.full ? "format=vuyx,hwupload" : "format=nv12,hwupload");
+                      (nv12 ? "hwupload" : hardware.full ? "format=vuyx,hwupload" : "format=nv12,hwupload");
     }
+    // The pixel format the encoder gets: NV12 frames stay 4:2:0 (NVENC and QSV take NV12 itself, x264 / x265 their
+    // planar 4:2:0); else 4:4:4 where the encoder has it
+    const char* const pixFmt420 = nv12 ? "nv12" : "yuv420p";
     if (!pipeFilter.isEmpty())
         args << "-vf" << pipeFilter;
     args << FfmpegVfrArgs(ffmpeg);
@@ -1157,17 +1392,19 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         if (hardware.name.contains("videotoolbox"))
         {
             // Measured on an M1 Ultra: hevc_videotoolbox takes 4:2:2 10-bit at best (rext, even when 4:4:4 is asked),
-            // h264 4:2:0 only. Full 4:4:4 in hardware is ProRes 4444 alone
-            if (h265)
+            // h264 4:2:0 only. Full 4:4:4 in hardware is ProRes 4444 alone. NV12 frames go in as they are
+            if (h265 && !nv12)
                 args << "-profile:v" << "rext" << "-q:v" << "85" << "-pix_fmt" << "yuv422p10le" << "-tag:v" << "hvc1";
+            else if (h265)
+                args << "-q:v" << "85" << "-pix_fmt" << "nv12" << "-tag:v" << "hvc1";
             else
-                args << "-q:v" << "85" << "-pix_fmt" << "yuv420p";
+                args << "-q:v" << "85" << "-pix_fmt" << pixFmt420;
         }
         else if (hardware.name.contains("nvenc"))
         {
             // Constant QP, as VA-API: hevc_nvenc keeps no -cq in its VBR (measured on a T1200, driver 595, ffmpeg
             // 8.0: 0.2 MB a minute, 30.6 dB on CRT frames at cq 14 and 18 alike; constqp 18 46.1 dB, h264 45.2)
-            args << "-rc" << "constqp" << "-qp" << "18" << "-pix_fmt" << (hardware.full ? "yuv444p" : "yuv420p");
+            args << "-rc" << "constqp" << "-qp" << "18" << "-pix_fmt" << (hardware.full ? "yuv444p" : pixFmt420);
         }
         else if (hardware.name.contains("vaapi"))
         {
@@ -1179,18 +1416,20 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
             args << "-global_quality" << "18" << "-pix_fmt" << "nv12";
         else  // amf
             args << "-quality" << "quality" << "-rc" << "cqp" << "-qp_i" << "18" << "-qp_p" << "18" << "-pix_fmt"
-                 << "yuv420p";
+                 << pixFmt420;
     }
     else
     {
         // Software: x264 / x265 4:4:4. Presets measured at 1080p (M1 Ultra, loaded): x264 veryfast 33 fps, ultrafast 42; x265 veryfast 3.4,
         // ultrafast 7.6. Above the native picture the fastest preset; x265 always (far from real time either way)
         const bool large = static_cast<qint64>(_size.width()) * _size.height() > 1000000;
+        // NV12 frames carry 4:2:0 colour: encoded as 4:2:0 (4:4:4 would only repeat the chroma)
+        const char* const pixFmt = nv12 ? "yuv420p" : "yuv444p";
         if (request.codec == "h265")
-            args << "-c:v" << "libx265" << "-preset" << "ultrafast" << "-crf" << "14" << "-pix_fmt" << "yuv444p";
+            args << "-c:v" << "libx265" << "-preset" << "ultrafast" << "-crf" << "14" << "-pix_fmt" << pixFmt;
         else
             args << "-c:v" << "libx264" << "-preset" << (large ? "ultrafast" : "veryfast") << "-crf" << "12"
-                 << "-pix_fmt" << "yuv444p";
+                 << "-pix_fmt" << pixFmt;
     }
     if (!fifo.isEmpty())
     {
@@ -1217,6 +1456,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     writer->mux.sampleRate = _sampleRate;
     writer->fifoPath = fifo;
     writer->native = native;
+    writer->nv12 = nv12;
     writer->fps = _fps;
     writer->nativeCodec = request.codec;
     writer->audioRate = _sampleRate;
@@ -1408,6 +1648,7 @@ void WindowRecorder::fill(WindowRecordingStatus& out)
     out.height = static_cast<uint16_t>(std::max(0, _size.height()));
     out.fps = _fps;
     out.audio = _audio;
+    out.transfer = _transfer;
     out.framesPending = _writer ? (_frames > _writer->framesDone ? _frames - _writer->framesDone : 0) : 0;
     out.sampleRate = _sampleRate;
     out.audioSamples = _audioSamples;

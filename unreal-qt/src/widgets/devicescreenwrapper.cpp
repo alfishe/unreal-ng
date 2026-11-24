@@ -4,6 +4,9 @@
 #include "hud/qt/hudoverlay.h"
 
 #include <QDebug>
+#include <QGuiApplication>
+#include <QTimer>
+#include <memory>
 #include <QKeyEvent>
 #include <QPixmap>
 #include <cstring>
@@ -14,6 +17,34 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/mousecapturecontroller.h"
+
+#ifdef Q_OS_MACOS
+/// macOS shows the native menu bar of the focus window, and Qt installs it only when a window that has one takes the
+/// focus. An embedded window (QWidget::createWindowContainer) has none: when it is the first to take the focus (a
+/// launch that leaves the app inactive, then a click into the picture) the menu bar stays Qt's empty default until the
+/// top-level window is focused. Hand the focus to the top-level once and back. The same helper is in
+/// `unreal-videowall/src/videowall/TileGridWrapper.cpp`.
+static void ShowMenuBarOnFirstFocus(QWidget* container, QWindow* embedded)
+{
+    auto shown = std::make_shared<bool>(false);
+    auto onFocus = [container, embedded, shown](QWindow* focus) {
+        QWindow* top = container->window()->windowHandle();
+        if (*shown || !focus || !top)
+            return;
+        if (focus == top)
+        {
+            *shown = true;
+            return;
+        }
+        if (focus != embedded)
+            return;
+        *shown = true;
+        top->requestActivate();
+        QTimer::singleShot(0, embedded, [embedded]() { embedded->requestActivate(); });
+    };
+    QObject::connect(qGuiApp, &QGuiApplication::focusWindowChanged, container, onFocus);
+}
+#endif
 
 DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent)
     : DeviceScreenWrapper(parent, DeviceScreenGLWindow::probeGPUAcceleration())
@@ -33,6 +64,9 @@ DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent, bool useGPU)
             _widget->setMinimumSize(352, 288);
             _widget->setFocusPolicy(Qt::StrongFocus);
             _widget->installEventFilter(this);
+#ifdef Q_OS_MACOS
+            ShowMenuBarOnFirstFocus(_widget, _gpuWindow);
+#endif
             _useGPU = true;
 
             // Forward drag/drop signals from GPU window
