@@ -242,8 +242,82 @@ guard). Now it ends as the cheap interpolation at the refresh's rate with no lat
 device the effects have; the step's log line: 4 of 20 pictures a refresh late on the CPU, 12 of 20 on the GPU.
 The live MCP scripts on .238: 40 of 41 (`test_gs_debugger.py` fails as it did before these changes).
 
-Not in it: a game profile's cadence modes (`video.smooth` cadence / carry) still draw by `MotionField`; the video
-wall (its tiles have no timed frames yet: per tile, not for the whole wall's picture).
+What a tile of the video wall would cost (2026-11-23): one `SmoothMotion` engine fed a trace at 50 frames a
+second and asked for a picture at every refresh of 60 Hz, one Steam Deck thread, no pool:
+
+| Trace | Mode | `Push`, a frame, p50 / p95 | Plan + Draw, a refresh, p50 / p95 | Of one thread |
+|-------|------|----------------------------|------------------------------------|---------------|
+| Across the Edge | `interpolate-lite` | 6.27 / 16.23 ms | 1.35 / 1.44 ms | 43.6 % |
+| | `blend` | 6.27 / 16.58 ms | 0.50 / 0.57 ms | 39.6 % |
+| action | `interpolate-lite` | 0.22 / 0.29 ms | 0.72 / 0.97 ms | 5.1 % |
+| Aleste | `interpolate-lite` | 0.20 / 0.23 ms | 0.74 / 0.85 ms | 4.8 % |
+| scroll | `interpolate-lite` | 0.21 / 0.23 ms | 0.58 / 0.64 ms | 4.1 % |
+| action / Aleste / scroll | `blend` | 0.19 / 0.23 ms | 0.25 / 0.27 ms | 2.3 % |
+
+A game is 4-5 % of a thread a tile: about 20 tiles a Deck thread. A full-screen demo is 44 %, and nearly all of
+it is `Push`: the flicker search over five frames, which runs whatever the mode (the blend pays it too) and takes
+16 ms at p95, a frame's whole 20 ms on a core a third of the Deck's. The cheap interpolation moved the cost there:
+before a wall of tiles, and before a low-end machine is called served, the flicker search needs the same bit-plane
+form.
+
+Done the same day. The time was `MovesBy` (the flicker's motion look-alike test: 288 shifts a block, a pixel loop
+each). Now the 24 x 24 pixels round a block are bit planes of the colours met there (up to 16; more: the pixel
+loop) and a shift is a few word operations; the same answers, so the same pictures (the sums of every picture of
+the Across the Edge and action traces, blend and interpolate-lite, before and after). One Deck thread:
+
+| Trace | `Push` before, p50 / p95 | After | A tile, `interpolate-lite`, of one thread: before | After |
+|-------|--------------------------|-------|---------------------------------------------------|-------|
+| Across the Edge | 6.27 / 16.23 ms | 2.07 / 3.49 ms | 43.6 % | 17.5 % |
+| action | 0.22 / 0.29 ms | 0.27 / 0.35 ms | 5.1 % | 6.5 % |
+| Aleste | 0.20 / 0.23 ms | 0.27 / 0.37 ms | 4.8 % | 7.2 % |
+| scroll | 0.21 / 0.23 ms | 0.28 / 0.36 ms | 4.1 % | 5.5 % |
+
+The games' rows are the Deck's run-to-run spread (section 1.7's quarter), not a cost of the change: their frames
+have no block that asks `MovesBy`. A memory of the answer two frames back (flicker repeats) was tried first and
+kept: it halves the calls where a picture flickers.
+
+### 1.9 The video wall (2026-11-24)
+
+Smooth motion per tile, in the GPU grid (`TileGridGL`); the software grid draws every frame as it is.
+
+- `smoothmotion::Tile` (`core/src/emulator/video/smoothtile.{h,cpp}`): one stream of frames among many. Pulls the
+  machine's frames in order with their times (`Screen::CopyNextFrame`), gives the picture for a refresh, steps down
+  when its pictures take too long. No threads of its own (`SmoothMotion::SetOwnThreads(false)`): the wall spreads
+  the tiles over one pool, half the cores and at most 8.
+- The wall draws a refresh while a tile is between frames and rests otherwise.
+- Two guards. A tile's own (`SmoothGuard` on its share of the refresh: the threads' time over the tiles that
+  draw). The wall's: all the tiles together took over 3/4 of a refresh in 4 refreshes of 20, so the costliest
+  quarter steps one level down: the full interpolation, the cheap one, the blend, the frames as they are.
+- Set by View > Smooth Motion, `tilegrid.smooth_motion {mode}` on the GUI plane, `UNREAL_SMOOTH_MOTION` at start.
+  State `smooth_motion` and `smooth {...}` on `main/tilegrid`.
+- Off is the default and the wall as it was: no tile engine, no pool, no state timer, a redraw only on a frame's
+  notification. Switching back to off drops all of it.
+
+Measured on the Steam Deck (gamescope, GL, a 60 Hz panel, 4 cores / 8 threads; Pentagon 128K tiles, the wall's
+process, one core = 100 %; `tools/verification/videowall/src/videowall_smooth.py`):
+
+| Tiles, content | Mode | Tiles in the mode at the end | A refresh's work | Wall CPU |
+|---|---|---|---|---|
+| 12, a game | off | - | - | 148-153 % |
+| | blend | 12 | 4.5 ms | 203 % |
+| | interpolate-lite | 12 | 6.4 ms | 244 % |
+| | interpolate | all 12 stepped down to the cheap one by their own guards | 6.3 ms | 257 % |
+| 24, a game | off | - | - | 317-333 % |
+| | blend | 24 | 9.2 ms | 424 % |
+| | interpolate-lite | 23, one on frames as they are (the wall's guard, 2 steps) | 8.3 ms | 441 % |
+| 12, Across the Edge (the flicker search's worst content) | off | - | - | 166-177 % |
+| | blend | 3, 9 on frames as they are (the wall's guard, 3 steps) | 12.0 ms | 237 % |
+| | interpolate-lite | 5, 7 on frames as they are | 6.2 ms | 261 % |
+
+- A wall of games fits the cheap interpolation on every tile at 12 tiles and nearly at 24; on the worst content the
+  wall's guard takes tiles down to frames as they are and the rest stay smooth. What is left there is the flicker
+  search of `Push` (1.8), paid in every mode.
+- Off costs nothing. Interleaved runs of the wall before this work and after it, 12 tiles of Across the Edge, 20 s
+  each: 172.1 / 167.8 / 166.1 % before, 164.7 / 171.3 / 165.7 % after, the same thread count; the state reports no
+  engine. The single window with smooth motion off: the engine is given no frame (`frames`, `renders` 0 a second).
+
+Not in it: a game profile's cadence modes (`video.smooth` cadence / carry) still draw by `MotionField`; the software
+grid of the wall; a default (the wall starts with smooth motion off).
 
 ## 2. Platform by mode, from the code (before the steps)
 
