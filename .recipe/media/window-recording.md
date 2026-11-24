@@ -259,4 +259,10 @@ ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_fr
   file's dts rise strictly (`ffprobe -show_entries packet=dts`); the check re-encodes into a coarser time base (two
   emulated frames per tick there), so two frames one emulated frame apart round to one tick. Check with
   `ffmpeg -i file.mp4 -enc_time_base demux -f null -` (or `-c copy -f null -`): no warning.
+- **Colors are tagged, players show them as the window does**: every file (native writer, ffmpeg, NVENC, the core
+  recorder) is BT.709 limited range with the BT.709 matrix and primaries and the sRGB transfer
+  (`ffprobe -show_entries stream=color_space,color_range,color_primaries,color_transfer` gives
+  `bt709,tv,bt709,iec61966-2-1`). Before 2026-11-24 ffmpeg files were untagged BT.601 (players decode HD as 709:
+  washed-out, shifted colors) and the native ones carried the BT.709 transfer (macOS shows mid-tones lighter). Check a
+  build with `tools/verification/recording/colors.py`.
 - **The file is the window's picture**: resize the window (or use `picture_height`) before starting, not during.

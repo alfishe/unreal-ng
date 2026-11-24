@@ -197,11 +197,13 @@ bool VideoToolboxEncoder::initAssetWriter(const std::string& filename, const Enc
             AVVideoAllowFrameReorderingKey: @NO  // No B-frames: low latency, simple PTS
         };
 
-        // Explicit BT.709 tagging — untagged output leaves players guessing
-        // the color matrix, which shows up as pale/shifted colors
+        // Explicit tagging - untagged output leaves players guessing the color matrix (pale / shifted colors).
+        // BT.709 matrix and primaries; the sRGB transfer, as the picture is an sRGB one: a BT.709 transfer tag makes
+        // macOS (QuickTime, Safari, previews) show it lighter, mid-greys up to 11 levels
+        // (tools/verification/recording/colors.py)
         NSDictionary* colorProps = @{
             AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+            AVVideoTransferFunctionKey: (__bridge NSString*)kCVImageBufferTransferFunction_sRGB,
             AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
         };
 

@@ -448,11 +448,11 @@ void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* t
     for (int i = 0; i < seeks; ++i)
     {
         // Resident: the head segment. Evicted: the segments before, in turn (the cache holds one)
-        const uint64_t near = head.firstFrame + 1 + rng() % (end.frame - 2 - head.firstFrame);
+        const uint64_t nearFrame = head.firstFrame + 1 + rng() % (end.frame - 2 - head.firstFrame);
         const size_t k = static_cast<size_t>(i) % (segments.size() - 1);
         const uint64_t span = engine.SegmentFrameSpan(0, k);
-        const uint64_t far = segments[k].firstFrame + 1 + rng() % (span - 2);
-        for (const auto& [frame, out] : {std::pair{near, &resident}, std::pair{far, &evicted}})
+        const uint64_t farFrame = segments[k].firstFrame + 1 + rng() % (span - 2);
+        for (const auto& [frame, out] : {std::pair{nearFrame, &resident}, std::pair{farFrame, &evicted}})
         {
             const Clock::time_point s0 = Clock::now();
             ASSERT_TRUE(ttd->SeekTo({frame, 0})) << "frame " << frame;
@@ -468,12 +468,13 @@ void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* t
             const size_t other = (k + 1) % (segments.size() - 1);
             ttd->SetSegmentWindowReads(false);
             ASSERT_TRUE(ttd->SeekTo({segments[other].firstFrame + 1, 0}));
-            ASSERT_TRUE(ttd->SeekTo({far, 0}));
-            EXPECT_EQ(MachineHash(context), stretch) << "from the file's start: frame " << far << " of segment " << k;
+            ASSERT_TRUE(ttd->SeekTo({farFrame, 0}));
+            EXPECT_EQ(MachineHash(context), stretch)
+                << "from the file's start: frame " << farFrame << " of segment " << k;
             ASSERT_TRUE(ttd->SeekTo({segments[k].firstFrame + span - 1, 0}));
             EXPECT_TRUE(segments[k].Whole());
-            ASSERT_TRUE(ttd->SeekTo({far, 0}));
-            EXPECT_EQ(MachineHash(context), stretch) << "whole: frame " << far << " of segment " << k;
+            ASSERT_TRUE(ttd->SeekTo({farFrame, 0}));
+            EXPECT_EQ(MachineHash(context), stretch) << "whole: frame " << farFrame << " of segment " << k;
             ttd->SetSegmentWindowReads(true);
         }
     }
@@ -683,7 +684,7 @@ void MeasureSide(const std::string& side, const std::string& ab, int round, cons
         struct Kind
         {
             const char* name;
-            bool far;
+            bool whole;
             bool mid;
             bool step = false;   ///< frame by frame back from a random frame of the window (stepping, scrubbing)
             bool evicted = false;   ///< only frames whose segment left memory (far: the whole session, the window too)
@@ -706,7 +707,7 @@ void MeasureSide(const std::string& side, const std::string& ab, int round, cons
             const uint64_t windowLoads0 = ttd->ReadBackWindowLoads();
             for (int i = 0; i < samples; ++i)
             {
-                const uint64_t lo = k.far ? first : windowLo;
+                const uint64_t lo = k.whole ? first : windowLo;
                 const uint64_t hi = k.evicted ? evictedHi : end.frame;
                 const uint64_t frame = k.step && i > 0 && previous > lo ? previous - 1
                                                                         : lo + rng() % std::max<uint64_t>(1, hi - lo);
@@ -777,7 +778,7 @@ void MeasureSide(const std::string& side, const std::string& ab, int round, cons
             const Clock::time_point l0 = Clock::now();
             while (Ms(l0, Clock::now()) < seconds * 1000.0)
             {
-                const uint64_t lo = kind->far ? first : windowLo;
+                const uint64_t lo = kind->whole ? first : windowLo;
                 const uint64_t hi = kind->evicted ? evictedHi : end.frame;
                 const uint64_t frame = lo + rng() % std::max<uint64_t>(1, hi - lo);
                 if (kindName == "timeline")
