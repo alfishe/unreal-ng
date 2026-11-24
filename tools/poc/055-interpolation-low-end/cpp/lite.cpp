@@ -15,6 +15,7 @@
 
 #include "bitfield.h"
 #include "litefield.h"
+#include "emulator/video/smoothlite.h"
 #include "planes.h"
 
 #include <cstring>
@@ -762,6 +763,17 @@ int main(int argc, char** argv)
                        }});
     }
     more.push_back({"lite14", lite14});
+    // `core`: smoothmotion::LiteFlow, the form adopted into the core (lite19). The same bytes as lite19
+    auto core = std::make_shared<LiteFlow>();
+    all.push_back({"core", [core](int64_t t, uint32_t* out) {
+                       int k, w;
+                       DueAt(t, k, w);
+                       Picture a = PictureAt(k), b = PictureAt(k + 1);
+                       a.id = static_cast<uint64_t>(Clamped(k)) + 1;
+                       b.id = static_cast<uint64_t>(Clamped(k + 1)) + 1;
+                       if (!core->Compose(a, b, w, out))
+                           std::memcpy(out, a.pixels, Pixels() * sizeof(uint32_t));
+                   }});
     std::vector<Filter> filters;
     const std::string list = std::getenv("FILTERS_ONLY") ? std::getenv("FILTERS_ONLY") : "off,blend,layers,lite";
     for (size_t start = 0; start <= list.size();)

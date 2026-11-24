@@ -1234,8 +1234,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unsupported [VIDEO] DisplayRate='%s', using keep", line);
 		config.displayRate = static_cast<uint8_t>(rate);
 	}
-	// Smooth motion on a fixed display: off (default) | blend | interpolate | auto (interpolate when the display neither
-	// runs VRR nor a rate fitting the machine's: View > Video Synchronization). Unknown values warn and keep off
+	// Smooth motion on a fixed display: off (default) | blend | interpolate | interpolate-lite (the cheap interpolation,
+	// smoothlite.h: a slow machine) | auto (interpolate when the display neither runs VRR nor a rate fitting the
+	// machine's: View > Video Synchronization). Unknown values warn and keep off
 	{
 		config.smoothMotion = static_cast<uint8_t>(smoothmotion::Mode::Off);
 		line[0] = '\0';

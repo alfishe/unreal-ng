@@ -1,6 +1,7 @@
 #include "smoothmotion.h"
 
 #include "smoothlayers.h"
+#include "smoothlite.h"
 
 #include <algorithm>
 #include <atomic>
@@ -61,6 +62,8 @@ const char* ModeName(Mode mode)
             return "interpolate";
         case Mode::Auto:
             return "auto";
+        case Mode::InterpolateLite:
+            return "interpolate-lite";
         case Mode::Off:
             break;
     }
@@ -71,7 +74,7 @@ bool ParseMode(const char* text, Mode& mode)
 {
     if (!text)
         return false;
-    for (Mode m : {Mode::Off, Mode::Blend, Mode::Interpolate, Mode::Auto})
+    for (Mode m : {Mode::Off, Mode::Blend, Mode::Interpolate, Mode::Auto, Mode::InterpolateLite})
         if (SameName(text, ModeName(m)))
         {
             mode = m;
@@ -452,6 +455,8 @@ void SmoothMotion::Reset()
     _periods.clear();
     _fields[0] = {};
     _fields[1] = {};
+    if (_lite)
+        _lite->Reset();
 }
 
 void SmoothMotion::BuildMask()
@@ -699,7 +704,7 @@ SmoothMotion::Result SmoothMotion::Plan(int64_t tNs) const
     r.kind = Kind::Frame;
     r.serial = r.from = r.to = a.serial;
 
-    if (_mode == Mode::Interpolate && _hasGame)
+    if ((_mode == Mode::Interpolate || _mode == Mode::InterpolateLite) && _hasGame)
     {
         if (_game.mode == GameMode::Off)
             return r;
@@ -788,12 +793,24 @@ bool SmoothMotion::Draw(const Result& r, uint32_t* out)
             break;
         case Kind::Interpolate:
         {
-            // The frame before a for the still and steady checks (a itself when it is the first)
-            const Stored* p = a;
-            for (size_t i = 1; i < _frames.size(); i++)
-                if (&_frames[i] == a)
-                    p = &_frames[i - 1];
-            ComposeLayers(*p, *a, *b, r.weight, out);
+            bool drawn = false;
+            if (Lite())
+            {
+                if (!_lite)
+                    _lite = std::make_unique<LiteFlow>();
+                drawn = _lite->Compose(pa, pb, r.weight, out);
+                if (drawn)
+                    _stats.lite++;
+            }
+            if (!drawn)
+            {
+                // The frame before a for the still and steady checks (a itself when it is the first)
+                const Stored* p = a;
+                for (size_t i = 1; i < _frames.size(); i++)
+                    if (&_frames[i] == a)
+                        p = &_frames[i - 1];
+                ComposeLayers(*p, *a, *b, r.weight, out);
+            }
             // Flickering pixels: the frame due
             for (size_t q = 0; q < a->smooth.size(); q++)
                 if (!a->smooth[q])

@@ -26,6 +26,9 @@ enum class Mode : uint8_t
     Auto,         // View > Video Synchronization: Interpolate while the display shows the frames unevenly (no VRR, no
                   // rate fitting the machine's: PickVideoSync), the frame due otherwise. A front end's choice: the
                   // SmoothMotion engine itself runs Off, Blend or Interpolate
+    InterpolateLite,  // Interpolate drawn by LiteFlow (smoothlite.h): a machine LayerFlow is too slow on. About 1 / 30
+                      // of its time on one thread at 1.3 times its error; pictures of over 256 colours fall back to
+                      // LayerFlow
 };
 
 /// A game profile's `video.smooth` (mapping-and-profiles.md section 7.7); only with Mode::Interpolate
@@ -194,6 +197,7 @@ public:
 };
 
 class LayerFlow;
+class LiteFlow;
 
 /// The presenter's side: every timed frame once, in order (Screen::CopyNextFrame), and per refresh the picture for
 /// its time. Keeps copies of the recent frames and of the game's last pictures; caches the motion fields per pair.
@@ -253,11 +257,16 @@ public:
         uint64_t estimates = 0;     ///< motion fields estimated
         uint64_t onDevice = 0;      ///< steps the Device ran (the rest on the CPU)
         uint64_t heldFlicker = 0;   ///< Blend / Interpolate renders that kept flickering pixels as the frame due
+        uint64_t lite = 0;          ///< Interpolate renders LiteFlow drew
     };
 
     /// Auto runs as Interpolate (the front end decides when it runs)
     void SetMode(Mode mode);
     Mode GetMode() const { return _mode; }
+    /// Interpolate's pictures by LiteFlow while the mode stays Interpolate: the front end's step down when LayerFlow's
+    /// pictures come late (Mode::InterpolateLite is the same, chosen outright)
+    void SetLite(bool on) { _stepLite = on; }
+    bool Lite() const { return _stepLite || _mode == Mode::InterpolateLite; }
     /// nullptr: the CPU. Not owned; the caller keeps its context current while it renders
     void SetDevice(Device* device) { _device = device; }
     Device* GetDevice() const { return _device; }
@@ -336,6 +345,8 @@ private:
     CachedField _fields[2];
     MotionField _still;  ///< every block matched still: the field a -> a when no frame comes before a
     std::unique_ptr<LayerFlow> _layers;
+    std::unique_ptr<LiteFlow> _lite;  ///< made on the first picture that asks for it
+    bool _stepLite = false;
     /// The fields and the layers' passes on several cores (the pictures are the same: every split part writes only
     /// its own pixels), made on the first picture that needs them
     static constexpr size_t kMaxThreads = 8;

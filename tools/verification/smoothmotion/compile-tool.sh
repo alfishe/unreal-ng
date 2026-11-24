@@ -13,6 +13,7 @@ shift 2
 CORE=(
     core/src/emulator/video/smoothmotion.cpp
     core/src/emulator/video/smoothlayers.cpp
+    core/src/emulator/video/smoothlite.cpp
     core/src/common/threadpool.cpp
     core/src/common/threadhelper.cpp
 )
