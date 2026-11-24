@@ -87,6 +87,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /history/{device}/config",
     "POST /history/{device}/pause",
     "POST /history/{device}/resume",
+    "POST /jobs",
     "POST /listing/load",
     "POST /listing/run_to_line",
     "POST /listing/step_line",
