@@ -139,6 +139,23 @@ class Emulator:
         wait, host_pc, dropped}], last_seq (pass as since), counters, text. available=False without
         a NeoGS"""
 
+    def gs_analysis(self, action: str = "status", cpu: str = "", decay: int = -1) -> dict:
+        """The card CPU analysis switch (classic GS, the ZX-MultiSound's GS with cpu="ms", NeoGS):
+        status / on / off (keep the data) / reset (clear) / release (free); decay the heat lost per
+        frame. Off by default, free while off. ValueError when not available (lightweight GS)"""
+
+    def gs_coverage(self, cpu: str = "", space: str = "", page: int = -1, ranges: int = 16,
+                    raw: bool = False) -> dict:
+        """Code / data log per physical byte: spaces[{space, totals, page_list[{page, exec, code,
+        read, write, jump, sub, dac, written, code_ranges, data_ranges, dac_ranges}]}],
+        handlers{executed, not_executed}, never_written{rows[{address, page, offset, pc, frame,
+        kind}]}, text"""
+
+    def gs_heatmap(self, cpu: str = "", channels: str = "", recent: str = "", frames: int = 50,
+                   cells: int = 4096, format: str = "base64") -> dict:
+        """The card RAM heat map: channels[{name, accesses, hot_cells, max, data}], recent{frames,
+        channels[{name, ranges[{start, end, length, page, offset}]}]} (default dac), text"""
+
     def audio_covox_state(self) -> dict:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""

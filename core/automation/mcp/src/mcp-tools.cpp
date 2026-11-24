@@ -26,6 +26,7 @@
 #include "mcp-gui.h"
 #include "mcp-streamdeck.h"
 #include "mcp-audio.h"
+#include "mcp-gsanalysis.h"
 #include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -9554,6 +9555,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterJobs(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
+    // gs_analysis: the GS card CPU coverage / heat map (docs/inprogress/2026-09-27-gs-debugger, P5.6)
+    RegisterGSAnalysis(*registry);
     // vdac4_state: the TS-Conf VDAC4 board (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2)
     RegisterVdac4State(*registry);
 

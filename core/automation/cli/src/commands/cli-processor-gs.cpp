@@ -19,6 +19,7 @@
 #include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/chips/gs/gsslotstats.h"
 #include "cli-processor.h"
+#include "cli-processor-gs-analysis.h"
 #include <emulator/state/devicestate.h>
 
 namespace
@@ -79,6 +80,12 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
     }
 
     EmulatorContext* context = emulator->GetContext();
+    // The card CPU analysis (cli-processor-gs-analysis.cpp): its own card lookup by --cpu
+    if (std::string reply; HandleGSAnalysisCommand(context, args, reply))
+    {
+        session.SendResponse(reply);
+        return;
+    }
     SoundManager* soundManager = context ? context->pSoundManager : nullptr;
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
     // `stats` and `firmware` read another card by its CPU (--cpu ms: the ZX-MultiSound's GS) without a GS slot card
@@ -229,6 +236,7 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs firmware [object] [--profile <id>] [--cpu gs|ms] - the firmware objects through the profile (gsfirmwareobjects.h, M1-M3)
 ///   gs firmware profiles              - the firmware profiles known (built-in and files)
 ///   gs zxdma [last] [--since <seq>]   - the NeoGS ZX-DMA trace (gszxdmatrace.h, N6): the bytes the host moved
+///   gs analysis|coverage|heatmap ...  - the card CPU analysis (cli-processor-gs-analysis.h, P5.6): CDL, heat map
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
 ///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - the card in the GS slot replaced (slots gs: a restart)
@@ -263,7 +271,8 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         "read_status|read_data|send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>]|"
         "conversation [id]|stats [section] [--since <id>] [--fresh] [--cpu gs|ms]|stats reset [--cpu gs|ms]|"
         "firmware [object] [--profile <id>] [--cpu gs|ms]|"
-        "firmware profiles|zxdma [last] [--since <seq>]|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
+        "firmware profiles|zxdma [last] [--since <seq>]|analysis [status|on|off|reset|release] [--cpu gs|ms]|"
+        "coverage [--space rom|ram] [--page N] [--cpu gs|ms]|heatmap [--recent dac] [--frames N] [--cpu gs|ms]|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
         "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
     if (args.empty())

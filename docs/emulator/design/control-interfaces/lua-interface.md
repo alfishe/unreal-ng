@@ -542,6 +542,9 @@ ay0 = audio_ay_state(0)     -- one chip: registers, latched_register (+ name), s
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
 gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
+an  = gs_analysis("on", {cpu = "gs", decay = 8})  -- card CPU coverage / heat map: status|on|off|reset|release (off by default, free while off)
+cov = gs_coverage({space = "ram", page = 3})     -- code/data log per physical page: spaces[i].page_list, handlers.executed, never_written.rows {address, page, offset, pc}
+hm  = gs_heatmap({recent = "dac", frames = 50, format = "none"})  -- RAM heat per channel (fetch, read, write, dac, sd_dma, zx_dma); recent.channels[i].ranges
 zx  = gs_zxdma(256, 0)      -- NeoGS ZX-DMA trace (while gsporttrace captures): rows[i] = {seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}; last_seq for the next 'since'
 cv  = audio_covox_state()   -- Covox / SoundDrive: fitment, ports, shared_with_beta128, channels[4]
 zm  = multisound_state()   -- ZX-MultiSound: options, shadowed built-ins, CPLD, ym.chips[2] {ssg, fm}, saa, gs, dac, midi

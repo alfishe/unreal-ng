@@ -62,6 +62,8 @@ public:
         virtual bool zxHostMemoryBus() const { return true; }
         /// A host write reached the card's RAM at `offset`. For a debugger
         virtual void zxRamWritten(uint32_t offset, uint8_t value) { (void)offset; (void)value; }
+        /// The module read the RAM byte at `offset` for the host (the card analysis's ZX-DMA channel)
+        virtual void zxRamRead(uint32_t offset) { (void)offset; }
     };
 
     // Timing, card clocks (neogs-zxdma-design.md §2.4; estimates from the Verilog)

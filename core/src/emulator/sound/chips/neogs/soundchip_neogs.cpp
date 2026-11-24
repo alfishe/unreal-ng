@@ -393,6 +393,8 @@ void SoundChip_NeoGS::coldBoot()
 {
     _activityCounters.resetsCold++;
     Z80CpuReset(_cpu);
+    if (_analysis) [[unlikely]]
+        _analysis->CardReset();
 
     // The crystal dividers start from zero at configuration
     _phaseOrigin = _runner.now();
@@ -445,6 +447,8 @@ void SoundChip_NeoGS::fpgaReset()
     Z80CpuReset(_cpu);
     if (_debugHooks) [[unlikely]]
         _debugHooks->onEvent(GSCardEvent::Reset, 0, 0);
+    if (_analysis) [[unlikely]]
+        _analysis->CardReset();
     _mem.resetRegisters();
     writeGscfg0(GSCFG0_RESET);
     _ticksPerCycle = _nextTicksPerCycle;
@@ -1152,6 +1156,8 @@ void SoundChip_NeoGS::zxLateStart(int64_t units)
 
 void SoundChip_NeoGS::dmaRamWritten(uint32_t offset, uint32_t length)
 {
+    if (_analysis) [[unlikely]]
+        _analysis->BusMaster(GSCardAnalysis::SdDma, offset, length, true);
     if (!_debugHooks) [[likely]]
         return;
     const uint8_t* ram = _mem.ram();
@@ -1166,6 +1172,8 @@ void SoundChip_NeoGS::dmaRamWritten(uint32_t offset, uint32_t length)
 
 void SoundChip_NeoGS::zxRamWritten(uint32_t offset, uint8_t value)
 {
+    if (_analysis) [[unlikely]]
+        _analysis->BusMaster(GSCardAnalysis::ZxDma, offset, 1, true);
     if (_debugHooks) [[unlikely]]
         _debugHooks->onBusMasterWrite(NeoGSDma::ZX, static_cast<uint8_t>(offset / NeoGSMemory::PAGE_SIZE),
                                       static_cast<uint16_t>(offset % NeoGSMemory::PAGE_SIZE), value);
@@ -1707,17 +1715,65 @@ bool SoundChip_NeoGS::setDebugHooks(IGSDebugHooks* hooks)
     if (!_cpu)
         return false;
     _debugHooks = hooks;
-    if (hooks)
+    bindBus();
+    return true;
+}
+
+void SoundChip_NeoGS::bindBus()
+{
+    if (_debugHooks)
     {
         Z80CpuSetMemoryBus(_cpu, &SoundChip_NeoGS::memReadDebugCb, this, &SoundChip_NeoGS::memWriteDebugCb, this);
         Z80CpuSetPortBus(_cpu, &SoundChip_NeoGS::portReadDebugCb, this, &SoundChip_NeoGS::portWriteDebugCb, this);
+        return;
     }
+    if (_analysis)
+        Z80CpuSetMemoryBus(_cpu, &SoundChip_NeoGS::memReadAnalysisCb, this, &SoundChip_NeoGS::memWriteAnalysisCb, this);
     else
-    {
         Z80CpuSetMemoryBus(_cpu, &SoundChip_NeoGS::memReadCb, this, &SoundChip_NeoGS::memWriteCb, this);
-        Z80CpuSetPortBus(_cpu, &SoundChip_NeoGS::portReadCb, this, &SoundChip_NeoGS::portWriteCb, this);
-    }
-    return true;
+    Z80CpuSetPortBus(_cpu, &SoundChip_NeoGS::portReadCb, this, &SoundChip_NeoGS::portWriteCb, this);
+}
+
+// Analysis bus (gscardanalysis.h): the plain access, then the mark on the physical byte the window maps (flash or RAM)
+uint8_t SoundChip_NeoGS::memReadAnalysisCb(Z80CPU* cpu, uint16_t addr, int m1State, void* userData)
+{
+    const uint8_t value = memReadCb(cpu, addr, m1State, userData);
+    static_cast<SoundChip_NeoGS*>(userData)->analysisRead(cpu, addr, value, m1State);
+    return value;
+}
+
+void SoundChip_NeoGS::memWriteAnalysisCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData)
+{
+    auto* self = static_cast<SoundChip_NeoGS*>(userData);
+    // Where the byte goes is decided before the write (a flash command may re-point the windows)
+    const int window = addr >> 14;
+    const bool flash = self->_mem.isFlash(window);
+    const bool landed = !flash && self->_mem.ramWritable(window);
+    const uint32_t offset = self->_mem.physical(addr);
+    memWriteCb(cpu, addr, value, userData);
+    self->_analysis->CpuWrite(flash ? GSCardAnalysis::Rom : GSCardAnalysis::Ram, offset, landed);
+}
+
+void SoundChip_NeoGS::analysisRead(Z80CPU* cpu, uint16_t addr, uint8_t value, int m1State)
+{
+    const GSCardAnalysis::Space space = _mem.isFlash(addr >> 14) ? GSCardAnalysis::Rom : GSCardAnalysis::Ram;
+    const uint32_t offset = _mem.physical(addr);
+    _analysis->CpuRead(space, offset, addr, value, m1State, cpu);
+    if ((addr & 0xE000) == 0x6000)
+        _analysis->DacRead(space, offset);
+}
+
+void SoundChip_NeoGS::analysisWrite(uint16_t addr)
+{
+    const int window = addr >> 14;
+    const bool flash = _mem.isFlash(window);
+    _analysis->CpuWrite(flash ? GSCardAnalysis::Rom : GSCardAnalysis::Ram, _mem.physical(addr),
+                        !flash && _mem.ramWritable(window));
+}
+
+void SoundChip_NeoGS::analysisIdle(uint16_t head)
+{
+    _analysis->IdleLoop(_mem.isFlash(head >> 14) ? GSCardAnalysis::Rom : GSCardAnalysis::Ram, _mem.physical(head));
 }
 
 // Debug bus (gsdebughooks.h): the plain access, then the hooks with the instruction's PC. Opcode and operand fetches
@@ -1725,15 +1781,21 @@ bool SoundChip_NeoGS::setDebugHooks(IGSDebugHooks* hooks)
 uint8_t SoundChip_NeoGS::memReadDebugCb(Z80CPU* cpu, uint16_t addr, int m1State, void* userData)
 {
     const uint8_t value = memReadCb(cpu, addr, m1State, userData);
+    auto* self = static_cast<SoundChip_NeoGS*>(userData);
+    if (self->_analysis) [[unlikely]]
+        self->analysisRead(cpu, addr, value, m1State);
     if (m1State)
         return value;
-    return static_cast<SoundChip_NeoGS*>(userData)->_debugHooks->onMemoryRead(Z80CpuInstructionPc(cpu), addr, value);
+    return self->_debugHooks->onMemoryRead(Z80CpuInstructionPc(cpu), addr, value);
 }
 
 void SoundChip_NeoGS::memWriteDebugCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData)
 {
+    auto* self = static_cast<SoundChip_NeoGS*>(userData);
+    if (self->_analysis) [[unlikely]]
+        self->analysisWrite(addr);  // before: a flash command may re-point the windows
     memWriteCb(cpu, addr, value, userData);
-    static_cast<SoundChip_NeoGS*>(userData)->_debugHooks->onMemoryWrite(Z80CpuInstructionPc(cpu), addr, value);
+    self->_debugHooks->onMemoryWrite(Z80CpuInstructionPc(cpu), addr, value);
 }
 
 uint8_t SoundChip_NeoGS::portReadDebugCb(Z80CPU* cpu, uint16_t port, void* userData)

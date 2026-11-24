@@ -43,6 +43,7 @@ set(SOURCES
     src/commands/cli-processor-rzx.cpp
     src/commands/cli-processor-state.cpp
     src/commands/cli-processor-gs.cpp
+    src/commands/cli-processor-gs-analysis.cpp
     src/commands/cli-processor-rtc.cpp
     src/commands/cli-processor-romflash.cpp
     src/commands/cli-processor-isa.cpp
