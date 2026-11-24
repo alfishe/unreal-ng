@@ -1,7 +1,7 @@
 # Recipe: frame presenter and smooth motion (present policy, display rate, the present report)
 
 Goal: from automation, choose how the unreal-qt window brings frames to the screen (VRR or the refresh grid), switch
-smooth motion (`off`, `blend`, `interpolate`, `auto`) and the display rate switch, read what the presenter did
+smooth motion (`off`, `blend`, `interpolate`, `interpolate-lite`, `auto`) and the display rate switch, read what the presenter did
 (presents, late ones, timing error, the GPU time per pass) and be told when the presenter's setup changes.
 
 Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-presenter/README.md) (sections 4 and
@@ -19,7 +19,7 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
 
   | Field | Words | What |
   |:--|:--|:--|
-  | `smooth_motion` | `off`, `blend`, `interpolate`, `auto` | the picture between two frames on a fixed display: the frame due, a mix of the two, the moving layers drawn at the refresh's time, or interpolate only while the display has neither VRR nor a fitting rate. VRR shows each frame as it is whatever this says |
+  | `smooth_motion` | `off`, `blend`, `interpolate`, `interpolate-lite`, `auto` | the picture between two frames on a fixed display: the frame due, a mix of the two, the moving layers drawn at the refresh's time, the same by the cheap interpolation (a slow machine: about 1 / 30 of the time on one CPU thread, pictures of at most 256 colours), or interpolate only while the display has neither VRR nor a fitting rate. VRR shows each frame as it is whatever this says |
   | `effects_device` | `gpu`, `cpu` | where smooth motion runs; the same bits either way |
   | `renderer` | `gl`, `vulkan` (one of `renderers`) | what the GPU screen draws with (the window's, kept across sessions); `renderer_active` says what draws, `present.presenter` is `vulkan` on its swapchain |
   | `present_policy` | `auto`, `vrr`, `vsync` | native presenter (Metal, DXGI): each frame at its own time, or on the refresh grid |
@@ -37,7 +37,7 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `low_latency` (the frame on screen shown at once), `timed_at` (`screen`; `paint` on the software screen: the window's paints of new frames against their time, not the screen; `""`: no times), `presented`, `shown`,
   `dropped`, `late`, `beat` {frames, off}, `lead_ms`, `error_ms` {p50, p99, max}, `sound_offset_ms`, `gpu_wait_ms`,
   `gpu_ms` {`smooth`, `picture`: {p50, max, longest, measured}}, `smooth` {mode in effect, device, game, frames, pictures, renders,
-  blended, interpolated, motion_fields, on_device, held_flicker, too_slow, behind, starved}, `display` {state, reason, hz, original_hz,
+  blended, interpolated, motion_fields, on_device, held_flicker, lite, stepped_down, too_slow, behind, starved}, `display` {state, reason, hz, original_hz,
   machine_hz}. The counters cover the native presenter's last 600 presents; `gl-timed` has screen times only where GLX
   has `GLX_OML_sync_control` (X11, XWayland on KDE, gamescope); the plain `gl` path has none (they stay 0); the
   `software` screen gives its paints instead (`timed_at` `paint`: new frames painted, the ones skipped, paint time

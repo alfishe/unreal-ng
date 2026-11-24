@@ -622,9 +622,11 @@ void VideoSyncWindow::refresh()
             tr("%1 on the %2%3%4")
                 .arg(QString::fromStdString(p.smooth), QString::fromStdString(p.smoothDevice).toUpper(),
                      p.game ? tr(", the game's cadence") : QString(),
-                     p.smoothTooSlow ? tr(": the interpolation's pictures came a refresh late on this machine, "
-                                          "blended instead")
-                                     : QString()));
+                     p.smoothTooSlow       ? tr(": the interpolation's pictures came a refresh late on this "
+                                                "machine, blended instead")
+                     : p.smoothSteppedDown ? tr(": the interpolation's pictures came a refresh late on this "
+                                                "machine, the cheap interpolation instead")
+                                           : QString()));
         if (rateDue && _lastNs == 0)
         {
             for (const char* key : {"frames", "pictures", "interpolated", "blended", "motion_fields", "held"})

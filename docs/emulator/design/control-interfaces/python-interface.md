@@ -2129,7 +2129,7 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
                                      #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
                                      #   'exponential'), 'blending_decay' (0.1..0.9), 'smooth_motion' ('off' /
-                                     #   'blend' / 'interpolate' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
+                                     #   'blend' / 'interpolate' / 'interpolate-lite' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
                                      #   'present_policy' ('auto' / 'vrr' / 'vsync'), 'display_rate' ('keep' /
                                      #   'match'), 'lip_sync_offset_ms'
                                      #   (-200..200), 'present' {'presenter', 'vrr', 'vrr_support': {'state', 'reason'}, 'sync': {'mode', 'reason'}, 'clock', 'timing': {'delay_clamped', 'max_delay_ms', 'clamped_frames', 'early', 'carried', 'cuts', 'carry_ms'}, 'late', 'beat': {'frames', 'off'}, 'lead_ms', 'error_ms', 'sound_offset_ms': {'p50', 'p99'}, 'gpu_wait_ms', 'gpu_ms': {'smooth', 'smooth_cpu', 'picture': {'p50', 'max', 'longest', 'measured'}}, 'smooth': {'mode',

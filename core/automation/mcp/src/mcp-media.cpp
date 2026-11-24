@@ -309,9 +309,14 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     std::to_string(smooth.get("held_flicker", 0).asUInt64()) + " with flicker held, " +
                     std::to_string(smooth.get("starved", 0).asUInt64()) + " frames without a next one, " +
                     std::to_string(smooth.get("behind", 0).asUInt64()) + " refreshes behind the frame due" +
+                    (smooth.get("lite", 0).asUInt64()
+                         ? ", " + std::to_string(smooth.get("lite", 0).asUInt64()) + " by the cheap interpolation"
+                         : std::string()) +
                     (smooth.get("too_slow", false).asBool()
                          ? " (the interpolation is too slow on this machine: blended instead)"
-                         : "");
+                         : smooth.get("stepped_down", false).asBool()
+                               ? " (the interpolation is too slow on this machine: the cheap one instead)"
+                               : "");
     }
     // The words the setters take: an agent may see only this text
     for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures", "osd_keyboard_styles"})
@@ -538,7 +543,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "crt (bool), crt_profile (one of the window's crt_profiles: "
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
-        "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display; "
+        "smooth_motion (off, blend, interpolate, interpolate-lite - the cheap interpolation for a slow machine: the "
+        "shown instance's picture between two frames on a fixed display; "
         "auto: View > Video Synchronization, interpolate only when the display has neither VRR nor a rate fitting the "
         "machine's), "
         "effects_device (gpu, cpu), present_policy (auto, vrr, vsync: how the native presenter shows the frames), "

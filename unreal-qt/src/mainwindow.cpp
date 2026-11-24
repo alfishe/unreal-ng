@@ -223,7 +223,7 @@ ScreenFrames TimedFrameSource(Screen* screen, EmulatorContext* context)
     source.next = [screen, context](uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
         return context && screen->CopyNextFrame(afterSerial, dst, dstSize, info, false);
     };
-    if (context && context->config.smoothMotion <= static_cast<uint8_t>(smoothmotion::Mode::Auto))
+    if (context && context->config.smoothMotion <= static_cast<uint8_t>(smoothmotion::Mode::InterpolateLite))
         source.smooth = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
     source.onCpu = context && context->config.effectsOnCpu;
     if (context && context->config.presentPolicy <= static_cast<uint8_t>(PresentPolicy::Vsync))

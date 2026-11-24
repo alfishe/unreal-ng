@@ -262,7 +262,7 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         smoothmotion::Mode mode = smoothmotion::Mode::Off;
         if (!smoothmotion::ParseMode(value.c_str(), mode))
         {
-            error = "'smooth_motion' takes off, blend, interpolate or auto, not '" + value + "'";
+            error = "'smooth_motion' takes off, blend, interpolate, interpolate-lite or auto, not '" + value + "'";
             return false;
         }
         change.smoothMotion = smoothmotion::ModeName(mode);
@@ -487,7 +487,7 @@ inline Result Set(const WindowDisplayChange& change)
 /// clock, low_latency, timed_at, timing {delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms}, presented, shown,
 /// dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms {p50, p99}, gpu_wait_ms
 /// {p50, max}, gpu_ms {smooth, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures,
-/// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
+/// renders, blended, interpolated, motion_fields, on_device, held_flicker, lite, stepped_down, too_slow, behind, starved}, display {state, reason, hz, original_hz,
 /// machine_hz}
 inline StateNode PresentReport(const WindowPresentStats& p)
 {
@@ -566,6 +566,8 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     smooth["motion_fields"] = p.motionFields;
     smooth["on_device"] = p.onDevice;
     smooth["held_flicker"] = p.heldFlicker;
+    smooth["lite"] = p.lite;
+    smooth["stepped_down"] = p.smoothSteppedDown;
     smooth["too_slow"] = p.smoothTooSlow;
     smooth["behind"] = p.smoothBehind;
     smooth["starved"] = p.smoothStarved;

@@ -30,8 +30,8 @@
         field("emulator", "string", "The emulator the window shows, \"\" when none");
         field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
         field("smooth_motion", "string",
-              "The shown instance's [VIDEO] SmoothMotion: off, blend, interpolate or auto (the picture between two "
-              "frames on a fixed display; auto: View > Video Synchronization, present.sync says the step in effect)");
+              "The shown instance's [VIDEO] SmoothMotion: off, blend, interpolate, interpolate-lite (the cheap "
+              "interpolation for a slow machine) or auto (the picture between two frames on a fixed display; auto: View > Video Synchronization, present.sync says the step in effect)");
         field("effects_device", "string", "The shown instance's [VIDEO] EffectsDevice: gpu or cpu (the same bits)");
         field("present_policy", "string", "The shown instance's [VIDEO] PresentPolicy: auto, vrr or vsync");
         field("display_rate", "string", "The shown instance's [VIDEO] DisplayRate: keep or match");
@@ -92,8 +92,9 @@
             pf("smooth", "object",
                "{mode (in effect: off with temporal blending or without timed frames), device (gpu / cpu), game (a "
                "game profile's cadence applies), frames, pictures, renders, blended, interpolated, motion_fields, "
-               "on_device, held_flicker, too_slow (the interpolation came a refresh late too often: blended "
-               "instead), behind (refreshes it was behind the frame due), starved (frames due "
+               "on_device, held_flicker, lite (interpolated pictures the cheap interpolation drew), stepped_down "
+               "(the interpolation came a refresh late too often: the cheap one instead), too_slow (the cheap one "
+               "was late too, or was the mode: blended instead), behind (refreshes it was behind the frame due), starved (frames due "
                "with no next frame yet)}");
             pf("display", "object",
                "[VIDEO] DisplayRate: {state (keep; matched: the display runs hz for the machine's machine_hz, its own "

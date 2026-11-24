@@ -891,9 +891,7 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     }
     out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
     FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.IsCreated(), out);
-    out.smoothTooSlow = _smoothTooSlow;
-    if (_smoothTooSlow && out.smooth == "interpolate" && !out.game)
-        out.smooth = "blend";  // what draws
+    FillSmoothStep(_smoothSteppedDown, _smoothTooSlow, out);
     out.smoothBehind = _smoothBehind;
     out.smoothStarved = _smoothStarved;
     const GpuPassTimes::Times smoothGpu = _gpuTimes.Get(GpuPassTimes::Smooth);
@@ -1148,8 +1146,9 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
     _smoothShown = {};
     // Settings set again (another device for the effects, another mode): the interpolation gets its chance again
     _smoothTooSlow = false;
-    _smoothGuardDrawn = _smoothGuardLates = 0;
-    _smoothGuardLate = _presenter ? _presenter->LatePresents() : 0;
+    _smoothSteppedDown = false;
+    _smooth.SetLite(false);
+    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
     _uploadedSerial = 0;
     updateDisplayRate();
     updateVideoSync();
@@ -1351,27 +1350,31 @@ void DeviceScreenGLWindow::watchScreenRate()
             Qt::QueuedConnection);
 }
 
-void DeviceScreenGLWindow::noteInterpolated()
+void DeviceScreenGLWindow::noteInterpolated(int64_t drawNs)
 {
     // An interpolated picture drawn. Do they reach the screen in time? Told by what the presenter saw, whatever the
     // device and the picture's size: of the last kSmoothGuardWindow of them, kSmoothGuardLates or more presents a
     // refresh late is an interpolation this machine cannot draw within a refresh (the Steam Deck: 18.9 ms a picture
     // on its GPU at 16.7 ms a refresh; 13 pictures a second reached the screen, and the lead those lates widened to
-    // its bound halved the blend's too). Blended from then on, until the settings are set again
-    if (!_presenter)
-        return;
-    const uint64_t late = _presenter->LatePresents();
-    _smoothGuardLates += static_cast<uint32_t>(late - std::min(late, _smoothGuardLate));
-    _smoothGuardLate = late;
-    if (++_smoothGuardDrawn < kSmoothGuardWindow)
-        return;
-    if (_smoothGuardLates >= kSmoothGuardLates)
+    // its bound halved the blend's too). Then it steps down, until the settings are set again: first to the cheap
+    // interpolation (LiteFlow, about 1 / 30 of the time on one thread), and if that is late as well (or was the
+    // mode chosen), to the blend
+    // Without a presenter (the GL swap alone) the drawing's own time tells
+    if (_smoothGuard.Note(_presenter ? _presenter->LatePresents() : 0, drawNs, refreshPeriodNs()))
     {
-        _smoothTooSlow = true;
-        qWarning() << "DeviceScreenGLWindow: smooth motion's interpolation is too slow here (" << _smoothGuardLates
-                   << "of its last" << _smoothGuardDrawn << "pictures a refresh late) - blended from now on";
+        if (!_smooth.Lite())
+        {
+            _smoothSteppedDown = true;
+            _smooth.SetLite(true);
+            _smoothShown = {};
+        }
+        else
+            _smoothTooSlow = true;
+        qWarning() << "DeviceScreenGLWindow: smooth motion's interpolation is too slow here (of its last"
+                   << SmoothGuard::kWindow << "pictures" << _smoothGuard.ClosedLates() << "a refresh late,"
+                   << _smoothGuard.ClosedSlow() << "drawn in most of a refresh) -"
+                   << (_smoothTooSlow ? "blended from now on" : "the cheap interpolation from now on");
     }
-    _smoothGuardDrawn = _smoothGuardLates = 0;
 }
 
 void DeviceScreenGLWindow::dropPresenter()
@@ -2109,13 +2112,12 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(framebuffer));
                     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
                 }
+                const auto drawTime = std::chrono::steady_clock::now() - drawStart;
                 if (draws && interpolates && !_smoothTooSlow)
-                    noteInterpolated();
+                    noteInterpolated(std::chrono::duration_cast<std::chrono::nanoseconds>(drawTime).count());
                 if (draws)
                     _gpuTimes.Record(GpuPassTimes::SmoothCpu,
-                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                               drawStart)
-                                         .count());
+                                     std::chrono::duration<double, std::milli>(drawTime).count());
                 if (timed)
                     _gpuTimes.Close(GpuPassTimes::Smooth);
                 if (drawn)

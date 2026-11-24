@@ -408,14 +408,12 @@ private:
     uint64_t _smoothStarved = 0;        ///< frames due with no next frame fed yet (no picture between them)
     uint64_t _smoothStarvedSerial = 0;  ///< ... the last one counted
     bool _smoothWasActive = false;      ///< smoothActive at the last feed: on again starts it over
-    /// The interpolation's pictures came a refresh late too often (noteInterpolated): blended instead
-    static constexpr uint32_t kSmoothGuardWindow = 20;
-    static constexpr uint32_t kSmoothGuardLates = 4;
+    /// The interpolation's pictures came a refresh late too often (noteInterpolated): the cheap interpolation instead
+    /// (_smoothSteppedDown, SmoothMotion::SetLite), and if its pictures are late too, blended (_smoothTooSlow)
     bool _smoothTooSlow = false;
-    uint32_t _smoothGuardDrawn = 0;
-    uint32_t _smoothGuardLates = 0;
-    uint64_t _smoothGuardLate = 0;  ///< the presenter's late presents as last counted
-    void noteInterpolated();
+    bool _smoothSteppedDown = false;
+    SmoothGuard _smoothGuard;
+    void noteInterpolated(int64_t drawNs);
     QMetaObject::Connection _screenRateChanged;  ///< the window's screen's refreshRateChanged (watchScreenRate)
     void watchScreenRate();
     /// The presenter goes (made anew, a fall back): its counters start from 0 again, so what was kept by them does too

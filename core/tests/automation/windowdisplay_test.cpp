@@ -245,6 +245,8 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.present.heldFlicker = 7;
     fake.settings.present.smoothBehind = 3;
     fake.settings.present.smoothTooSlow = true;
+    fake.settings.present.smoothSteppedDown = true;
+    fake.settings.present.lite = 19;
     fake.settings.present.smoothStarved = 11;
     fake.settings.present.clock = "audio";
     fake.settings.present.beatFrames = 500;
@@ -273,6 +275,8 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
     EXPECT_EQ(present.find("smooth")->find("behind")->i, 3);
     EXPECT_TRUE(present.find("smooth")->find("too_slow")->b);
+    EXPECT_TRUE(present.find("smooth")->find("stepped_down")->b);
+    EXPECT_EQ(present.find("smooth")->find("lite")->i, 19);
     EXPECT_EQ(present.find("smooth")->find("starved")->i, 11);
     ASSERT_NE(present.find("vrr"), nullptr);
     ASSERT_NE(present.find("display"), nullptr);
@@ -407,8 +411,11 @@ TEST(WindowDisplay_Test, SmoothMotionWords)
     EXPECT_EQ(change.smoothMotion, "interpolate");
     EXPECT_EQ(change.effectsDevice, "cpu");
     EXPECT_FALSE(change.Empty());
+    WindowDisplayChange lite;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(lite, "smooth_motion", "Interpolate-Lite", error)) << error;
+    EXPECT_EQ(lite.smoothMotion, "interpolate-lite");
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "smooth_motion", "motion", error));
-    EXPECT_NE(error.find("off, blend, interpolate or auto"), std::string::npos) << error;
+    EXPECT_NE(error.find("off, blend, interpolate, interpolate-lite or auto"), std::string::npos) << error;
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "effects_device", "npu", error));
     // View > Video Synchronization's mode
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "smooth_motion", "AUTO", error)) << error;
