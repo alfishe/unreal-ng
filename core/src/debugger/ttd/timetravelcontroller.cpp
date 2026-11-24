@@ -9,7 +9,10 @@
 /// ttdcheckpoint.cpp) go to the engine's capture (FeedShadow).
 
 #include "emulator/readoutschanged.h"
+#include "emulator/jobs/jobregistry.h"
 #include "timetravelcontroller.h"
+#include "debugger/ttd/engine/ttdbytes.h"
+#include "debugger/ttd/ttdsessionfacts.h"
 
 #include <filesystem>
 #include <optional>
@@ -144,7 +147,8 @@ TimeTravelController::TimeTravelController(EmulatorContext* context)
     _engine = std::make_unique<TimeTravelEngine>();
     _shadowEngine = _engine.get();
     _replayEngine = _engine.get();
-    _engine->SetSegmentLoader([this](uint32_t line, size_t segment) { return LoadSegmentFromFile(line, segment); });
+    _engine->SetSegmentLoader(
+        [this](uint32_t line, size_t segment, size_t upTo) { return LoadSegmentFromFile(line, segment, upTo); });
     ApplyHistoryPolicy();
 }
 
@@ -339,6 +343,7 @@ bool TimeTravelController::StartRecording()
     // A fresh session: coverage of an earlier one (live or loaded) describes a
     // different timeline, and a stale "never touched" would prune a hit
     _line->coverageIndex.Clear();
+    _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;   // the folder's next coverage part whole
 
     // Lazy-allocate write journal on first recording if enabled.
     // Use async allocation to avoid blocking the emulator thread.
@@ -612,6 +617,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
     _line->coverageIndex.Clear();
+    _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;   // the folder's next coverage part whole
     if (_context)
         _context->ttdCoverageActive = false;
     _portJournalValid = false;
@@ -1273,10 +1279,9 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
     h.ramPayload = e.piecePayload;
     h.ramPayloadSlack = e.arenaSlack;
     h.checkpoints = e.checkpoints + e.frameTable + _line->timeline.capacity() * sizeof(TTDCheckpoint);
-    h.deviceBlobs = e.deviceBlobs + e.frameStreams;
-    for (const TTDCheckpoint& cp : _line->timeline)
-        for (const auto& entry : cp.peripheralBlobs)
-            h.deviceBlobs += entry.second.capacity();
+    // The checkpoints' own device blobs are kept summed (_blobBytes): a walk over the timeline here ran at every
+    // published seek and grew with the session (P1.S10 soak)
+    h.deviceBlobs = e.deviceBlobs + e.frameStreams + static_cast<size_t>(_blobBytes);
 
     // Input journal + external-event journal — same pattern: capacity is
     // what's allocated, size is what's logically used. Plus the session-scope
@@ -3980,8 +3985,9 @@ void TimeTravelController::RunToFrameEnd()
     // frame-end processing, which completes the frame's picture.
     // A hardware turbo switch inside the frame (GMX, ATM3, Next) rescales the
     // CPU's position and the frame's length at once, so the remainder counted
-    // before the run falls short: run again on the new geometry until the
-    // frame has ended, as the live machine did
+    // before the run falls short (a faster clock): run again on the new
+    // geometry until the frame has ended, as the live machine did; or it is
+    // too long (a slower clock): the run stops at the frame's end
     const uint64_t frameBefore = _context->emulatorState.frame_counter;
     for (int pass = 0; pass < 8 && _context->emulatorState.frame_counter == frameBefore; ++pass)
     {
@@ -3989,7 +3995,10 @@ void TimeTravelController::RunToFrameEnd()
         const uint32_t startT = static_cast<uint32_t>(z80->t);
         if (startT >= frameTStates)
             break;
-        _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
+        // Never past the frame's end: a clock slowed inside the frame (an ATM3 boot leaves 14 MHz) makes the
+        // remainder longer than what is left of it
+        _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true, /*onTimeline=*/false,
+                                        /*stopAtFrameEnd=*/true);
         if (static_cast<uint32_t>(z80->t) == startT && _context->emulatorState.frame_counter == frameBefore)
             break;  // no progress (a halted run) - never spin
     }
@@ -4013,11 +4022,22 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         return i < 0 ? nullptr : &_line->timeline[static_cast<size_t>(i)];
     };
 
-    // Deliberately a LOCAL snapshot, not the shared _liveSnapshot member:
-    // RunTStates pumps MessageCenter (NC_EXECUTION_CPU_STEP) and a synchronous
-    // subscriber (debugger views) can reenter GetFrameCache, which saves and
-    // restores through _liveSnapshot.
-    LiveStateSnapshot local;
+    // Deliberately not the shared _liveSnapshot member: RunTStates pumps
+    // MessageCenter (NC_EXECUTION_CPU_STEP) and a synchronous subscriber
+    // (debugger views) can reenter GetFrameCache, which saves and restores
+    // through _liveSnapshot. One snapshot per nesting depth, kept from one
+    // compose to the next: a fresh one handed its RAM and framebuffer copies
+    // back to the system each time (madvise, 5 % of a seek, P1.S10 seek tails)
+    if (_composeScratch.size() <= _composeDepth)
+        _composeScratch.push_back(std::make_unique<ComposeScratch>());
+    ComposeScratch& scratch = *_composeScratch[_composeDepth];
+    ++_composeDepth;
+    struct DepthGuard
+    {
+        size_t& depth;
+        ~DepthGuard() { --depth; }
+    } depthGuard{_composeDepth};
+    LiveStateSnapshot& local = scratch.live;
     SaveLiveState(local);
     ReplayModeScope replay(*this);
 
@@ -4047,6 +4067,14 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
             std::fill(planeB, planeB + planeBCount, uint16_t{0});
     };
 
+    // The recorded port writes only check a replay (a differing OUT is counted): the picture's frame needs none of
+    // them, and checking it decoded a write journal block per seek (15 % of a seek, P1.S10 seek tails). The seek's
+    // own replay and the seek check still compare them; RestoreLiveState puts the hook back
+    auto restoreForPicture = [this](const TTDCheckpoint& cp) {
+        RestoreCheckpointForReplay(cp);
+        _context->ttdPortWrites = nullptr;
+    };
+
     ITTDDisplayParticipant* participant = _context->pTtdDisplayParticipant;
     if (frameTarget)
     {
@@ -4061,7 +4089,7 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         const uint64_t from = ended > leadIn ? ended - leadIn : 0;
         if (const TTDCheckpoint* cp = checkpointAtOrBefore(from))
         {
-            RestoreCheckpointForReplay(*cp);
+            restoreForPicture(*cp);
             paintStaticBase();
             runUntilFrame(ended);
             RunToFrameEnd();
@@ -4076,13 +4104,13 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         const TTDCheckpoint* cur = checkpointAtOrBefore(frame);
         if (prev)
         {
-            RestoreCheckpointForReplay(*prev);
+            restoreForPicture(*prev);
             paintStaticBase();
             runUntilFrame(frame);
         }
         else if (cur)
         {
-            RestoreCheckpointForReplay(*cur);
+            restoreForPicture(*cur);
             paintStaticBase();
         }
 
@@ -4096,7 +4124,8 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
     if (participant)
         participant->TTDPrepareComposedPicture(frameTarget);
 
-    std::vector<uint8_t> composed;
+    std::vector<uint8_t>& composed = scratch.composed;
+    composed.clear();
     uint32_t* fb = nullptr;
     size_t fbSize = 0;
     _context->pScreen->GetFramebufferData(&fb, &fbSize);
@@ -4104,7 +4133,8 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         composed.assign(reinterpret_cast<const uint8_t*>(fb), reinterpret_cast<const uint8_t*>(fb) + fbSize);
 
     // Plane B was rendered by the same replay (ZX DLSS), so it is composed too
-    std::vector<uint16_t> composedPlaneB;
+    std::vector<uint16_t>& composedPlaneB = scratch.planeB;
+    composedPlaneB.clear();
     size_t planeBCount = 0;
     if (const uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount))
         composedPlaneB.assign(planeB, planeB + planeBCount);
@@ -4346,6 +4376,8 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     const bool atCheckpoint = _seekLandedOnCheckpoint && !_line->timeline.empty() &&
                               _line->timeline.back().time.frame == cut.frame;
     _line->coverageIndex.DropFramesFrom(cut.frame, !atCheckpoint);
+    if (_line == _lines.front().get())
+        _shadowCoverageFrom = std::min(_shadowCoverageFrom, cut.frame);   // the folder's next part replaces the cut
 
     // Port records past the resume point are dead future: the engine cuts
     // its bus journals at the cut with the rest (TruncateTimelineAfter)
@@ -4661,7 +4693,12 @@ void TimeTravelController::EnforceDiskTier(uint64_t frames, uint64_t bytes)
     {
         const TTDSegmentInfo& s = info(e.key);
         if (s.resident && s.readBack && (window.count(e.key) || engine.SegmentHeldByHead(e.key.first, e.key.second)))
+        {
+            // A window segment is whole: one read back in part is read again whole first
+            if (s.residentEnd != SIZE_MAX && !LoadSegmentFromFile(e.key.first, e.key.second, SIZE_MAX))
+                continue;
             engine.SetSegmentReadBack(e.key.first, e.key.second, false);
+        }
     }
     // The frame window: what lies outside it leaves memory once its file is complete (T-C10); the cache keeps its own
     if (frames != 0)
@@ -4687,25 +4724,47 @@ void TimeTravelController::EnforceDiskTier(uint64_t frames, uint64_t bytes)
     }
 }
 
-bool TimeTravelController::LoadSegmentFromFile(uint32_t line, size_t segment)
+bool TimeTravelController::LoadSegmentFromFile(uint32_t line, size_t segment, size_t upTo)
 {
     TimeTravelEngine& engine = *_engine;
     const std::deque<TTDSegmentInfo>* segments = engine.LineSegments(line);
     if (!segments || segment >= segments->size())
         return false;
     const TTDSegmentInfo& s = (*segments)[segment];
-    if (s.resident)
+    if (s.resident && (s.residentEnd == SIZE_MAX || upTo < s.residentEnd))
         return true;
+    if (s.resident)
+    {
+        // Read back up to a part: the whole file is read again in its place
+        std::string why;
+        if (!engine.EvictSegment(line, segment, why))
+        {
+            MLOGWARNING("TimeTravelController: segment %zu of branch %u cannot be read whole: %s", segment, line,
+                        why.c_str());
+            return false;
+        }
+        upTo = SIZE_MAX;
+    }
     const auto it = _segmentFiles.find({line, s.firstCheckpoint});
     std::string why = "its file is not known";
     bool ok = false;
     if (it != _segmentFiles.end())
     {
-        TTDFileSource source(it->second);
-        if (!source.Valid())
-            why = it->second + ": " + source.Error();
+        TTDFileSource file(it->second);
+        if (!file.Valid())
+            why = it->second + ": " + file.Error();
         else
-            ok = engine.ReadBackSegmentFrom(line, segment, source, why);
+        {
+            // The file in one read: the container's index checks every record header of every part, a read each
+            // (hundreds a file, 7 % of a seek into it, P1.S10 seek tails). The buffer is kept for the next one
+            TTDMemorySource source(std::move(_readBackFileBytes));
+            source.bytes.resize(static_cast<size_t>(file.Size()));
+            if (!file.ReadAt(0, source.bytes.data(), source.bytes.size()))
+                why = it->second + ": the file cannot be read";
+            else
+                ok = engine.ReadBackSegmentFrom(line, segment, source, why, upTo);
+            _readBackFileBytes = std::move(source.bytes);
+        }
     }
     if (!ok)
     {
@@ -4756,7 +4815,8 @@ bool TimeTravelController::ReadBackAll(std::string& error)
     for (uint32_t line = 0; line < engine.LineIds(); ++line)
         if (const std::deque<TTDSegmentInfo>* segments = engine.LineSegments(line))
             for (size_t k = 0; k < segments->size(); ++k)
-                if (!(*segments)[k].resident && !LoadSegmentFromFile(line, k))
+                if (((*segments)[k].residentEnd != SIZE_MAX || !(*segments)[k].resident) &&
+                    !LoadSegmentFromFile(line, k, SIZE_MAX))
                 {
                     error = "segment " + std::to_string(k) + " of branch " + std::to_string(line) +
                             " cannot be read back from its file";
@@ -4944,7 +5004,13 @@ void TimeTravelController::FinishShadowFiles()
     // The facts, the coverage and the bookmarks as they are at the end: a
     // finished recording's folder loads like a saved session
     if (_shadowWriter && _shadowEngine)
-        _shadowWriter->SetHolderStreams(SessionHolderStreams(/*declareAll=*/true));
+    {
+        // The trunk's coverage as a part: from where the last part's open blocks started (a pause wrote the whole
+        // index before 2026-11-21: 180 ms and 90 MB at 240,000 frames)
+        _shadowWriter->SetHolderStreams(SessionHolderStreams(/*declareAll=*/true, _shadowCoverageFrom));
+        _shadowLastCoveragePartFrom = _shadowCoverageFrom;
+        _shadowCoverageFrom = _lines.front()->coverageIndex.RepeatFrom();
+    }
     FinishLineFiles();   // the folder stays the session's until a new one starts or it is invalidated
 }
 
@@ -5001,6 +5067,13 @@ bool TimeTravelController::StartLineFiles(TimeTravelEngine& engine)
         return false;
     TTDSessionSaveParams params = _shadowParams;
     params.fileLine = line;
+    // After a pause the line's new file starts at the baseline after the resume: it takes the records between
+    // the paused file's end and that baseline (before 2026-11-21 that frame was in no file)
+    const ShadowJournalEnds ends = std::exchange(_shadowJournalEnds, {});
+    if (!firstFile && ends.line == line && ends.ends.set && engine.Segments().back().firstCheckpoint == ends.checkpoints &&
+        engine.BusReads().Size() >= ends.ends.cursors[0] && engine.BusWrites().Size() >= ends.ends.cursors[1] &&
+        engine.MediaReads().Size() >= ends.ends.cursors[2])
+        params.journalsFrom = ends.ends;
     if (line != 0 && !params.lineMeta.count(line))
         params.lineMeta[line] = BranchRecordBytes(line);
     TTDRecordingFolder* folder = _shadowFolder.get();
@@ -5012,6 +5085,23 @@ bool TimeTravelController::StartLineFiles(TimeTravelEngine& engine)
         const uint64_t size = std::filesystem::file_size(FileHelper::ToFsPath(path), ec);
         _shadowClosedBytes += ec ? 0 : size;
     });
+    // The trunk's files closed at the next baseline carry the coverage index's part since the last one: a pause
+    // writes only what came after (0.4-0.5 s for a pause after 240,000 frames without one, P1.S10 seek tails)
+    _shadowCoverageParts.clear();
+    if (line == kTTDTrunk)
+        _shadowWriter->SetFileEndStreams([this](uint32_t file) {
+            std::vector<TTDHolderStream> streams;
+            std::vector<uint8_t> coverage = CoverageBytes(*_lines.front(), _shadowCoverageFrom);
+            if (coverage.empty())
+                return streams;
+            TTDByteWriter from;
+            from.U64(_shadowCoverageFrom);
+            streams.push_back({holderstream::kCoverageFrom, "coverage-from", std::move(from.bytes)});
+            streams.push_back({holderstream::kCoverage, "coverage", std::move(coverage)});
+            _shadowCoverageParts[file] = _shadowCoverageFrom;
+            _shadowCoverageFrom = _lines.front()->coverageIndex.RepeatFrom();
+            return streams;
+        });
     std::string why;
     if (!(firstFile ? _shadowWriter->BeginAt(engine, 0, why) : _shadowWriter->Begin(engine, why)))
     {
@@ -5033,8 +5123,16 @@ void TimeTravelController::FinishLineFiles()
     const uint32_t viewed = engine.ActiveLine();
     if (viewed != _shadowWriterLine && engine.HasLine(_shadowWriterLine))
         engine.ViewLine(_shadowWriterLine);
-    if (!_shadowWriter->Finish(engine))
+    const bool finished = _shadowWriter->Finish(engine);
+    if (!finished)
         MLOGWARNING("TimeTravelController: the shadow session's files: %s", _shadowWriter->Error().c_str());
+    // A pause: the file ends where the machine stands, the line's next file starts at a new baseline
+    _shadowJournalEnds = {};
+    if (!finished)
+        _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;   // the part may not be on disk: the next one whole
+    if (finished && _shadowWriterLine == _tip && engine.ActiveLine() == _shadowWriterLine)
+        _shadowJournalEnds = {_shadowWriterLine, engine.CheckpointCount(),
+                              TTDSessionWriter::JournalEnds(engine, GlobalT(CurrentPosition()))};
     if (engine.HasLine(_shadowWriterLine))
         engine.RequestBaseline(_shadowWriterLine);
     if (viewed != engine.ActiveLine() && engine.HasLine(viewed))
@@ -5049,6 +5147,8 @@ void TimeTravelController::DiscardShadowFiles()
         _shadowFolder->Discard();
     _shadowFolder.reset();
     _shadowLinesWithFiles.clear();
+    _shadowJournalEnds = {};
+    _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;
     _segmentFiles.clear();   // the files are gone (the session goes with them: ResetShadow)
     _heldSegmentFiles.clear();
     _shadowFilesStopped = false;
@@ -5067,6 +5167,8 @@ void TimeTravelController::KeepShadowFiles()
         MLOGINFO("TimeTravelController: the black box's previous recording stays in %s", _shadowFolder->Path().c_str());
     _shadowFolder.reset();
     _shadowLinesWithFiles.clear();
+    _shadowJournalEnds = {};
+    _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;
     _shadowFilesStopped = false;
     _shadowDiskStop = false;
     _shadowDiskSpace = TTDDiskSpace::Ok;
@@ -5463,6 +5565,8 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
                     b = static_cast<uint8_t>(random());
                 _shadowParams.holderStreams = SessionHolderStreams(/*declareAll=*/true);
                 _shadowLinesWithFiles.clear();
+                _shadowJournalEnds = {};
+                _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;
                 // A loaded session's folder holds what is recorded after the load: the loaded file comes first
                 // when the folder is joined (Q-11)
                 std::string sourceWhy;
@@ -5547,10 +5651,21 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
                  it != _segmentFiles.end() && it->first.first == line;)
                 it = _segmentFiles.erase(it);
         }
+        // A live writer writes its last file again: a coverage part it held goes with it, the next part starts where
+        // that one did. After a pause there is none (the paused file stays, the next file starts at a new baseline)
+        if (_shadowWriter)
+            _shadowCoverageFrom = std::min(_shadowCoverageFrom, _shadowLastCoveragePartFrom);
         if (_shadowWriter && !_shadowWriter->RewindToLastSegment(*_engine, error))
         {
             MLOGWARNING("TimeTravelController::TruncateTimelineAfter — the recording's files stop: %s", error.c_str());
             _shadowWriter.reset();   // the folder keeps the files before the cut
+        }
+        // The files it deleted took their coverage parts along: the next part starts where the first of them did
+        for (auto it = _shadowCoverageParts.lower_bound(_shadowWriter ? _shadowWriter->ClosedFiles() : 0);
+             it != _shadowCoverageParts.end();)
+        {
+            _shadowCoverageFrom = std::min(_shadowCoverageFrom, it->second);
+            it = _shadowCoverageParts.erase(it);
         }
         // The engine's cursors into the controller's journals, at their new ends
         _shadowEvents.input = std::min(_shadowEvents.input, _line->inputJournal.Size());
@@ -5726,7 +5841,10 @@ void TimeTravelController::SetEnableCoverageIndex(bool enable)
     _enableCoverageIndex = enable;
 
     if (!enable)
+    {
         _line->coverageIndex.Clear();
+        _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;   // the folder's next coverage part whole
+    }
 
     // Only mirror into the hot-path flag while a session is live; StartRecording
     // sets it otherwise.
@@ -6871,10 +6989,26 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
         size_t i = firstIndex;
         while (i + 1 < endIndex && ViewLineageCheckpoint(i)->time.frame < result.fromFrame)
             ++i;
+        // Run as a job (S2): the frames done are its progress, a cancel ends the window where it stands
+        const size_t windowStart = i;
+        const uint64_t windowFrames = result.toFrame >= result.fromFrame ? result.toFrame - result.fromFrame + 1 : 0;
+        jobs::Context* job = jobs::Current();
         for (; i + 1 < endIndex && ViewLineageCheckpoint(i)->time.frame <= result.toFrame; ++i)
         {
             const TTDCheckpoint& cp = *ViewLineageCheckpoint(i);
             const uint64_t frame = cp.time.frame;
+            if (job != nullptr)
+            {
+                job->Progress(i - windowStart, windowFrames, "frames");
+                if (job->CancelRequested() && i > windowStart)
+                {
+                    result.cancelled = true;
+                    result.truncated = true;
+                    result.nextFromFrame = frame;
+                    result.toFrame = frame - 1;
+                    break;
+                }
+            }
             if (const std::optional<TTDExternalEvent> barrier =
                     FirstBarrierBetween(cp.time, TTDTimePoint{frame, FrameSpan()}))
             {

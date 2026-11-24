@@ -2308,6 +2308,24 @@ emu.analysis("experiment", keep_branches="observed", run="r7", spec=[...])  # ob
 emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
 ```
 
+### Jobs
+
+The long verbs as jobs ([jobs.md](./jobs.md), PLAN #122 S2) through `jobs::Execute`: `emu.jobs(action, **options)`;
+the answer is a dict of the reply's fields plus `text`, a refusal `{"ok": False, "error": <why>}`. `wait` releases the
+GIL while it blocks (until the job ends or `wait_ms` is up).
+
+```python
+j = emu.jobs("start", domain="ttd", verb="dump", path="/tmp/a.ttd")   # {job, state, status_url, text}
+r = emu.jobs("wait", job=j["job"], wait_ms=60000)                       # {state, ended, status, result, text}
+while not r["ended"]:
+    r = emu.jobs("wait", job=j["job"], wait_ms=60000)                   # a long job: wait again
+print(r["state"], r["result"]["bytes"])
+emu.jobs("list")                                 # the selected instance's; instance="all", state="active"
+emu.jobs("status", job=j["job"], result=False)
+emu.jobs("cancel", job=j["job"])
+b = emu.analysis("build", **{"async": True})     # the build as a job (async is a keyword: the dict form)
+```
+
 ### Memory markup
 
 The [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) through the shared core handler (`markup::Execute`): the answer is a dict of its fields

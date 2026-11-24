@@ -11,6 +11,7 @@
 #include "mp4_muxer.h"
 #include "mf_aac_encoder.h"
 #include "emulator/video/screen.h"
+#include "common/framescaler.h"
 
 #ifdef _WIN32
 #include <cstring>
@@ -84,7 +85,6 @@ struct NvencEncoder::Impl
     uint32_t frameIdx = 0;
     uint32_t fps = 50;
     bool useHevc = false;
-    std::vector<uint8_t> nv12Buffer;
 
     // Initialization
     bool init(const std::string& filename, const EncoderConfig& config, std::string& error);
@@ -94,7 +94,7 @@ struct NvencEncoder::Impl
     // Frame encoding
     bool encodeFrame(const uint8_t* rgba);
     /// Zero-copy halves of encodeFrame: lock the next input buffer (draining a pending output first) / unlock it and
-    /// submit it. encodeFrame is convert + beginFrame + copy + finishFrame
+    /// submit it. encodeFrame is beginFrame + FrameScaler::ScaleIntoNv12 into the buffer + finishFrame
     bool beginFrame(uint8_t*& bufferData, uint32_t& bufferPitch);
     void abortFrame();
     bool finishFrame();
@@ -109,8 +109,6 @@ private:
     bool openEncodeSession();
     bool initializeEncoder(const EncoderConfig& config);
     bool createBuffers();
-    void convertRgbaToNv12(const uint8_t* rgba);
-    void copyToInputBuffer(void* dst, uint32_t dstPitch);
 };
 
 bool NvencEncoder::Impl::loadNvencDll()
@@ -383,7 +381,6 @@ bool NvencEncoder::Impl::init(const std::string& filename, const EncoderConfig& 
     scaleFactor = config.scaleFactor > 0 ? config.scaleFactor : 1;
     width = srcWidth * scaleFactor;
     height = srcHeight * scaleFactor;
-    nv12Buffer.resize(width * height * 3 / 2);
 
     if (!loadNvencDll())         { error = "Failed to load NVENC"; return false; }
     if (!createD3D11Device())    { error = "Failed to create D3D11 device"; return false; }
@@ -508,74 +505,6 @@ void NvencEncoder::Impl::cleanup()
     }
 }
 
-void NvencEncoder::Impl::convertRgbaToNv12(const uint8_t* rgba)
-{
-    // rgba is srcWidth x srcHeight; nv12Buffer is width x height (scaled).
-    // Nearest-neighbor upscaling is applied during conversion so that
-    // each source pixel maps to scaleFactor x scaleFactor output pixels,
-    // preserving sharp edges through the subsequent 4:2:0 chroma subsampling.
-    uint8_t* yPlane = nv12Buffer.data();
-    uint8_t* uvPlane = yPlane + width * height;
-
-    // Y plane (BT.601) with nearest-neighbor upscaling
-    for (uint32_t y = 0; y < height; y++)
-    {
-        uint32_t sy = y / scaleFactor;
-        if (sy >= srcHeight) sy = srcHeight - 1;
-        for (uint32_t x = 0; x < width; x++)
-        {
-            uint32_t sx = x / scaleFactor;
-            if (sx >= srcWidth) sx = srcWidth - 1;
-            const uint8_t* px = rgba + (sy * srcWidth + sx) * 4;
-            int yVal = ((66 * px[0] + 129 * px[1] + 25 * px[2] + 128) >> 8) + 16;
-            yPlane[y * width + x] = static_cast<uint8_t>(std::clamp(yVal, 0, 255));
-        }
-    }
-
-    // UV plane (2x2 subsampled) with nearest-neighbor upscaling.
-    // At scaleFactor >= 2, each 2x2 block in the scaled domain maps to a
-    // single source pixel, so the chroma value exactly matches the source —
-    // this is what eliminates the color smearing that 4:2:0 would otherwise
-    // introduce at native resolution.
-    for (uint32_t y = 0; y < height; y += 2)
-    {
-        for (uint32_t x = 0; x < width; x += 2)
-        {
-            int rSum = 0, gSum = 0, bSum = 0;
-            for (int dy = 0; dy < 2; dy++)
-                for (int dx = 0; dx < 2; dx++)
-                {
-                    uint32_t sx = (x + dx) / scaleFactor;
-                    uint32_t sy = (y + dy) / scaleFactor;
-                    if (sx >= srcWidth) sx = srcWidth - 1;
-                    if (sy >= srcHeight) sy = srcHeight - 1;
-                    const uint8_t* px = rgba + (sy * srcWidth + sx) * 4;
-                    rSum += px[0]; gSum += px[1]; bSum += px[2];
-                }
-            int r = rSum / 4, g = gSum / 4, b = bSum / 4;
-            int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-            int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-            size_t uvIdx = (y / 2) * width + x;
-            uvPlane[uvIdx] = static_cast<uint8_t>(std::clamp(u, 0, 255));
-            uvPlane[uvIdx + 1] = static_cast<uint8_t>(std::clamp(v, 0, 255));
-        }
-    }
-}
-
-void NvencEncoder::Impl::copyToInputBuffer(void* dst, uint32_t dstPitch)
-{
-    uint8_t* dstPtr = static_cast<uint8_t*>(dst);
-    uint8_t* yPlane = nv12Buffer.data();
-    uint8_t* uvPlane = yPlane + width * height;
-
-    for (uint32_t y = 0; y < height; y++)
-        memcpy(dstPtr + y * dstPitch, yPlane + y * width, width);
-
-    uint8_t* dstUV = dstPtr + dstPitch * height;
-    for (uint32_t y = 0; y < height / 2; y++)
-        memcpy(dstUV + y * dstPitch, uvPlane + y * width, width);
-}
-
 bool NvencEncoder::Impl::beginFrame(uint8_t*& bufferData, uint32_t& bufferPitch)
 {
     // If all buffers are pending, read one output first
@@ -642,14 +571,20 @@ bool NvencEncoder::Impl::finishFrame()
 
 bool NvencEncoder::Impl::encodeFrame(const uint8_t* rgba)
 {
-    convertRgbaToNv12(rgba);
-
     uint8_t* bufferData = nullptr;
     uint32_t bufferPitch = 0;
     if (!beginFrame(bufferData, bufferPitch))
         return false;
 
-    copyToInputBuffer(bufferData, bufferPitch);
+    // Nearest-neighbour scale x scaleFactor and BT.601 NV12 straight into the locked input buffer (Y, then the
+    // interleaved UV plane below it at the same pitch). The SIMD FrameScaler path gives the bytes the former scalar
+    // conversion and staging copy gave, 5-24x faster
+    if (!FrameScaler::ScaleIntoNv12(rgba, srcWidth, srcHeight, bufferData, bufferPitch,
+                                    bufferData + static_cast<size_t>(bufferPitch) * height, bufferPitch, width, height))
+    {
+        abortFrame();  // an odd size has no 4:2:0 layout: the frame is dropped, never submitted half-written
+        return false;
+    }
     return finishFrame();
 }
 

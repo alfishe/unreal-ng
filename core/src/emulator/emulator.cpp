@@ -458,9 +458,14 @@ bool Emulator::Init()
         }
     }
 
-    // The labels of the known ROMs the machine runs (symbol bundles)
+    // The labels of the known ROMs the machine runs (symbol bundles), and of the firmware of the sound cards it was
+    // built with: those cards were made before the debug manager, so nothing told their targets
     if (result)
+    {
         ApplySymbolBundles();
+        if (_context->pDebugManager && !SymbolBundleFolder().empty())
+            _context->pDebugManager->ApplyCardSymbolBundles();
+    }
 
     // Create the time travel controller (per parent TDD §10.2). Always constructed; the
     // per-frame capture cost is gated by the cached _feature_ttd_enabled
@@ -3908,7 +3913,8 @@ Emulator::DirectRunResult Emulator::RunNFrames(unsigned frames, bool skipBreakpo
     return result;
 }
 
-Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints, bool onTimeline)
+Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints, bool onTimeline,
+                                               bool stopAtFrameEnd)
 {
     DirectStepScope directStep(*this, "run_tstates");
     CancelPendingStepOver();
@@ -3962,6 +3968,14 @@ Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakp
             result.frames++;
             ranBeforeFrame += static_cast<uint64_t>(limitBefore) - frameStartT;
             frameStartT = 0;
+            if (stopAtFrameEnd)
+            {
+                // The frame is over, whatever was left of the count (a clock slowed inside the frame): the run ends
+                // with the instruction that crossed the frame end, where a live frame ends
+                overshoot = z80.t;
+                reached = true;
+                break;
+            }
             if (targetT >= static_cast<int64_t>(limitBefore))
             {
                 targetT -= limitBefore;
@@ -4869,12 +4883,6 @@ void Emulator::ApplySymbolBundles()
     const std::string folder = SymbolBundleFolder();
     if (folder.empty())
         return;
-    // The sound cards' firmware symbols too: a card fitted with the machine is created before the debug manager, so
-    // its target saw no card creation (GSCardTarget::OnCardCreated runs on a later switch only)
-    if (_context && _context->pDebugManager)
-        for (const DebugCpuId cpu : {DebugCpuId::GS, DebugCpuId::MultiSoundGS})
-            if (GSCardTarget* target = _context->pDebugManager->GetCardTarget(cpu))
-                target->ApplySymbolBundles();
     if (!_context || !_context->pDebugManager || !_context->pMemory || !_core || !_core->GetROM())
         return;
     LabelManager* labels = _context->pDebugManager->GetLabelManager();

@@ -88,9 +88,19 @@ struct TTDSegmentInfo
     /// Its versions and full tables are in memory; false: evicted, its file in the recording folder holds them
     /// (EvictSegment), read back when a restore needs them (ReadBackSegment)
     bool resident = true;
+    /// Resident: the checkpoints from firstCheckpoint up to here have their versions and full tables (SIZE_MAX:
+    /// all of them). A restore reads back only the file's parts up to the one it needs and one more: on average
+    /// half the segment (P1.S10 seek tails); a restore past them reads the whole segment
+    size_t residentEnd = SIZE_MAX;
     bool readBack = false;           ///< in memory because a restore read it back (the read-back cache)
     uint64_t readBackBytes = 0;      ///< read back: the payload bytes it brought in
     mutable uint64_t lastUse = 0;    ///< read back: the engine's use clock at its last use (the cache's LRU order)
+    /// The pieces whose content its baseline changed from the checkpoint before (region << 16 | piece, ascending):
+    /// what a comparison of the two versions would show, known without either in memory (the timeline over evicted
+    /// segments read each one back, P1.S10 follow-up 2026-11-21). Live captures only: false for a loaded, imported
+    /// or forked baseline and for the session's first
+    bool baselineDiffKnown = false;
+    std::vector<uint32_t> baselineDiff;
 };
 
 /// One piece of a region taking a new version (TimeTravelEngine::ImportCheckpoint)
@@ -558,7 +568,8 @@ public:
 
     /// Called when a restore needs segment @p segment of line @p line and it is evicted: the holder reads the
     /// segment's file and hands it to ReadBackSegment. False when it cannot (the restore reports the segment)
-    using SegmentLoader = std::function<bool(uint32_t line, size_t segment)>;
+    /// @p upTo: the checkpoint the restore needs (the loader may read the segment's file up to it; SIZE_MAX: all)
+    using SegmentLoader = std::function<bool(uint32_t line, size_t segment, size_t upTo)>;
     void SetSegmentLoader(SegmentLoader loader) { _segmentLoader = std::move(loader); }
     /// Line @p line's segments (null for a line not held)
     const std::deque<TTDSegmentInfo>* LineSegments(uint32_t line) const
@@ -580,9 +591,14 @@ public:
     /// Bring an evicted segment back from @p pieces (its file's versions): every change record and full table as
     /// before the eviction, holding the same content. The segment joins the read-back cache (readBack). Nothing
     /// changes when @p pieces does not match the segment (a frame or a piece missing)
-    bool ReadBackSegment(uint32_t line, size_t segment, const TTDSegmentPieces& pieces, std::string& error);
+    /// @p prefix: @p pieces may hold only the segment's first checkpoints (ReadSegmentPieces up to a frame): those
+    /// become resident (TTDSegmentInfo::residentEnd), checkpoint @p need among them
+    bool ReadBackSegment(uint32_t line, size_t segment, const TTDSegmentPieces& pieces, std::string& error,
+                         bool prefix = false, size_t need = 0);
     /// ReadBackSegment from the segment's file @p source (TTDSessionFile::ReadSegmentPieces)
-    bool ReadBackSegmentFrom(uint32_t line, size_t segment, const ITTDByteSource& source, std::string& error);
+    /// @p upTo: the checkpoint needed; the file is read up to the part after it (SIZE_MAX: whole)
+    bool ReadBackSegmentFrom(uint32_t line, size_t segment, const ITTDByteSource& source, std::string& error,
+                             size_t upTo = SIZE_MAX);
     /// A read-back segment stays as a window segment (false) or joins the cache again (true)
     void SetSegmentReadBack(uint32_t line, size_t segment, bool readBack);
     /// Segments held on disk only, and their checkpoints, over all lines
@@ -619,6 +635,21 @@ public:
         const TTDEngineCheckpoint::RegionRefs* r = RefsOf(index, region);
         return r ? r->changeCount : 0;
     }
+    /// Those pieces without their versions, from the change records alone: no read back of an evicted segment
+    std::vector<uint32_t> ChangedPieceIndices(size_t index, uint32_t region) const
+    {
+        std::vector<uint32_t> pieces;
+        if (const TTDEngineCheckpoint::RegionRefs* r = HasCheckpoint(index) ? RefsOf(index, region) : nullptr)
+        {
+            pieces.resize(r->changeCount);   // one allocation: the timeline asks for every frame's (P1.S10 seek A/B)
+            for (uint32_t k = 0; k < r->changeCount; ++k)
+                pieces[k] = ChangeAt(r->firstChange + k).piece;
+        }
+        return pieces;
+    }
+    /// The content changes of the baseline at checkpoint @p index of the active line (TTDSegmentInfo::baselineDiff),
+    /// or null when @p index is no baseline or its changes are not known
+    const std::vector<uint32_t>* BaselineDiff(size_t index) const;
     /// Those pieces with their new versions (PieceStore().Decode reads one)
     std::vector<std::pair<uint32_t, TTDPieceId>> ChangesAt(size_t index, uint32_t region) const
     {
@@ -780,6 +811,21 @@ private:
     std::vector<std::vector<TTDPieceId>> _inMemory;
     static constexpr TTDPieceId kUnknown = 0xFFFFFFFEu;
     std::vector<DecodedState> _decodedStates;   ///< RestoreDevices: per device of the table
+    /// RestoreToMemory: the memory pieces as last decoded, by version. A restore that does not know what memory holds
+    /// (a seek's) copies the pieces whose version it has and moves the others along their chains from the version it
+    /// has: a seek near the last one decodes what differs, not every piece (P1.S10 seek A/B). Only pieces decoded so
+    /// get a slot (zero pieces none), so the copy is the size of the memory the session restored, not of the regions.
+    /// The ids stand while the store's ReuseGeneration does (DecodedState's rule)
+    struct DecodedMemory
+    {
+        static constexpr uint32_t kNoSlot = 0xFFFFFFFFu;
+        static constexpr size_t kChunkPieces = 64;   ///< pieces per allocation (256 KB)
+        uint64_t generation = 0;
+        std::vector<std::vector<uint32_t>> pieceSlots;    ///< per region, per piece: its slot, or kNoSlot
+        std::vector<TTDPieceId> ids;                      ///< per slot: the version its bytes hold, or kUnknown
+        std::vector<std::unique_ptr<uint8_t[]>> chunks;   ///< the slots' bytes, kChunkPieces each
+    };
+    DecodedMemory _decodedMemory;
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
@@ -848,6 +894,11 @@ private:
         TTDWriteIndex writes;
         /// A deque: no growth reserve (a vector held up to twice the records), and records never move
         std::deque<TTDEngineCheckpoint> checkpoints;
+        /// HeapBreakdown's sums over checkpoints[0, heapCounted): what is appended is added at the next call, what
+        /// is dropped is taken out as it goes (UncountCheckpoints), so a breakdown does not walk the whole history
+        mutable size_t heapCounted = 0;
+        mutable size_t heapRegions = 0;   ///< each checkpoint's region references, as allocated
+        mutable size_t heapDevices = 0;   ///< each checkpoint's unclaimed device list, as allocated
         std::vector<TTDConfigEntry> configs;
         std::vector<std::pair<uint32_t, TTDMediaVersion>> pendingMedia;   ///< slot, version: for the next checkpoint
         std::vector<TTDMediaSlot> mediaSlots;   ///< the slots and their version changes along this lineage
@@ -859,6 +910,8 @@ private:
     uint32_t _headLine = 0;   ///< the line the capture head was built for
     /// Release a line's change records and full tables (EndSession, ReleaseLine)
     void ReleaseLineData(BranchLine& line);
+    /// Takes checkpoints[from, to) of @p line out of its heap sums, before they are dropped
+    static void UncountCheckpoints(BranchLine& line, size_t from, size_t to);
     /// The active line's journal modes pass to @p to: recording stays recording (ForkAt, SwitchLine)
     void HandOverJournals(BranchLine& from, BranchLine& to);
     /// The fork checkpoint's tables for @p line from the active line's checkpoint @p index (ForkAt, ImportForkLine)

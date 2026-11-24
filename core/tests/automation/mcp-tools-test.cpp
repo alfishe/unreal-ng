@@ -6737,3 +6737,145 @@ TEST_F(McpTools_Test, TimeTravel_AnalysisListsAreInTheText)
     EXPECT_NE(result.text.find("0xC000 RAM 1"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("F30E"), std::string::npos) << result.text;
 }
+
+// ===========================================================================
+// jobs (PLAN #122 S2): async on the long verbs, the jobs tool's routes and its text
+// ===========================================================================
+
+TEST_F(McpTools_Test, TimeTravel_AsyncDump_AnswersTheJobInTheText)
+{
+    Json::Value accepted;
+    accepted["job"] = 12;
+    accepted["state"] = "queued";
+    accepted["kind"] = "ttd.dump";
+    accepted["text"] = "Job 12 (ttd.dump: dump path=/tmp/a.ttd) queued on emu-1. Its end: jobs action=wait job=12";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/dump"] = {202, accepted};
+
+    Json::Value args;
+    args["action"] = "dump";
+    args["path"] = "/tmp/a.ttd";
+    args["async"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Job 12 (ttd.dump"), std::string::npos) << "not the dump's summary: " << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/dump");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["async"].asBool());
+
+    args["action"] = "status";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "async on a short action";
+    args["action"] = "dump";
+    args["async"] = "yes";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "async is a boolean";
+}
+
+TEST_F(McpTools_Test, Analysis_AsyncBuild_SendsNoWait)
+{
+    Json::Value accepted;
+    accepted["job"] = 7;
+    accepted["state"] = "queued";
+    accepted["text"] = "Job 7 (analysis.build) queued";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/build"] = {202, accepted};
+    Json::Value args;
+    args["action"] = "build";
+    args["async"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analysis", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/build");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["async"].asBool());
+    EXPECT_FALSE(call->body.isMember("wait")) << "async and the default wait would be refused together";
+    EXPECT_NE(result.text.find("Job 7"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("Job 7"), result.text.rfind("Job 7")) << "the job text once: " << result.text;
+}
+
+TEST_F(McpTools_Test, Jobs_WaitLongPollsAndAnswersTheText)
+{
+    Json::Value done;
+    done["job"] = 12;
+    done["state"] = "done";
+    done["ended"] = true;
+    done["text"] = "job 12 ttd.dump on emu-1 (dump path=/tmp/a.ttd): done in 41 ms\nSession written";
+    _caller->routes["GET /api/v1/jobs/12?wait_ms=45000"] = {200, done};
+    Json::Value args;
+    args["action"] = "wait";
+    args["job"] = 12;
+    args["wait_ms"] = 45000;
+    mcp::ToolResult result = RunTool(*_registry, "jobs", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("job 12 ttd.dump"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("done"), std::string::npos) << result.text;
+
+    // The default wait, status without the result, cancel, list of every instance and of one
+    args.removeMember("wait_ms");
+    RunTool(*_registry, "jobs", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/jobs/12?wait_ms=30000"));
+    Json::Value status;
+    status["action"] = "status";
+    status["job"] = "#12";
+    status["result"] = false;
+    RunTool(*_registry, "jobs", status, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/jobs/12?result=false"));
+    Json::Value cancel;
+    cancel["action"] = "cancel";
+    cancel["job"] = 12;
+    RunTool(*_registry, "jobs", cancel, *_caller);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/jobs/12/cancel"));
+    Json::Value list;
+    list["action"] = "list";
+    list["state"] = "active";
+    RunTool(*_registry, "jobs", list, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/jobs?state=active"));
+    list["target"] = "auto";
+    RunTool(*_registry, "jobs", list, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/jobs?state=active"));
+}
+
+TEST_F(McpTools_Test, Jobs_StartPostsTheVerbAndRefusesBadArguments)
+{
+    Json::Value accepted;
+    accepted["job"] = 3;
+    accepted["text"] = "Job 3 (ttd.find-event) queued on emu-1";
+    _caller->routes["POST /api/v1/emulator/emu-1/jobs"] = {202, accepted};
+    Json::Value args;
+    args["action"] = "start";
+    args["domain"] = "ttd";
+    args["verb"] = "find-event";
+    args["options"]["find"] = "exec";
+    args["options"]["address"] = "0x8000";
+    mcp::ToolResult result = RunTool(*_registry, "jobs", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Job 3"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/jobs");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["domain"].asString(), "ttd");
+    EXPECT_EQ(call->body["verb"].asString(), "find-event");
+    EXPECT_EQ(call->body["find"].asString(), "exec");
+
+    const size_t before = _caller->calls.size();
+    Json::Value bad;
+    bad["action"] = "wait";
+    EXPECT_TRUE(RunTool(*_registry, "jobs", bad, *_caller).isError) << "wait needs a job";
+    bad["action"] = "sleep";
+    bad["job"] = 1;
+    EXPECT_TRUE(RunTool(*_registry, "jobs", bad, *_caller).isError);
+    Json::Value noDomain;
+    noDomain["action"] = "start";
+    noDomain["verb"] = "dump";
+    EXPECT_TRUE(RunTool(*_registry, "jobs", noDomain, *_caller).isError);
+    for (size_t i = before; i < _caller->calls.size(); ++i)
+        EXPECT_NE(_caller->calls[i].path.find("/api/v1/emulator"), std::string::npos)
+            << "a refused call sends nothing but the target lookup: " << _caller->calls[i].path;
+
+    // A refusal from the server carries its reason
+    Json::Value notFound;
+    notFound["error"] = "Not Found";
+    notFound["message"] = "no job 99";
+    _caller->routes["GET /api/v1/jobs/99"] = {404, notFound};
+    Json::Value status;
+    status["action"] = "status";
+    status["job"] = 99;
+    result = RunTool(*_registry, "jobs", status, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("no job 99"), std::string::npos) << result.text;
+}

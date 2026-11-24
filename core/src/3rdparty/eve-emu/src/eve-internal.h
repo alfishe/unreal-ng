@@ -648,6 +648,10 @@ struct EveChip
     // a shadow chip draws it. Declared last: the renderer stops before anything else goes
     EveConfig config;                      // as created: the shadow is made from it
     bool asyncDrawing = false;
+    // REG_TAG of the last frames barrier is still the renderer's (EveFramesBarrier): stored at the first read
+    bool tagPending = false;
+    // Lines went to the renderer ahead since the last catch-up (CatchUpAhead)
+    bool drawnAhead = false;
     std::unique_ptr<EveLib::AsyncDrawing, EveLib::AsyncDrawingDelete> async;
 };
 
@@ -686,6 +690,8 @@ const uint8_t* RamG(const EveChip& chip);
 uint8_t* PendingDl(EveChip& chip);
 const uint8_t* ActiveDl(const EveChip& chip);
 Region& PendingDlRegion(EveChip& chip);
+// A RAM_G byte (address < ramGLimit) as a host write stores it, the lines due drawn before (CatchUp) by the caller
+void StoreRamG(EveChip& chip, uint32_t address, uint8_t value);
 Region& ActiveDlRegion(EveChip& chip);
 uint8_t RomByte(const EveChip& chip, uint32_t address);
 uint8_t RomImageByte(const EveChip& chip, uint32_t address); // the image, even while blank
@@ -719,6 +725,8 @@ void SetLastError(const char* text);
 
 void SpiSelect(EveChip& chip, bool selected);
 uint8_t SpiExchange(EveChip& chip, uint8_t mosi);
+// EveWriteRamGWords (eve.h)
+size_t SpiWriteRamGWords(EveChip& chip, uint32_t address, const uint8_t* words, size_t count);
 
 // --- Timing (eve-timing.cpp) -----------------------------------------------------------------
 
@@ -760,6 +768,8 @@ void GetCoproView(const EveChip& chip, EveCoproView& out);
 void DrawingReset(EveChip& chip);             // handles and derived drawing state
 uint32_t FrameLinesDue(const EveChip& chip);  // visible lines of the frame in flight passed so far
 void CatchUp(EveChip& chip);                  // draw every line sampled up to now
+// With the renderer on: the lines due to it ahead of the next catch-up, up to (not with) REG_TAG's line
+void CatchUpAhead(EveChip& chip);
 // The lines of the frame in flight up to `due`: drawn (draw), or passed without drawing (CatchUp's work)
 void DrawLinesTo(EveChip& chip, uint32_t due, bool draw);
 void FrameStart(EveChip& chip);               // new frame: nothing drawn yet
@@ -775,8 +785,11 @@ bool InitDrawing(EveChip& chip);               // allocate the derived drawing b
 
 // --- Drawing on the renderer thread (eve-async.cpp) -------------------------------------------------
 
-// Queued instead of drawn while chip.asyncDrawing: lines up to `due`, a frame start / end, a swap
-void AsyncLines(EveChip& chip, uint32_t due, bool draw);
+// Queued instead of drawn while chip.asyncDrawing: lines up to `due` (`ahead`: CatchUpAhead's, not a catch-up of
+// the drawing on this thread), a frame start / end, a swap
+void AsyncLines(EveChip& chip, uint32_t due, bool draw, bool ahead = false);
+// A catch-up that found nothing new to queue after lines drawn ahead: REG_TAG of the renderer counts from here
+void AsyncCatchUpPoint(EveChip& chip);
 void AsyncFrameStart(EveChip& chip);
 void AsyncFrameEnd(EveChip& chip);
 void AsyncSwapped(EveChip& chip, bool changed);
@@ -790,6 +803,18 @@ void AsyncWait(const EveChip& chip);
 const EveChip& DrawingChip(const EveChip& chip);
 // REG_TAG as the drawing left it, into the chip's register (a host read)
 void AsyncSyncTag(EveChip& chip);
+// EveFramesBarrier
+void AsyncFramesBarrier(EveChip& chip);
+// The REG_TAG of the last frames barrier into the chip's register, once the renderer has it: before anything reads
+// the register. Logically part of that read (the barrier's store, deferred), so a const chip takes it too
+void AsyncStorePendingTag(const EveChip& chip);
+inline void AsyncResolveTag(const EveChip& chip)
+{
+    if (chip.tagPending) [[unlikely]]
+        AsyncStorePendingTag(chip);
+}
+// The registers are the truth again (reset, state load, memory restored): a pending REG_TAG is dropped
+void AsyncDropPendingTag(EveChip& chip);
 
 // --- VDAC4 3D (eve-vdac4-3d.cpp) ---------------------------------------------------------------
 

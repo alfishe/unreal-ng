@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "debugger/ttd/engine/ttdpiecestore.h"
@@ -231,4 +233,43 @@ TEST(TTDPieceStore_Test, RangesStoreFewChangesExactlyAndCheaply)
     for (size_t i = ids.size(); i-- > 0;)
         store.Release(ids[i]);
     EXPECT_EQ(store.LiveVersions(), 0u) << "runs hold their base like any difference";
+}
+
+/// DecodeFrom moves a piece's bytes from one version of its chain to another by the differences between them, up
+/// or down the chain (an XOR difference turns either way): one link for a neighbour, not the chain from its start
+/// (the picture's restore of the frame before a seek's, P1.S10 seek tails). Versions of another chain, or a step
+/// longer than the chain from its start, are left to Decode
+TEST(TTDPieceStore_Test, DecodeFromMovesAlongTheChainEitherWay)
+{
+    TTDPieceStore store;
+    std::vector<std::vector<uint8_t>> versions = {Noise(1)};
+    std::vector<TTDPieceId> ids = {store.InternFirst(versions[0].data())};
+    for (int i = 1; i < 30; ++i)
+    {
+        auto b = versions.back();
+        for (int k = 0; k < (i % 3 == 0 ? 600 : 3); ++k)   // XOR differences and byte ranges
+            b[(i * 131 + k * 7) % kTTDPieceSize] ^= static_cast<uint8_t>(i + k);
+        ids.push_back(store.Intern(ids.back(), versions.back().data(), b.data()));
+        versions.push_back(b);
+    }
+    ASSERT_GT(store.DepthOf(ids.back()), 20u);
+    bool damaged = false;
+    for (const auto& [from, to] : {std::pair{20, 21}, std::pair{21, 20}, std::pair{25, 18}, std::pair{3, 29}})
+    {
+        std::vector<uint8_t> bytes = versions[from];
+        store.ResetWork();
+        ASSERT_TRUE(store.DecodeFrom(ids[to], ids[from], bytes.data(), damaged)) << from << " -> " << to;
+        EXPECT_EQ(bytes, versions[to]) << from << " -> " << to;
+        EXPECT_EQ(store.GetWork().linksDecoded, static_cast<uint64_t>(std::abs(to - from)));
+    }
+    // Down a long way: from the chain's start is cheaper
+    std::vector<uint8_t> bytes = versions[28];
+    EXPECT_FALSE(store.DecodeFrom(ids[2], ids[28], bytes.data(), damaged));
+    EXPECT_FALSE(damaged);
+    EXPECT_EQ(bytes, versions[28]) << "untouched";
+    // Another chain
+    const auto other = Noise(99);
+    const TTDPieceId foreign = store.InternFirst(other.data());
+    EXPECT_FALSE(store.DecodeFrom(ids[5], foreign, bytes.data(), damaged));
+    EXPECT_FALSE(damaged);
 }

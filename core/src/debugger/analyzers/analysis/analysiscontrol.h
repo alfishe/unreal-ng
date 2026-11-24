@@ -18,6 +18,8 @@
 ///                          job id; WebSocket topics analysis.progress / analysis.ready follow it. frames: replay at
 ///                          most that many; path: write the L1 JSON there; wait: block up to that many ms (<= 30000)
 ///   cancel                 stop the running build
+///   async=true             (build, trace, experiment, cover) run it as a job (emulator/jobs/jobcontrol.h): the
+///                          answer is {job, state, status_url} at once (HTTP 202), the job holds the result
 ///   explain address [page what]  a routine's fact sheet (<= 1 KB, <= 24 disassembly lines) when L1 has a routine
 ///                          running at the address (what=auto, the default, or routine), otherwise what L0 knows of
 ///                          one byte (what=byte): access kinds, last reader and writer, frames, the values written,
@@ -79,11 +81,12 @@ struct Reply
     std::string message;  ///< the refusal, one sentence a user can act on (empty on success)
     std::string text;     ///< the readable answer (what the CLI prints and MCP's content[] carries)
     StateNode body = StateNode::Object();
+    bool accepted = false;  ///< async=true: queued as a job, the body is {job, state, ...} (HTTP 202)
 
     bool Ok() const { return error == Error::None; }
     /// Success: the body plus "text". Failure: {"error": <phrase>, "message": ...}
     StateNode ToValue() const;
-    int HttpStatus() const { return ErrorHttpStatus(error); }
+    int HttpStatus() const { return Ok() && accepted ? 202 : ErrorHttpStatus(error); }
 };
 
 /// "start", "stop", "status", "build", "cancel", "explain", "query", "export", "gallery"

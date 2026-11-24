@@ -144,6 +144,10 @@ public:
     /// frame base on
     virtual void OnFrameEnd();
 
+    /// The machine goes away (the decoder's BeforeRelease, before the Screen and the CPU are released): the renderer
+    /// thread stops, so it presents nothing into them; the drawing stays on this thread from here on
+    void BeforeRelease();
+
     /// Bring the chip up to the owner's current raster position
     void Synchronize();
 
@@ -213,6 +217,9 @@ public:
     /// select do byte by byte, with the clock caught up once and the next event planned once (no time passes
     /// inside a transaction). `miso` may be null. A capture or a device history takes the byte path
     void Transaction(const uint8_t* mosi, uint8_t* miso, size_t count);
+    /// `count` 32-bit words (little-endian bytes) at `address`, `address` + 4, ... (22-bit addresses), one write
+    /// transaction each: the words in RAM_G go in one pass (EveWriteRamGWords), the others as transactions
+    void WriteWords(uint32_t address, const uint8_t* words, size_t count);
     /// endregion
 
     /// region <TTD (line-budget-metrics.md §3.4)>
@@ -288,6 +295,17 @@ private:
     bool Drawing() const;
     /// The chip's frame buffer (ARGB8888) into the presented picture (RGBA8888)
     void ConvertFrameToPicture();
+    /// The frame converted into `out` (and `copy` when not null), `pixels` of it
+    void ConvertFrame(uint8_t* out, uint8_t* copy, size_t pixels) const;
+    /// The finished frame into the picture and, unless a TTD replay composes the pictures, latched into the present
+    /// queue (Screen::LatchExternalFrame), on the emulation thread
+    void PresentPicture();
+    /// The same on the renderer thread: the machine frame and the fraction of it where the FT812's frame ended
+    void PresentPicture(uint64_t frameNumber, float fraction);
+    void PresentPicture(const void* stamp);  // Screen::ExternalFrameStamp, or null
+    /// The machine frame and position now, for the FT812 frame the chip ends next (the renderer presents it later
+    /// and must not read the CPU or the frame counter)
+    void StampNextFrame();
     /// The drawing on the renderer thread when wanted (Params::drawThread), on this thread for a capture
     /// (it hashes the frame buffer at the frame event) and a TTD replay (it composes pictures from it)
     bool AsyncWanted() const;
@@ -324,6 +342,17 @@ private:
     // above are resized only after it is idle (EveSetOutput waits, ConfigureOutput waits first)
     bool _async = false;
     std::atomic<bool> _asyncPresent{false};  // _showing as of the last output setup, for the renderer
+    // Where in the machine's time each FT812 frame ended, by its EveCompletedFrames count: written on the emulation
+    // thread before the chip steps that end it (so before the frame end is queued), read by the renderer. The
+    // renderer is at most a few frames behind (the library's frames-ahead limit), well inside the ring. Raw values
+    // (a store each per write: it runs at every advance); the renderer divides
+    struct FrameStamp
+    {
+        std::atomic<uint64_t> frameNumber{0};
+        std::atomic<uint64_t> position{0};  // Z80::t (low 32 bits) and the machine frame's length (high 32 bits)
+    };
+    static constexpr size_t kFrameStamps = 8;
+    FrameStamp _frameStamps[kFrameStamps];
 
     // [VDAC2] CaptureFile: the bus traffic as an .evr replay stream; while
     // capturing, the chip draws every frame so the stream carries frame hashes

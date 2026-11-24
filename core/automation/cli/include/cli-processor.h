@@ -222,6 +222,7 @@ private:
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args);  // analysis layers (L0 facts)
+    void HandleJobs(const ClientSession& session, const std::vector<std::string>& args);  // long verbs as jobs (S2)
     void HandleMarkup(const ClientSession& session, const std::vector<std::string>& args);    // memory markup
     void HandleCpuProfile(const ClientSession& session, const std::vector<std::string>& args);  // CPU time profile (profilecontrol.h)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);

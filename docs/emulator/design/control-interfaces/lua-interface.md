@@ -1842,6 +1842,22 @@ emu.analysis("experiment", {spec = '{"poke": {"$8100": 5}, "frames": 50, "keep_b
 emu.analysis("cover", "32")                          -- a string: the budget
 ```
 
+### Jobs
+
+The long verbs as jobs ([jobs.md](./jobs.md), PLAN #122 S2) through `jobs::Execute`: `emu.jobs(action, opts)`; the
+answer is a table of the reply's fields plus `text`, a refusal `{ ok = false, error = <why> }`. `wait` blocks the
+script until the job ends or `wait_ms` is up.
+
+```lua
+local j = emu.jobs("start", {domain = "ttd", verb = "dump", path = "/tmp/a.ttd"})   -- {job, state, status_url, text}
+local r = emu.jobs("wait", {job = j.job, wait_ms = 60000})   -- {state, ended, status, result, text}
+print(r.state, r.result.bytes)
+emu.jobs("status", j.job)                     -- a number or string: the job id
+emu.jobs("list")                              -- the selected instance's; {instance = "all", state = "active"}
+emu.jobs("cancel", j.job)
+local b = emu.analysis("build", {async = true})   -- the build as a job: b.job (trace, experiment, cover too)
+```
+
 ### Memory markup
 
 The [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) through the shared core handler (`markup::Execute`): the answer is a table of its fields

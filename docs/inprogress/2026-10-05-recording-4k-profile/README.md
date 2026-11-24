@@ -61,11 +61,90 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   | 352x288 (fit, 7.5x) | 2.95 ms | 2.66 ms | 3.2 ms | 2.9 ms |
 
   No threads: a 4K frame is now near the memory bandwidth on arm64 and well under a frame's time on both. The RGBA
-  `ScaleInto` is 1-2 ms at 4K; its `SIMD-CANDIDATE(frame scaler row expand)` stays a candidate. The fit path (a column
-  gather per pixel) gains little and is not the videowall's.
+  `ScaleInto` is 1-2 ms at 4K. Its row expansion was measured 2026-11-21 and stays scalar: for k = 2..4 the
+  compiler's fills beat NEON vst2q / vst3q / vst4q, and broadcast stores for k >= 5 halve the row on arm64 but
+  that is 5-8 % of the frame (the repeated-row copies and bars are memory-bound) and slower on x86. The fit path
+  chroma is the item below.
+- ~~VideoToolbox integer upscale (`video/record` `scale` 2..4) as a per-pixel swizzle loop on the emulation
+  thread~~ done 2026-11-21: `FrameScaler::ScaleInto` with the red / blue swap (SIMD swap, a factor-3 expand case, the
+  1x swap straight into the output), byte-identical to the loop it replaced. Per frame on an M1 Ultra: 352x288 x2
+  154 -> 41 us, x3 271 -> 89 us, x4 458 -> 229 us, 960x540 x2 819 -> 252 us (the x86-64 build, SSE2, run under
+  Rosetta: 2-3x as well). The encoder's own NEON / SSSE3 copy stays for 1x (ScaleInto is 6-19 % slower there).
+- ~~NV12 chroma of the fitted picture and of odd whole factors (a per-block loop with four lookups and branches)~~
+  done 2026-11-21: `ChromaPlaneBuilder` reduces each source row once to the R, G, B sums of the two pixels under each
+  chroma column; a block row is the sum of two such rows through a NEON / SSE2 kernel. Byte-identical on arm64 and
+  x86-64 (the old and new outputs compared, `ScaleIntoNv12_MatchesTheFullFrameConversionByteForByte` widened). To
+  3840x2160 on an M1 Ultra: 352x288 (7.5x fit) 2.40 -> 1.38 ms, 320x256 2.17 -> 1.27 ms, 2048x1536 (fit) 9.2 ->
+  6.4 ms, 1280x720 (3x) 5.17 -> 2.4 ms, 768x432 (5x) 4.43 -> 2.98 ms; even factors and 1x unchanged.
+- ~~GIF (the `video/record` default, `Auto` palette) on the emulation thread~~ done 2026-11-21. `GifWriteFrame` made
+  the median-split palette of the whole frame twice per frame, and a repeated frame turned pixel (0,0) black (a
+  1x1 frame of the previous index with a palette of no colors). Now: a repeated frame is one transparent pixel; the
+  changed pixels of a frame with at most 255 colors get an exact palette (one entry per color, the fewest code bits)
+  in two passes, no median split; more colors keep the median split. Quality: every decoded frame equals its source
+  on six ZX programs (the old encoder was off in 2-200 of 200 frames, by up to 255 per channel) and on 16-color
+  noise; the GIF bytes are the same on macOS, Linux and Windows. Mean ms per frame, 5 interleaved rounds (M1 Ultra
+  clang / i7-11850H gcc 15 / Windows host MSVC 2022): earshaver 5.6 -> 2.2 / 5.6 -> 1.2 / 3.3 -> 1.0; aleste 2.9 ->
+  2.1 / 2.3 -> 1.4 / 1.5 -> 1.0; Dizzy 1.1 -> 0.6 / 0.7 -> 0.4 / 0.7 -> 0.5; across-the-edge 10.7 -> 1.3 / 11.6 ->
+  1.2 / 7.0 -> 1.0; 16-color noise 48 -> 3.8 / 54 -> 6.3 / 28 -> 3.4; a 1024-color frame (median split) 42 -> 33 /
+  49 -> 37 / 30 -> 21. Files 4-49 % smaller; a live 5 s recording records the same frames, 37-50 % smaller.
+- ~~NVENC frames at the native size (`scale` 1..4, not a fixed profile) converted by a scalar loop~~ done 2026-11-21.
+  Only the fixed profiles lent the NVENC input buffer to FrameScaler; the native-size path converted every output
+  pixel (BT.601, nearest scale) into a staging NV12 buffer and copied it into the locked buffer. Now
+  `FrameScaler::ScaleIntoNv12` writes straight into the locked buffer: the same bytes (checked for x1..x5, odd source
+  sizes, a 256-byte pitch), no staging buffer. Per frame, MSVC 2022 on the Windows host: 352x288 x1 1389 -> 46 us,
+  x2 5.6 -> 0.19 ms, x3 12.6 -> 0.57 ms, x4 22.4 -> 0.35 ms (clang arm64 / x86_64: 5-24x). Live 8 s recordings on an
+  RTX 4090, 3 interleaved rounds: at x4 the old encoder kept 236-316 frames (29-39 fps), the new one 392-394
+  (48.8 fps, every frame); at x2 and x3 both keep every frame; the first decoded frames are the same.
+- ~~Window recorder (ffmpeg and VideoToolbox paths): a fresh frame image per picture, a scalar red/blue swap~~ done
+  2026-11-22. The swap loop read `picture.width()` in its condition; every `uint32_t` store may alias the image, so
+  the width was reloaded and the loop stayed scalar. A local width vectorizes it. The ffmpeg path composed into a new
+  4K `QImage` every picture (page faults); two reused buffers now hold the picture being composed and the last one
+  sent (the still-screen `memcmp` stays). Microbenchmark, 4K, 3 interleaved rounds, swap on 4 threads / on one:
+  M1 Ultra clang 5.2 / 16-42 -> 1.2 / 2 ms; i7-11850H gcc 15 12.7 / 29 -> 4.9 / 7.1 ms; Ryzen MSVC 4.4 / 16.8 ->
+  2.4 / 3.1 ms; filling a reused image 2.0 ms against 4.1 fresh (MSVC). Live on Linux (xvfb, stepped 4K libx264,
+  5 interleaved rounds of 200 frames): the same decoded frames (framemd5) in both builds, no slower; the stepped
+  call runs at the real-time pace either way. Transport to ffmpeg measured apart: POC 054 (the macOS FIFO is the
+  4K limit, a unix socket moves 10x more).
+- ~~ffmpeg (software and `-c:v` hardware through the pipe) with a fixed profile: the 33 MB 4K frame through the FIFO
+  and ffmpeg's RGB conversion of 8.3 M pixels~~ done 2026-11-22 (POC 054). The pipe carries the source picture
+  (352x288 RGBA, 0.4 MB) and ffmpeg builds the frame at the target size given explicitly: the colour conversion at
+  the source size (4:4:4), then whole factors `neighbor` + `pad`, other factors `remap` with FrameScaler's own
+  mapping as gray16le tables (byte-identical 4:4:4 to FrameScaler's frame for 352x288 / 320x240 / 256x192 into 4K,
+  1440p, 1080p), then `area` 4:2:0 (+0.06..0.10 dB over swscale's conversion of the RGB frame). A raw input has one
+  size, so each picture size is a segment (one ffmpeg, its end on a thread of its own so no frame waits for the
+  flush; the queue holds 5 s of source pictures); the sound goes into a PCM file and Stop joins the segments (stream
+  copy) with the sound encoded. Live, `video/record` h264 software, 9 s, interleaved rounds, frames in the file:
+
+  | Host | 1080p old / new | 1440p old / new | 4K old / new |
+  |:--|--:|--:|--:|
+  | M1 Ultra, 3 rounds | 440 / 440 | 177-381 / 440 | 59-83 / 440 |
+  | i7-11850H Linux (gcc 15), 3 rounds | 440 / 440 | 440 / 440 | 440 / 440 |
+  | Windows 64 threads (MSVC 2022), 3 rounds | 441 / 441 | 441 / 441 | 440-442 / 440-441 |
+
+  CPU of the app and its ffmpeg per recorded frame (psutil): M1 Ultra 4K 185 -> 108 ms (old 255 frames, new 440),
+  1080p 82 -> 77 ms; Windows 4K: the app 5.4 -> 2.6 s (the emulation thread halves), ffmpeg 20.8 -> 25.5 s (`remap`
+  at 4K), 7 % more in total where the old path kept up. The same pictures (PSNR between the files 52-54 dB, the
+  1-frame start offset removed). With sound the old fixed profiles left an mp4 without `moov` on macOS in every run
+  (6 of 6); the new path's sound is one AAC track of the whole recording. Overscan toggled twice mid-recording:
+  3 segments, 443 frames, no frame lost. Side fix: `FFmpegProbe::searchPath` looked for `ffmpeg.exe.exe` on Windows,
+  ffmpeg on PATH was never found there.
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
-- Videowall: the `QWidget::grab()` + `toImage()` + RGBA convert per tick is the remaining 4K cost; a direct
-  `QOpenGLWidget` / window-buffer read would remove it.
+- ~~Stepped window recording (`video/window/record/frames`) through ffmpeg with sound stalls ("recorded nothing
+  within 10 s", then "the recording stopped")~~ fixed 2026-11-21, found under Xvfb on Linux. ffmpeg analysed the raw
+  sound input for its default 5 s before reading more picture; a paused machine makes sound only as its pictures are
+  taken, so both sides waited. The FIFO input gets `-probesize 32 -analyzeduration 0` (its format is all given).
+  3 x 50 steps now take 0.4-0.6 s each, the file 150 frames = 3.072 s of picture and sound; running is unchanged
+  (195 frames in 4 s, both streams from 0). The Mac's default `native` engine does not use ffmpeg; `engine: ffmpeg`
+  has the same arguments.
+- ~~Videowall: the `QWidget::grab()` + `toImage()` + RGBA convert per tick~~ done 2026-11-21. With the GPU grid
+  (`--gpu`, a `QOpenGLWindow` in a window container) the recording and the wall screenshot were an empty grey frame:
+  `grab()` of the container does not see the GL window. The GL grid now reads its framebuffer back after each paint
+  while recording (`TileGridGL::setCaptureEnabled`, `glReadPixels` RGBA, 3.4-3.6 ms at 2048x1536 on an M1 Ultra) and
+  the recorder takes the last frame; the screenshot uses `grabFramebuffer()`. The CPU grid is painted with `render()`
+  into a reused RGB32 image instead of a new pixmap per tick (16 tiles, 2048x1536 into the 4K profile, three
+  interleaved rounds: 8.7-10.3 ms against 10.6-15.2 ms; painting into RGBA8888 directly was 2-2.5x slower, the
+  raster engine's slow path). Open: an asynchronous read (two pixel-pack buffers) would take the 3.5 ms stall off the
+  GUI thread; the CPU grid's cost is the tiles' own painting.
 - Qt toolbar widget offers h264 only (the dialog also h265).

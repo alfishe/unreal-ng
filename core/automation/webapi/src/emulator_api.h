@@ -58,6 +58,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
     // The operation log (machine state coordinator, api/operations_api.cpp): who did what to the machine, when, result
     ADD_METHOD_TO(EmulatorAPI::getOperations, "/api/v1/emulator/{id}/operations", drogon::Get);
+    // Jobs (api/jobs_api.cpp, PLAN #122 S2): the long verbs run with async=true; list, long-poll, cancel
+    ADD_METHOD_TO(EmulatorAPI::listJobs, "/api/v1/jobs", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::listInstanceJobs, "/api/v1/emulator/{id}/jobs", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::startJob, "/api/v1/emulator/{id}/jobs", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getJob, "/api/v1/jobs/{job}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::cancelJob, "/api/v1/jobs/{job}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::cancelJob, "/api/v1/jobs/{job}/cancel", drogon::Post);
     // NMI pulse (Scorpion MNI "magic button" with {"magic": true})
     ADD_METHOD_TO(EmulatorAPI::requestNmi, "/api/v1/emulator/{id}/nmi", drogon::Post);
     // Front-panel switches (Profi TURBO): GET lists them, POST {"name": "turbo", "on": true} flips one
@@ -936,6 +943,23 @@ public:
     /// @brief GET /api/v1/emulator/{id}/operations[?since=&limit=] — the operation log (OperationsStatus::Report)
     void getOperations(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // region Jobs (implementation: api/jobs_api.cpp; core: emulator/jobs/jobcontrol.h)
+    /// @brief GET /api/v1/jobs[?instance=&state=&limit=] — every instance's jobs (instance=<id> filters)
+    void listJobs(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// @brief GET /api/v1/emulator/{id}/jobs[?state=&limit=] — the instance's jobs
+    void listInstanceJobs(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/jobs {domain: ttd | analysis, verb, <the verb's options>} — 202 {job, ...}
+    void startJob(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    /// @brief GET /api/v1/jobs/{job}[?wait_ms=&result=] — one job; wait_ms long-polls (no thread held) up to 60000
+    void getJob(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                const std::string& job) const;
+    /// @brief DELETE /api/v1/jobs/{job}, POST /api/v1/jobs/{job}/cancel — cancel it
+    void cancelJob(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& job) const;
+    // endregion Jobs
 
     // Pulse the NMI line; body {"magic": true} selects the Scorpion MNI variant
     // (Shadow Monitor paged before the NMI so #0066 executes monitor code)

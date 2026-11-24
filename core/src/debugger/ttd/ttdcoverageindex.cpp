@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstring>
 #include <istream>
 #include <iterator>
 #include <ostream>
@@ -28,6 +29,18 @@ void AppendVarint(std::vector<uint8_t>& out, uint32_t value)
         value >>= 7;
     }
     out.push_back(static_cast<uint8_t>(value));
+}
+
+/// One varint at @p p (room for five bytes); past it
+inline uint8_t* PutVarint(uint8_t* p, uint32_t value)
+{
+    while (value >= 0x80)
+    {
+        *p++ = static_cast<uint8_t>((value & 0x7F) | 0x80);
+        value >>= 7;
+    }
+    *p++ = static_cast<uint8_t>(value);
+    return p;
 }
 
 uint32_t ReadVarint(const uint8_t* data, size_t& pos)
@@ -144,6 +157,7 @@ void TTDCoverageIndex::DropFramesFrom(uint64_t frame, bool partialFirstFrame)
     _blockCache.clear();
     _blockCacheKind = SIZE_MAX;
     _blockCacheIndex = UINT32_MAX;
+    _rowsCacheIndex = UINT32_MAX;
     _blockFrameOffsets.clear();
     _blockFrameCounts.clear();
 
@@ -161,7 +175,9 @@ void TTDCoverageIndex::DropFramesFrom(uint64_t frame, bool partialFirstFrame)
         {
             // Nothing before the cut was indexed for this kind
             _blocks[k].clear();
+            DropGroups(k);
             _openBlock[k].clear();
+            ResetOpenSummary(k);
             _openBlockFrames[k] = 0;
             _openBlockBaseFrame[k] = 0;
             _compressedBytes[k] = 0;
@@ -181,12 +197,14 @@ void TTDCoverageIndex::DropFramesFrom(uint64_t frame, bool partialFirstFrame)
             {
                 _openBlock[k].clear();
                 _openBlockFrames[k] = 0;
+                ResetOpenSummary(k);
             }
             else if (base + _openBlockFrames[k] > frame)
             {
                 const uint32_t keep = static_cast<uint32_t>(frame - base);
                 _openBlock[k].resize(RawPrefixBytes(_openBlock[k], keep));
                 _openBlockFrames[k] = keep;
+                ResetOpenSummary(k);   // its summary held the dropped frames: built by a query instead
             }
         }
 
@@ -215,6 +233,7 @@ void TTDCoverageIndex::DropFramesFrom(uint64_t frame, bool partialFirstFrame)
                     if (lost <= _firstCoveredFrame[k])
                     {
                         _hasCoverage[k] = false;
+                        DropGroups(k);
                         continue;
                     }
                     frame = lost;
@@ -228,11 +247,22 @@ void TTDCoverageIndex::DropFramesFrom(uint64_t frame, bool partialFirstFrame)
                     b.compressed = codec::Compress(raw.data(), raw.size());
                     b.rawSize = static_cast<uint32_t>(raw.size());
                     b.frameCount = keep;
+                    b.unionKeys.clear();
+                    b.unionRawSize = 0;
+                    b.frameKeyCounts.clear();
+                    b.pieceMask.clear();
+                    b.unionSpans.clear();
+                    b.unionCount = 0;
+                    b.frameRows.clear();
+                    b.frameRowsRawSize = 0;
+                    b.summarized = false;
                     _rawBytes[k] += b.rawSize;
                     _compressedBytes[k] += b.compressed.size();
                 }
             }
         }
+
+        DropGroups(k, frame);
 
         if (_lastCoveredFrame[k] >= frame)
             _lastCoveredFrame[k] = frame - 1;
@@ -386,6 +416,50 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
         assert(at == pending.size());
     }
 
+    // The block summary: the keys new to the block with this frame, the frame's count
+    if (_openBlockFrames[kindIdx] == 0)
+    {
+        ResetOpenSummary(kindIdx);
+        _blockSummaryValid[kindIdx] = true;
+    }
+    if (_blockSummaryValid[kindIdx])
+    {
+        // The keys are sorted: one leaf lookup per 4 KB the frame reached. Each key's first and last frame in the
+        // block are noted beside its bit, so the seal reads the union in key order without a sort or a walk back
+        // over the frames (the summaries had doubled a frame's coverage capture, P1.S10 seek tails)
+        SparseBits& blockSeen = _blockSeen[kindIdx];
+        blockSeen.tracks = true;
+        const uint8_t inBlock = static_cast<uint8_t>(_blockCounts[kindIdx].size());
+        uint32_t piece = UINT32_MAX;
+        uint64_t* leaf = nullptr;
+        uint8_t* firsts = nullptr;
+        uint8_t* lasts = nullptr;
+        for (const TTDCoverageKey key : pending)
+        {
+            const TTDCoverageKey masked = key & (kKeySpace - 1);
+            if ((masked >> 12) != piece)
+            {
+                piece = masked >> 12;
+                leaf = blockSeen.Leaf(piece, true);
+                const size_t at = static_cast<size_t>(leaf - blockSeen.words.data()) << 6;
+                firsts = blockSeen.firsts.data() + at;
+                lasts = blockSeen.lasts.data() + at;
+            }
+            const uint32_t inLeaf = masked & 4095;
+            uint64_t& word = leaf[inLeaf >> 6];
+            const uint64_t bit = uint64_t{1} << (inLeaf & 63);
+            if (!(word & bit))
+            {
+                word |= bit;
+                firsts[inLeaf] = inBlock;
+            }
+            lasts[inLeaf] = inBlock;
+        }
+        _blockCounts[kindIdx].push_back(static_cast<uint32_t>(pending.size()));
+        if (kindIdx == static_cast<size_t>(TTDCoverageKind::Written))
+            AppendFrameRows(_blockRows, pending.data(), pending.size());
+    }
+
     std::vector<uint8_t>& pool = _openBlock[kindIdx];
 
     // A query may have cached a copy of the open block; it is about to grow,
@@ -394,20 +468,24 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
     {
         _blockCacheKind = SIZE_MAX;
         _blockCacheIndex = UINT32_MAX;
+        _rowsCacheIndex = UINT32_MAX;
     }
 
     if (_openBlockFrames[kindIdx] == 0)
         _openBlockBaseFrame[kindIdx] = frame;
 
-    // Frame layout inside the block: key count, then sorted delta varints.
-    AppendVarint(pool, static_cast<uint32_t>(pending.size()));
-
+    // Frame layout inside the block: key count, then sorted delta varints (written through a pointer: a push per
+    // byte was a fifth of the capture)
+    const size_t poolAt = pool.size();
+    pool.resize(poolAt + 5 * (pending.size() + 1));
+    uint8_t* out = PutVarint(pool.data() + poolAt, static_cast<uint32_t>(pending.size()));
     TTDCoverageKey prev = 0;
     for (TTDCoverageKey key : pending)
     {
-        AppendVarint(pool, key - prev);
+        out = PutVarint(out, key - prev);
         prev = key;
     }
+    pool.resize(static_cast<size_t>(out - pool.data()));
 
     pending.clear();  // Keeps the reserved capacity for the next frame.
 
@@ -421,6 +499,7 @@ void TTDCoverageIndex::CloseOpenBlock(size_t kindIdx)
     if (raw.empty())
     {
         _openBlockFrames[kindIdx] = 0;
+        ResetOpenSummary(kindIdx);
         return;
     }
 
@@ -429,14 +508,291 @@ void TTDCoverageIndex::CloseOpenBlock(size_t kindIdx)
     block.baseFrame = _openBlockBaseFrame[kindIdx];
     block.frameCount = _openBlockFrames[kindIdx];
     block.compressed = codec::Compress(raw.data(), raw.size());
+    SealSummary(kindIdx, block);
 
     _rawBytes[kindIdx] += block.rawSize;
     _compressedBytes[kindIdx] += block.compressed.size();
 
     _blocks[kindIdx].push_back(std::move(block));
+    AccumulateGroups(kindIdx, static_cast<uint32_t>(_blocks[kindIdx].size() - 1));
 
     raw.clear();
     _openBlockFrames[kindIdx] = 0;
+}
+
+void TTDCoverageIndex::AccumulateGroups(size_t kindIdx, uint32_t index)
+{
+    // A run is united when its last block seals: from the unions of its parts (the blocks of a run of 4, the runs of 4
+    // of a run of 32), each sorted, merged pairwise. Nothing is kept between seals
+    const std::vector<Block>& blocks = _blocks[kindIdx];
+    const Block& block = blocks[index];
+    if (!block.summarized)
+        return;
+    std::vector<uint32_t> keys, bounds;
+    auto decodeInto = [&](const std::vector<uint8_t>& packed, uint32_t rawSize) {
+        std::vector<uint8_t>& raw = _sealRaw;
+        raw.resize(rawSize);
+        if (rawSize && !codec::Decompress(packed, rawSize, raw.data()))
+            return false;
+        size_t pos = 0;
+        TTDCoverageKey key = 0;
+        while (pos < raw.size())
+            keys.push_back(key += ReadVarint(raw.data(), pos));
+        bounds.push_back(static_cast<uint32_t>(keys.size()));
+        return true;
+    };
+    auto mergeParts = [&]() {
+        // Sorted parts [bounds[i - 1], bounds[i]) merged in pairs until one is left, the duplicates dropped
+        for (size_t width = 1; width < bounds.size(); width *= 2)
+            for (size_t i = 0; i + width < bounds.size(); i += 2 * width)
+            {
+                const uint32_t lo = i == 0 ? 0 : bounds[i - 1];
+                const uint32_t mid = bounds[i + width - 1];
+                const uint32_t hi = bounds[std::min(i + 2 * width, bounds.size()) - 1];
+                std::inplace_merge(keys.begin() + lo, keys.begin() + mid, keys.begin() + hi);
+            }
+        keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    };
+    auto store = [&](uint32_t level, uint32_t group, uint32_t firstBlock) {
+        std::vector<Group>& groups = _groups[kindIdx][level].groups;
+        if (groups.size() <= group)
+            groups.resize(group + 1);
+        Group& g = groups[group];
+        _sealRaw.clear();
+        TTDCoverageKey prev = 0;
+        for (const uint32_t key : keys)
+        {
+            AppendVarint(_sealRaw, key - prev);
+            prev = key;
+        }
+        g.keys = codec::Compress(_sealRaw.data(), _sealRaw.size());
+        g.keys.shrink_to_fit();
+        g.rawSize = static_cast<uint32_t>(_sealRaw.size());
+        g.firstFrame = blocks[firstBlock].baseFrame;
+        g.lastFrame = block.baseFrame + block.frameCount - 1;
+        g.valid = !keys.empty() && !g.keys.empty();
+    };
+
+    const uint32_t small = kGroupBlocks[0];
+    if (index % small != small - 1)
+        return;
+    // The run of 4: the earlier blocks' unions, then this one's keys as SealSummary left them (in key order)
+    for (uint32_t b = index + 1 - small; b < index; ++b)
+        if (!blocks[b].summarized || !decodeInto(blocks[b].unionKeys, blocks[b].unionRawSize))
+            return;
+    for (const uint32_t packed : _sealFirst)
+        keys.push_back(packed >> 8);
+    bounds.push_back(static_cast<uint32_t>(keys.size()));
+    mergeParts();
+    store(0, index / small, index + 1 - small);
+
+    const uint32_t large = kGroupBlocks[1];
+    if (index % large != large - 1)
+        return;
+    // The run of 32: its runs of 4
+    const std::vector<Group>& parts = _groups[kindIdx][0].groups;
+    keys.clear();
+    bounds.clear();
+    for (uint32_t g = (index + 1 - large) / small; g <= index / small; ++g)
+        if (g >= parts.size() || !parts[g].valid || !decodeInto(parts[g].keys, parts[g].rawSize))
+            return;
+    mergeParts();
+    store(1, index / large, index + 1 - large);
+}
+
+void TTDCoverageIndex::DropGroups(size_t kindIdx, uint64_t frame)
+{
+    for (GroupLevel& run : _groups[kindIdx])
+        while (!run.groups.empty() && (!run.groups.back().valid || run.groups.back().lastFrame >= frame))
+            run.groups.pop_back();
+}
+
+void TTDCoverageIndex::ResetOpenSummary(size_t kindIdx)
+{
+    _blockSeen[kindIdx].Reset();
+    _blockCounts[kindIdx].clear();
+    if (kindIdx == static_cast<size_t>(TTDCoverageKind::Written))
+        _blockRows.clear();
+    _blockSummaryValid[kindIdx] = false;
+}
+
+void TTDCoverageIndex::AppendFrameRows(std::vector<uint8_t>& out, const TTDCoverageKey* keys, size_t count)
+{
+    // The count leads the frame: the rows are written after room for the widest count, then moved up
+    const size_t at = out.size();
+    out.resize(at + 5 + 5 * count);
+    uint8_t* p = out.data() + at + 5;
+    uint32_t rows = 0;
+    uint32_t prev = 0;
+    for (size_t i = 0, prevRow = SIZE_MAX; i < count; ++i)
+        if (const size_t row = (keys[i] & (kKeySpace - 1)) >> kRowBits; row != prevRow)
+        {
+            p = PutVarint(p, static_cast<uint32_t>(row) - prev);
+            prev = static_cast<uint32_t>(row);
+            prevRow = row;
+            ++rows;
+        }
+    const size_t end = static_cast<size_t>(p - out.data());
+    uint8_t head[5];
+    const size_t headSize = static_cast<size_t>(PutVarint(head, rows) - head);
+    std::memcpy(out.data() + at, head, headSize);
+    std::memmove(out.data() + at + headSize, out.data() + at + 5, end - at - 5);
+    out.resize(end - (5 - headSize));
+}
+
+int TTDCoverageIndex::FrameWroteIn(uint64_t frame, TTDCoverageKey lo, TTDCoverageKey hi) const
+{
+    constexpr size_t kindIdx = static_cast<size_t>(TTDCoverageKind::Written);
+    if (lo >= hi)
+        return 0;
+    const uint32_t b = FindBlockForFrame(kindIdx, frame);
+    if (b >= _blocks[kindIdx].size() || !SummarizeBlock(kindIdx, b))
+        return -1;
+    const Block& block = _blocks[kindIdx][b];
+    if (block.frameRows.empty() && block.frameRowsRawSize != 0)
+        return -1;
+    if (_rowsCacheIndex != b)
+    {
+        _rowsCacheIndex = UINT32_MAX;
+        _rowsCache.resize(block.frameRowsRawSize);
+        if (block.frameRowsRawSize &&
+            !codec::Decompress(block.frameRows, block.frameRowsRawSize, _rowsCache.data()))
+            return -1;
+        _rowsOffsets.clear();
+        size_t pos = 0;
+        for (uint32_t f = 0; f < block.frameCount && pos < _rowsCache.size(); ++f)
+        {
+            _rowsOffsets.push_back(static_cast<uint32_t>(pos));
+            const uint32_t rows = ReadVarint(_rowsCache.data(), pos);
+            for (uint32_t i = 0; i < rows; ++i)
+                ReadVarint(_rowsCache.data(), pos);
+        }
+        if (_rowsOffsets.size() != block.frameCount)
+            return -1;
+        _rowsCacheIndex = b;
+    }
+    // Rows the range holds whole answer yes; a row it cuts may hold only keys outside it
+    const uint32_t firstRow = lo >> kRowBits;
+    const uint32_t lastRow = (hi - 1) >> kRowBits;
+    size_t pos = _rowsOffsets[static_cast<size_t>(frame - block.baseFrame)];
+    const uint32_t rows = ReadVarint(_rowsCache.data(), pos);
+    uint32_t row = 0;
+    int answer = 0;
+    for (uint32_t i = 0; i < rows; ++i)
+    {
+        row += ReadVarint(_rowsCache.data(), pos);
+        if (row < firstRow)
+            continue;
+        if (row > lastRow)
+            break;
+        const TTDCoverageKey rowLo = row << kRowBits;
+        const TTDCoverageKey rowHi = rowLo + (TTDCoverageKey{1} << kRowBits);
+        if (rowLo >= lo && rowHi <= hi)
+            return 1;
+        answer = -1;
+    }
+    return answer;
+}
+
+namespace
+{
+/// Sort packed (key << 8 | frame) values below 2^31: three passes of 11 bits. std::sort of a block's few thousand
+/// keys was most of a seal's summary
+void RadixSort31(std::vector<uint32_t>& values, std::vector<uint32_t>& scratch)
+{
+    constexpr uint32_t kBits = 11;
+    constexpr uint32_t kBuckets = 1u << kBits;
+    if (values.size() < 64)
+    {
+        std::sort(values.begin(), values.end());
+        return;
+    }
+    scratch.resize(values.size());
+    uint32_t counts[kBuckets];
+    for (uint32_t shift = 0; shift < 33; shift += kBits)
+    {
+        std::fill(std::begin(counts), std::end(counts), 0u);
+        for (const uint32_t v : values)
+            ++counts[(v >> shift) & (kBuckets - 1)];
+        uint32_t sum = 0;
+        for (uint32_t& c : counts)
+        {
+            const uint32_t n = c;
+            c = sum;
+            sum += n;
+        }
+        for (const uint32_t v : values)
+            scratch[counts[(v >> shift) & (kBuckets - 1)]++] = v;
+        values.swap(scratch);
+    }
+}
+}  // namespace
+
+void TTDCoverageIndex::SealSummary(size_t kindIdx, Block& block)
+{
+    const std::vector<uint32_t>& counts = _blockCounts[kindIdx];
+    if (!_blockSummaryValid[kindIdx] || counts.size() != block.frameCount)
+    {
+        ResetOpenSummary(kindIdx);   // a cut inside the block: the first query builds it
+        return;
+    }
+    // The union in key order: the leaves by their 4 KB, each one's bits ascending, with the frames noted beside them
+    SparseBits& blockSeen = _blockSeen[kindIdx];
+    std::sort(blockSeen.touched.begin(), blockSeen.touched.end());
+    _sealFirst.clear();
+    _sealLast.clear();
+    for (const uint32_t piece : blockSeen.touched)
+    {
+        const size_t leaf = blockSeen.leafOf[piece];
+        const uint64_t* words = blockSeen.words.data() + (leaf << 6);
+        const uint8_t* firsts = blockSeen.firsts.data() + (leaf << 12);
+        const uint8_t* lasts = blockSeen.lasts.data() + (leaf << 12);
+        for (uint32_t w = 0; w < 64; ++w)
+            for (uint64_t bits = words[w]; bits != 0; bits &= bits - 1)
+            {
+                const uint32_t inLeaf = (w << 6) + static_cast<uint32_t>(std::countr_zero(bits));
+                const uint32_t key = (piece << 12) | inLeaf;
+                _sealFirst.push_back(key << 8 | firsts[inLeaf]);
+                _sealLast.push_back(key << 8 | lasts[inLeaf]);
+            }
+    }
+    BuildSummary(block, _sealFirst, _sealLast, _sealRaw);
+    block.frameKeyCounts = counts;
+    if (kindIdx == static_cast<size_t>(TTDCoverageKind::Written))
+    {
+        block.frameRows = codec::Compress(_blockRows.data(), _blockRows.size());
+        block.frameRowsRawSize = static_cast<uint32_t>(_blockRows.size());
+    }
+    block.summarized = true;
+    ResetOpenSummary(kindIdx);
+}
+
+void TTDCoverageIndex::BuildSummary(const Block& block, const std::vector<uint32_t>& firsts,
+                                    const std::vector<uint32_t>& lasts, std::vector<uint8_t>& scratch)
+{
+    assert(firsts.size() == lasts.size());
+    scratch.clear();
+    block.pieceMask.assign(kSummaryPieceWords, 0);
+    std::vector<uint8_t> spans;
+    spans.reserve(firsts.size() * 2);
+    TTDCoverageKey prev = 0;
+    for (size_t i = 0; i < firsts.size(); ++i)
+    {
+        const TTDCoverageKey key = firsts[i] >> 8;
+        assert((lasts[i] >> 8) == key);
+        const size_t piece = key >> kSummaryPieceBits;
+        block.pieceMask[piece >> 6] |= uint64_t{1} << (piece & 63);
+        AppendVarint(scratch, key - prev);
+        prev = key;
+        spans.push_back(static_cast<uint8_t>(firsts[i]));
+        spans.push_back(static_cast<uint8_t>(lasts[i]));
+    }
+    block.unionKeys = codec::Compress(scratch.data(), scratch.size());
+    block.unionKeys.shrink_to_fit();
+    block.unionRawSize = static_cast<uint32_t>(scratch.size());
+    block.unionSpans = codec::Compress(spans.data(), spans.size());
+    block.unionSpans.shrink_to_fit();
+    block.unionCount = static_cast<uint32_t>(firsts.size());
 }
 
 void TTDCoverageIndex::FlushOpenBlocks()
@@ -466,6 +822,7 @@ bool TTDCoverageIndex::MaterializeBlock(size_t kindIdx, uint32_t blockIdx) const
         {
             _blockCacheKind = SIZE_MAX;
             _blockCacheIndex = UINT32_MAX;
+            _rowsCacheIndex = UINT32_MAX;
             return false;
         }
         frameCount = block.frameCount;
@@ -547,8 +904,20 @@ void TTDCoverageIndex::Clear()
     _blockCache.clear();
     _blockCacheKind = SIZE_MAX;
     _blockCacheIndex = UINT32_MAX;
+    _rowsCacheIndex = UINT32_MAX;
     _blockFrameOffsets.clear();
     _blockFrameCounts.clear();
+    _unionSeen = {};
+    _unionScratch = {};
+    _unionRaw = {};
+    _sealRaw = {};
+    _sealFirst = {};
+    _sealLast = {};
+    _unionLast = {};
+    _spansRaw = {};
+    _blockRows = {};
+    _rowsCache = {};
+    _rowsOffsets = {};
 
     for (size_t k = 0; k < kKindCount; ++k)
     {
@@ -557,7 +926,11 @@ void TTDCoverageIndex::Clear()
         _seenWords[k].assign(kSeenSummaryWords, 0);
         std::fill(std::begin(_recent[k]), std::end(_recent[k]), TTDCoverageKey{0});
         _blocks[k].clear();
+        for (GroupLevel& run : _groups[k])
+            run = {};
         _openBlock[k].clear();
+        ResetOpenSummary(k);
+        _blockSeen[k] = {};
         _openBlockFrames[k] = 0;
         _openBlockBaseFrame[k] = 0;
         _compressedBytes[k] = 0;
@@ -649,6 +1022,240 @@ size_t TTDCoverageIndex::SealedFrameCount(TTDCoverageKind kind) const
     return total;
 }
 
+uint32_t TTDCoverageIndex::FirstBlockReaching(size_t kindIdx, uint64_t first) const
+{
+    const std::vector<Block>& blocks = _blocks[kindIdx];
+    const auto at = std::partition_point(blocks.begin(), blocks.end(),
+                                         [&](const Block& b) { return b.baseFrame + b.frameCount <= first; });
+    return static_cast<uint32_t>(at - blocks.begin());
+}
+
+bool TTDCoverageIndex::SummarizeBlock(size_t kindIdx, uint32_t blockIdx) const
+{
+    const Block& block = _blocks[kindIdx][blockIdx];
+    if (block.summarized)
+        return true;
+    if (!MaterializeBlock(kindIdx, blockIdx))
+        return false;
+    if (_unionSeen.empty())
+        _unionSeen.assign(kSeenWords, 0);
+    block.frameKeyCounts.assign(_blockFrameCounts.begin(), _blockFrameCounts.end());
+    _unionScratch.clear();
+    const bool rows = kindIdx == static_cast<size_t>(TTDCoverageKind::Written);
+    std::vector<uint8_t> frameRows;
+    std::vector<TTDCoverageKey> frameKeys;
+    for (uint32_t f = 0; f < _blockFrameOffsets.size(); ++f)
+    {
+        size_t pos = _blockFrameOffsets[f];
+        TTDCoverageKey key = 0;
+        if (rows)
+        {
+            frameKeys.clear();
+            size_t at = pos;
+            TTDCoverageKey k = 0;
+            for (uint32_t i = 0; i < _blockFrameCounts[f]; ++i)
+                frameKeys.push_back(k += ReadVarint(_blockCache.data(), at));
+            AppendFrameRows(frameRows, frameKeys.data(), frameKeys.size());
+        }
+        for (uint32_t i = 0; i < _blockFrameCounts[f]; ++i)
+        {
+            key += ReadVarint(_blockCache.data(), pos);
+            const TTDCoverageKey masked = key & (kKeySpace - 1);
+            uint64_t& word = _unionSeen[masked >> 6];
+            const uint64_t bit = uint64_t{1} << (masked & 63);
+            if (word & bit)
+                continue;
+            word |= bit;
+            _unionScratch.push_back(masked << 8 | f);
+        }
+    }
+    // Each key's last frame: the frames walked back, a key's bit cleared where it is met first (all clear after)
+    _unionLast.clear();
+    for (uint32_t f = static_cast<uint32_t>(_blockFrameOffsets.size()); f-- > 0;)
+    {
+        size_t pos = _blockFrameOffsets[f];
+        TTDCoverageKey key = 0;
+        for (uint32_t i = 0; i < _blockFrameCounts[f]; ++i)
+        {
+            key += ReadVarint(_blockCache.data(), pos);
+            const TTDCoverageKey masked = key & (kKeySpace - 1);
+            uint64_t& word = _unionSeen[masked >> 6];
+            const uint64_t bit = uint64_t{1} << (masked & 63);
+            if (word & bit)
+            {
+                word &= ~bit;
+                _unionLast.push_back(masked << 8 | f);
+            }
+        }
+    }
+    std::vector<uint32_t> sortScratch;
+    RadixSort31(_unionScratch, sortScratch);
+    RadixSort31(_unionLast, sortScratch);
+    BuildSummary(block, _unionScratch, _unionLast, _unionRaw);
+    if (rows)
+    {
+        block.frameRows = codec::Compress(frameRows.data(), frameRows.size());
+        block.frameRows.shrink_to_fit();
+        block.frameRowsRawSize = static_cast<uint32_t>(frameRows.size());
+    }
+    block.summarized = true;
+    return true;
+}
+
+uint32_t TTDCoverageIndex::CountDistinctKeys(TTDCoverageKind kind, uint64_t first, uint64_t last,
+                                             std::vector<uint32_t>& stamp, uint32_t mark) const
+{
+    const size_t kindIdx = static_cast<size_t>(kind);
+    if (kindIdx >= kKindCount || !_hasCoverage[kindIdx] || first > last)
+        return 0;
+    uint32_t distinct = 0;
+    auto count = [&](TTDCoverageKey key) {
+        if (key < stamp.size() && stamp[key] != mark)
+        {
+            stamp[key] = mark;
+            ++distinct;
+        }
+    };
+    // Frames one by one: a block the range cuts, the open block, a block that would not summarise
+    auto frames = [&](uint32_t blockIdx, uint64_t base, uint32_t frameCount) {
+        const uint64_t from = std::max(first, base);
+        const uint64_t to = std::min(last, base + frameCount - 1);
+        if (from > to || !MaterializeBlock(kindIdx, blockIdx))
+            return;
+        for (uint64_t frame = from; frame <= to; ++frame)
+        {
+            const uint32_t f = static_cast<uint32_t>(frame - base);
+            if (f >= _blockFrameOffsets.size())
+                break;
+            size_t pos = _blockFrameOffsets[f];
+            TTDCoverageKey key = 0;
+            for (uint32_t i = 0; i < _blockFrameCounts[f]; ++i)
+            {
+                key += ReadVarint(_blockCache.data(), pos);
+                count(key);
+            }
+        }
+    };
+    const std::vector<Block>& blocks = _blocks[kindIdx];
+    // A whole run of blocks inside the range: its union (the longest run first)
+    auto wholeRun = [&](uint32_t b) -> uint32_t {
+        for (uint32_t level = kGroupLevels; level-- > 0;)
+        {
+            const uint32_t size = kGroupBlocks[level];
+            const std::vector<Group>& groups = _groups[kindIdx][level].groups;
+            if (b % size != 0 || b / size >= groups.size() || b + size > blocks.size())
+                continue;
+            const Group& group = groups[b / size];
+            if (!group.valid || group.firstFrame < first || group.lastFrame > last)
+                continue;
+            _unionRaw.resize(group.rawSize);
+            if (!codec::Decompress(group.keys, group.rawSize, _unionRaw.data()))
+                continue;
+            size_t pos = 0;
+            TTDCoverageKey key = 0;
+            while (pos < _unionRaw.size())
+            {
+                key += ReadVarint(_unionRaw.data(), pos);
+                count(key);
+            }
+            return size;
+        }
+        return 0;
+    };
+    for (uint32_t b = FirstBlockReaching(kindIdx, first); b < blocks.size() && blocks[b].baseFrame <= last; ++b)
+    {
+        const Block& block = blocks[b];
+        if (block.frameCount == 0)
+            continue;
+        if (const uint32_t run = wholeRun(b))
+        {
+            b += run - 1;
+            continue;
+        }
+        const bool holdsStart = block.baseFrame >= first;
+        const bool holdsEnd = block.baseFrame + block.frameCount - 1 <= last;
+        if ((!holdsStart && !holdsEnd) || !SummarizeBlock(kindIdx, b))
+        {
+            frames(b, block.baseFrame, block.frameCount);
+            continue;
+        }
+        if (!holdsStart || !holdsEnd)
+        {
+            // Cut at one side: the union's keys first seen up to the range's end, or last seen from its start
+            _spansRaw.resize(size_t{block.unionCount} * 2);
+            _unionRaw.resize(block.unionRawSize);
+            if ((block.unionRawSize && !codec::Decompress(block.unionKeys, block.unionRawSize, _unionRaw.data())) ||
+                (block.unionCount && !codec::Decompress(block.unionSpans, _spansRaw.size(), _spansRaw.data())))
+            {
+                frames(b, block.baseFrame, block.frameCount);
+                continue;
+            }
+            const uint32_t edge = static_cast<uint32_t>((holdsStart ? last : first) - block.baseFrame);
+            size_t pos = 0;
+            TTDCoverageKey key = 0;
+            for (uint32_t i = 0; i < block.unionCount && pos < _unionRaw.size(); ++i)
+            {
+                key += ReadVarint(_unionRaw.data(), pos);
+                if (holdsStart ? _spansRaw[2 * i] <= edge : _spansRaw[2 * i + 1] >= edge)
+                    count(key);
+            }
+            continue;
+        }
+        _unionRaw.resize(block.unionRawSize);
+        if (block.unionRawSize && !codec::Decompress(block.unionKeys, block.unionRawSize, _unionRaw.data()))
+        {
+            frames(b, block.baseFrame, block.frameCount);
+            continue;
+        }
+        size_t pos = 0;
+        TTDCoverageKey key = 0;
+        while (pos < _unionRaw.size())
+        {
+            key += ReadVarint(_unionRaw.data(), pos);
+            count(key);
+        }
+    }
+    if (_openBlockFrames[kindIdx] > 0)
+        frames(static_cast<uint32_t>(blocks.size()), _openBlockBaseFrame[kindIdx], _openBlockFrames[kindIdx]);
+    return distinct;
+}
+
+bool TTDCoverageIndex::BlockMayHaveKeyIn(TTDCoverageKind kind, uint64_t frame, TTDCoverageKey lo,
+                                         TTDCoverageKey hi) const
+{
+    const size_t kindIdx = static_cast<size_t>(kind);
+    if (kindIdx >= kKindCount || lo >= hi)
+        return lo < hi;
+    const uint32_t b = FindBlockForFrame(kindIdx, frame);
+    if (b >= _blocks[kindIdx].size() || !SummarizeBlock(kindIdx, b))
+        return true;
+    const std::vector<uint64_t>& mask = _blocks[kindIdx][b].pieceMask;
+    const size_t last = std::min<size_t>((static_cast<size_t>(hi) - 1) >> kSummaryPieceBits, kSummaryPieceWords * 64 - 1);
+    for (size_t piece = static_cast<size_t>(lo) >> kSummaryPieceBits; piece <= last; ++piece)
+        if (mask[piece >> 6] & (uint64_t{1} << (piece & 63)))
+            return true;
+    return false;
+}
+
+void TTDCoverageIndex::FrameKeyCounts(TTDCoverageKind kind, uint64_t first, uint64_t last, uint32_t* out) const
+{
+    const size_t kindIdx = static_cast<size_t>(kind);
+    if (kindIdx >= kKindCount || !_hasCoverage[kindIdx] || first > last)
+        return;
+    auto copy = [&](uint64_t base, const uint32_t* counts, size_t n) {
+        const uint64_t from = std::max(first, base);
+        const uint64_t to = std::min<uint64_t>(last, base + n - 1);
+        for (uint64_t frame = from; n > 0 && frame <= to; ++frame)
+            out[frame - first] = counts[frame - base];
+    };
+    const std::vector<Block>& blocks = _blocks[kindIdx];
+    for (uint32_t b = FirstBlockReaching(kindIdx, first); b < blocks.size() && blocks[b].baseFrame <= last; ++b)
+        if (SummarizeBlock(kindIdx, b))
+            copy(blocks[b].baseFrame, blocks[b].frameKeyCounts.data(), blocks[b].frameKeyCounts.size());
+    if (_openBlockFrames[kindIdx] > 0 && MaterializeBlock(kindIdx, static_cast<uint32_t>(blocks.size())))
+        copy(_openBlockBaseFrame[kindIdx], _blockFrameCounts.data(), _blockFrameCounts.size());
+}
+
 size_t TTDCoverageIndex::EncodedBytes(TTDCoverageKind kind) const
 {
     const size_t kindIdx = static_cast<size_t>(kind);
@@ -686,10 +1293,24 @@ size_t TTDCoverageIndex::HeapBytes() const
         total += _seen[k].capacity() * sizeof(uint64_t);
         total += _seenWords[k].capacity() * sizeof(uint64_t);
         total += _openBlock[k].capacity();
+        total += _blockSeen[k].HeapBytes() +
+                 _blockCounts[k].capacity() * sizeof(uint32_t);
         for (const Block& b : _blocks[k])
-            total += b.compressed.capacity() + sizeof(Block);
+            total += b.compressed.capacity() + sizeof(Block) + b.unionKeys.capacity() +
+                     b.frameKeyCounts.capacity() * sizeof(uint32_t) + b.pieceMask.capacity() * sizeof(uint64_t) +
+                     b.frameRows.capacity() + b.unionSpans.capacity();
+        for (const GroupLevel& run : _groups[k])
+        {
+            total += run.groups.capacity() * sizeof(Group);
+            for (const Group& g : run.groups)
+                total += g.keys.capacity();
+        }
     }
     total += _decodeScratch.capacity() * sizeof(TTDCoverageKey);
+    total += _unionSeen.capacity() * sizeof(uint64_t) + _unionScratch.capacity() * sizeof(TTDCoverageKey) +
+             _unionRaw.capacity() + _sealRaw.capacity() + _blockRows.capacity() + _spansRaw.capacity() +
+             (_unionLast.capacity() + _sealFirst.capacity() + _sealLast.capacity()) * sizeof(uint32_t) + _rowsCache.capacity() +
+             _rowsOffsets.capacity() * sizeof(uint32_t);
     total += _blockCache.capacity();
     return total;
 }
@@ -725,7 +1346,79 @@ bool ReadPod(std::istream& in, T& value)
 
 }  // namespace
 
-bool TTDCoverageIndex::Serialize(std::ostream& out) const
+uint64_t TTDCoverageIndex::RepeatFrom() const
+{
+    uint64_t from = UINT64_MAX;
+    for (size_t k = 0; k < kKindCount; ++k)
+    {
+        if (_openBlockFrames[k] > 0 && !_openBlock[k].empty())
+            from = std::min(from, _openBlockBaseFrame[k]);
+        else if (!_blocks[k].empty())
+            from = std::min<uint64_t>(from, _blocks[k].back().baseFrame + _blocks[k].back().frameCount);
+    }
+    return from == UINT64_MAX ? 0 : from;
+}
+
+void TTDCoverageIndex::AppendLater(TTDCoverageIndex&& later, uint64_t fromFrame)
+{
+    _blockCache.clear();
+    _blockCacheKind = SIZE_MAX;
+    _blockCacheIndex = UINT32_MAX;
+    _rowsCacheIndex = UINT32_MAX;
+    for (size_t k = 0; k < kKindCount; ++k)
+    {
+        std::vector<Block>& mine = _blocks[k];
+        std::vector<Block>& theirs = later._blocks[k];
+        const uint64_t cut = theirs.empty() ? fromFrame : std::min(fromFrame, theirs.front().baseFrame);
+        while (!mine.empty() && mine.back().baseFrame + mine.back().frameCount > cut)
+            mine.pop_back();
+        for (Block& b : theirs)
+            mine.push_back(std::move(b));
+        theirs.clear();
+    }
+    RebuildFromBlocks();
+}
+
+void TTDCoverageIndex::RebuildFromBlocks()
+{
+    for (size_t k = 0; k < kKindCount; ++k)
+    {
+        DropGroups(k);   // joined or loaded blocks: their runs are not known
+        _rawBytes[k] = 0;
+        _compressedBytes[k] = 0;
+        _hasCoverage[k] = false;
+        _firstCoveredFrame[k] = 0;
+        _lastCoveredFrame[k] = 0;
+        _holes[k].clear();
+        const std::vector<Block>& blocks = _blocks[k];
+        for (size_t i = 0; i < blocks.size(); ++i)
+        {
+            const Block& b = blocks[i];
+            _rawBytes[k] += b.rawSize;
+            _compressedBytes[k] += b.compressed.size();
+            // The covered range from the blocks themselves rather than stored: a stored range could disagree with
+            // the blocks and would then authorise pruning frames the index does not hold
+            const uint64_t lastFrame = b.baseFrame + (b.frameCount ? b.frameCount - 1 : 0);
+            if (!_hasCoverage[k])
+            {
+                _hasCoverage[k] = true;
+                _firstCoveredFrame[k] = b.baseFrame;
+                _lastCoveredFrame[k] = lastFrame;
+            }
+            else
+            {
+                _firstCoveredFrame[k] = std::min(_firstCoveredFrame[k], b.baseFrame);
+                _lastCoveredFrame[k] = std::max(_lastCoveredFrame[k], lastFrame);
+            }
+            // Holes (DropFramesFrom, a dropped block of a join) are the gaps between consecutive blocks
+            if (i > 0)
+                for (uint64_t f = blocks[i - 1].baseFrame + blocks[i - 1].frameCount; f < b.baseFrame; ++f)
+                    _holes[k].push_back(f);
+        }
+    }
+}
+
+bool TTDCoverageIndex::Serialize(std::ostream& out, uint64_t fromFrame) const
 {
     if (!WritePod(out, kCoverageSectionMagic)) return false;
     if (!WritePod(out, kCoverageSectionVersion)) return false;
@@ -749,8 +1442,12 @@ bool TTDCoverageIndex::Serialize(std::ostream& out) const
             pending.compressed = codec::Compress(_openBlock[k].data(), _openBlock[k].size());
         }
 
+        // A part: the blocks that reach fromFrame (in frame order, so the first of them is found by its end)
+        const auto firstBlock = std::partition_point(_blocks[k].begin(), _blocks[k].end(), [fromFrame](const Block& b) {
+            return b.baseFrame + b.frameCount <= fromFrame;
+        });
         const uint32_t blockCount =
-            static_cast<uint32_t>(_blocks[k].size()) + (hasPending ? 1u : 0u);
+            static_cast<uint32_t>(_blocks[k].end() - firstBlock) + (hasPending ? 1u : 0u);
         if (!WritePod(out, blockCount)) return false;
 
         auto writeBlock = [&out](const Block& b) -> bool
@@ -770,8 +1467,8 @@ bool TTDCoverageIndex::Serialize(std::ostream& out) const
             return true;
         };
 
-        for (const Block& b : _blocks[k])
-            if (!writeBlock(b)) return false;
+        for (auto it = firstBlock; it != _blocks[k].end(); ++it)
+            if (!writeBlock(*it)) return false;
 
         if (hasPending && !writeBlock(pending)) return false;
     }
@@ -824,26 +1521,6 @@ bool TTDCoverageIndex::Deserialize(std::istream& in)
                 return false;
             }
 
-            _rawBytes[k] += b.rawSize;
-            _compressedBytes[k] += compSize;
-
-            // Rebuild the covered range from the blocks themselves rather than
-            // storing it: a stored range could disagree with the blocks and
-            // would then authorise pruning frames the index does not hold.
-            const uint64_t firstFrame = b.baseFrame;
-            const uint64_t lastFrame = b.baseFrame + (b.frameCount ? b.frameCount - 1 : 0);
-            if (!_hasCoverage[k])
-            {
-                _hasCoverage[k] = true;
-                _firstCoveredFrame[k] = firstFrame;
-                _lastCoveredFrame[k] = lastFrame;
-            }
-            else
-            {
-                if (firstFrame < _firstCoveredFrame[k]) _firstCoveredFrame[k] = firstFrame;
-                if (lastFrame > _lastCoveredFrame[k])   _lastCoveredFrame[k] = lastFrame;
-            }
-
             _blocks[k].push_back(std::move(b));
         }
     }
@@ -855,18 +1532,7 @@ bool TTDCoverageIndex::Deserialize(std::istream& in)
         return false;
     }
 
-    // Holes (DropFramesFrom) are the gaps between consecutive blocks
-    for (size_t k = 0; k < kKindCount; ++k)
-    {
-        const std::vector<Block>& blocks = _blocks[k];
-        for (size_t i = 1; i < blocks.size(); ++i)
-        {
-            const uint64_t prevEnd = blocks[i - 1].baseFrame + blocks[i - 1].frameCount;
-            for (uint64_t f = prevEnd; f < blocks[i].baseFrame; ++f)
-                _holes[k].push_back(f);
-        }
-    }
-
+    RebuildFromBlocks();
     return true;
 }
 

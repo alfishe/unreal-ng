@@ -91,6 +91,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_ttd.inc"
 #include "openapi/openapi_ttdfile.inc"
 #include "openapi/openapi_machine.inc"
+#include "openapi/openapi_jobs.inc"
 }
 
 void buildSchemas(Json::Value& schemas)
@@ -104,6 +105,7 @@ void buildSchemas(Json::Value& schemas)
 #include "openapi/openapi_temporal_schemas.inc"
 #include "openapi/openapi_window_schemas.inc"
 #include "openapi/openapi_operations_schemas.inc"
+#include "openapi/openapi_jobs_schemas.inc"
 }
 
 }  // namespace
@@ -254,6 +256,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
         "Time-Travel Debug recorder control — start/stop recording, seek, step, "
         "resume, and inspect external-event markers (parent TDD §10.4)";
     tags.append(tagTTD);
+    Json::Value tagJobs;
+    tagJobs["name"] = "Jobs";
+    tagJobs["description"] = "Long verbs run as jobs: async=true, list, long-poll, cancel (PLAN #122 S2)";
+    tags.append(tagJobs);
     Json::Value tagCompanions;
     tagCompanions["name"] = "Companions";
     tagCompanions["description"] =

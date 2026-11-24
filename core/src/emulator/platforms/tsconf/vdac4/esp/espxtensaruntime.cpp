@@ -91,6 +91,11 @@ EspXtensaRuntime::EspXtensaRuntime(std::function<void(const int16_t*, size_t, ui
         if (tang != nullptr)
             tang->LinkWrite(address, value);
     };
+    ports.linkFtWrite = [this](uint32_t ftAddress, const uint8_t* words, size_t count) {
+        IVdac4TangLink* tang = _appHost ? _appHost->Tang() : nullptr;
+        if (tang != nullptr)
+            tang->LinkFtWrite(ftAddress, words, count);
+    };
     ports.audio = [this](const int16_t* frames, size_t count, uint32_t rate) {
         if (!_audio)
             return;

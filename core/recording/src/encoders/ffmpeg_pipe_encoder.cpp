@@ -2,6 +2,7 @@
 #include "ffmpeg_probe.h"
 #include "emulator/video/screen.h"
 #include "common/threadhelper.h"
+#include "common/framescaler.h"
 
 #include <algorithm>
 #include <chrono>
@@ -107,6 +108,10 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _outputFilename = filename;
     _width = config.videoWidth;
     _height = config.videoHeight;
+    _config = config;
+    _segmented = false;
+    _segmentWidth = _segmentHeight = 0;
+    _segmentFiles.clear();
     {
         const size_t frameBytes = static_cast<size_t>(_width) * _height * 4;
         MAX_QUEUE_FRAMES = frameBytes == 0 ? kMaxQueueFrames
@@ -136,12 +141,18 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         }
 
-        if (resolveVideoEncoder(config, ext).empty())
+        _videoEncoderName = resolveVideoEncoder(config, ext);
+        if (_videoEncoderName.empty())
         {
             _lastError = "This ffmpeg build has no encoder for codec '" + config.videoCodec +
                          "' (container '" + ext + "'). Install a full ffmpeg build.";
             return false;
         }
+        _container = ext;
+        // A fixed frame (H.264 / H.265 only, see RecordingManager) is built by ffmpeg from the source picture
+        _segmented = config.fixedOutput;
+        if (_segmented)
+            MAX_QUEUE_FRAMES = kMaxSegmentQueueFrames;  // source pictures, not 33 MB frames
     }
 
     // Create temp directory for named pipes
@@ -162,6 +173,47 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _videoPipePath = std::string("unreal_video") + uniqueSuffix;
     _audioPipePath = std::string("unreal_audio") + uniqueSuffix;
 #endif
+
+    if (_segmented)
+    {
+        // The sound into one file for the whole recording; the video pipe and ffmpeg come with the first picture
+        if (_hasAudio)
+        {
+#ifndef _WIN32
+            _pcmPath = _tempDir + "/audio.pcm";
+#else
+            _pcmPath = _tempDir + "\\audio.pcm";
+#endif
+            _pcmFile = std::fopen(_pcmPath.c_str(), "wb");
+            if (!_pcmFile)
+            {
+                _lastError = "Failed to create the sound file " + _pcmPath;
+                cleanup();
+                return false;
+            }
+        }
+        _videoQueue.clear();
+        _framePool.clear();
+        _lentFrame = std::vector<uint8_t>();
+        _audioQueue.clear();
+        _cancelRequested = false;
+        _drainRequested = false;
+        _workerFailed = false;
+        _diagnostics.clear();
+        _videoThread = std::thread([this]() {
+            ThreadHelper::setThreadName("ffmpeg-video");
+            videoWriterMain();
+        });
+        if (_hasAudio)
+            _audioThread = std::thread([this]() {
+                ThreadHelper::setThreadName("ffmpeg-audio");
+                audioWriterMain();
+            });
+        _isRecording = true;
+        _framesEncoded = 0;
+        _audioSamplesEncoded = 0;
+        return true;
+    }
 
     // Create named pipes (only for streams we have)
     if (_hasVideo)
@@ -298,7 +350,7 @@ void FFmpegPipeEncoder::Stop()
         _cancelRequested = true;
         _queueCond.notify_all();
         if (killFfmpeg)
-            _ffmpegProcess.kill();
+            signalFFmpeg(true);
         waiter.join();
         return false;
     };
@@ -307,6 +359,30 @@ void FFmpegPipeEncoder::Stop()
     joinWithTimeout(_audioThread, true);
 
     _isRecording = false;
+
+    if (_segmented)
+    {
+        // The last segment ends, the sound file closes, and the segments are joined with the sound into the output
+        const bool segmentDone = finishSegment(std::max(msRemaining(), FINALIZE_MS));
+        if (_pcmFile)
+        {
+            std::fclose(_pcmFile);
+            _pcmFile = nullptr;
+        }
+        // Joined even after a failure: the segments that finished are the recording
+        const std::string segmentError = segmentDone ? std::string() : _lastError;
+        muxSegments();
+        if (!segmentError.empty())
+            _lastError = segmentError;
+        {
+            std::lock_guard<std::mutex> lock(_processMutex);
+            for (const std::string& file : _segmentFiles)
+                std::remove(file.c_str());
+            _segmentFiles.clear();
+        }
+        cleanup();
+        return;
+    }
 
     // 2. Close write ends → EOF to ffmpeg
     if (_videoPipe) _videoPipe->close();
@@ -343,8 +419,9 @@ void FFmpegPipeEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, d
     if (!_isRecording || !_hasVideo || _workerFailed)
         return;
 
-    uint32_t expectedWidth = _width > 0 ? _width : framebuffer.width;
-    uint32_t expectedHeight = _height > 0 ? _height : framebuffer.height;
+    // Segments take the source picture at its own size; otherwise every frame is the file's size
+    uint32_t expectedWidth = _width > 0 && !_segmented ? _width : framebuffer.width;
+    uint32_t expectedHeight = _height > 0 && !_segmented ? _height : framebuffer.height;
     size_t expectedSize = static_cast<size_t>(expectedWidth) * expectedHeight * 4;
 
     if (framebuffer.memoryBuffer == nullptr || framebuffer.memoryBufferSize < expectedSize)
@@ -369,6 +446,8 @@ void FFmpegPipeEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, d
 
     FrameData data;
     data.data = takeFrameBuffer(expectedSize);
+    data.width = expectedWidth;
+    data.height = expectedHeight;
     std::memcpy(data.data.data(), framebuffer.memoryBuffer, expectedSize);
     _videoQueue.push_back(std::move(data));
 
@@ -398,7 +477,7 @@ FrameTargetResult FFmpegPipeEncoder::AcquireFrameTarget(uint32_t width, uint32_t
 {
     if (!_isRecording || !_hasVideo || _workerFailed)
         return FrameTargetResult::Dropped;
-    if (width != _width || height != _height || width == 0 || height == 0)
+    if (_segmented || width != _width || height != _height || width == 0 || height == 0)
         return FrameTargetResult::Unsupported;
 
     std::unique_lock<std::mutex> lock(_queueMutex);
@@ -431,6 +510,8 @@ void FFmpegPipeEncoder::SubmitFrameTarget(FrameTarget& target, double timestampS
         std::lock_guard<std::mutex> lock(_queueMutex);
         FrameData data;
         data.data = std::move(_lentFrame);
+        data.width = _width;
+        data.height = _height;
         _videoQueue.push_back(std::move(data));
     }
     _queueCond.notify_one();
@@ -491,7 +572,7 @@ void FFmpegPipeEncoder::failWorker(const std::string& error)
     if (!_workerFailed.exchange(true))
     {
         _lastError = error;
-        _ffmpegProcess.terminate();
+        signalFFmpeg(false);
     }
     // Wake the other writer and any producer blocked on backpressure
     _queueCond.notify_all();
@@ -499,9 +580,9 @@ void FFmpegPipeEncoder::failWorker(const std::string& error)
 
 void FFmpegPipeEncoder::videoWriterMain()
 {
-    // Open video pipe (completes when ffmpeg connects its read end)
-    _videoPipe = std::make_unique<NamedPipe>();
-    if (!_videoPipe->openForWriteTimeout(_videoPipePath, 15000, &_cancelRequested))
+    // Open video pipe (completes when ffmpeg connects its read end). Segments open theirs with their first picture
+    _videoPipe = _segmented ? nullptr : std::make_unique<NamedPipe>();
+    if (_videoPipe && !_videoPipe->openForWriteTimeout(_videoPipePath, 15000, &_cancelRequested))
     {
         failWorker("Failed to open video pipe: " + _videoPipe->getLastError());
         return;
@@ -530,6 +611,17 @@ void FFmpegPipeEncoder::videoWriterMain()
             _videoQueue.pop_front();
         }
 
+        // A picture of another size (or the first one): the segment for that size
+        if (_segmented && (frame.width != _segmentWidth || frame.height != _segmentHeight))
+        {
+            retireSegment();
+            if (!startSegment(frame.width, frame.height))
+            {
+                failWorker(_lastError);
+                return;
+            }
+        }
+
         if (!_videoPipe->write(frame.data.data(), frame.data.size(), &_cancelRequested))
         {
             failWorker("Failed to write video frame: " + _videoPipe->getLastError());
@@ -548,8 +640,8 @@ void FFmpegPipeEncoder::videoWriterMain()
 
 void FFmpegPipeEncoder::audioWriterMain()
 {
-    _audioPipe = std::make_unique<NamedPipe>();
-    if (!_audioPipe->openForWriteTimeout(_audioPipePath, 15000, &_cancelRequested))
+    _audioPipe = _pcmFile ? nullptr : std::make_unique<NamedPipe>();
+    if (_audioPipe && !_audioPipe->openForWriteTimeout(_audioPipePath, 15000, &_cancelRequested))
     {
         failWorker("Failed to open audio pipe: " + _audioPipe->getLastError());
         return;
@@ -578,7 +670,8 @@ void FFmpegPipeEncoder::audioWriterMain()
             _audioQueue.pop_front();
         }
 
-        if (!_audioPipe->write(chunk.data.data(), chunk.data.size(), &_cancelRequested))
+        if (_pcmFile ? std::fwrite(chunk.data.data(), 1, chunk.data.size(), _pcmFile) != chunk.data.size()
+                     : !_audioPipe->write(chunk.data.data(), chunk.data.size(), &_cancelRequested))
         {
             failWorker("Failed to write audio samples: " + _audioPipe->getLastError());
             return;
@@ -593,10 +686,36 @@ void FFmpegPipeEncoder::audioWriterMain()
 // Output file size
 // ============================================================================
 
+namespace
+{
+uint64_t FileSize(const std::string& path)
+{
+#ifndef _WIN32
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0)
+        return static_cast<uint64_t>(st.st_size);
+#else
+    WIN32_FILE_ATTRIBUTE_DATA attrs;
+    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attrs))
+        return (static_cast<uint64_t>(attrs.nFileSizeHigh) << 32) | attrs.nFileSizeLow;
+#endif
+    return 0;
+}
+}  // namespace
+
 uint64_t FFmpegPipeEncoder::GetOutputFileSize() const
 {
     if (_outputFilename.empty())
         return 0;
+    if (_segmented && _isRecording)
+    {
+        // While recording the video is in the segments (the output is written at Stop)
+        std::lock_guard<std::mutex> lock(_processMutex);
+        uint64_t bytes = 0;
+        for (const std::string& file : _segmentFiles)
+            bytes += FileSize(file);
+        return bytes;
+    }
 
 #ifndef _WIN32
     struct stat st;
@@ -906,7 +1025,23 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
             args.push_back("-vf");
             args.push_back(vf);
         }
+        appendVideoCodecArgs(args, config, videoEncoder, ext);
+    }
 
+    // --- Audio encoder ---
+    if (_hasAudio)
+        appendAudioCodecArgs(args, config, ext);
+
+    appendOutputArgs(args, ext, filename);
+    return args;
+}
+
+void FFmpegPipeEncoder::appendVideoCodecArgs(std::vector<std::string>& args, const EncoderConfig& config,
+                                             const std::string& videoEncoder, const std::string& ext) const
+{
+    {
+        const bool rgbFormat = (videoEncoder == "gif" || videoEncoder == "apng" ||
+                                videoEncoder.rfind("libwebp", 0) == 0);
         if (!rgbFormat)
         {
             args.push_back("-colorspace");
@@ -1028,9 +1163,11 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
             args.push_back("1");      // Pixel-perfect for ZX content
         }
     }
+}
 
-    // --- Audio encoder ---
-    if (_hasAudio)
+void FFmpegPipeEncoder::appendAudioCodecArgs(std::vector<std::string>& args, const EncoderConfig& config,
+                                             const std::string& ext)
+{
     {
         std::string audioEncoder = resolveAudioEncoder(config, ext);
         args.push_back("-c:a");
@@ -1079,6 +1216,11 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
         }
     }
 
+}
+
+void FFmpegPipeEncoder::appendOutputArgs(std::vector<std::string>& args, const std::string& ext,
+                                         const std::string& filename)
+{
     // Flush the muxer's output buffer after every packet. Without this the
     // 32KB avio buffer holds minutes of low-bitrate ZX output and the file
     // size appears frozen at 0 during recording.
@@ -1095,8 +1237,6 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
 
     // --- Output file ---
     args.push_back(filename);
-
-    return args;
 }
 
 // ============================================================================
@@ -1105,6 +1245,17 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
 
 void FFmpegPipeEncoder::cleanup()
 {
+    if (_pcmFile)
+    {
+        std::fclose(_pcmFile);
+        _pcmFile = nullptr;
+    }
+    if (!_pcmPath.empty())
+    {
+        std::remove(_pcmPath.c_str());
+        _pcmPath.clear();
+    }
+
     // Close any remaining pipes
     if (_videoPipe)
     {
@@ -1137,4 +1288,358 @@ void FFmpegPipeEncoder::cleanup()
 
     _videoPipePath.clear();
     _audioPipePath.clear();
+}
+
+// ============================================================================
+// Segments: the fixed frame built by ffmpeg from the source picture
+// ============================================================================
+
+namespace
+{
+std::string TempFile(const std::string& dir, const std::string& name)
+{
+#ifndef _WIN32
+    return dir + "/" + name;
+#else
+    return dir + "\\" + name;
+#endif
+}
+
+/// A remap table of the output frame, gray16le: per pixel the source column (xAxis) or row of FrameScaler's nearest
+/// mapping (output pixel i of the picture takes source pixel i * src / picture), 65535 on the bars (remap fills them)
+bool WriteMap(const std::string& path, const FrameScaler::Layout& layout, uint32_t source, uint32_t frameWidth,
+              uint32_t frameHeight, bool xAxis)
+{
+    const uint32_t length = xAxis ? frameWidth : frameHeight;
+    const uint32_t offset = xAxis ? layout.offsetX : layout.offsetY;
+    const uint32_t picture = xAxis ? layout.width : layout.height;
+    std::vector<uint16_t> axis(length, 0xFFFF);
+    for (uint32_t i = 0; i < picture && offset + i < length; ++i)
+        axis[offset + i] = static_cast<uint16_t>(static_cast<uint64_t>(i) * source / picture);
+
+    std::vector<uint8_t> row(static_cast<size_t>(frameWidth) * 2);
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+    if (!file)
+        return false;
+    bool ok = true;
+    for (uint32_t y = 0; y < frameHeight && ok; ++y)
+    {
+        for (uint32_t x = 0; x < frameWidth; ++x)
+        {
+            const uint16_t value = xAxis ? axis[x] : axis[y];
+            row[2 * static_cast<size_t>(x)] = static_cast<uint8_t>(value & 0xFF);  // little-endian
+            row[2 * static_cast<size_t>(x) + 1] = static_cast<uint8_t>(value >> 8);
+        }
+        ok = std::fwrite(row.data(), 1, row.size(), file) == row.size();
+    }
+    return std::fclose(file) == 0 && ok;
+}
+}  // namespace
+
+std::vector<std::string> FFmpegPipeEncoder::buildSegmentArgs(uint32_t width, uint32_t height,
+                                                             const std::string& segmentFile, const Segment& segment)
+{
+    const FrameScaler::Layout layout = FrameScaler::ComputeLayout(width, height, _width, _height);
+    const std::string frameSize = std::to_string(_width) + "x" + std::to_string(_height);
+    std::vector<std::string> args = {"-y", "-nostats", "-loglevel", "warning", "-threads", "0",
+                                     "-probesize", "32", "-analyzeduration", "0", "-f", "rawvideo",
+                                     "-pix_fmt", "rgba", "-s", std::to_string(width) + "x" + std::to_string(height),
+                                     "-r", std::to_string(static_cast<int>(std::round(_fps))),
+                                     "-i", getFFmpegPipePath(segment.pipePath)};
+
+    // The colour first, at the source size: converting a pixel and repeating it is repeating the converted pixel, so
+    // the 4:4:4 picture is byte for byte the conversion of FrameScaler's frame. 4:2:0 last, at the output frame's size
+    // (the target, given explicitly): the area average of the chroma, 0.06-0.10 dB above swscale's conversion of the
+    // RGB frame (POC 054)
+    const std::string convert = "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv444p";
+    const std::string to420 =
+        "scale=" + std::to_string(_width) + ":" + std::to_string(_height) + ":flags=area,format=yuv420p";
+    if (layout.scale > 0)
+    {
+        // A whole factor: every source pixel a k x k block (swscale's nearest is exact there), then the bars
+        args.push_back("-vf");
+        args.push_back(convert + ",scale=" + std::to_string(layout.width) + ":" + std::to_string(layout.height) +
+                       ":flags=neighbor,pad=" + std::to_string(_width) + ":" + std::to_string(_height) + ":" +
+                       std::to_string(layout.offsetX) + ":" + std::to_string(layout.offsetY) + ":black," + to420);
+    }
+    else
+    {
+        // Any other factor: swscale's nearest puts the k / k+1 boundaries elsewhere; FrameScaler's own mapping goes in
+        // as remap tables (startSegment writes them), read once and repeated; the bars are where they point outside
+        for (const std::string* map : {&segment.xmapPath, &segment.ymapPath})
+        {
+            for (const char* word : {"-f", "rawvideo", "-pix_fmt", "gray16le", "-s"})
+                args.push_back(word);
+            args.push_back(frameSize);
+            args.push_back("-i");
+            args.push_back(*map);
+        }
+        args.push_back("-filter_complex");
+        args.push_back("[0:v]" + convert + "[s];[1:v]loop=loop=-1:size=1[x];[2:v]loop=loop=-1:size=1[y];" +
+                       "[s][x][y]remap=fill=black," + to420 + "[v]");
+        args.push_back("-map");
+        args.push_back("[v]");
+    }
+    args.push_back("-c:v");
+    args.push_back(_videoEncoderName);
+    appendVideoCodecArgs(args, _config, _videoEncoderName, "mkv");  // the hvc1 tag is the output's (muxSegments)
+    for (const char* word : {"-an", "-f", "matroska"})
+        args.push_back(word);
+    args.push_back(segmentFile);
+    return args;
+}
+
+bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
+{
+    const FrameScaler::Layout layout = FrameScaler::ComputeLayout(width, height, _width, _height);
+    if (layout.width == 0 || layout.height == 0)
+    {
+        _lastError = "No picture to record";
+        return false;
+    }
+
+    const std::string index = std::to_string(_segmentFiles.size());
+    auto segment = std::make_unique<Segment>();
+    if (layout.scale == 0)
+    {
+        // Per segment: a retired segment's ffmpeg may still be reading its own tables
+        segment->xmapPath = TempFile(_tempDir, "xmap-" + index + ".raw");
+        segment->ymapPath = TempFile(_tempDir, "ymap-" + index + ".raw");
+        if (!WriteMap(segment->xmapPath, layout, width, _width, _height, true) ||
+            !WriteMap(segment->ymapPath, layout, height, _width, _height, false))
+        {
+            _lastError = "Failed to write the scaling tables in " + _tempDir;
+            std::remove(segment->xmapPath.c_str());
+            std::remove(segment->ymapPath.c_str());
+            return false;
+        }
+    }
+#ifndef _WIN32
+    segment->pipePath = TempFile(_tempDir, "video-" + index + ".fifo");
+#else
+    char suffix[48];
+    snprintf(suffix, sizeof(suffix), "_%p_", static_cast<void*>(this));
+    segment->pipePath = std::string("unreal_video") + suffix + index;
+#endif
+    _videoPipePath = segment->pipePath;
+    const std::string segmentFile = TempFile(_tempDir, "segment-" + index + ".mkv");
+    if (!NamedPipe::create(segment->pipePath))
+    {
+        _lastError = "Failed to create video pipe";
+        return false;
+    }
+
+    segment->process = std::make_unique<Subprocess>();
+    if (!segment->process->spawn(_ffmpegPath, buildSegmentArgs(width, height, segmentFile, *segment)))
+    {
+        _lastError = "Failed to spawn ffmpeg: " + segment->process->getLastError();
+        NamedPipe::remove(segment->pipePath);
+        std::remove(segment->xmapPath.c_str());
+        std::remove(segment->ymapPath.c_str());
+        return false;
+    }
+    // Without a reader the stderr pipe fills and ffmpeg blocks (see _stderrThread)
+    Subprocess* running = segment->process.get();
+    segment->stderrThread = std::thread([this, running]() {
+        ThreadHelper::setThreadName("ffmpeg-stderr");
+        const std::string text = running->readAllStderr();
+        std::lock_guard<std::mutex> lock(_diagnosticsMutex);
+        _diagnostics += text;
+    });
+    {
+        std::lock_guard<std::mutex> lock(_processMutex);
+        _segment = std::move(segment);
+        _segmentFiles.push_back(segmentFile);
+    }
+
+    _videoPipe = std::make_unique<NamedPipe>();
+    if (!_videoPipe->openForWriteTimeout(_videoPipePath, 15000, &_cancelRequested))
+    {
+        _lastError = "Failed to open video pipe: " + _videoPipe->getLastError();
+        return false;
+    }
+    _segmentWidth = width;
+    _segmentHeight = height;
+    return true;
+}
+
+int FFmpegPipeEncoder::closeSegment(Segment& segment, int timeoutMs)
+{
+    if (segment.pipe)
+        segment.pipe->close();  // EOF: ffmpeg flushes the encoder and closes the segment
+    segment.process->closeStdin();
+    int exitCode = segment.process->waitForFinished(timeoutMs);
+    if (exitCode == -1)
+    {
+        segment.process->kill();
+        segment.process->waitForFinished(100);
+    }
+    segment.process->closeStderr();
+    if (segment.stderrThread.joinable())
+        segment.stderrThread.join();
+    segment.pipe.reset();
+    NamedPipe::remove(segment.pipePath);
+    if (!segment.xmapPath.empty())
+        std::remove(segment.xmapPath.c_str());
+    if (!segment.ymapPath.empty())
+        std::remove(segment.ymapPath.c_str());
+    return exitCode;
+}
+
+void FFmpegPipeEncoder::retireSegment()
+{
+    Segment* retiring = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(_processMutex);
+        if (!_segment)
+            return;
+        _segment->pipe = std::move(_videoPipe);
+        retiring = _segment.get();
+        _retired.push_back(std::move(_segment));  // stays alive (and signalled by signalFFmpeg) until Stop
+    }
+    _videoPipePath.clear();
+    _segmentWidth = _segmentHeight = 0;
+    _retireThreads.emplace_back([retiring]() {
+        ThreadHelper::setThreadName("ffmpeg-segment-end");
+        retiring->exitCode = closeSegment(*retiring, 20000);
+    });
+}
+
+bool FFmpegPipeEncoder::finishSegment(int timeoutMs)
+{
+    retireSegment();
+    // The last one has the whole timeout; the earlier ones had theirs since they were retired
+    for (std::thread& thread : _retireThreads)
+        if (thread.joinable())
+            thread.join();
+    _retireThreads.clear();
+    (void)timeoutMs;
+
+    bool ok = true;
+    std::lock_guard<std::mutex> lock(_processMutex);
+    for (const std::unique_ptr<Segment>& segment : _retired)
+    {
+        if (segment->exitCode != 0 && ok)
+        {
+            ok = false;
+            _lastError = segment->exitCode == -1 ? "ffmpeg did not finish a video segment in time"
+                                                 : "FFmpeg exited with code " + std::to_string(segment->exitCode);
+        }
+    }
+    _retired.clear();
+    return ok;
+}
+
+bool FFmpegPipeEncoder::muxSegments()
+{
+    const bool sound = _hasAudio && !_pcmPath.empty() && FileSize(_pcmPath) > 0;
+    if (_segmentFiles.empty() && !sound)
+        return true;
+
+    std::vector<std::string> args = {"-y", "-nostats", "-loglevel", "warning"};
+    const std::string list = TempFile(_tempDir, "segments.ffconcat");
+    if (!_segmentFiles.empty())
+    {
+        // The segments one after another: each one's times follow the previous one's end
+        std::FILE* file = std::fopen(list.c_str(), "wb");
+        if (!file)
+        {
+            _lastError = "Failed to write " + list;
+            return false;
+        }
+        std::fputs("ffconcat version 1.0\n", file);
+        for (const std::string& segment : _segmentFiles)
+            std::fprintf(file, "file '%s'\n", segment.c_str());
+        std::fclose(file);
+        for (const char* word : {"-f", "concat", "-safe", "0", "-i"})
+            args.push_back(word);
+        args.push_back(list);
+    }
+    if (sound)
+    {
+        for (const char* word : {"-f", "s16le", "-ar"})
+            args.push_back(word);
+        args.push_back(std::to_string(_config.audioSampleRate));
+        args.push_back("-ac");
+        args.push_back(std::to_string(_config.audioChannels));
+        args.push_back("-i");
+        args.push_back(_pcmPath);
+    }
+    int input = 0;
+    if (!_segmentFiles.empty())
+    {
+        for (const char* word : {"-map", "0:v", "-c:v", "copy"})
+            args.push_back(word);
+        const bool hevc = _videoEncoderName.find("265") != std::string::npos ||
+                          _videoEncoderName.find("hevc") != std::string::npos;
+        if (hevc && (_container == "mp4" || _container == "mov"))
+        {
+            args.push_back("-tag:v");
+            args.push_back("hvc1");
+        }
+        ++input;
+    }
+    if (sound)
+    {
+        args.push_back("-map");
+        args.push_back(std::to_string(input) + ":a");
+        appendAudioCodecArgs(args, _config, _container);
+    }
+    appendOutputArgs(args, _container, _outputFilename);
+
+    Subprocess mux;
+    if (!mux.spawn(_ffmpegPath, args))
+    {
+        _lastError = "Failed to spawn ffmpeg: " + mux.getLastError();
+        std::remove(list.c_str());
+        return false;
+    }
+    std::string text;
+    std::thread reader([&]() { text = mux.readAllStderr(); });
+    mux.closeStdin();
+    // Stream copy of the video, the sound encoded: seconds for a long recording
+    constexpr int kMuxTimeoutMs = 10 * 60 * 1000;
+    int exitCode = mux.waitForFinished(kMuxTimeoutMs);
+    if (exitCode == -1)
+    {
+        mux.kill();
+        mux.waitForFinished(100);
+    }
+    mux.closeStderr();
+    reader.join();
+    {
+        std::lock_guard<std::mutex> lock(_diagnosticsMutex);
+        _diagnostics += text;
+    }
+    std::remove(list.c_str());
+    if (exitCode != 0)
+    {
+        _lastError = exitCode == -1 ? "ffmpeg did not join the segments in time"
+                                    : "FFmpeg exited with code " + std::to_string(exitCode) + " joining the segments";
+        return false;
+    }
+    return true;
+}
+
+void FFmpegPipeEncoder::signalFFmpeg(bool kill)
+{
+    if (!_segmented)
+    {
+        if (kill)
+            _ffmpegProcess.kill();
+        else
+            _ffmpegProcess.terminate();
+        return;
+    }
+    std::lock_guard<std::mutex> lock(_processMutex);
+    auto signal = [kill](Segment& segment) {
+        if (kill)
+            segment.process->kill();
+        else
+            segment.process->terminate();
+    };
+    if (_segment)
+        signal(*_segment);
+    for (const std::unique_ptr<Segment>& segment : _retired)
+        signal(*segment);
 }

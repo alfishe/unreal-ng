@@ -101,6 +101,16 @@ class Session:
     def tools(self):
         return {t['name']: t for t in self.rpc('tools/list')['result']['tools']}
 
+    def wait_job(self, job, timeout=600, wait_ms=30000):
+        """The end of a job (an async=true call answered its id): the jobs tool's long-poll, wait_ms at a time (the
+        server answers when the job ends, at most every wait_ms; no sleep here). The last answer: Result with
+        structured state done / failed / cancelled, or still running after @p timeout seconds"""
+        deadline = time.time() + timeout
+        while True:
+            result = self.call('jobs', {'action': 'wait', 'job': int(job), 'wait_ms': wait_ms}, ok=False)
+            if result.is_error or (result.structured or {}).get('ended', False) or time.time() >= deadline:
+                return result
+
     def fresh_machine(self, model=None, ram_power_on=None):
         """Destroys every instance and creates one: each script starts from a known machine (@p ram_power_on 'zero':
         RAM all zeros, a reproducible run)"""

@@ -1,5 +1,7 @@
 #include "videowall/VideowallRecorder.h"
 
+#include "videowall/TileGridGL.h"
+
 #include <QDebug>
 #include <QGuiApplication>
 #include <QScreen>
@@ -29,9 +31,15 @@ VideowallRecorder::~VideowallRecorder()
     }
 }
 
-void VideowallRecorder::setTargetWidget(QWidget* widget)
+void VideowallRecorder::setTargetWidget(QWidget* widget, TileGridGL* gpuGrid)
 {
+    if (_gpuGrid && _gpuGrid != gpuGrid)
+        _gpuGrid->setCaptureEnabled(false);
     _targetWidget = widget;
+    _gpuGrid = gpuGrid;
+    if (_gpuGrid && isRecording())
+        _gpuGrid->setCaptureEnabled(true);  // switched to the GPU grid mid-recording
+    _frame = QImage();
 }
 
 bool VideowallRecorder::startRecording(const std::string& filename,
@@ -65,6 +73,12 @@ bool VideowallRecorder::startRecording(const std::string& filename,
     uint32_t h = targetHeight;
 
     // Auto-detect resolution from target widget (window or fullscreen grab buffer)
+    if ((w == 0 || h == 0) && _gpuGrid)
+    {
+        const qreal dpr = _gpuGrid->devicePixelRatio();
+        w = static_cast<uint32_t>(qRound(_gpuGrid->width() * dpr));
+        h = static_cast<uint32_t>(qRound(_gpuGrid->height() * dpr));
+    }
     if ((w == 0 || h == 0) && _targetWidget)
     {
         QPixmap pixmap = _targetWidget->grab();
@@ -96,6 +110,8 @@ bool VideowallRecorder::startRecording(const std::string& filename,
     bool ok = _recordingManager->StartRecording(filename, videoCodec, audioCodec, videoBitrate, audioBitrate);
     if (ok)
     {
+        if (_gpuGrid)
+            _gpuGrid->setCaptureEnabled(true);
         if (!_isSynchronousMode)
         {
             // Start 50 Hz frame grab timer (20ms)
@@ -116,6 +132,9 @@ bool VideowallRecorder::startRecording(const std::string& filename,
 void VideowallRecorder::stopRecording()
 {
     _frameTimer.stop();
+    if (_gpuGrid)
+        _gpuGrid->setCaptureEnabled(false);
+    _frame = QImage();
     if (_recordingManager)
     {
         _recordingManager->StopRecording();
@@ -192,13 +211,30 @@ void VideowallRecorder::captureVideoFrame()
     if (!isRecording() || !_targetWidget)
         return;
 
-    QPixmap pixmap = _targetWidget->grab();
-    if (pixmap.isNull())
-        return;
-
-    QImage img = pixmap.toImage().convertToFormat(QImage::Format_RGBA8888);
-    if (img.isNull())
-        return;
+    // The wall as painted now: the GL grid's last frame, read back after its paint; or the CPU grid painted into a
+    // reused image (no pixmap per frame)
+    QImage img;
+    if (_gpuGrid)
+    {
+        img = _gpuGrid->capturedFrame();
+        if (img.isNull())
+            return;  // no paint since the capture started
+    }
+    else
+    {
+        const qreal dpr = _targetWidget->devicePixelRatioF();
+        const QSize size(qRound(_targetWidget->width() * dpr), qRound(_targetWidget->height() * dpr));
+        if (size.isEmpty())
+            return;
+        // The raster engine paints fast only into its own formats: RGB32, then one R <-> B swap into R,G,B,A
+        if (_frame.size() != size)
+        {
+            _frame = QImage(size, QImage::Format_RGB32);
+            _frame.setDevicePixelRatio(dpr);
+        }
+        _targetWidget->render(&_frame);
+        img = _frame.convertToFormat(QImage::Format_RGBA8888);
+    }
 
     // A fixed profile (1080p / 1440p / 4K) is fitted by the RecordingManager (aspect kept, nearest, black bars): the grab goes in as it is. Only a custom size is stretched here
     if (!_recordingManager->HasFixedOutput() && _targetWidth > 0 && _targetHeight > 0 &&

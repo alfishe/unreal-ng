@@ -396,6 +396,7 @@ jobs:
         working-directory: build/packages/UnrealNG-Suite
         run: |
           test -f platforms/qwindows.dll
+          test -f platforms/qoffscreen.dll   # headless runs (QT_QPA_PLATFORM=offscreen)
           # The runner has the VC++ runtime in System32; the package must carry its own.
           test -f msvcp140.dll && test -f vcruntime140.dll
           # A portable package must start without Qt/MSYS2 on PATH (exit code 0 for --help).
@@ -526,6 +527,7 @@ jobs:
         working-directory: build/packages/UnrealNG-Suite
         run: |
           test -f platforms/qwindows.dll
+          test -f platforms/qoffscreen.dll   # headless runs (QT_QPA_PLATFORM=offscreen)
           # A portable package must start without Qt/MSYS2 on PATH (exit code 0 for --help).
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
@@ -703,6 +705,9 @@ jobs:
           UnrealNG.app/Contents/MacOS/unreal-streamdeck --help
           # install-qt-action points these at the runner's Qt; a user's machine has neither
           unset QT_PLUGIN_PATH QML2_IMPORT_PATH
+          # headless runs (QT_QPA_PLATFORM=offscreen) from the bundle's own plugin
+          test -f UnrealNG.app/Contents/PlugIns/platforms/libqoffscreen.dylib
+          QT_QPA_PLATFORM=offscreen UnrealNG.app/Contents/MacOS/unreal-qt --help > /dev/null
           # cocoa from UnrealNG.app/Contents/PlugIns (the only platform plugin macdeployqt deploys)
           DYLD_PRINT_LIBRARIES=1 "$studio/Contents/MacOS/unreal-streamdeck-studio" --help \
             2> libs.txt || { cat libs.txt; exit 1; }

@@ -247,6 +247,8 @@ void ResetRegisters(EveChip& chip)
 
 uint32_t RegReadValue(const EveChip& chip, const RegInfo& info)
 {
+    if (info.reg == Reg::Tag)
+        AsyncResolveTag(chip);
     if (info.flags & RegWriteOnly)
         return 0;
     switch (info.reg)

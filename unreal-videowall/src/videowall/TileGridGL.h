@@ -68,6 +68,13 @@ public:
     /// Get emulator at position
     int emulatorIndexAt(const QPoint& pos) const;
 
+    /// While on, every painted frame is also read back into capturedFrame() (the recorder's source: the GL picture
+    /// is not in the widget tree, so QWidget::grab() of the window container shows none of it)
+    void setCaptureEnabled(bool enable);
+    /// The last painted frame at framebuffer resolution, R,G,B,A top row first; null before the first paint with
+    /// capture on
+    const QImage& capturedFrame() const { return _captured; }
+
 signals:
     /// Emitted when a tile is clicked
     void tileClicked(int index);
@@ -86,6 +93,8 @@ protected:
     bool event(QEvent* event) override;
 
 private:
+    void drawGrid();
+    void readBackFrame();
     void updateLayout();
     void updateTextures();
     QRect calculateTileRect(int index) const;
@@ -118,6 +127,10 @@ private:
     bool _isFullscreen = false;
     bool _singleSyncMode = false;
     std::string _syncEmulatorId;
+
+    bool _captureEnabled = false;
+    QImage _captured;
+    std::vector<uint8_t> _readBack;  ///< the framebuffer as GL returns it, bottom row first
 
     std::atomic<bool> _isRepaintPending{false};
     uint64_t _videoFrameObserverId = 0;

@@ -205,6 +205,29 @@ TEST_F(TTDEngineRecording_Test, RestoreToMemoryWritesOnlyWhatDiffers)
     ASSERT_TRUE(engine.RestoreToMemory(at, nullptr, &stats).Ok());
     EXPECT_GT(stats.piecesDecoded, 0u);
     EXPECT_EQ(stats.piecesSkipped, 0u);
+
+    // The engine keeps its own decoded copy of what it restored: memory overwritten behind its back is written
+    // from it again, nothing decoded; the next checkpoint applies its differences
+    std::memset(live, 0xA5, size_t(pieces) * ttd::kTTDPieceSize);
+    engine.ForgetMemory();
+    ASSERT_TRUE(engine.RestoreToMemory(at, nullptr, &stats).Ok());
+    EXPECT_EQ(stats.linksDecoded, 0u);
+    EXPECT_EQ(stats.piecesSkipped, 0u);
+    ASSERT_NO_FATAL_FAILURE(expectLiveIs(at));
+    std::memset(live, 0x5A, size_t(pieces) * ttd::kTTDPieceSize);
+    engine.ForgetMemory();
+    ASSERT_TRUE(engine.RestoreToMemory(at + 1, nullptr, &stats).Ok());
+    EXPECT_LE(stats.linksDecoded, differing(at, at + 1) * 50) << "at most a chain per changed piece";
+    ASSERT_NO_FATAL_FAILURE(expectLiveIs(at + 1));
+
+    // A version whose content changed under its id (damage) is decoded again, not copied: the damage is reported
+    uint32_t damagedPiece = pieces;
+    for (uint32_t p = 0; p < pieces && damagedPiece == pieces; ++p)
+        if (engine.DamageForTesting(at + 1, 0, p))
+            damagedPiece = p;
+    ASSERT_LT(damagedPiece, pieces);
+    engine.ForgetMemory();
+    EXPECT_FALSE(engine.RestoreToMemory(at + 1, nullptr, &stats).Ok());
 }
 
 /// Phase 3, Step 1: while recording, the engine gets key presses and releases

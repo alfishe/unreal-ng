@@ -359,6 +359,22 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
     return true;
 }
 
+TTDSessionSaveParams::JournalStart TTDSessionWriter::JournalEnds(const TimeTravelEngine& e, uint64_t time)
+{
+    TTDSessionSaveParams::JournalStart ends;
+    if (!e._open || !e._line)
+        return ends;
+    ends.set = true;
+    ends.cursors[0] = e._line->busReads.Size();
+    ends.cursors[1] = e._line->busWrites.Size();
+    ends.cursors[2] = e._line->mediaReads.Size();
+    ends.cursors[3] = e._line->busVectors.Size();
+    ends.time = time;
+    ends.eventsAtTime = e._line->events.Events().size() - std::min(e._line->events.CursorAt(time),
+                                                                  e._line->events.Events().size());
+    return ends;
+}
+
 bool TTDSessionWriter::Collect(TimeTravelEngine& e)
 {
     const bool ok = CollectParts(e);
@@ -503,6 +519,8 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     const bool fileStart = _linePart == 0;
     const bool forkCopy = _local != 0 && first == e._line->cpBase;   // a branch's first checkpoint (the fork's copy)
     const bool folderFile = _params.fileLine != UINT32_MAX;
+    const TTDSessionSaveParams::JournalStart journalsFrom =
+        fileStart && folderFile && first != 0 ? _params.journalsFrom : TTDSessionSaveParams::JournalStart{};
     if (fileStart)
     {
         // Journal positions in the file count from its first record, so files
@@ -511,6 +529,11 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         _base[1] = first == 0 ? 0 : head.busWriteCursor;
         _base[2] = first == 0 ? 0 : head.mediaReadCursor;
         _base[3] = first == 0 ? 0 : head.busVectorCursor;
+        // After a pause: from where the paused file ended (the frame recorded after the resume, before this
+        // file's first checkpoint, is in no other file)
+        if (journalsFrom.set)
+            for (size_t k = 0; k < 4; ++k)
+                _base[k] = std::min(_base[k], journalsFrom.cursors[k]);
         job.end.extra = {kPartFileStart};
     }
     TTDByteWriter pieces, checkpoints;
@@ -681,7 +704,10 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     TTDByteWriter ev;
     size_t count = 0;
     // By time, not by index: a ring drops old events, which shifts the indices
-    const size_t eventsFrom = first == 0 ? 0 : e._line->events.CursorAt(head.start);
+    size_t eventsFrom = first == 0 ? 0 : e._line->events.CursorAt(head.start);
+    if (journalsFrom.set && journalsFrom.time < head.start)
+        eventsFrom = std::min(eventsFrom, std::min(e._line->events.CursorAt(journalsFrom.time) + journalsFrom.eventsAtTime,
+                                                   events.size()));
     const size_t eventsTo = atSessionEnd ? events.size() : e._line->events.CursorAt(until);
     count = eventsTo - eventsFrom;
     ev.Varint(count);
@@ -743,11 +769,17 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     auto range = [&](uint64_t TTDEngineCheckpoint::*cursor, uint64_t size) {
         return Range{first == 0 ? 0 : head.*cursor, atSessionEnd ? size : e.CpAt(last).*cursor};
     };
+    // The file's first part from the file's base (after a pause, where the paused file ended)
+    auto fromBase = [&](Range r, size_t k) {
+        if (fileStart)
+            r.from = std::min(r.from, _base[k]);
+        return r;
+    };
     TTDByteWriter reads, writes, vectors, mediaReads;
-    const Range rr = range(&TTDEngineCheckpoint::busReadCursor, e._line->busReads.Size());
-    const Range wr = range(&TTDEngineCheckpoint::busWriteCursor, e._line->busWrites.Size());
-    const Range vr = range(&TTDEngineCheckpoint::busVectorCursor, e._line->busVectors.Size());
-    const Range mr = range(&TTDEngineCheckpoint::mediaReadCursor, e._line->mediaReads.Size());
+    const Range rr = fromBase(range(&TTDEngineCheckpoint::busReadCursor, e._line->busReads.Size()), 0);
+    const Range wr = fromBase(range(&TTDEngineCheckpoint::busWriteCursor, e._line->busWrites.Size()), 1);
+    const Range vr = fromBase(range(&TTDEngineCheckpoint::busVectorCursor, e._line->busVectors.Size()), 3);
+    const Range mr = fromBase(range(&TTDEngineCheckpoint::mediaReadCursor, e._line->mediaReads.Size()), 2);
     WritePortRecords(reads, e._line->busReads, rr.from, rr.to);
     WritePortRecords(writes, e._line->busWrites, wr.from, wr.to);
     WritePortRecords(vectors, e._line->busVectors, vr.from, vr.to);
@@ -814,15 +846,41 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         job.records.emplace_back(StreamOf(static_cast<uint16_t>(kFrameStreamFirst + stream)), std::move(sw.bytes));
     }
 
-    // The write journal (derived, D40) goes whole with the last part
-    if (ok && !_lineage && lastPart && atSessionEnd &&
+    // The write journal (derived, D40). A saved file holds it whole with its last part. A recording folder's file
+    // holds each part's own records: a write belongs to the frame it ends, (start, next start], so a part takes
+    // (its first checkpoint's start, the next part's start] (the line's first part from the line's start, the part
+    // at the session's end up to now), with the spans clipped to it. A pause for browsing finishes the open file,
+    // and the whole journal written again at each pause made the first seek of a browse grow with the session
+    // (P1.S10 soak, 2026-11-21)
+    const bool journalWhole = !folderFile && lastPart && atSessionEnd;
+    if (ok && !_lineage && (folderFile || journalWhole) &&
         (e._line->writes.Size() > 0 || !e._line->writes.Segments().empty()))
     {
+        const bool fromLineStart = journalWhole || first == e._line->cpBase;
+        const uint64_t after = fromLineStart ? 0
+                               : journalsFrom.set ? std::min<uint64_t>(head.start, journalsFrom.time)
+                                                  : head.start;   // exclusive
+        const uint64_t upTo = journalWhole || atSessionEnd ? UINT64_MAX : until;   // inclusive
         // In column blocks of 2,048 records (EncodeWriteBlock)
         TTDByteWriter wj;
         std::vector<TTDWriteRecord> all;
-        all.reserve(static_cast<size_t>(e._line->writes.Size()));
-        e._line->writes.ForEach([&all](const TTDWriteRecord& rec) { all.push_back(rec); });
+        if (journalWhole)
+        {
+            all.reserve(static_cast<size_t>(e._line->writes.Size()));
+            e._line->writes.ForEach([&all](const TTDWriteRecord& rec) { all.push_back(rec); });
+        }
+        else
+            e._line->writes.ForEachInRange(fromLineStart ? 0 : after + 1, upTo == UINT64_MAX ? UINT64_MAX : upTo + 1,
+                                           [&all](const TTDWriteRecord& rec) { all.push_back(rec); });
+        // The spans cover (from, to]: clipped to the part's (after, upTo]
+        std::vector<TTDJournalSegment> spans;
+        for (TTDJournalSegment s : e._line->writes.Segments())
+        {
+            s.from = std::max(s.from, after);
+            s.to = std::min(s.to, upTo);
+            if (s.to > s.from)
+                spans.push_back(s);
+        }
         wj.Varint(all.size());
         for (size_t k = 0; k < all.size(); k += kWriteBlockRecords)
         {
@@ -831,8 +889,8 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
             wj.Varint(block.size());
             wj.Bytes(block.data(), block.size());
         }
-        wj.Varint(e._line->writes.Segments().size());
-        for (const TTDJournalSegment& s : e._line->writes.Segments())
+        wj.Varint(spans.size());
+        for (const TTDJournalSegment& s : spans)
         {
             wj.U64(s.from);
             wj.U64(s.to);
@@ -843,6 +901,10 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     // The holder's own data, whole, with the session's last part
     if (ok && lastPart && atSessionEnd && (_local == 0 || folderFile))
         for (const TTDHolderStream& h : _params.holderStreams)
+            if (!h.bytes.empty())
+                job.records.emplace_back(h.id, h.bytes);
+    if (ok && lastPart && !atSessionEnd && _local == 0)
+        for (const TTDHolderStream& h : _fileEndStreams)
             if (!h.bytes.empty())
                 job.records.emplace_back(h.id, h.bytes);
     if (ok && lastPart && atSessionEnd && _local != 0)
@@ -1226,8 +1288,10 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         e._lineId = 0;
     };
 
+    uint64_t coverageFrom = 0;   // the next coverage record's part start (kCoverageFrom), within one part
     for (const TTDPartRef& part : reader.Parts())
     {
+        coverageFrom = 0;
         const uint32_t lineOf = branchReading ? part.branch : 0;
         // A branch's part: its line must be loaded, or be created by this part (the branch table's create)
         if (lineOf != 0 && lostLines.count(lineOf))
@@ -1283,7 +1347,15 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                 std::string holderWhy;
                 if (reader.ReadRecord(record, bytes, &holderWhy))
                 {
-                    if (lineOf == 0 || trunkData)
+                    if ((lineOf == 0 || trunkData) && stream == kCoverageFrom)
+                    {
+                        TTDByteReader from(bytes);
+                        uint64_t frame = 0;
+                        coverageFrom = from.U64(frame) ? frame : 0;
+                    }
+                    else if ((lineOf == 0 || trunkData) && stream == kCoverage)
+                        report.coverageParts.emplace_back(std::exchange(coverageFrom, 0), std::move(bytes));
+                    else if (lineOf == 0 || trunkData)
                         report.holderStreams[stream] = std::move(bytes);
                     else
                         report.lineHolderStreams[lineOf][stream] = std::move(bytes);
@@ -1646,7 +1718,20 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                     segments.push_back(s);
                 }
                 if (journalOk)
-                    e._line->writes.SetSegments(std::move(segments));
+                {
+                    // A recording folder's parts each bring their own spans: joined with those loaded before
+                    std::vector<TTDJournalSegment> all = e._line->writes.Segments();
+                    all.insert(all.end(), segments.begin(), segments.end());
+                    std::sort(all.begin(), all.end(),
+                              [](const TTDJournalSegment& a, const TTDJournalSegment& b) { return a.from < b.from; });
+                    std::vector<TTDJournalSegment> joined;
+                    for (const TTDJournalSegment& s : all)
+                        if (!joined.empty() && s.from <= joined.back().to)
+                            joined.back().to = std::max(joined.back().to, s.to);
+                        else
+                            joined.push_back(s);
+                    e._line->writes.SetSegments(std::move(joined));
+                }
                 else
                 {
                     e._line->writes.Clear();   // ancillary: dropped, the session stands
@@ -1684,7 +1769,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
 }
 
 bool TTDSessionFile::ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
-                                       std::string& error)
+                                       std::string& error, uint64_t upToFrame)
 {
     TTDContainerReader reader;
     if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
@@ -1697,8 +1782,12 @@ bool TTDSessionFile::ReadSegmentPieces(const ITTDByteSource& source, TTDPieceSto
         return false;
     };
     std::vector<uint8_t> pieceBytes, cpBytes;
+    bool past = false;   // a part after @p upToFrame's was read: the last one wanted
     for (const TTDPartRef& part : reader.Parts())
     {
+        if (past)
+            break;
+        past = part.firstFrame > upToFrame;
         if (!reader.IsReachable(part.index))
             return fail("part " + std::to_string(part.index) + ": " +
                         (part.damaged ? part.damage : std::string("it depends on a damaged part")));

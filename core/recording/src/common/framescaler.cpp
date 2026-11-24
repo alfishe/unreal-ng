@@ -64,8 +64,9 @@ void FillBars(std::vector<uint8_t>& out)
     std::fill(words, words + out.size() / 4, word);
 }
 
-/// SIMD-CANDIDATE(frame scaler row expand): the k-fold pixel repeat is a store-bound scalar loop; the compiler
-/// vectorizes the fixed-width fills for small k, an SSE / NEON zip-and-store would cover every k
+/// The k-fold pixel repeat. Measured 2026-11-21: the compiler's vectorized fills for k = 2..4 beat NEON
+/// vst2q / vst3q / vst4q; broadcast stores for k >= 5 halve the row on arm64 but are 5-8 % of a 4K frame (the
+/// repeated-row copies and the bars are the memory-bound rest) and slower on x86: no hand-written kernel
 void ExpandRow(const uint32_t* src, uint32_t srcW, uint32_t k, uint32_t* dst)
 {
     switch (k)
@@ -79,6 +80,16 @@ void ExpandRow(const uint32_t* src, uint32_t srcW, uint32_t k, uint32_t* dst)
                 const uint32_t p = src[x];
                 dst[2 * x] = p;
                 dst[2 * x + 1] = p;
+            }
+            break;
+        case 3:
+            for (uint32_t x = 0; x < srcW; x++)
+            {
+                const uint32_t p = src[x];
+                uint32_t* d = dst + 3 * static_cast<size_t>(x);
+                d[0] = p;
+                d[1] = p;
+                d[2] = p;
             }
             break;
         case 4:
@@ -112,7 +123,32 @@ inline uint32_t SwapRedBlue(uint32_t p)
 
 void SwapRow(const uint32_t* src, uint32_t* dst, uint32_t count)
 {
-    for (uint32_t x = 0; x < count; x++)
+    uint32_t x = 0;
+#if FRAMESCALER_NEON
+    // 16 pixels a step: the channel planes swapped as whole registers
+    for (; x + 16 <= count; x += 16)
+    {
+        const uint8x16x4_t p = vld4q_u8(reinterpret_cast<const uint8_t*>(src + x));
+        uint8x16x4_t q;
+        q.val[0] = p.val[2];
+        q.val[1] = p.val[1];
+        q.val[2] = p.val[0];
+        q.val[3] = p.val[3];
+        vst4q_u8(reinterpret_cast<uint8_t*>(dst + x), q);
+    }
+#elif FRAMESCALER_SSE2
+    const __m128i keep = _mm_set1_epi32(static_cast<int>(0xFF00FF00u));
+    const __m128i low = _mm_set1_epi32(0xFF);
+    for (; x + 4 <= count; x += 4)
+    {
+        const __m128i p = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + x));
+        const __m128i q = _mm_or_si128(_mm_and_si128(p, keep),
+                                       _mm_or_si128(_mm_and_si128(_mm_srli_epi32(p, 16), low),
+                                                    _mm_slli_epi32(_mm_and_si128(p, low), 16)));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + x), q);
+    }
+#endif
+    for (; x < count; x++)
         dst[x] = SwapRedBlue(src[x]);
 }
 }  // namespace
@@ -135,14 +171,21 @@ void DrawPicture(const uint32_t* src, uint32_t srcW, uint32_t srcH, const Layout
         for (uint32_t sy = 0; sy < srcH; sy++)
         {
             const uint32_t* srcRow = src + static_cast<size_t>(sy) * srcW;
-            if (swapRedBlue)
-            {
-                swapped.resize(srcW);
-                SwapRow(srcRow, swapped.data(), srcW);
-                srcRow = swapped.data();
-            }
             uint32_t* firstRow = rowAt(layout.offsetY + sy * k) + layout.offsetX;
-            ExpandRow(srcRow, srcW, k, firstRow);
+            if (swapRedBlue && k == 1)
+            {
+                SwapRow(srcRow, firstRow, srcW);  // straight into the output, no second pass
+            }
+            else
+            {
+                if (swapRedBlue)
+                {
+                    swapped.resize(srcW);
+                    SwapRow(srcRow, swapped.data(), srcW);
+                    srcRow = swapped.data();
+                }
+                ExpandRow(srcRow, srcW, k, firstRow);
+            }
             for (uint32_t r = 1; r < k; r++)
                 std::memcpy(rowAt(layout.offsetY + sy * k + r) + layout.offsetX, firstRow,
                             static_cast<size_t>(layout.width) * sizeof(uint32_t));
@@ -459,6 +502,147 @@ void ChromaBlockRow(const uint8_t* FRAMESCALER_RESTRICT row0, const uint8_t* FRA
 }
 }  // namespace
 
+namespace
+{
+/// The chroma plane of a picture whose output pixel (x, y) is source pixel (col[x], row[y]), -1 = a bar (black): any
+/// nearest mapping, whole factor or not. Each 2x2 block is the average of its four source pixels, as the full-frame
+/// conversion of the scaled picture computes it. A source row is reduced once to the R, G, B sums of the two pixels
+/// under each chroma column; a block row is then the sum of two such rows, / 4, through the vector chroma kernel
+class ChromaPlaneBuilder
+{
+public:
+    ChromaPlaneBuilder(const uint8_t* src, uint32_t srcW, const int* col0, const int* col1, uint32_t chromaW)
+        : _src(src), _srcW(srcW), _col0(col0), _col1(col1), _chromaW(chromaW)
+    {
+        for (Slot& slot : _slots)
+        {
+            slot.row = -2;
+            slot.sums.resize(static_cast<size_t>(chromaW) * 3);
+        }
+    }
+
+    /// One U,V row from the source rows under the block's two output rows
+    void BuildRow(int row0, int row1, uint8_t* out)
+    {
+        const uint16_t* a = Sums(row0);
+        const uint16_t* b = Sums(row1);
+        const size_t n = _chromaW;
+        ChromaFromSums(a, a + n, a + 2 * n, b, b + n, b + 2 * n, _chromaW, out);
+    }
+
+private:
+    struct Slot
+    {
+        int row;
+        std::vector<uint16_t> sums;  ///< R sums, then G, then B: one per chroma column
+    };
+
+    /// The sums of a source row, from the two most recent ones (rows advance) or computed into the older slot
+    const uint16_t* Sums(int row)
+    {
+        for (Slot& slot : _slots)
+            if (slot.row == row)
+                return slot.sums.data();
+        Slot& slot = _slots[_next];
+        _next ^= 1;
+        slot.row = row;
+        uint16_t* r = slot.sums.data();
+        uint16_t* g = r + _chromaW;
+        uint16_t* b = g + _chromaW;
+        if (row < 0)
+        {
+            std::fill(slot.sums.begin(), slot.sums.end(), uint16_t{0});  // a bar row adds black
+            return r;
+        }
+        const uint8_t* line = _src + static_cast<size_t>(row) * _srcW * 4;
+        for (uint32_t cx = 0; cx < _chromaW; cx++)
+        {
+            const int c0 = _col0[cx];
+            const int c1 = _col1[cx];
+            unsigned sr = 0, sg = 0, sb = 0;
+            if (c0 >= 0)
+            {
+                const uint8_t* p = line + static_cast<size_t>(c0) * 4;
+                sr += p[0];
+                sg += p[1];
+                sb += p[2];
+            }
+            if (c1 >= 0)
+            {
+                const uint8_t* p = line + static_cast<size_t>(c1) * 4;
+                sr += p[0];
+                sg += p[1];
+                sb += p[2];
+            }
+            r[cx] = static_cast<uint16_t>(sr);
+            g[cx] = static_cast<uint16_t>(sg);
+            b[cx] = static_cast<uint16_t>(sb);
+        }
+        return r;
+    }
+
+    /// (sum of row 0 + sum of row 1) / 4 per channel -> interleaved U, V (the sums are at most 2 x 2 x 255)
+    static void ChromaFromSums(const uint16_t* FRAMESCALER_RESTRICT r0, const uint16_t* FRAMESCALER_RESTRICT g0,
+                               const uint16_t* FRAMESCALER_RESTRICT b0, const uint16_t* FRAMESCALER_RESTRICT r1,
+                               const uint16_t* FRAMESCALER_RESTRICT g1, const uint16_t* FRAMESCALER_RESTRICT b1,
+                               uint32_t count, uint8_t* FRAMESCALER_RESTRICT out)
+    {
+        uint32_t x = 0;
+#if FRAMESCALER_NEON
+        for (; x + 8 <= count; x += 8)
+        {
+            const int16x8_t r = vreinterpretq_s16_u16(vshrq_n_u16(vaddq_u16(vld1q_u16(r0 + x), vld1q_u16(r1 + x)), 2));
+            const int16x8_t g = vreinterpretq_s16_u16(vshrq_n_u16(vaddq_u16(vld1q_u16(g0 + x), vld1q_u16(g1 + x)), 2));
+            const int16x8_t b = vreinterpretq_s16_u16(vshrq_n_u16(vaddq_u16(vld1q_u16(b0 + x), vld1q_u16(b1 + x)), 2));
+            int16x8_t cu = vmulq_n_s16(b, 112);
+            cu = vmlaq_n_s16(cu, r, -38);
+            cu = vmlaq_n_s16(cu, g, -74);
+            int16x8_t cv = vmulq_n_s16(r, 112);
+            cv = vmlaq_n_s16(cv, g, -94);
+            cv = vmlaq_n_s16(cv, b, -18);
+            const int16x8_t half = vdupq_n_s16(128);
+            cu = vaddq_s16(vshrq_n_s16(vaddq_s16(cu, half), 8), half);
+            cv = vaddq_s16(vshrq_n_s16(vaddq_s16(cv, half), 8), half);
+            uint8x8x2_t uv;
+            uv.val[0] = vmovn_u16(vreinterpretq_u16_s16(cu));
+            uv.val[1] = vmovn_u16(vreinterpretq_u16_s16(cv));
+            vst2_u8(out + 2 * static_cast<size_t>(x), uv);
+        }
+#elif FRAMESCALER_SSE2
+        const __m128i half = _mm_set1_epi16(128);
+        auto load = [](const uint16_t* p) { return _mm_loadu_si128(reinterpret_cast<const __m128i*>(p)); };
+        for (; x + 8 <= count; x += 8)
+        {
+            const __m128i r = _mm_srli_epi16(_mm_add_epi16(load(r0 + x), load(r1 + x)), 2);
+            const __m128i g = _mm_srli_epi16(_mm_add_epi16(load(g0 + x), load(g1 + x)), 2);
+            const __m128i b = _mm_srli_epi16(_mm_add_epi16(load(b0 + x), load(b1 + x)), 2);
+            __m128i cu = _mm_add_epi16(_mm_mullo_epi16(b, _mm_set1_epi16(112)),
+                                       _mm_add_epi16(_mm_mullo_epi16(r, _mm_set1_epi16(-38)),
+                                                     _mm_mullo_epi16(g, _mm_set1_epi16(-74))));
+            __m128i cv = _mm_add_epi16(_mm_mullo_epi16(r, _mm_set1_epi16(112)),
+                                       _mm_add_epi16(_mm_mullo_epi16(g, _mm_set1_epi16(-94)),
+                                                     _mm_mullo_epi16(b, _mm_set1_epi16(-18))));
+            cu = _mm_add_epi16(_mm_srai_epi16(_mm_add_epi16(cu, half), 8), half);
+            cv = _mm_add_epi16(_mm_srai_epi16(_mm_add_epi16(cv, half), 8), half);
+            const __m128i u8 = _mm_packus_epi16(cu, cu);
+            const __m128i v8 = _mm_packus_epi16(cv, cv);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 2 * static_cast<size_t>(x)), _mm_unpacklo_epi8(u8, v8));
+        }
+#endif
+        for (; x < count; x++)
+            ChromaOf((r0[x] + r1[x]) / 4, (g0[x] + g1[x]) / 4, (b0[x] + b1[x]) / 4, out[2 * x], out[2 * x + 1]);
+    }
+
+    const uint8_t* _src;
+    uint32_t _srcW;
+    const int* _col0;
+    const int* _col1;
+    uint32_t _chromaW;
+    Slot _slots[2];
+    int _next = 0;
+};
+}  // namespace
+
 void PackedToNv12(const uint8_t* rgba, size_t srcStride, uint32_t w, uint32_t h, uint8_t* yDst, size_t yStride,
                   uint8_t* uvDst, size_t uvStride)
 {
@@ -535,11 +719,7 @@ bool ScaleIntoNv12Fit(const uint8_t* src, uint32_t srcW, uint32_t srcH, const La
         col0[cx] = colIndex(2 * cx);
         col1[cx] = colIndex(2 * cx + 1);
     }
-    thread_local std::vector<uint8_t> chromaU;
-    thread_local std::vector<uint8_t> chromaV;
-    chromaU.resize(srcW);
-    chromaV.resize(srcW);
-
+    ChromaPlaneBuilder chroma(src, srcW, col0.data(), col1.data(), chromaW);
     int prevRow0 = -2;
     int prevRow1 = -2;
     for (uint32_t cy = 0; cy < dstH / 2; cy++)
@@ -554,49 +734,10 @@ bool ScaleIntoNv12Fit(const uint8_t* src, uint32_t srcW, uint32_t srcH, const La
         }
         prevRow0 = r0;
         prevRow1 = r1;
-
-        // Both output rows under one source row: the chroma of a pair of columns inside one source pixel is that
-        // pixel's chroma, converted once per source pixel
-        const bool pureRow = r0 == r1 && r0 >= 0;
-        if (pureRow)
-        {
-            ChromaRow(src + static_cast<size_t>(r0) * srcW * 4, srcW, chromaU.data(), chromaV.data());
-        }
-
-        for (uint32_t cx = 0; cx < chromaW; cx++)
-        {
-            const int c0 = col0[cx];
-            const int c1 = col1[cx];
-            if (pureRow && c0 == c1 && c0 >= 0)
-            {
-                out[2 * cx] = chromaU[c0];
-                out[2 * cx + 1] = chromaV[c0];
-                continue;
-            }
-            if (r0 < 0 && r1 < 0)
-            {
-                out[2 * cx] = 128;  // a bar row: black
-                out[2 * cx + 1] = 128;
-                continue;
-            }
-
-            int rSum = 0;
-            int gSum = 0;
-            int bSum = 0;
-            auto add = [&](int sr, int sc) {
-                if (sr < 0 || sc < 0)
-                    return;  // a bar adds black (0, 0, 0)
-                const uint8_t* px = src + (static_cast<size_t>(sr) * srcW + static_cast<size_t>(sc)) * 4;
-                rSum += px[0];
-                gSum += px[1];
-                bSum += px[2];
-            };
-            add(r0, c0);
-            add(r0, c1);
-            add(r1, c0);
-            add(r1, c1);
-            ChromaOf(rSum / 4, gSum / 4, bSum / 4, out[2 * cx], out[2 * cx + 1]);
-        }
+        if (r0 < 0 && r1 < 0)
+            std::memset(out, 128, dstW);  // a bar row: black
+        else
+            chroma.BuildRow(r0, r1, out);
     }
     return true;
 }
@@ -711,6 +852,7 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
     thread_local std::vector<uint8_t> chromaV;
     chromaU.resize(srcW);
     chromaV.resize(srcW);
+    ChromaPlaneBuilder chroma(src, srcW, col0.data(), col1.data(), chromaW);
 
     int prevRow0 = -2;
     int prevRow1 = -2;
@@ -729,16 +871,11 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
 
         // A pure row pair (both output rows under one source row): the chroma of a column pair inside one source
         // pixel is that pixel's own chroma, converted ONCE per source pixel here and looked up below
-        const bool pureRow = r0 == r1 && r0 >= 0;
-        if (pureRow)
+        // Even factor and the picture on even coordinates: every 2x2 block is inside one source pixel, so the row is
+        // the source row's (U,V) pairs, converted once per source pixel, repeated k / 2 times between two bars
+        if (r0 == r1 && r0 >= 0 && (k & 1) == 0 && (picX0 & 1) == 0)
         {
             ChromaRow(src + static_cast<size_t>(r0) * srcW * 4, srcW, chromaU.data(), chromaV.data());
-        }
-
-        // Even factor and the picture on even coordinates: every 2x2 block is inside one source pixel, so the row is
-        // the source row's (U,V) pairs repeated k / 2 times between two bars
-        if (pureRow && (k & 1) == 0 && (picX0 & 1) == 0)
-        {
             std::memset(out, 128, picX0);
             uint8_t* d = out + picX0;
             const uint32_t reps = k / 2;
@@ -764,40 +901,11 @@ bool ScaleIntoNv12(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* yD
             continue;
         }
 
-        for (uint32_t cx = 0; cx < chromaW; cx++)
-        {
-            const int c0 = col0[cx];
-            const int c1 = col1[cx];
-            if (pureRow && c0 == c1 && c0 >= 0)
-            {
-                out[2 * cx] = chromaU[c0];
-                out[2 * cx + 1] = chromaV[c0];
-                continue;
-            }
-            if (r0 < 0 && r1 < 0)
-            {
-                out[2 * cx] = 128;  // a bar row: black
-                out[2 * cx + 1] = 128;
-                continue;
-            }
-
-            int rSum = 0;
-            int gSum = 0;
-            int bSum = 0;
-            auto add = [&](int sr, int sc) {
-                if (sr < 0 || sc < 0)
-                    return;  // a bar adds black (0, 0, 0)
-                const uint8_t* px = src + (static_cast<size_t>(sr) * srcW + static_cast<size_t>(sc)) * 4;
-                rSum += px[0];
-                gSum += px[1];
-                bSum += px[2];
-            };
-            add(r0, c0);
-            add(r0, c1);
-            add(r1, c0);
-            add(r1, c1);
-            ChromaOf(rSum / 4, gSum / 4, bSum / 4, out[2 * cx], out[2 * cx + 1]);
-        }
+        // Odd factor or the picture on odd coordinates: blocks straddle source pixels or bars
+        if (r0 < 0 && r1 < 0)
+            std::memset(out, 128, dstW);  // a bar row: black
+        else
+            chroma.BuildRow(r0, r1, out);
     }
     return true;
 }

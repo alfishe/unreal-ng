@@ -40,6 +40,7 @@ void StateLoaded(EveChip& chip)
 
 void MemoryRestored(EveChip& chip)
 {
+    AsyncDropPendingTag(chip); // the host wrote REG_TAG back too
     DrawingInvalidate(chip);
 }
 
@@ -111,6 +112,8 @@ void EveGetRegion(const EveChip* chip, size_t index, EveRegion* out)
         *out = EveRegion{};
         return;
     }
+    if (index == RegionReg)
+        AsyncResolveTag(*chip); // the region's bytes hold REG_TAG
     const Region& region = chip->regions[index];
     out->name = region.name;
     out->base = region.base;

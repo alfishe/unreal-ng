@@ -680,6 +680,31 @@ range     kind          detector       conf status   label / title
 L2 skool (5900-59FF,8000-FFFF): 103 entries, 224275 bytes written to scratch/game.skool
 ```
 
+### Jobs
+
+The long verbs as jobs ([jobs.md](./jobs.md), PLAN #122 S2): one command over `jobs::Execute`, the same lines as the
+`text` of `GET /api/v1/jobs/{job}` and MCP `jobs`. A job runs on the selected instance; `list` shows its jobs (`all`:
+every instance's).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `jobs [list] [all\|this\|<id>] [state=active\|finished\|all] [limit=N]` | The jobs, oldest first: id, kind, summary, state, progress, times. |
+| `jobs start <ttd\|analysis> <verb> [name=value ...]` | Run a long verb as a job (TTD `dump`, `load`, `probe-frames`, `memory-series`, `find-event`, `replay-check`, `export-clip`, `journal-build`, `branch-create`; analysis `build`, `trace`, `experiment`, `cover`), its options beside: `jobs start ttd dump path=/tmp/a.ttd`. Answers the job id at once. |
+| `jobs status <job> [result=false]` | One job; when it ended its status, error and the verb's text. |
+| `jobs wait <job> [wait_ms]` | Block this session until the job ends or `wait_ms` (default 30000, at most 60000) is up, then as `status`. |
+| `jobs cancel <job>` | A queued job ends cancelled; a running one is asked to stop (`probe-frames`, `memory-series`, `journal-build`, `analysis build`); refused when it cannot stop or ended. |
+| `analysis build async=true` | The same through the verb (`trace`, `experiment`, `cover` too). |
+
+`--json` prints the reply's fields.
+
+```
+> jobs start ttd memory-series ranges=0x5C00:4 frames=100
+Job 3 (ttd.memory-series: memory-series frames=100 ranges=0x5C00:4) queued on 0f3a.... Its end: ...
+> jobs wait 3
+job 3 ttd.memory-series on 0f3a... (memory-series frames=100 ranges=0x5C00:4): done in 12 ms
+...
+```
+
 ### Memory markup
 
 What each byte of memory is (code, data, text, sprite, ...) by layer, the [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md): one command over the

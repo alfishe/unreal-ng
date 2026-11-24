@@ -32,24 +32,34 @@ constexpr size_t kMaxEvents = 1000;
 constexpr size_t kCoverageKeySlots = size_t{1} << 23;
 
 /// The pieces of @p region that changed at checkpoint @p index. A baseline (a segment's start) stores every piece
-/// anew, so there a piece counts only when its content differs from the one the checkpoint before held; elsewhere
-/// the change records are the answer
-std::vector<std::pair<uint32_t, TTDPieceId>> ChangedPieces(const TimeTravelEngine& engine, size_t index, uint32_t region)
+/// anew, so there a piece counts only when its content differs from the one the checkpoint before held: from the
+/// differences the capture noted (TTDSegmentInfo::baselineDiff), else (a loaded session) by decoding both versions.
+/// Elsewhere the change records are the answer; they stay in memory when a segment is evicted, its versions do not,
+/// so nothing is read back (the timeline read every evicted segment back before 2026-11-21: 2 s at 240,000 frames)
+std::vector<uint32_t> ChangedPieces(const TimeTravelEngine& engine, size_t index, uint32_t region)
 {
-    std::vector<std::pair<uint32_t, TTDPieceId>> changes;
+    std::vector<uint32_t> pieces;
     if (engine.ChangeCount(index, region) == 0)
-        return changes;
-    changes = engine.ChangesAt(index, region);
+        return pieces;
     const TTDEngineCheckpoint* cp = engine.Checkpoint(index);
     if (!cp || !cp->baseline || index == 0 || !engine.Checkpoint(index - 1))
-        return changes;
+        return engine.ChangedPieceIndices(index, region);
+    if (const std::vector<uint32_t>* diff = engine.BaselineDiff(index))
+    {
+        const auto from = std::lower_bound(diff->begin(), diff->end(), region << 16);
+        for (auto it = from; it != diff->end() && (*it >> 16) == region; ++it)
+            pieces.push_back(*it & 0xFFFF);
+        return pieces;
+    }
     std::vector<uint8_t> now(kTTDPieceSize), before(kTTDPieceSize);
-    std::erase_if(changes, [&](const std::pair<uint32_t, TTDPieceId>& c) {
-        const uint32_t previous = engine.VersionAt(index - 1, region, c.first);
-        return previous != TimeTravelEngine::kAbsent && engine.PieceStore().Decode(c.second, now.data()) &&
-               engine.PieceStore().Decode(previous, before.data()) && now == before;
-    });
-    return changes;
+    for (const auto& [piece, id] : engine.ChangesAt(index, region))
+    {
+        const uint32_t previous = engine.VersionAt(index - 1, region, piece);
+        if (!(previous != TimeTravelEngine::kAbsent && engine.PieceStore().Decode(id, now.data()) &&
+              engine.PieceStore().Decode(previous, before.data()) && now == before))
+            pieces.push_back(piece);
+    }
+    return pieces;
 }
 
 /// Any piece of @p region changed at checkpoint @p index (ChangedPieces, without the list off a baseline)
@@ -62,11 +72,44 @@ bool RegionChanged(const TimeTravelEngine& engine, size_t index, uint32_t region
     return !(cp && cp->baseline) || !ChangedPieces(engine, index, region).empty();
 }
 
+/// A frame's written keys, asked by range: the block summary's mask rules out most ranges, the frame's rows of 256
+/// bytes answer nearly all the rest; the keys are decoded only for a row the range cuts. Sorted as stored: a RAM key is the byte's
+/// RAM address
+class FrameWrittenKeys
+{
+public:
+    FrameWrittenKeys(const TTDCoverageIndex& index, uint64_t frame, std::vector<TTDCoverageKey>& scratch)
+        : _index(index), _frame(frame), _keys(scratch)
+    {
+    }
+    bool Any(uint32_t lo, uint32_t hi)
+    {
+        if (!_index.BlockMayHaveKeyIn(TTDCoverageKind::Written, _frame, lo, hi))
+            return false;
+        if (const int rows = _index.FrameWroteIn(_frame, lo, hi); rows >= 0)
+            return rows == 1;
+        if (!_decoded)
+        {
+            _decoded = true;
+            _known = _index.GetFrameKeys(TTDCoverageKind::Written, _frame, _keys);
+        }
+        // Keys that would not decode: as if not known, the change is the answer
+        return !_known || std::lower_bound(_keys.begin(), _keys.end(), lo) != std::lower_bound(_keys.begin(), _keys.end(), hi);
+    }
+
+private:
+    const TTDCoverageIndex& _index;
+    uint64_t _frame;
+    std::vector<TTDCoverageKey>& _keys;
+    bool _decoded = false;
+    bool _known = false;
+};
+
 /// The frame wrote the picture's bytes: a piece of a layout range changed at checkpoint @p index, and, in machine RAM
-/// with the frame's written keys known (@p keys, sorted: a RAM key is the byte's RAM address), the CPU wrote a byte of
-/// the range there - or wrote nothing in that piece at all (a DMA, a device: the piece is all there is to go by)
+/// with the frame's written keys known (@p keys), the CPU wrote a byte of the range there - or wrote nothing in that
+/// piece at all (a DMA, a device: the piece is all there is to go by)
 bool WroteScreen(const TimeTravelEngine& engine, size_t index, const std::vector<TTDScreenRange>& layout,
-                 uint32_t ramRegion, const std::vector<TTDCoverageKey>* keys)
+                 uint32_t ramRegion, FrameWrittenKeys* keys)
 {
     for (size_t k = 0; k < layout.size();)
     {
@@ -75,12 +118,11 @@ bool WroteScreen(const TimeTravelEngine& engine, size_t index, const std::vector
         while (end < layout.size() && layout[end].region == region)
             ++end;
         if (engine.ChangeCount(index, region) > 0)
-            for (const auto& change : ChangedPieces(engine, index, region))
+            for (const uint32_t piece : ChangedPieces(engine, index, region))
             {
-                const uint32_t lo = change.first * static_cast<uint32_t>(kTTDPieceSize);
+                const uint32_t lo = piece * static_cast<uint32_t>(kTTDPieceSize);
                 const uint32_t hi = lo + static_cast<uint32_t>(kTTDPieceSize);
                 bool overlaps = false;
-                bool cpuInPiece = false;
                 for (size_t r = k; r < end; ++r)
                 {
                     const uint32_t b = std::max(layout[r].begin, lo);
@@ -90,12 +132,10 @@ bool WroteScreen(const TimeTravelEngine& engine, size_t index, const std::vector
                     overlaps = true;
                     if (region != ramRegion || !keys)
                         return true;
-                    if (std::lower_bound(keys->begin(), keys->end(), b) != std::lower_bound(keys->begin(), keys->end(), e))
+                    if (keys->Any(b, e))
                         return true;   // the CPU wrote a byte of the picture
                 }
-                if (overlaps && region == ramRegion && keys)
-                    cpuInPiece = std::lower_bound(keys->begin(), keys->end(), lo) != std::lower_bound(keys->begin(), keys->end(), hi);
-                if (overlaps && !cpuInPiece)
+                if (overlaps && !keys->Any(lo, hi))
                     return true;   // changed by no CPU write: the piece is all there is to go by
             }
         k = end;
@@ -139,7 +179,6 @@ struct FrameFacts
     uint32_t ramPieces = 0;
     uint32_t borderOuts = 0;
     uint32_t beeperToggles = 0;
-    uint32_t writes = 0;
     uint32_t keyEvents = 0;
     uint32_t otherInput = 0;
     uint32_t netEvents = 0;
@@ -191,7 +230,6 @@ void SumFrames(const std::vector<FrameFacts>& frames, const std::vector<DeviceCo
         into.ulaReads += f.cut.ulaReads;
         into.borderOuts += f.borderOuts;
         into.beeperToggles += f.beeperToggles;
-        into.writes += f.writes;
         into.tapePlaying = into.tapePlaying || f.cut.tape;
         into.diskWritten = into.diskWritten || f.cut.diskWritten;
         for (uint32_t k = f.firstDevice; k < f.firstDevice + f.deviceCount; ++k)
@@ -343,7 +381,6 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
     std::vector<uint32_t> slotSectors(result.media.size());
     TTDPortJournal::ReadCache readCache;
     TTDPortJournal::ReadCache writeCache;
-    TTDPortRecord rec;
     const TTDEngineCheckpoint* prev = firstIndex > static_cast<int64_t>(firstCp)
                                           ? engine.Checkpoint(static_cast<size_t>(firstIndex) - 1)
                                           : nullptr;
@@ -406,25 +443,40 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
             const TTDPortJournal& reads = engine.BusReads();
             const TTDPortJournal& outs = engine.BusWrites();
             result.portRecords += f.in + f.out;
-            for (uint64_t k = std::max(cp->busReadCursor, reads.FirstIndex()); k < next->busReadCursor; ++k)
-                if (reads.Get(k, rec, readCache))
-                    if (const int16_t d = ports.DeviceOf(rec.port); d >= 0)
-                        ++in[static_cast<size_t>(d)];
+            // Per-port tallies: a sealed block's runs need no decode (a polling loop reads #FE thousands of times a
+            // frame; the decode was half of a long session's timeline)
+            reads.Tally(cp->busReadCursor, next->busReadCursor, readCache,
+                        [&](const TTDPortJournal::PortTally* t, size_t n) {
+                            for (size_t k = 0; k < n; ++k)
+                                if (const int16_t d = ports.DeviceOf(t[k].port); d >= 0)
+                                    in[static_cast<size_t>(d)] += t[k].count;
+                            return true;
+                        });
             uint8_t fe = cp->chipset.pFE;
-            for (uint64_t k = std::max(cp->busWriteCursor, outs.FirstIndex()); k < next->busWriteCursor; ++k)
-                if (outs.Get(k, rec, writeCache))
-                {
-                    const int16_t d = ports.DeviceOf(rec.port);
-                    if (d < 0)
-                        continue;
-                    ++out[static_cast<size_t>(d)];
-                    if (d == ula)
-                    {
-                        ++f.borderOuts;
-                        f.beeperToggles += ((rec.value ^ fe) & 0x10) != 0;
-                        fe = rec.value;
-                    }
-                }
+            outs.Tally(cp->busWriteCursor, next->busWriteCursor, writeCache,
+                       [&](const TTDPortJournal::PortTally* t, size_t n) {
+                           // The beeper's toggles follow the ULA's writes in order: a run writing it through two
+                           // ports is visited record by record
+                           size_t ulaPorts = 0;
+                           for (size_t k = 0; k < n; ++k)
+                               ulaPorts += ula >= 0 && ports.DeviceOf(t[k].port) == ula;
+                           if (ulaPorts > 1)
+                               return false;
+                           for (size_t k = 0; k < n; ++k)
+                           {
+                               const int16_t d = ports.DeviceOf(t[k].port);
+                               if (d < 0)
+                                   continue;
+                               out[static_cast<size_t>(d)] += t[k].count;
+                               if (d == ula)
+                               {
+                                   f.borderOuts += t[k].count;
+                                   f.beeperToggles += (((t[k].first ^ fe) & 0x10) != 0) + t[k].bit4Toggles;
+                                   fe = t[k].last;
+                               }
+                           }
+                           return true;
+                       });
             for (size_t d = 0; d < in.size(); ++d)
                 if (in[d] || out[d])
                 {
@@ -472,41 +524,40 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
     };
 
     // Coverage: distinct written keys per frame (what a burst is measured by)
-    // and which bytes of the picture it wrote
+    // and which bytes of the picture it wrote. The counts come from the index's block summaries; a frame's keys
+    // are decoded only where its block wrote near a changed piece of the picture (FrameWrittenKeys)
     std::vector<TTDCoverageKey> frameKeys;
+    std::vector<uint32_t> writtenPerFrame(coverage ? frameCount : 0, 0);
+    if (coverage)
+        _line->coverageIndex.FrameKeyCounts(TTDCoverageKind::Written, fromFrame, toFrame, writtenPerFrame.data());
     for (size_t i = 0; i < frameCount; ++i)
     {
         FrameFacts& f = frames[i];
-        const bool keys = coverage && _line->coverageIndex.GetFrameKeys(TTDCoverageKind::Written, fromFrame + i, frameKeys);
-        if (keys)
-        {
-            f.cut.written = static_cast<uint32_t>(frameKeys.size());
-            std::sort(frameKeys.begin(), frameKeys.end());
-        }
+        if (coverage)
+            f.cut.written = writtenPerFrame[i];
+        FrameWrittenKeys keys(_line->coverageIndex, fromFrame + i, frameKeys);
+        const bool known = coverage && _line->coverageIndex.CoversFrame(TTDCoverageKind::Written, fromFrame + i);
         for (const std::vector<TTDScreenRange>* layout : f.layout)
             if (layout && !f.cut.screen)
-                f.cut.screen = WroteScreen(engine, f.changesAt, *layout, ramRegion, keys ? &frameKeys : nullptr);
+                f.cut.screen = WroteScreen(engine, f.changesAt, *layout, ramRegion, known ? &keys : nullptr);
     }
 
-    // The write journal, where it was on: a write at machine time t belongs to the frame whose start is before it
-    if (writes)
-    {
-        std::vector<TTDMachineTime> starts;
-        std::vector<uint64_t> starting;
-        for (size_t i = firstCp; i < cpCount; ++i)
-            if (const TTDEngineCheckpoint* cp = engine.Checkpoint(i))
-            {
-                starts.push_back(cp->start);
-                starting.push_back(cp->position.frame);
-            }
-        engine.Writes().ForEach([&](const TTDWriteRecord& w) {
-            const auto it = std::lower_bound(starts.begin(), starts.end(), TTDMachineTime{w.globalT});
-            if (it == starts.begin() || w.isIo)
-                return;
-            if (FrameFacts* f = frameOf(starting[static_cast<size_t>(it - starts.begin()) - 1]))
-                ++f->writes;
-        });
-    }
+    // The write journal, where it was on: a write at machine time t belongs to the frame whose start is before it.
+    // A range's writes are counted from the index's running counts (one block decoded per end), not visited: the
+    // journal of a long session holds hundreds of millions of records (P1.S10 soak, 2026-11-21)
+    auto writesIn = [&](uint64_t frameStart, uint64_t frameEnd) -> uint64_t {
+        const int64_t a = engine.CheckpointIndexOf({0, frameStart, 0});
+        const int64_t b = engine.CheckpointIndexOf({0, frameEnd, 0});
+        const TTDEngineCheckpoint* from = a >= 0 ? engine.Checkpoint(static_cast<size_t>(a)) : nullptr;
+        if (!from || b < 0)
+            return 0;
+        // Up to the next frame's start; the session's last frame up to now
+        const TTDEngineCheckpoint* next = engine.Checkpoint(static_cast<size_t>(b) + 1);
+        const uint64_t upTo = next ? next->start : UINT64_MAX;
+        if (upTo < from->start)
+            return 0;
+        return engine.Writes().MemoryWritesUpTo(upTo) - engine.Writes().MemoryWritesUpTo(from->start);
+    };
 
     // Input; the keys pressed, kept for the per-range lists
     std::vector<std::pair<uint64_t, uint8_t>> keyDowns;
@@ -607,6 +658,8 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
     std::vector<uint32_t> stamp(coverage ? kCoverageKeySlots : 0, 0);
     uint32_t generation = 0;
     std::vector<uint32_t> executedPerFrame(coverage ? frameCount : 0, 0);
+    if (coverage)
+        _line->coverageIndex.FrameKeyCounts(TTDCoverageKind::Executed, fromFrame, toFrame, executedPerFrame.data());
     auto fill = [&](TTDTimelineBucket& b) {
         b.deviceIn.assign(result.devices.size(), 0);
         b.deviceOut.assign(result.devices.size(), 0);
@@ -615,6 +668,8 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
         b.stateFrames.assign(result.states.size(), 0);
         SumFrames(frames, deviceCounts, static_cast<size_t>(b.frameStart - fromFrame),
                   static_cast<size_t>(b.frameEnd - fromFrame), b);
+        if (writes)
+            b.writes = writesIn(b.frameStart, b.frameEnd);
         for (const auto& [frame, key] : keyDowns)
             if (frame >= b.frameStart && frame <= b.frameEnd)
             {
@@ -624,27 +679,13 @@ TTDTimelineResult TimeTravelController::QueryTimelineOn(const TTDTimelineOptions
             }
         if (!coverage)
             return;
+        // A range's distinct keys from the index's block summaries: per block its keys united, frame by frame only
+        // where the range cuts a block
         for (const TTDCoverageKind kind : {TTDCoverageKind::Executed, TTDCoverageKind::Written, TTDCoverageKind::Read})
-        {
-            const uint32_t mark = ++generation;
-            uint32_t distinct = 0;
-            for (uint64_t frame = b.frameStart; frame <= b.frameEnd; ++frame)
-            {
-                if (!_line->coverageIndex.GetFrameKeys(kind, frame, frameKeys))
-                    continue;
-                if (kind == TTDCoverageKind::Executed)
-                    executedPerFrame[static_cast<size_t>(frame - fromFrame)] = static_cast<uint32_t>(frameKeys.size());
-                for (const TTDCoverageKey key : frameKeys)
-                    if (key < kCoverageKeySlots && stamp[key] != mark)
-                    {
-                        stamp[key] = mark;
-                        ++distinct;
-                    }
-            }
             (kind == TTDCoverageKind::Executed ? b.executed
              : kind == TTDCoverageKind::Written ? b.written
-                                                : b.read) = distinct;
-        }
+                                                : b.read) =
+                _line->coverageIndex.CountDistinctKeys(kind, b.frameStart, b.frameEnd, stamp, ++generation);
     };
     for (TTDTimelinePhase& p : result.phases)
     {

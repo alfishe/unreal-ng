@@ -433,13 +433,17 @@ struct WindowRecorder::Writer
             return false;
         // Rows are independent: a few threads write them at once (the encoder's pixel buffer is shared memory, one
         // thread does not fill its bandwidth)
+        // The width in a local: read through the QImage in the loop condition it is reloaded after every store (a
+        // uint32_t store may alias the image's fields), which kept the loop scalar. A 4K frame on 4 threads / on one:
+        // 5.2 / 16+ ms -> 1.2 / 2 (clang, M1), 12.7 / 29 -> 4.9 / 7.1 (gcc 15), 4.4 / 16.8 -> 2.4 / 3.1 (MSVC)
+        const int width = picture.width();
         const auto swapRows = [&](int first, int last)
         {
             for (int y = first; y < last; ++y)
             {
                 const uint32_t* from = reinterpret_cast<const uint32_t*>(picture.constScanLine(y));
                 uint32_t* to = reinterpret_cast<uint32_t*>(frame.scanLine(y0 + y)) + x0;
-                for (int x = 0; x < picture.width(); ++x)
+                for (int x = 0; x < width; ++x)
                 {
                     const uint32_t p = from[x];
                     // RGBA bytes = A,B,G,R as a little-endian word: red and blue swap. BGRA-ordered formats are the
@@ -630,7 +634,11 @@ struct WindowRecorder::Writer
 
         // The last picture sent and its frame: a picture equal to it is not sent (a still screen; it only lengthens
         // the one before), unless a quarter second went by (seeking wants a frame that often)
-        QImage lastSent;
+        // Two frame buffers, reused: one is composed into, the other holds the last picture sent (filling a fresh 4K
+        // QImage took 4.1 ms on Windows, a reused one 2.0; the same on Linux and macOS). lastSent points at one of them
+        QImage frames[2];
+        int composing = 0;
+        const QImage* lastSent = nullptr;
         uint64_t lastSentFrame = 0;
         const uint64_t resendFrames = std::max<uint64_t>(1, static_cast<uint64_t>(fps / 4));
         // The sound queued behind this picture goes to ffmpeg ahead of it, and again while it waits (see
@@ -677,7 +685,7 @@ struct WindowRecorder::Writer
             }
             if (!taken || process.state() != QProcess::Running)
                 fail("ffmpeg stopped taking frames: " + process.errorString().toStdString());
-            lastSent = frame;
+            lastSent = &frame;
             lastSentFrame = frameIndex;
         };
 
@@ -719,21 +727,26 @@ struct WindowRecorder::Writer
             // B,G,R,A bytes on a little-endian host: the stream's order. Premultiplied, QPainter's own format (the
             // keyboard drawn into plain ARGB32 took most of a frame's time at 1080p); the frame is opaque, so the bytes
             // are the same
-            QImage frame(size, QImage::Format_ARGB32_Premultiplied);
+            QImage& frame = frames[composing];
+            if (frame.size() != size)
+                frame = QImage(size, QImage::Format_ARGB32_Premultiplied);
             composeInto(frame, job);
-            const bool same = !lastSent.isNull() && job.frameStart < lastSentFrame + resendFrames &&
-                              std::memcmp(frame.constBits(), lastSent.constBits(),
+            const bool same = lastSent && job.frameStart < lastSentFrame + resendFrames &&
+                              std::memcmp(frame.constBits(), lastSent->constBits(),
                                           static_cast<size_t>(frame.sizeInBytes())) == 0;
             if (feedSound() && !same)
+            {
                 sendFrame(frame, job.frameStart);
+                composing ^= 1;  // the frame sent is kept; the next one goes into the other buffer
+            }
             framesDone = job.frameStart + job.repeat;
             if (!pumpSound())
                 fail("ffmpeg stopped taking the sound");
             pictureHandled(pictureStartUs);
         }
         // The last picture once more at the last frame's time: the picture lasts to the end of the sound
-        if (failure.empty() && !lastSent.isNull() && mux.frames > lastSentFrame + 1)
-            sendFrame(lastSent, mux.frames - 1);
+        if (failure.empty() && lastSent && mux.frames > lastSentFrame + 1)
+            sendFrame(*lastSent, mux.frames - 1);
 
         sound.close();
         std::string result = failure;
@@ -1115,9 +1128,13 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // The picture in Matroska with each frame's time (see MatroskaStreamHeader), the output's frame rate variable:
     // those times, microsecond-exact, are the file's
     QStringList args{"-v", "error", "-y", "-f", "matroska", "-i", "-"};
+    // The raw sound's format is all given: no analysis. With ffmpeg's default (5 s of sound read before it goes on)
+    // it stopped reading the picture meanwhile, and a paused machine stepped by record/frames makes sound only as the
+    // picture is taken: both waited for good ("recorded nothing within 10 s"); running, it only started 5 s late
     if (!fifo.isEmpty())
-        args << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
-             << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
+        args << "-thread_queue_size" << "512" << "-probesize" << "32" << "-analyzeduration" << "0" << "-f" << "s16le"
+             << "-ar" << QString::number(_sampleRate) << "-ac" << QString::number(AUDIO_CHANNELS) << "-i" << fifo
+             << "-map" << "0:v:0" << "-map" << "1:a:0";
     const bool h265 = request.codec == "h265";
     const HardwareEncoder hardware =
         request.codec != "prores" && request.hardware ? FfmpegHardwareEncoder(ffmpeg, h265) : HardwareEncoder{};
