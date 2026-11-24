@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "esprom.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4espstate.h"
 
 namespace vdac4
 {
@@ -160,8 +161,9 @@ private:
 /// region <Construction, boot>
 
 EspAppHost::EspAppHost(std::unique_ptr<IEspCpu> cpu, EspAppHostPorts ports, uint32_t mhz)
-    : _cpu(std::move(cpu)), _ports(std::move(ports)), _mhz(mhz ? mhz : kDefaultMhz)
+    : _cpu(std::move(cpu)), _outer(std::move(ports)), _mhz(mhz ? mhz : kDefaultMhz)
 {
+    InstallPorts();
     _cpu->Map(EspMemory::kPsramDbus, EspMemory::kPsramSize, _memory.PsramBytes().data(), true);
     _cpu->Map(EspMemory::kPsramIbus, EspMemory::kPsramSize, _memory.PsramBytes().data(), true);
     _cpu->Map(EspMemory::kSramBase, EspMemory::kSramSize, _memory.SramBytes().data(), true);
@@ -195,6 +197,9 @@ uint32_t EspAppHost::RomSymbol(const char* name) const
 
 void EspAppHost::Reset()
 {
+    JournalEntry entry(*this);
+    if (entry.Record())
+        JournalPutToken(TokReset);
     _tasks.clear();
     _loop = _net = nullptr;
     for (SyncObject& object : _sync)
@@ -208,6 +213,8 @@ void EspAppHost::Reset()
     _nextTaskId = 1;
     _mediaFirst = _mediaLast = 0;
     _inCommand = false;
+    _lastCommandResult = 0;
+    _startDone = nullptr;
     _lastError.clear();
     _memory.Reset();
     _cpu->InvalidateCode(EspMemory::kPsramDbus, EspMemory::kPsramSize);
@@ -431,6 +438,12 @@ void EspAppHost::DumpProfile()
 
 void EspAppHost::Advance(uint64_t nowUs)
 {
+    JournalEntry entry(*this);
+    if (entry.Record() && nowUs > _nowUs)
+    {
+        JournalPutToken(TokAdvance);
+        JournalPutVarint(nowUs - _nowUs);
+    }
 #ifdef UNREAL_XTENSA_PROFILE
     const uint64_t advanceStart = ProfileNs();
 #endif
@@ -598,8 +611,7 @@ void EspAppHost::Fault(Task& task, const IEspCpu::Result& result)
         task.state = TaskState::HostIdle;
         _cpu->ResetState();
         _cpu->SaveState(task.cpu);
-        if (call.done)
-            call.done(static_cast<uint32_t>(kZmError));
+        CallDone(call.kind, static_cast<uint32_t>(kZmError));
     }
     else
     {
@@ -780,8 +792,7 @@ bool EspAppHost::HandleRomTrap(Task& task, uint32_t index)
                 HostCall call = std::move(task.calls.front());
                 task.calls.pop_front();
                 task.callRunning = false;
-                if (call.done)
-                    call.done(result);
+                CallDone(call.kind, result);
             }
             if (task.state == TaskState::Done || task.calls.empty())
             {
@@ -1377,6 +1388,15 @@ void EspAppHost::Log(const std::string& line)
 void EspAppHost::StartApp(const std::string& name, std::vector<uint8_t> elf,
                           std::function<void(int, const std::string&, const std::string&)> done)
 {
+    JournalEntry entry(*this);
+    if (entry.Record())
+    {
+        JournalPutToken(TokStartApp);
+        JournalPutVarint(name.size());
+        JournalPutBytes(reinterpret_cast<const uint8_t*>(name.data()), name.size());
+        JournalPutVarint(elf.size());
+        JournalPutBytes(elf.data(), elf.size());
+    }
     // The same app already running is not restarted (startApp)
     if (_app.address != 0 && _app.name == name)
     {
@@ -1386,23 +1406,27 @@ void EspAppHost::StartApp(const std::string& name, std::vector<uint8_t> elf,
         return;
     }
     StopApp();
-    LoadApp(name, elf, std::move(done));
+    _startDone = std::move(done);
+    LoadApp(name, elf);
 }
 
-void EspAppHost::LoadApp(const std::string& name, const std::vector<uint8_t>& elf,
-                         std::function<void(int, const std::string&, const std::string&)> done)
+void EspAppHost::StartDone(int result, const std::string& name, const std::string& version)
 {
-    auto fail = [done](int result) {
-        if (done)
-            done(result, "", "");
-    };
+    auto done = std::move(_startDone);
+    _startDone = nullptr;
+    if (done)
+        done(result, name, version);
+}
+
+void EspAppHost::LoadApp(const std::string& name, const std::vector<uint8_t>& elf)
+{
     ElfHost host(_memory);
     std::string error;
     if (!EspElfLoad(elf.data(), elf.size(), host, _app.image, error))
     {
         Log(name + ": relocate failed (" + error + ")");
         _lastError = error;
-        fail(kZmError);
+        StartDone(kZmError, "", "");
         return;
     }
     _cpu->InvalidateCode(_app.image.textBlock + kEspIbusOffset, _app.image.sections[EspElfImage::Text].size);
@@ -1425,41 +1449,65 @@ void EspAppHost::LoadApp(const std::string& name, const std::vector<uint8_t>& el
     mainCall.args[0] = 3;
     mainCall.args[1] = argv;
     mainCall.count = 2;
-    mainCall.done = [this, appOut, fail, done, name](uint32_t entryResult) {
-        const uint32_t app = _memory.Read32(appOut);
-        const bool ok = static_cast<int32_t>(entryResult) == 1 && app != 0 && _memory.Bytes(app, 36) != nullptr &&
-                        (_memory.Read32(app) >> 16) == 1 && (_memory.Read32(app) & 0xFFFF) >= 36 &&
-                        _memory.Read32(app + 20) != 0;
-        if (!ok)
+    mainCall.kind = HostCallKind::Main;
+    QueueHostCall(*_loop, std::move(mainCall));
+}
+
+void EspAppHost::CallDone(HostCallKind kind, uint32_t result)
+{
+    switch (kind)
+    {
+        case HostCallKind::None:
+            return;
+        case HostCallKind::Main:
         {
-            Log(name + ": interface " + std::to_string(static_cast<int32_t>(entryResult)) + ", not 1");
-            ForceCleanup();
-            fail(kZmError);
+            // main returned: app_out holds the zm_app_t (argv block, LoadApp)
+            const std::string name = _app.name;
+            const uint32_t app = _memory.Read32(_argvBlock + 32);
+            const bool ok = static_cast<int32_t>(result) == 1 && app != 0 && _memory.Bytes(app, 36) != nullptr &&
+                            (_memory.Read32(app) >> 16) == 1 && (_memory.Read32(app) & 0xFFFF) >= 36 &&
+                            _memory.Read32(app + 20) != 0;
+            if (!ok)
+            {
+                Log(name + ": interface " + std::to_string(static_cast<int32_t>(result)) + ", not 1");
+                auto done = std::move(_startDone);
+                _startDone = nullptr;
+                ForceCleanup();
+                if (done)
+                    done(kZmError, "", "");
+                return;
+            }
+            _app.address = app;
+            _app.commandFirst = *_memory.Bytes(app + 16, 1);
+            _app.commandLast = *_memory.Bytes(app + 17, 1);
+            _app.start = _memory.Read32(app + 20);
+            _app.stop = _memory.Read32(app + 24);
+            _app.command = _memory.Read32(app + 28);
+            _app.poll = _memory.Read32(app + 32);
+            if (_ports.declared)
+                _ports.declared(_memory.ReadString(_memory.Read32(app + 8), 24),
+                                _memory.ReadString(_memory.Read32(app + 12), 24), _app.commandFirst, _app.commandLast);
+
+            HostCall startCall;
+            startCall.pc = _app.start;
+            startCall.args[0] = _core;
+            startCall.count = 1;
+            startCall.kind = HostCallKind::Start;
+            // Runs next on the loop task, right after main returns
+            // (the Return trap popped main already: start goes first)
+            _loop->calls.push_front(std::move(startCall));
             return;
         }
-        _app.address = app;
-        _app.commandFirst = *_memory.Bytes(app + 16, 1);
-        _app.commandLast = *_memory.Bytes(app + 17, 1);
-        _app.start = _memory.Read32(app + 20);
-        _app.stop = _memory.Read32(app + 24);
-        _app.command = _memory.Read32(app + 28);
-        _app.poll = _memory.Read32(app + 32);
-        if (_ports.declared)
-            _ports.declared(_memory.ReadString(_memory.Read32(app + 8), 24),
-                            _memory.ReadString(_memory.Read32(app + 12), 24), _app.commandFirst, _app.commandLast);
-
-        HostCall startCall;
-        startCall.pc = _app.start;
-        startCall.args[0] = _core;
-        startCall.count = 1;
-        startCall.done = [this, done, name, app](uint32_t result) {
+        case HostCallKind::Start:
+        {
+            const std::string name = _app.name;
+            const uint32_t app = _app.address;
             const std::string appName = _memory.ReadString(_memory.Read32(app + 8), 24);
             const std::string version = _memory.ReadString(_memory.Read32(app + 12), 24);
             if (static_cast<int32_t>(result) != kZmOk)
             {
                 Log(name + ": start failed (" + std::to_string(static_cast<int32_t>(result)) + ")");
-                if (done)
-                    done(static_cast<int32_t>(result), appName, version);
+                StartDone(static_cast<int32_t>(result), appName, version);
                 StopApp();
                 return;
             }
@@ -1469,14 +1517,20 @@ void EspAppHost::LoadApp(const std::string& name, const std::vector<uint8_t>& el
             std::snprintf(text, sizeof(text), "app %s %s %s started, commands %02X..%02X", name.c_str(),
                           appName.c_str(), version.c_str(), _app.commandFirst, _app.commandLast);
             Log(text);
-            if (done)
-                done(kZmOk, appName, version);
-        };
-        // Runs next on the loop task, right after main returns
-        // (the Return trap popped main already: start goes first)
-        _loop->calls.push_front(std::move(startCall));
-    };
-    QueueHostCall(*_loop, std::move(mainCall));
+            StartDone(kZmOk, appName, version);
+            return;
+        }
+        case HostCallKind::Command:
+            _inCommand = false;
+            _lastCommandResult = static_cast<int32_t>(result);
+            if (_app.done)
+            {
+                _app.done = false;
+                Log("app " + _app.name + ": done, unloading");
+                StopApp();
+            }
+            return;
+    }
 }
 
 bool EspAppHost::OwnsCommand(uint8_t command) const
@@ -1486,6 +1540,14 @@ bool EspAppHost::OwnsCommand(uint8_t command) const
 
 void EspAppHost::Command(uint8_t command, const uint8_t* data, size_t size)
 {
+    JournalEntry entry(*this);
+    if (entry.Record())
+    {
+        JournalPutToken(TokCommand);
+        JournalPutVarint(command);
+        JournalPutVarint(size);
+        JournalPutBytes(data, size);
+    }
     if (!OwnsCommand(command))
         return;
     size = std::min<size_t>(size, 8192);
@@ -1496,16 +1558,7 @@ void EspAppHost::Command(uint8_t command, const uint8_t* data, size_t size)
     call.args[2] = static_cast<uint32_t>(size);
     call.count = 3;
     call.payload = std::make_shared<std::vector<uint8_t>>(data, data + size);
-    call.done = [this](uint32_t result) {
-        _inCommand = false;
-        _lastCommandResult = static_cast<int32_t>(result);
-        if (_app.done)
-        {
-            _app.done = false;
-            Log("app " + _app.name + ": done, unloading");
-            StopApp();
-        }
-    };
+    call.kind = HostCallKind::Command;
     _app.lastCommandUs = _nowUs;
     QueueHostCall(*_loop, std::move(call));
 }
@@ -1517,6 +1570,12 @@ bool EspAppHost::LoopIdle() const
 
 bool EspAppHost::RunUntilLoopIdle(uint64_t limitUs)
 {
+    JournalEntry entry(*this);
+    if (entry.Record())
+    {
+        JournalPutToken(TokRunIdle);
+        JournalPutVarint(limitUs);
+    }
     // 20 us steps (4800 instructions at 240 MHz): the ESP's clock moves about as far as the call really takes
     constexpr uint64_t kStepUs = 20;
     const uint64_t until = _nowUs + limitUs;
@@ -1536,6 +1595,9 @@ size_t EspAppHost::PendingCommands() const
 
 void EspAppHost::StopApp()
 {
+    JournalEntry entry(*this);
+    if (entry.Record())
+        JournalPutToken(TokStopApp);
     if (_app.address == 0 && _app.image.textBlock == 0)
         return;
     ForceCleanup();
@@ -1582,6 +1644,7 @@ void EspAppHost::ForceCleanup()
     ElfHost host(_memory);
     EspElfUnload(host, _app.image);
     _app = AppState{};
+    _startDone = nullptr;
 }
 
 /// endregion
@@ -1597,5 +1660,652 @@ bool EspAppHost::PeekAppByte(uint32_t elfAddress, uint8_t& value) const
     value = *bytes;
     return true;
 }
+
+
+/// region <State (TTD)>
+
+namespace
+{
+constexpr uint32_t kStateMagic = 0x31484145;  // "EAH1"
+constexpr size_t kMaxTasks = 64;
+constexpr size_t kMaxCalls = 1024;
+constexpr size_t kMaxBlocks = 1u << 20;
+constexpr size_t kMaxText = 4096;
+
+void PutBlocks(Vdac4EspStateWriter& w, const std::map<uint32_t, uint32_t>& blocks)
+{
+    w.U32(static_cast<uint32_t>(blocks.size()));
+    for (const auto& [start, size] : blocks)
+    {
+        w.U32(start);
+        w.U32(size);
+    }
+}
+
+bool GetBlocks(Vdac4EspStateReader& r, std::map<uint32_t, uint32_t>& blocks)
+{
+    const uint32_t count = r.U32();
+    if (!r.Ok() || count > kMaxBlocks)
+        return false;
+    for (uint32_t i = 0; i < count && r.Ok(); ++i)
+    {
+        const uint32_t start = r.U32();
+        blocks[start] = r.U32();
+    }
+    return r.Ok();
+}
+}  // namespace
+
+void EspAppHost::SaveState(std::vector<uint8_t>& out) const
+{
+    out.clear();
+    Vdac4EspStateWriter w(out);
+    w.U32(kStateMagic);
+    w.U64(_nowUs);
+    w.U64(_sliceUsedCycles);
+    w.U64(_instructions);
+    w.U64(_readySerial);
+    w.U32(_nextTaskId);
+    w.U64(_nextPollUs);
+
+    int loop = -1, net = -1;
+    w.U32(static_cast<uint32_t>(_tasks.size()));
+    for (size_t i = 0; i < _tasks.size(); ++i)
+    {
+        const Task& t = *_tasks[i];
+        if (&t == _loop)
+            loop = static_cast<int>(i);
+        if (&t == _net)
+            net = static_cast<int>(i);
+        w.U32(t.id);
+        w.String(t.name);
+        w.U8(t.priority);
+        w.Bool(t.host);
+        w.U8(static_cast<uint8_t>(t.state));
+        w.Blob(t.cpu);
+        w.U32(t.stack);
+        w.U32(t.stackSize);
+        w.U64(t.wakeUs);
+        w.U32(t.waitObject);
+        w.Bool(t.hasPending);
+        w.U32(t.pendingReturn);
+        w.U64(t.readySerial);
+        w.Bool(t.callRunning);
+        w.U32(t.pcmFrames);
+        w.U32(t.pcmAddress);
+        w.U32(t.pcmAccepted);
+        w.U64(t.pcmDeadlineUs);
+        w.U32(static_cast<uint32_t>(t.calls.size()));
+        for (const HostCall& c : t.calls)
+        {
+            w.U32(c.pc);
+            for (uint32_t a : c.args)
+                w.U32(a);
+            w.U32(static_cast<uint32_t>(c.count));
+            w.U8(static_cast<uint8_t>(c.kind));
+            w.Bool(c.payload != nullptr);
+            if (c.payload)
+                w.Blob(*c.payload);
+        }
+    }
+    w.U32(static_cast<uint32_t>(loop));
+    w.U32(static_cast<uint32_t>(net));
+
+    for (const SyncObject& o : _sync)
+    {
+        w.Bool(o.used);
+        w.Bool(o.mutex);
+        w.U32(o.handle);
+        w.U32(o.owner);
+        w.Bool(o.given);
+    }
+
+    w.String(_app.name);
+    w.U32(_app.address);
+    w.Bool(_app.started);
+    w.U8(_app.commandFirst);
+    w.U8(_app.commandLast);
+    w.U32(_app.start);
+    w.U32(_app.stop);
+    w.U32(_app.command);
+    w.U32(_app.poll);
+    for (const EspElfSection& section : _app.image.sections)
+    {
+        w.U32(section.vaddr);
+        w.U32(section.size);
+        w.U32(section.offset);
+        w.U32(section.addr);
+    }
+    w.U32(_app.image.textBlock);
+    w.U32(_app.image.dataBlock);
+    w.U32(_app.image.entry);
+    w.U32(_app.image.relocations);
+    w.U32(_app.image.imports);
+    w.U32(static_cast<uint32_t>(_app.allocations.size()));
+    for (uint32_t a : _app.allocations)
+        w.U32(a);
+    w.Bool(_app.done);
+    w.Bool(_app.ftOpened);
+    w.U64(_app.lastCommandUs);
+
+    w.U32(_core);
+    w.U32(_commandBuffer);
+    w.U32(_argvBlock);
+    w.U32(_sentinel);
+    w.U32(_romTrapBase);
+    w.U8(_mediaFirst);
+    w.U8(_mediaLast);
+    w.String(_lastError.size() > kMaxText ? _lastError.substr(0, kMaxText) : _lastError);
+    w.Bool(_inCommand);
+    w.U32(static_cast<uint32_t>(_lastCommandResult));
+
+    // PCM: the ring's queued frames only (the rest is never read before it is written)
+    w.Bool(_pcm.open);
+    w.Bool(_pcm.paused);
+    w.U32(_pcm.rate);
+    w.U8(_pcm.channels);
+    w.U8(_pcm.volume);
+    w.U16(_pcm.faults);
+    const size_t capacity = _pcm.ring.size() / 2;
+    w.U32(static_cast<uint32_t>(capacity));
+    w.U32(static_cast<uint32_t>(_pcm.head));
+    w.U32(static_cast<uint32_t>(_pcm.queued));
+    for (size_t i = 0; i < _pcm.queued && capacity != 0; ++i)
+    {
+        const size_t at = (_pcm.head + i) % capacity;
+        w.U16(static_cast<uint16_t>(_pcm.ring[at * 2]));
+        w.U16(static_cast<uint16_t>(_pcm.ring[at * 2 + 1]));
+    }
+    w.U64(_pcm.playedFraction);
+
+    PutBlocks(w, _memory.Psram().Blocks());
+    PutBlocks(w, _memory.Sram().Blocks());
+}
+
+bool EspAppHost::LoadState(const uint8_t* data, size_t size)
+{
+    Vdac4EspStateReader r(data, size);
+    auto fail = [this]() {
+        Reset();
+        return false;
+    };
+    if (r.U32() != kStateMagic)
+        return fail();
+    _nowUs = r.U64();
+    _sliceUsedCycles = r.U64();
+    _instructions = r.U64();
+    _readySerial = r.U64();
+    _nextTaskId = r.U32();
+    _nextPollUs = r.U64();
+
+    const uint32_t taskCount = r.U32();
+    if (!r.Ok() || taskCount > kMaxTasks)
+        return fail();
+    _tasks.clear();
+    _loop = _net = nullptr;
+    for (uint32_t i = 0; i < taskCount && r.Ok(); ++i)
+    {
+        auto t = std::make_unique<Task>();
+        t->id = r.U32();
+        r.String(t->name, 64);
+        t->priority = r.U8();
+        t->host = r.Bool();
+        t->state = static_cast<TaskState>(r.U8());
+        if (t->state > TaskState::Done)
+            return fail();
+        r.Blob(t->cpu, 1u << 16);
+        t->stack = r.U32();
+        t->stackSize = r.U32();
+        t->wakeUs = r.U64();
+        t->waitObject = r.U32();
+        t->hasPending = r.Bool();
+        t->pendingReturn = r.U32();
+        t->readySerial = r.U64();
+        t->callRunning = r.Bool();
+        t->pcmFrames = r.U32();
+        t->pcmAddress = r.U32();
+        t->pcmAccepted = r.U32();
+        t->pcmDeadlineUs = r.U64();
+        const uint32_t calls = r.U32();
+        if (!r.Ok() || calls > kMaxCalls)
+            return fail();
+        for (uint32_t k = 0; k < calls && r.Ok(); ++k)
+        {
+            HostCall c;
+            c.pc = r.U32();
+            for (uint32_t& a : c.args)
+                a = r.U32();
+            c.count = static_cast<int>(r.U32());
+            c.kind = static_cast<HostCallKind>(r.U8());
+            if (c.count < 0 || c.count > 4 || c.kind > HostCallKind::Command)
+                return fail();
+            if (r.Bool())
+            {
+                c.payload = std::make_shared<std::vector<uint8_t>>();
+                r.Blob(*c.payload, 8192);
+            }
+            t->calls.push_back(std::move(c));
+        }
+        _tasks.push_back(std::move(t));
+    }
+    const uint32_t loop = r.U32();
+    const uint32_t net = r.U32();
+    if (!r.Ok() || loop >= _tasks.size() || net >= _tasks.size())
+        return fail();
+    _loop = _tasks[loop].get();
+    _net = _tasks[net].get();
+
+    for (SyncObject& o : _sync)
+    {
+        o.used = r.Bool();
+        o.mutex = r.Bool();
+        o.handle = r.U32();
+        o.owner = r.U32();
+        o.given = r.Bool();
+    }
+
+    _app = AppState{};
+    r.String(_app.name, 64);
+    _app.address = r.U32();
+    _app.started = r.Bool();
+    _app.commandFirst = r.U8();
+    _app.commandLast = r.U8();
+    _app.start = r.U32();
+    _app.stop = r.U32();
+    _app.command = r.U32();
+    _app.poll = r.U32();
+    for (EspElfSection& section : _app.image.sections)
+    {
+        section.vaddr = r.U32();
+        section.size = r.U32();
+        section.offset = r.U32();
+        section.addr = r.U32();
+    }
+    _app.image.textBlock = r.U32();
+    _app.image.dataBlock = r.U32();
+    _app.image.entry = r.U32();
+    _app.image.relocations = r.U32();
+    _app.image.imports = r.U32();
+    const uint32_t allocations = r.U32();
+    if (!r.Ok() || allocations > kMaxBlocks)
+        return fail();
+    _app.allocations.resize(allocations);
+    for (uint32_t& a : _app.allocations)
+        a = r.U32();
+    _app.done = r.Bool();
+    _app.ftOpened = r.Bool();
+    _app.lastCommandUs = r.U64();
+
+    _core = r.U32();
+    _commandBuffer = r.U32();
+    _argvBlock = r.U32();
+    _sentinel = r.U32();
+    _romTrapBase = r.U32();
+    _mediaFirst = r.U8();
+    _mediaLast = r.U8();
+    r.String(_lastError, kMaxText);
+    _inCommand = r.Bool();
+    _lastCommandResult = static_cast<int32_t>(r.U32());
+
+    _pcm = Pcm{};
+    _pcm.open = r.Bool();
+    _pcm.paused = r.Bool();
+    _pcm.rate = r.U32();
+    _pcm.channels = r.U8();
+    _pcm.volume = r.U8();
+    _pcm.faults = r.U16();
+    const uint32_t capacity = r.U32();
+    _pcm.head = r.U32();
+    _pcm.queued = r.U32();
+    if (!r.Ok() || capacity > kPcmRingFrames || (capacity == 0 ? _pcm.queued != 0 || _pcm.head != 0
+                                                                : _pcm.head >= capacity || _pcm.queued > capacity))
+        return fail();
+    _pcm.ring.assign(static_cast<size_t>(capacity) * 2, 0);
+    for (size_t i = 0; i < _pcm.queued && r.Ok(); ++i)
+    {
+        const size_t at = (_pcm.head + i) % capacity;
+        _pcm.ring[at * 2] = static_cast<int16_t>(r.U16());
+        _pcm.ring[at * 2 + 1] = static_cast<int16_t>(r.U16());
+    }
+    _pcm.playedFraction = r.U64();
+
+    std::map<uint32_t, uint32_t> psram, sram;
+    if (!GetBlocks(r, psram) || !GetBlocks(r, sram) || !r.AtEnd())
+        return fail();
+    _memory.Psram().SetBlocks(std::move(psram));
+    _memory.Sram().SetBlocks(std::move(sram));
+    _startDone = nullptr;
+    InvalidateAllCode();
+    return true;
+}
+
+void EspAppHost::InvalidateAllCode()
+{
+    _cpu->InvalidateCode(EspMemory::kPsramDbus, EspMemory::kPsramSize);
+    _cpu->InvalidateCode(EspMemory::kPsramIbus, EspMemory::kPsramSize);
+    _cpu->InvalidateCode(EspMemory::kSramBase, EspMemory::kSramSize);
+    _cpu->InvalidateCode(kEspRomBase, kEspRomSize);
+}
+
+/// endregion
+
+
+/// region <Input journal (TTD)>
+
+void EspAppHost::InstallPorts()
+{
+    // A port the owner left unset stays unset: the host behaves by which ports exist (appDone, mediaRange)
+    _ports = EspAppHostPorts{};
+    if (_outer.reply)
+        _ports.reply = [this](uint8_t command, const uint8_t* data, size_t size) {
+            return JournalResult([&]() { return _outer.reply(command, data, size); });
+        };
+    if (_outer.event)
+        _ports.event = [this](uint8_t code, const uint8_t* data, size_t size) {
+            return JournalResult([&]() { return _outer.event(code, data, size); });
+        };
+    if (_outer.mediaRange)
+        _ports.mediaRange = [this](uint8_t first, uint8_t last) {
+            return JournalResult([&]() { return _outer.mediaRange(first, last); });
+        };
+    if (_outer.linkRead)
+        _ports.linkRead = [this](uint32_t address) { return JournalLinkRead(address); };
+    // Outputs: dropped while replaying
+    if (_outer.declared)
+        _ports.declared = [this](const std::string& name, const std::string& version, uint8_t first, uint8_t last) {
+            if (!Replaying())
+                _outer.declared(name, version, first, last);
+        };
+    if (_outer.appDone)
+        _ports.appDone = [this]() {
+            if (!Replaying())
+                _outer.appDone();
+        };
+    if (_outer.ftOpened)
+        _ports.ftOpened = [this]() {
+            if (!Replaying())
+                _outer.ftOpened();
+        };
+    if (_outer.linkWrite)
+        _ports.linkWrite = [this](uint32_t address, uint32_t value) {
+            if (!Replaying())
+                _outer.linkWrite(address, value);
+        };
+    if (_outer.linkFtWrite)
+        _ports.linkFtWrite = [this](uint32_t ftAddress, const uint8_t* words, size_t count) {
+            if (!Replaying())
+                _outer.linkFtWrite(ftAddress, words, count);
+        };
+    if (_outer.audio)
+        _ports.audio = [this](const int16_t* frames, size_t count, uint32_t rate) {
+            if (!Replaying())
+                _outer.audio(frames, count, rate);
+        };
+    if (_outer.log)
+        _ports.log = [this](const std::string& line) {
+            if (!Replaying())
+                _outer.log(line);
+        };
+}
+
+void EspAppHost::JournalBegin()
+{
+    _journal.mode = JournalMode::Record;
+    _journal.bytes.clear();
+    _journal.lastRead.clear();
+    _journal.sameRun = 0;
+    _journal.position = 0;
+    _journal.diverged = false;
+    _journal.error.clear();
+}
+
+void EspAppHost::JournalStop()
+{
+    _journal.mode = JournalMode::Off;
+    _journal.bytes.clear();
+    _journal.bytes.shrink_to_fit();
+    _journal.lastRead.clear();
+    _journal.sameRun = 0;
+}
+
+const std::vector<uint8_t>& EspAppHost::JournalBytes()
+{
+    if (_journal.mode == JournalMode::Record)
+        JournalFlushRun();
+    return _journal.bytes;
+}
+
+void EspAppHost::JournalFlushRun()
+{
+    if (_journal.sameRun == 0)
+        return;
+    const uint64_t run = _journal.sameRun;
+    _journal.sameRun = 0;
+    _journal.bytes.push_back(TokReadSame);
+    JournalPutVarint(run);
+}
+
+void EspAppHost::JournalPutToken(uint8_t token)
+{
+    JournalFlushRun();
+    _journal.bytes.push_back(token);
+}
+
+void EspAppHost::JournalPutVarint(uint64_t value)
+{
+    while (value >= 0x80)
+    {
+        _journal.bytes.push_back(static_cast<uint8_t>(value | 0x80));
+        value >>= 7;
+    }
+    _journal.bytes.push_back(static_cast<uint8_t>(value));
+}
+
+void EspAppHost::JournalPutBytes(const uint8_t* data, size_t size)
+{
+    if (size != 0)
+        _journal.bytes.insert(_journal.bytes.end(), data, data + size);
+}
+
+void EspAppHost::JournalDiverged(const char* what)
+{
+    if (_journal.diverged)
+        return;
+    _journal.diverged = true;
+    char text[96];
+    std::snprintf(text, sizeof(text), "journal: %s at byte %zu", what, _journal.position);
+    _journal.error = text;
+}
+
+bool EspAppHost::JournalTakeToken(uint8_t expected)
+{
+    if (_journal.diverged)
+        return false;
+    if (_journal.position >= _journal.bytes.size())
+    {
+        JournalDiverged("ended early");
+        return false;
+    }
+    if (_journal.bytes[_journal.position] != expected)
+    {
+        JournalDiverged("unexpected token");
+        return false;
+    }
+    ++_journal.position;
+    return true;
+}
+
+uint64_t EspAppHost::JournalTakeVarint()
+{
+    uint64_t value = 0;
+    for (int shift = 0; shift < 64; shift += 7)
+    {
+        if (_journal.position >= _journal.bytes.size())
+            break;
+        const uint8_t b = _journal.bytes[_journal.position++];
+        value |= static_cast<uint64_t>(b & 0x7F) << shift;
+        if ((b & 0x80) == 0)
+            return value;
+    }
+    JournalDiverged("bad number");
+    return 0;
+}
+
+uint32_t EspAppHost::JournalLinkRead(uint32_t address)
+{
+    JournalState& j = _journal;
+    if (j.mode == JournalMode::Replay)
+    {
+        if (j.sameRun == 0 && !j.diverged && j.position < j.bytes.size() && j.bytes[j.position] == TokReadSame)
+        {
+            ++j.position;
+            j.sameRun = JournalTakeVarint();
+        }
+        if (j.sameRun != 0)
+        {
+            --j.sameRun;
+            const auto it = j.lastRead.find(address);
+            if (it == j.lastRead.end())
+            {
+                JournalDiverged("read run at a new address");
+                return 0;
+            }
+            return it->second;
+        }
+        if (!JournalTakeToken(TokRead))
+            return 0;
+        const uint32_t value = static_cast<uint32_t>(JournalTakeVarint());
+        j.lastRead[address] = value;
+        return value;
+    }
+    const uint32_t value = _outer.linkRead(address);
+    if (j.mode == JournalMode::Record)
+    {
+        const auto it = j.lastRead.find(address);
+        if (it != j.lastRead.end() && it->second == value)
+        {
+            ++j.sameRun;
+            return value;
+        }
+        JournalPutToken(TokRead);
+        JournalPutVarint(value);
+        j.lastRead[address] = value;
+    }
+    return value;
+}
+
+int EspAppHost::JournalResult(const std::function<int()>& live)
+{
+    if (_journal.mode == JournalMode::Replay)
+    {
+        if (!JournalTakeToken(TokResult))
+            return kZmError;
+        const uint64_t z = JournalTakeVarint();
+        return static_cast<int>(static_cast<int64_t>(z >> 1) ^ -static_cast<int64_t>(z & 1));
+    }
+    const int result = live();
+    if (_journal.mode == JournalMode::Record)
+    {
+        JournalPutToken(TokResult);
+        const int64_t v = result;
+        JournalPutVarint(static_cast<uint64_t>((v << 1) ^ (v >> 63)));
+    }
+    return result;
+}
+
+bool EspAppHost::JournalReplay(const uint8_t* data, size_t size, std::string& error)
+{
+    JournalState& j = _journal;
+    j.mode = JournalMode::Replay;
+    j.bytes.assign(data, data + size);
+    j.lastRead.clear();
+    j.sameRun = 0;
+    j.position = 0;
+    j.diverged = false;
+    j.error.clear();
+    std::vector<uint8_t> blob;
+    while (!j.diverged && j.position < j.bytes.size())
+    {
+        const uint8_t token = j.bytes[j.position++];
+        switch (token)
+        {
+            case TokAdvance:
+            {
+                const uint64_t delta = JournalTakeVarint();
+                if (!j.diverged)
+                    Advance(_nowUs + delta);
+                break;
+            }
+            case TokStartApp:
+            {
+                const uint64_t nameSize = JournalTakeVarint();
+                if (j.diverged || nameSize > j.bytes.size() - j.position)
+                {
+                    JournalDiverged("bad app name");
+                    break;
+                }
+                const std::string name(reinterpret_cast<const char*>(j.bytes.data() + j.position), nameSize);
+                j.position += nameSize;
+                const uint64_t elfSize = JournalTakeVarint();
+                if (j.diverged || elfSize > j.bytes.size() - j.position)
+                {
+                    JournalDiverged("bad ELF");
+                    break;
+                }
+                std::vector<uint8_t> elf(j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position),
+                                         j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position + elfSize));
+                j.position += elfSize;
+                StartApp(name, std::move(elf), nullptr);
+                break;
+            }
+            case TokStopApp:
+                StopApp();
+                break;
+            case TokCommand:
+            {
+                const uint8_t command = static_cast<uint8_t>(JournalTakeVarint());
+                const uint64_t length = JournalTakeVarint();
+                if (j.diverged || length > j.bytes.size() - j.position)
+                {
+                    JournalDiverged("bad command");
+                    break;
+                }
+                blob.assign(j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position),
+                            j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position + length));
+                j.position += length;
+                Command(command, blob.data(), blob.size());
+                break;
+            }
+            case TokRunIdle:
+            {
+                const uint64_t limit = JournalTakeVarint();
+                if (!j.diverged)
+                    RunUntilLoopIdle(limit);
+                break;
+            }
+            case TokReset:
+                Reset();
+                break;
+            default:
+                // An input here means the host asked less than when recording
+                --j.position;
+                JournalDiverged("input not asked for");
+                break;
+        }
+    }
+    if (!j.diverged && j.sameRun != 0)
+        JournalDiverged("read run not used up");
+    const bool ok = !j.diverged;
+    error = j.error;
+    // Record on from here: the journal is what was replayed
+    j.mode = JournalMode::Record;
+    j.sameRun = 0;
+    j.position = 0;
+    j.diverged = false;
+    j.error.clear();
+    return ok;
+}
+
+/// endregion
 
 }  // namespace vdac4

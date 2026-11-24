@@ -206,3 +206,32 @@ TEST(ZControllerSpi_Test, StateKeepsTheWholeConfigByte)
     EXPECT_TRUE(ft2.selects.back());
     EXPECT_FALSE(sd2.selects.back());
 }
+
+/// A state restore is no bus activity: a device that keeps its own select state (the VDAC4 ESP: its time
+/// would move on) is told through restoreSelect; a reset and the config port stay bus activity (select)
+TEST(ZControllerSpi_Test, StateRestoreAnnouncesThroughRestoreSelect)
+{
+    struct RestoreAware : ScriptedDevice
+    {
+        std::vector<bool> restored;
+        void restoreSelect(bool selected) override { restored.push_back(selected); }
+    };
+    ScriptedDevice sd;
+    RestoreAware esp;
+    ZControllerSpi zc;
+    zc.SetDevice(&sd);
+    zc.AttachDevice(2, &esp, 0x10, true);
+    zc.Reset();
+    EXPECT_FALSE(esp.selects.empty()) << "a reset drives the lines";
+    EXPECT_TRUE(esp.restored.empty());
+    esp.selects.clear();
+    sd.selects.clear();
+
+    zc.SetState(ZControllerSpi::State{0x11, 0x00});
+    EXPECT_TRUE(esp.selects.empty()) << "no select: the restore ran no bus cycle";
+    EXPECT_EQ(esp.restored, (std::vector<bool>{true}));
+    EXPECT_EQ(sd.selects, (std::vector<bool>{true})) << "a plain device sees select, as before (#11: /CS low)";
+
+    zc.WriteConfig(0x03);
+    EXPECT_EQ(esp.selects, (std::vector<bool>{false})) << "the config port is bus activity";
+}

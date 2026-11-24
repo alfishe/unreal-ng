@@ -312,6 +312,25 @@ void EspXtensaRuntime::Flush()
     ReplayUpTo(_posted);
 }
 
+void EspXtensaRuntime::DropJobs()
+{
+    WaitIdle();
+    for (; _replayed < _posted; ++_replayed)
+        _outputs[_replayed % kRing].clear();
+}
+
+bool EspXtensaRuntime::LoadState(const std::string& module, const Vdac4AppInfo& info, IVdac4AppHost& host,
+                                 const std::vector<uint8_t>& state)
+{
+    (void)module;
+    (void)info;
+    (void)state;
+    DropJobs();
+    _appHost = &host;
+    _info = nullptr;
+    return true;
+}
+
 // endregion
 
 int EspXtensaRuntime::StartApp(const std::string& module, const std::vector<uint8_t>& elf, IVdac4AppHost& host,

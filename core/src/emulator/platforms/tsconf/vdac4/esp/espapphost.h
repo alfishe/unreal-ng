@@ -87,6 +87,8 @@ public:
     static constexpr uint16_t kAbiMinor = 16;
 
     EspAppHost(std::unique_ptr<IEspCpu> cpu, EspAppHostPorts ports, uint32_t mhz = kDefaultMhz);
+    EspAppHost(const EspAppHost&) = delete;
+    EspAppHost& operator=(const EspAppHost&) = delete;
     ~EspAppHost();
 
     /// Power-on / SYS_RESET: everything stopped and freed, time 0
@@ -136,13 +138,61 @@ public:
     /// The running app's sections: ELF address, size and the D-bus address each was loaded at (none: no app)
     const EspElfImage* AppImage() const { return _app.address != 0 ? &_app.image : nullptr; }
 
+    /// region <State (TTD)>
+
+    /// Everything but the memory bytes: scheduler, tasks with their CPU states and queued calls, sync objects,
+    /// the app, PCM, the heaps' block tables. Plain little-endian bytes. Taken between Advance calls (no slice
+    /// running); a StartApp's `done` is not part of it (StartApp is synchronous)
+    void SaveState(std::vector<uint8_t>& out) const;
+    /// Restore SaveState's bytes; the memory (Memory().PsramBytes() / SramBytes() / RomBytes()) is the caller's,
+    /// before or after. Drops the CPU's predecoded and translated code. False: malformed, the host is Reset
+    bool LoadState(const uint8_t* data, size_t size);
+    /// Drop predecoded and translated code of all guest memory (its bytes were replaced)
+    void InvalidateAllCode();
+
+    /// region <Input journal (TTD)>
+
+    /// Everything the ESP takes in, in order: the calls into the host (Advance, StartApp, StopApp, Command,
+    /// RunUntilLoopIdle, Reset; the outermost only) and what its ports answered (LINK reads, reply / event /
+    /// mediaRange results). Run on the state it started from, the journal brings the host to the same state:
+    /// the ports are not asked then and what goes out is dropped (the rest of the machine is restored apart).
+    /// LINK reads that return the last word read at that address are counted, not stored (polling loops)
+    enum class JournalMode : uint8_t
+    {
+        Off,
+        Record,
+        Replay,
+    };
+    /// Start a new journal from the state now (a keyframe)
+    void JournalBegin();
+    void JournalStop();
+    JournalMode Journal() const { return _journal.mode; }
+    /// The journal so far, the read run in progress closed (call between host calls)
+    const std::vector<uint8_t>& JournalBytes();
+    /// The journal as the last JournalBytes left it (no run closed)
+    const std::vector<uint8_t>& JournalData() const { return _journal.bytes; }
+    /// Run `data` (a journal begun at the state the host has now) to its end, then record on from there (the
+    /// journal is `data`). False: it does not fit this state (`error` says where); the host is wherever it got
+    bool JournalReplay(const uint8_t* data, size_t size, std::string& error);
+
+    /// endregion
+
 private:
+    enum class HostCallKind : uint8_t
+    {
+        None = 0,     ///< net poll: nothing on return
+        Main = 1,     ///< the app's main: check the interface, queue start
+        Start = 2,    ///< app->start: the app runs
+        Command = 3,  ///< app->command: the command's result
+    };
+
     struct HostCall
     {
         uint32_t pc = 0;
         uint32_t args[4] = {};
         int count = 0;
-        std::function<void(uint32_t result)> done;
+        /// What its return does (data, not a closure: a host task's queue is part of the saved state)
+        HostCallKind kind = HostCallKind::None;
         /// app->command: the payload goes to the command buffer when the call starts (commands run in order)
         std::shared_ptr<std::vector<uint8_t>> payload;
     };
@@ -246,12 +296,69 @@ private:
     void FtWrite(uint32_t address, uint32_t words, uint32_t count);
 
     void Log(const std::string& line);
-    void LoadApp(const std::string& name, const std::vector<uint8_t>& elf,
-                 std::function<void(int, const std::string&, const std::string&)> done);
+    void LoadApp(const std::string& name, const std::vector<uint8_t>& elf);
     void ForceCleanup();
+    /// A host call returned `result`: what its kind does
+    void CallDone(HostCallKind kind, uint32_t result);
+    /// StartApp's `done`, taken once (it may be gone: cleanup clears it)
+    void StartDone(int result, const std::string& name, const std::string& version);
+
+    // Journal tokens (one byte, then varints)
+    enum JournalToken : uint8_t
+    {
+        TokAdvance = 1,  ///< microseconds past the host's time
+        TokStartApp,     ///< name, ELF
+        TokStopApp,
+        TokCommand,      ///< command, size, bytes
+        TokRunIdle,      ///< limit, microseconds
+        TokReset,
+        TokRead,         ///< a LINK word unlike the last one read at its address
+        TokReadSame,     ///< count of LINK reads giving the last word read at their address
+        TokResult,       ///< a port's result, zigzag
+    };
+    struct JournalState
+    {
+        JournalMode mode = JournalMode::Off;
+        std::vector<uint8_t> bytes;
+        std::map<uint32_t, uint32_t> lastRead;  ///< address -> last word read there
+        uint64_t sameRun = 0;                   ///< reads pending as TokReadSame (record) / left of one (replay)
+        size_t position = 0;                    ///< replay: next byte
+        bool diverged = false;                  ///< replay: the stream did not fit
+        std::string error;
+        int depth = 0;                          ///< host calls in progress (only the outermost is journaled)
+    };
+    /// RAII: a host entry point; true for the outermost one while recording
+    class JournalEntry
+    {
+    public:
+        explicit JournalEntry(EspAppHost& host)
+            : _host(host), _record(host._journal.depth++ == 0 && host._journal.mode == JournalMode::Record)
+        {
+        }
+        ~JournalEntry() { --_host._journal.depth; }
+        bool Record() const { return _record; }
+
+    private:
+        EspAppHost& _host;
+        bool _record;
+    };
+    void JournalPutToken(uint8_t token);
+    void JournalPutVarint(uint64_t value);
+    void JournalPutBytes(const uint8_t* data, size_t size);
+    void JournalFlushRun();
+    bool JournalTakeToken(uint8_t expected);
+    uint64_t JournalTakeVarint();
+    void JournalDiverged(const char* what);
+    /// The ports' inputs through the journal
+    uint32_t JournalLinkRead(uint32_t address);
+    /// A port result: the live one recorded, or the recorded one replayed (`live` is not called then)
+    int JournalResult(const std::function<int()>& live);
+    bool Replaying() const { return _journal.mode == JournalMode::Replay; }
+    void InstallPorts();
 
     std::unique_ptr<IEspCpu> _cpu;
-    EspAppHostPorts _ports;
+    EspAppHostPorts _outer;  ///< the owner's ports
+    EspAppHostPorts _ports;  ///< what the host calls: _outer through the journal
     uint32_t _mhz;
     EspMemory _memory;
 
@@ -295,6 +402,9 @@ private:
     std::string _lastError;
     bool _inCommand = false;
     int _lastCommandResult = 0;
+    JournalState _journal;
+    /// StartApp's `done` while its main / start calls are queued (not saved: StartApp is synchronous)
+    std::function<void(int, const std::string&, const std::string&)> _startDone;
 
     // PCM player (audio_player.cpp): ring of int16 stereo at the open rate
     struct Pcm
