@@ -870,6 +870,9 @@ if (TESTS)
         # The analysis tabs: objects, dispatch, unknown commands, writers (gs-debugger TODO P5.6, A5.2a)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsanalysispane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsanalysispane.h"
+        # The card CPU analysis tabs: profiler, events, coverage, heat map (gs-debugger TODO P5.6, A5.2a)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gscpuanalysispane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gscpuanalysispane.h"
         # The NeoGS SD card pane's "Open media panel" (gs-debugger N8): the media panel focused on the card's slot
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.h"

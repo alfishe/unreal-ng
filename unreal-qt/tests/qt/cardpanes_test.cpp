@@ -10,6 +10,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSpinBox>
 #include <QTableView>
 #include <QComboBox>
 #include <QTableWidget>
@@ -18,6 +19,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,6 +34,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80mcycles.h"
 #include "debugger/gsanalysispane.h"
+#include "debugger/gscpuanalysispane.h"
 #include "debugger/gslwpane.h"
 #include "debugger/gsmonitorpane.h"
 #include "debugger/history/historycontrol.h"
@@ -48,10 +53,12 @@
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gshostdriver.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
+#include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
 #include "media/mediapanelwindow.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
 
 namespace
@@ -90,17 +97,21 @@ protected:
 TEST_F(CardPanes_Test, PanesInTabOrder)
 {
     const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
-    ASSERT_EQ(panes.size(), 14u);
+    ASSERT_EQ(panes.size(), 18u);
     const char* titles[] = {"GS log",    "GS protocol", "GS monitor", "GS objects",           "GS hardware", "NeoGS hardware",
                             "NeoGS DMA", "NeoGS SD · MP3 · Flash", "GS stats", "GS interpreter", "GS player",
-                            "GS dispatch", "GS unknown", "GS writers"};
+                            "GS dispatch", "GS unknown", "GS writers", "GS profiler", "GS events", "GS coverage",
+                            "GS heat map"};
     const CardPanes::Card cards[] = {CardPanes::Card::Any,   CardPanes::Card::Any,   CardPanes::Card::Any, CardPanes::Card::Any,
                                      CardPanes::Card::NotNeoGS, CardPanes::Card::NeoGS, CardPanes::Card::NeoGS,
                                      CardPanes::Card::NeoGS, CardPanes::Card::Any, CardPanes::Card::Lightweight,
                                      CardPanes::Card::Lightweight, CardPanes::Card::Any, CardPanes::Card::Any,
-                                     CardPanes::Card::Any};
+                                     CardPanes::Card::Any, CardPanes::Card::Any, CardPanes::Card::Any,
+                                     CardPanes::Card::Any, CardPanes::Card::Any};
     const GsAnalysisPane::View views[] = {GsAnalysisPane::View::Dispatch, GsAnalysisPane::View::Unknown,
                                           GsAnalysisPane::View::Writers};
+    const GsCpuAnalysisPane::View cpuViews[] = {GsCpuAnalysisPane::View::Profiler, GsCpuAnalysisPane::View::Events,
+                                                GsCpuAnalysisPane::View::Coverage, GsCpuAnalysisPane::View::HeatMap};
     for (size_t i = 0; i < panes.size(); i++)
     {
         EXPECT_EQ(panes[i].title, QString::fromUtf8(titles[i]));
@@ -109,12 +120,18 @@ TEST_F(CardPanes_Test, PanesInTabOrder)
         EXPECT_EQ(panes[i].board != nullptr, panes[i].card == CardPanes::Card::NeoGS) << titles[i];
         EXPECT_EQ(panes[i].inspector != nullptr, panes[i].card == CardPanes::Card::Lightweight) << titles[i];
         EXPECT_EQ(panes[i].monitor != nullptr, i == 2) << titles[i];
-        EXPECT_EQ(panes[i].analysis != nullptr, i == 3 || i >= 11) << titles[i];
+        EXPECT_EQ(panes[i].analysis != nullptr, i == 3 || (i >= 11 && i < 14)) << titles[i];
+        EXPECT_EQ(panes[i].cpuAnalysis != nullptr, i >= 14) << titles[i];
         EXPECT_FALSE(panes[i].tooltip.isEmpty());
     }
     EXPECT_EQ(panes[3].analysis->view(), GsAnalysisPane::View::Objects);
-    for (size_t i = 11; i < panes.size(); i++)
+    for (size_t i = 11; i < 14; i++)
         EXPECT_EQ(panes[i].analysis->view(), views[i - 11]) << titles[i];
+    for (size_t i = 14; i < panes.size(); i++)
+    {
+        EXPECT_EQ(panes[i].cpuAnalysis->view(), cpuViews[i - 14]) << titles[i];
+        EXPECT_EQ(panes[i].widget(), panes[i].cpuAnalysis) << titles[i];
+    }
 }
 
 /// The card fitted: every pane has its report; the hardware pane lists the DAC channels, the log the host's command
@@ -211,6 +228,12 @@ TEST_F(CardPanes_Test, WithoutTheCardEachSaysWhy)
             pane.analysis->refresh(_context, false);
             EXPECT_FALSE(pane.analysis->status().isEmpty()) << pane.title.toStdString();
             EXPECT_EQ(pane.analysis->table()->rowCount(), 0) << pane.title.toStdString();
+            continue;
+        }
+        if (pane.cpuAnalysis)
+        {
+            pane.cpuAnalysis->refresh(_context, false);
+            EXPECT_TRUE(pane.cpuAnalysis->status().startsWith("No General Sound card fitted")) << pane.title.toStdString();
             continue;
         }
         pane.pane->refresh(_context, false);
@@ -1292,3 +1315,331 @@ TEST_F(CardPanes_Test, TheWritersTabShowsTheHostsWritesWithTheirPc)
             cardRows++;
     EXPECT_GT(cardRows, 0) << "the firmware's own port writes with its PC";
 }
+
+// region <The card CPU analysis tabs: Profiler, Events, Coverage, Heat map (A5.2a; X2, X8-X11, X20)>
+
+namespace
+{
+constexpr size_t kProfilerPane = 14;
+constexpr size_t kEventsPane = 15;
+constexpr size_t kCoveragePane = 16;
+constexpr size_t kHeatMapPane = 17;
+
+/// A classic GS ROM: DI, SP #5800, IM 1, EI, then NOP NOP JR back; the ISR at #0038: `nops` NOPs, EI, RET (IM 1
+/// acknowledge 13 + 4 * nops + EI 4 + RET 10 cycles every 320)
+std::vector<uint8_t> IsrRom(int nops)
+{
+    std::vector<uint8_t> rom(SoundChip_GeneralSound::ROM_SIZE, 0x00);
+    const uint8_t start[] = {0xF3, 0x31, 0x00, 0x58, 0xED, 0x56, 0xFB, 0x00, 0x00, 0x18, 0xFC};
+    std::copy(std::begin(start), std::end(start), rom.begin());
+    rom[static_cast<size_t>(0x38 + nops)] = 0xFB;
+    rom[static_cast<size_t>(0x38 + nops + 1)] = 0xC9;
+    return rom;
+}
+
+/// `rom` as the classic card's ROM, then a power-on reset of the card
+void LoadRom(GeneralSoundCard& card, const std::vector<uint8_t>& rom, const char* leaf)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath(leaf);
+    std::ofstream(path, std::ios::binary | std::ios::trunc)
+        .write(reinterpret_cast<const char*>(rom.data()), static_cast<std::streamsize>(rom.size()));
+    card.loadROM(path);
+    card.reset();
+}
+
+}  // namespace
+
+/// Profiler (X9, X20): off by default with its Start (and the slowdown said); started on the idle stock firmware: the
+/// "interrupts off" state (no interrupt taken, the period requests lost) and "no routine called yet" instead of empty
+/// tables, the activity per frame newest first; Stop keeps the data
+TEST_F(CardPanes_Test, TheProfilerShowsTheInterruptsOffStateOnTheIdleFirmware)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    _emulator->RunNFrames(2);
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsCpuAnalysisPane* profiler = panes[kProfilerPane].cpuAnalysis;
+    ASSERT_NE(profiler, nullptr);
+    profiler->refresh(_context, false);
+    ASSERT_TRUE(profiler->status().isEmpty()) << profiler->status().toStdString();
+    EXPECT_TRUE(profiler->hint().contains("The profiler is off")) << profiler->hint().toStdString();
+    EXPECT_TRUE(profiler->hint().contains("slower")) << "it says the card slows";
+    ASSERT_NE(profiler->button("profile_start"), nullptr);
+    EXPECT_TRUE(profiler->button("profile_start")->isEnabled());
+    EXPECT_FALSE(profiler->button("profile_stop")->isEnabled());
+
+    ASSERT_TRUE(profiler->runAction(_context, "profile_start"));
+    _emulator->RunNFrames(3);
+    profiler->refresh(_context, false);
+    EXPECT_TRUE(profiler->headline().startsWith("Profiler on")) << profiler->headline().toStdString();
+    EXPECT_FALSE(profiler->button("profile_start")->isEnabled());
+    EXPECT_TRUE(profiler->hint().contains("Interrupts off")) << profiler->hint().toStdString();
+    EXPECT_TRUE(profiler->hint().contains("request(s) lost")) << profiler->hint().toStdString();
+    EXPECT_TRUE(profiler->hint().contains("No routine called yet")) << profiler->hint().toStdString();
+    EXPECT_EQ(profiler->gauge()->format(), "ISR budget: no interrupt taken");
+    EXPECT_EQ(profiler->routines()->rowCount(), 0);
+    ASSERT_GT(profiler->activity()->rowCount(), 1);
+    EXPECT_EQ(GsCpuAnalysisPane::Cell(profiler->activity(), 0, "INTs"), "0");
+    EXPECT_GT(GsCpuAnalysisPane::Cell(profiler->activity(), 0, "Lost").toLongLong(), 0);
+    EXPECT_GT(GsCpuAnalysisPane::Cell(profiler->activity(), 0, "Frame").toLongLong(),
+              GsCpuAnalysisPane::Cell(profiler->activity(), 1, "Frame").toLongLong())
+        << "newest first";
+
+    ASSERT_TRUE(profiler->runAction(_context, "profile_stop"));
+    _emulator->RunNFrames(1);
+    profiler->refresh(_context, false);
+    EXPECT_TRUE(profiler->hint().contains("stopped")) << profiler->hint().toStdString();
+    EXPECT_GT(profiler->activity()->rowCount(), 0) << "the data kept";
+    EXPECT_FALSE(profiler->runAction(_context, "profile_bogus"));
+}
+
+/// Profiler (X9): a hand-built program (main CALL #0100, which CALLs #0180; an ISR of 67 cycles every 320) gives the
+/// gauge, the routines with their calls and inclusive cycles, sortable by address
+TEST_F(CardPanes_Test, TheProfilerShowsTheRoutinesAndTheBudgetOfAProgram)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsCpuAnalysisPane* profiler = panes[kProfilerPane].cpuAnalysis;
+    ASSERT_NE(profiler, nullptr);
+    std::vector<uint8_t> rom = IsrRom(10);
+    const uint8_t main[] = {0xCD, 0x00, 0x01, 0x18, 0xFB};  // #0007: CALL #0100; JR #0007
+    std::copy(std::begin(main), std::end(main), rom.begin() + 0x07);
+    rom[0x100] = 0xCD;  // CALL #0180, 20 NOPs, RET
+    rom[0x101] = 0x80;
+    rom[0x102] = 0x01;
+    rom[0x103 + 20] = 0xC9;
+    rom[0x180 + 30] = 0xC9;  // 30 NOPs, RET
+    ASSERT_NO_FATAL_FAILURE(LoadRom(*_context->pSoundManager->getGeneralSound(), rom, "cardpanes-calls.rom"));
+    ASSERT_TRUE(profiler->runAction(_context, "profile_start"));
+    _emulator->RunNFrames(2);
+    profiler->refresh(_context, false);
+    EXPECT_TRUE(profiler->gauge()->format().startsWith("ISR 67 / 320 avg · 67 max")) << profiler->gauge()->format().toStdString();
+    EXPECT_FALSE(profiler->hint().contains("Interrupts off")) << profiler->hint().toStdString();
+    QTableWidget* routines = profiler->routines();
+    const int inner = GsCpuAnalysisPane::FindRow(routines, "Address", "#0180");
+    const int outer = GsCpuAnalysisPane::FindRow(routines, "Address", "#0100");
+    const int isr = GsCpuAnalysisPane::FindRow(routines, "Address", "#0038");
+    ASSERT_GE(inner, 0) << profiler->headline().toStdString();
+    ASSERT_GE(outer, 0);
+    ASSERT_GE(isr, 0);
+    EXPECT_GT(GsCpuAnalysisPane::Cell(routines, inner, "Calls").toLongLong(), 100);
+    EXPECT_EQ(GsCpuAnalysisPane::Cell(routines, inner, "Max"), "130") << "30 NOPs + RET, interrupts never counted";
+    EXPECT_EQ(GsCpuAnalysisPane::Cell(routines, outer, "Max"), "237") << "CALL 17 + 130 + 20 NOPs + RET";
+    EXPECT_EQ(GsCpuAnalysisPane::Cell(routines, isr, "Max"), "67");
+    EXPECT_EQ(GsCpuAnalysisPane::Cell(routines, isr, "Page"), "ROM 0");
+    routines->sortByColumn(0, Qt::AscendingOrder);
+    EXPECT_EQ(GsCpuAnalysisPane::Cell(routines, 0, "Address"), "#0038");
+    EXPECT_EQ(GsCpuAnalysisPane::Cell(routines, routines->rowCount() - 1, "Address"), "#0180");
+}
+
+/// Profiler (X9) on the stock firmware: a card reset's POST calls its routines (labelled by gs105a's symbols); they
+/// show once they return, at the POST's end (about 120 frames; read every 10 frames to stay fast)
+TEST_F(CardPanes_Test, TheProfilerShowsTheFirmwareRoutinesAfterACardReset)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    _emulator->RunNFrames(2);
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsCpuAnalysisPane* profiler = panes[kProfilerPane].cpuAnalysis;
+    ASSERT_NE(profiler, nullptr);
+    ASSERT_TRUE(profiler->runAction(_context, "profile_start"));
+    _context->pPortDecoder->DecodePortOut(0x0033, 0x80, 0);  // the host resets the card: its POST calls its routines
+    bool found = false;
+    for (int f = 0; f < 400 && !found; f += 10)
+    {
+        _emulator->RunNFrames(10);
+        profiler->refresh(_context, false);
+        found = profiler->routines()->rowCount() > 0;
+    }
+    ASSERT_TRUE(found) << profiler->headline().toStdString() << "\n" << profiler->hint().toStdString();
+    int labelled = 0;
+    for (int r = 0; r < profiler->routines()->rowCount(); r++)
+        labelled += GsCpuAnalysisPane::Cell(profiler->routines(), r, "Label").isEmpty() ? 0 : 1;
+    EXPECT_GT(labelled, 0) << "gs105a's symbols name its routines";
+    EXPECT_FALSE(profiler->hint().contains("No routine called yet")) << profiler->hint().toStdString();
+}
+
+/// Events (X2): without the profiler a hint and its Start; a hand-built ISR (67 cycles every 320) gives a row per
+/// period with its bar, the host's #B3 write a dot; the stock firmware's frame has rows but no bars (interrupts off)
+TEST_F(CardPanes_Test, TheEventsTabShowsThePeriodsAndTheIsrBars)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsCpuAnalysisPane* events = panes[kEventsPane].cpuAnalysis;
+    ASSERT_NE(events, nullptr);
+    events->refresh(_context, false);
+    ASSERT_TRUE(events->status().isEmpty()) << events->status().toStdString();
+    EXPECT_EQ(events->events()->rowCount(), 0);
+    EXPECT_TRUE(events->hint().contains("the frame map needs the profiler")) << events->hint().toStdString();
+    EXPECT_TRUE(events->hint().contains("port trace is off")) << events->hint().toStdString();
+
+    // The stock firmware: periods, no ISR bars
+    ASSERT_TRUE(events->runAction(_context, "profile_start"));
+    _emulator->RunNFrames(2);
+    events->refresh(_context, false);
+    EXPECT_GT(events->events()->rowCount(), 700) << events->headline().toStdString();
+    EXPECT_TRUE(events->hint().contains("No ISR bars")) << events->hint().toStdString();
+
+    // A hand-built ISR
+    GeneralSoundCard* card = _context->pSoundManager->getGeneralSound();
+    ASSERT_NE(card, nullptr);
+    ASSERT_NO_FATAL_FAILURE(LoadRom(*card, IsrRom(10), "cardpanes-isr.rom"));
+    ASSERT_TRUE(events->runAction(_context, "trace_start"));
+    _emulator->RunNFrames(1);
+    _context->pPortDecoder->DecodePortOut(0x00B3, 0x5A, 0);
+    _emulator->RunNFrames(1);
+    events->refresh(_context, false);
+    GsEventsCanvas* canvas = events->events();
+    ASSERT_GT(canvas->rowCount(), 700) << events->headline().toStdString();
+    EXPECT_LT(canvas->rowCount(), 800);
+    EXPECT_EQ(canvas->periodCycles(), 320);
+    EXPECT_TRUE(events->headline().contains("periods of 320 cycles")) << events->headline().toStdString();
+    EXPECT_FALSE(events->hint().contains("No ISR bars")) << events->hint().toStdString();
+    EXPECT_FALSE(events->hint().contains("port trace is off")) << events->hint().toStdString();
+    int bars = 0;
+    int row = -1;
+    const GsEventsCanvas::Bar* bar = nullptr;
+    for (int r = 0; r < canvas->rowCount(); r++)
+        for (const GsEventsCanvas::Bar& b : canvas->rows()[static_cast<size_t>(r)].isrs)
+        {
+            bars++;
+            if (!bar && b.end >= 0)
+            {
+                bar = &b;
+                row = r;
+            }
+        }
+    EXPECT_GT(bars, 700) << "an ISR each period";
+    ASSERT_NE(bar, nullptr);
+    EXPECT_EQ(bar->end - bar->accept, 67);
+    EXPECT_EQ(bar->entry, 0x38);
+    const QString tip = canvas->describe(row, bar->accept + 10);
+    EXPECT_TRUE(tip.contains("INT accepted at cycle")) << tip.toStdString();
+    EXPECT_TRUE(tip.contains("67 cycles")) << tip.toStdString();
+    // The host's #B3 write: a dot of its own kind, named by the tooltip
+    bool found = false;
+    for (int r = 0; r < canvas->rowCount() && !found; r++)
+        for (const GsEventsCanvas::Dot& d : canvas->rows()[static_cast<size_t>(r)].events)
+            if (d.kind == GsEventsCanvas::HostDataWrite && d.value == 0x5A)
+            {
+                found = true;
+                EXPECT_TRUE(canvas->describe(r, d.cycle).contains("host writes #B3 = #5A")) << canvas->describe(r, d.cycle).toStdString();
+            }
+    EXPECT_TRUE(found) << events->headline().toStdString();
+    canvas->setShown(GsEventsCanvas::IsrBars, false);
+    EXPECT_FALSE(canvas->describe(row, bar->accept + 10).contains("INT accepted")) << "a hidden category says nothing";
+}
+
+/// Coverage (X8, X11): off with On; on, the firmware's code shows as executed ranges: ROM on the classic card, RAM on
+/// a NeoGS (it runs a RAM copy of its flash); the handlers and the never-written list are captioned; no break on new
+/// code in the core
+TEST_F(CardPanes_Test, TheCoverageTabShowsTheExecutedCodeRanges)
+{
+    for (const char* kind : {"gs", "neogs"})
+    {
+        ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", kind}}));
+        const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+        GsCpuAnalysisPane* coverage = panes[kCoveragePane].cpuAnalysis;
+        ASSERT_NE(coverage, nullptr);
+        coverage->refresh(_context, false);
+        ASSERT_TRUE(coverage->status().isEmpty()) << kind << ": " << coverage->status().toStdString();
+        EXPECT_TRUE(coverage->hint().contains("The analysis is off")) << coverage->hint().toStdString();
+        EXPECT_TRUE(coverage->button("analysis_on")->isEnabled());
+        EXPECT_FALSE(coverage->button("analysis_release")->isEnabled());
+        ASSERT_NE(coverage->button("break_new_code"), nullptr);
+        EXPECT_FALSE(coverage->button("break_new_code")->isEnabled()) << "not in the core";
+
+        ASSERT_TRUE(coverage->runAction(_context, "analysis_on"));
+        _emulator->RunNFrames(3);
+        coverage->refresh(_context, false);
+        EXPECT_TRUE(coverage->hint().isEmpty()) << coverage->hint().toStdString();
+        EXPECT_TRUE(coverage->headline().startsWith("Analysis on")) << coverage->headline().toStdString();
+        const bool neogs = std::string(kind) == "neogs";
+        const QString space = neogs ? QStringLiteral("RAM") : QStringLiteral("ROM");
+        int pages = 0;
+        QString ranges;
+        for (int r = 0; r < coverage->pages()->rowCount(); r++)
+            if (GsCpuAnalysisPane::Cell(coverage->pages(), r, "Space") == space &&
+                GsCpuAnalysisPane::Cell(coverage->pages(), r, "Page") != "all" &&
+                !GsCpuAnalysisPane::Cell(coverage->pages(), r, "Code ranges").isEmpty())
+            {
+                pages++;
+                if (ranges.isEmpty())
+                    ranges = GsCpuAnalysisPane::Cell(coverage->pages(), r, "Code ranges");
+            }
+        EXPECT_GT(pages, 0) << kind << ": " << coverage->headline().toStdString();
+        EXPECT_TRUE(ranges.startsWith('#')) << ranges.toStdString();
+        const int total = GsCpuAnalysisPane::FindRow(coverage->pages(), "Space", space);
+        ASSERT_GE(total, 0);
+        EXPECT_EQ(GsCpuAnalysisPane::Cell(coverage->pages(), total, "Page"), "all");
+        EXPECT_GT(GsCpuAnalysisPane::Cell(coverage->pages(), total, "Exec").toLongLong(), 50) << kind;
+        EXPECT_TRUE(coverage->caption(coverage->handlers()).startsWith("The dispatcher's handlers"))
+            << coverage->caption(coverage->handlers()).toStdString();
+        EXPECT_TRUE(coverage->caption(coverage->neverWritten()).startsWith("Reads of RAM never written"))
+            << coverage->caption(coverage->neverWritten()).toStdString();
+
+        ASSERT_TRUE(coverage->runAction(_context, "analysis_release"));
+        coverage->refresh(_context, false);
+        EXPECT_TRUE(coverage->hint().contains("The analysis is off")) << coverage->hint().toStdString();
+        EXPECT_EQ(coverage->pages()->rowCount(), 0);
+        EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
+        _emulator.reset();
+    }
+}
+
+/// Heat map (X10): a NeoGS runs from RAM, so the fetch channel glows; the decay set from the tab; a cell's tooltip
+/// names its RAM bytes and heats; the DAC's recent ranges captioned
+TEST_F(CardPanes_Test, TheHeatMapShowsTheFetchedCells)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "neogs"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    GsCpuAnalysisPane* heat = panes[kHeatMapPane].cpuAnalysis;
+    ASSERT_NE(heat, nullptr);
+    heat->refresh(_context, false);
+    ASSERT_TRUE(heat->status().isEmpty()) << heat->status().toStdString();
+    EXPECT_EQ(heat->heatmap()->cells(), 0);
+    heat->decay()->setValue(2);
+    ASSERT_TRUE(heat->runAction(_context, "analysis_on"));
+    _emulator->RunNFrames(3);
+    heat->refresh(_context, false);
+    EXPECT_TRUE(heat->headline().contains("decay 2 per frame")) << heat->headline().toStdString();
+    ASSERT_GT(heat->heatmap()->cells(), 0);
+    EXPECT_LE(heat->heatmap()->cells(), static_cast<int>(GsCpuAnalysisPane::kHeatCells));
+    heat->channel()->setCurrentIndex(1);
+    heat->heatmap()->setChannel(0);  // fetch
+    EXPECT_GT(heat->heatmap()->hotCells(), 0) << heat->headline().toStdString();
+    int hot = -1;
+    for (int cell = 0; cell < heat->heatmap()->cells() && hot < 0; cell++)
+        if (!heat->heatmap()->describe(cell).contains("fetch 0 "))
+            hot = cell;
+    ASSERT_GE(hot, 0);
+    const QString tip = heat->heatmap()->describe(hot);
+    EXPECT_TRUE(tip.startsWith("RAM #")) << tip.toStdString();
+    EXPECT_TRUE(tip.contains("(page #")) << tip.toStdString();
+    EXPECT_TRUE(heat->caption(heat->recent()).startsWith("What the DAC played in the last 50 frames"))
+        << heat->caption(heat->recent()).toStdString();
+
+    heat->decay()->setValue(9);
+    ASSERT_TRUE(heat->runAction(_context, "analysis_decay"));
+    heat->refresh(_context, false);
+    EXPECT_TRUE(heat->headline().contains("decay 9 per frame")) << heat->headline().toStdString();
+}
+
+/// The lightweight player has no card CPU: each of the four tabs says so
+TEST_F(CardPanes_Test, TheCpuAnalysisTabsAreNotAvailableOnTheLightweightPlayer)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs-lw"}}));
+    const std::vector<CardPanes::Pane> panes = CardPanes::Create(&_parent);
+    for (size_t i = kProfilerPane; i <= kHeatMapPane; i++)
+    {
+        GsCpuAnalysisPane* pane = panes[i].cpuAnalysis;
+        ASSERT_NE(pane, nullptr);
+        EXPECT_TRUE(CardPanes::Shown(panes[i].card, _context));
+        pane->refresh(_context, false);
+        EXPECT_TRUE(pane->status().contains("not available")) << panes[i].title.toStdString() << ": "
+                                                              << pane->status().toStdString();
+    }
+    QString error;
+    EXPECT_FALSE(panes[kProfilerPane].cpuAnalysis->runAction(_context, "profile_start", &error));
+    EXPECT_FALSE(error.isEmpty());
+}
+
+// endregion </The card CPU analysis tabs>

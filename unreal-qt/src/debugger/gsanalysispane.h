@@ -12,6 +12,7 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorContext;
+class LabelManager;
 class QComboBox;
 class QLabel;
 class QPushButton;
@@ -121,4 +122,20 @@ private:
     std::map<QString, QString> _now;          ///< ... of this refresh
     std::map<std::pair<int, int>, bool> _marked;
     QString _scope;                           ///< the marks' scope: the object shown (another one: no marks)
+};
+
+/// The labels of a CPU for one refresh: the label at an address as the CPU's map shows it now (the card CPU's labels
+/// are page-tied by the card's map); else, for a card, the firmware's label at that address in any page (a NeoGS runs
+/// a RAM copy of its flash, a handler's page may not be mapped at the moment). The analysis tabs share it
+class GsCardLabels
+{
+public:
+    GsCardLabels(EmulatorContext* context, DebugCpuId cpu);
+    QString at(uint16_t address);
+
+private:
+    LabelManager* _labels = nullptr;
+    bool _anyPage = false;
+    bool _built = false;
+    std::map<uint16_t, std::string> _byAddress;
 };

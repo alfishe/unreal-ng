@@ -83,48 +83,6 @@ StateNode GsReport(EmulatorContext* context, CardPanes::Target target)
     return gs && gs->isObject() ? *gs : ms;
 }
 
-/// The labels of a CPU for one refresh: the label at an address as the CPU's map shows it now (the card CPU's labels
-/// are page-tied by the card's map); else, for a card, the firmware's label at that address in any page (a NeoGS runs
-/// a RAM copy of its flash, a handler's page may not be mapped at the moment)
-class Labels
-{
-public:
-    Labels(EmulatorContext* context, DebugCpuId cpu)
-    {
-        DebugManager* debug = context ? context->pDebugManager : nullptr;
-        _labels = debug ? debug->GetLabelManager(cpu) : nullptr;
-        _anyPage = cpu != DebugCpuId::Main;
-    }
-    QString at(uint16_t address)
-    {
-        if (!_labels)
-            return QString();
-        if (const std::shared_ptr<Label> label = _labels->GetLabelByZ80Address(address))
-            return QString::fromStdString(label->name);
-        if (!_anyPage)
-            return QString();
-        if (!_built)
-        {
-            _built = true;
-            for (const std::shared_ptr<Label>& label : _labels->GetLabelsInRange(0x0000, 0xFFFF))
-                if (label && label->active)
-                {
-                    std::string& name = _byAddress[label->address];
-                    if (name.empty() || label->name < name)
-                        name = label->name;  // the same one each refresh
-                }
-        }
-        const auto it = _byAddress.find(address);
-        return it != _byAddress.end() ? QString::fromStdString(it->second) : QString();
-    }
-
-private:
-    LabelManager* _labels = nullptr;
-    bool _anyPage = false;
-    bool _built = false;
-    std::map<uint16_t, std::string> _byAddress;
-};
-
 DebugCpuId CardCpu(CardPanes::Target target)
 {
     return target == CardPanes::Target::MultiSound ? DebugCpuId::MultiSoundGS : DebugCpuId::GS;
@@ -215,6 +173,36 @@ QString CardPortName(int port)
     return port >= 0 && port < 0x24 && kNames[port] ? QString::fromLatin1(kNames[port]) : QString();
 }
 }  // namespace
+
+GsCardLabels::GsCardLabels(EmulatorContext* context, DebugCpuId cpu)
+{
+    DebugManager* debug = context ? context->pDebugManager : nullptr;
+    _labels = debug ? debug->GetLabelManager(cpu) : nullptr;
+    _anyPage = cpu != DebugCpuId::Main;
+}
+
+QString GsCardLabels::at(uint16_t address)
+{
+    if (!_labels)
+        return QString();
+    if (const std::shared_ptr<Label> label = _labels->GetLabelByZ80Address(address))
+        return QString::fromStdString(label->name);
+    if (!_anyPage)
+        return QString();
+    if (!_built)
+    {
+        _built = true;
+        for (const std::shared_ptr<Label>& label : _labels->GetLabelsInRange(0x0000, 0xFFFF))
+            if (label && label->active)
+            {
+                std::string& name = _byAddress[label->address];
+                if (name.empty() || label->name < name)
+                    name = label->name;  // the same one each refresh
+            }
+    }
+    const auto it = _byAddress.find(address);
+    return it != _byAddress.end() ? QString::fromStdString(it->second) : QString();
+}
 
 GsAnalysisPane::GsAnalysisPane(View view, std::shared_ptr<DebugCpuId> follow, QWidget* parent)
     : QWidget(parent), _view(view), _follow(std::move(follow))
@@ -456,7 +444,7 @@ void GsAnalysisPane::refreshDispatch(EmulatorContext* context, int targetValue)
     setColumns({tr("Cmd"), tr("Name"), tr("Handler"), tr("Label"), tr("ROM"), tr("Patched by")});
     const std::vector<StateNode>& entries = Items(*dispatch, "entries");
     setRowCount(static_cast<int>(entries.size()));
-    Labels cardLabels(context, CardCpu(target));
+    GsCardLabels cardLabels(context, CardCpu(target));
     for (size_t i = 0; i < entries.size(); i++)
     {
         const StateNode& e = entries[i];
@@ -585,7 +573,7 @@ void GsAnalysisPane::refreshUnknown(EmulatorContext* context, int targetValue)
     _scope = QStringLiteral("unknown");
     setColumns({tr("Cmd"), tr("Since Clear"), tr("Total"), tr("Handler"), tr("Label")});
     setRowCount(static_cast<int>(since.size()));
-    Labels cardLabels(context, CardCpu(target));
+    GsCardLabels cardLabels(context, CardCpu(target));
     for (size_t i = 0; i < since.size(); i++)
     {
         const int row = static_cast<int>(i);
@@ -856,8 +844,8 @@ void GsAnalysisPane::refreshWriters(EmulatorContext* context, int targetValue)
 
     setColumns({tr("Port"), tr("Register"), tr("Value"), tr("PC"), tr("Label"), tr("Frame"), tr("Writes"), tr("Source")});
     setRowCount(static_cast<int>(cardPorts.size()) + 3);
-    Labels cardLabels(context, CardCpu(target));
-    Labels hostLabels(context, DebugCpuId::Main);
+    GsCardLabels cardLabels(context, CardCpu(target));
+    GsCardLabels hostLabels(context, DebugCpuId::Main);
     int row = 0;
     const auto put = [&](const QString& port, const QString& reg, const Writer& w, bool host) {
         setCell(row, 0, port);

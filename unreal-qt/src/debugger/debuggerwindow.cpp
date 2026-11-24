@@ -43,6 +43,7 @@
 #include "debugger/cardpanes.h"
 #include "debugger/gslwpane.h"
 #include "debugger/gsanalysispane.h"
+#include "debugger/gscpuanalysispane.h"
 #include "debugger/gsmonitorpane.h"
 #include "debugger/nextpanes.h"
 #include "emulator/emulatorcontext.h"
@@ -121,6 +122,8 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
             connectGsMonitor(monitor);
         if (GsAnalysisPane* analysisPane = pane.analysis)
             connectGsAnalysis(analysisPane);
+        if (GsCpuAnalysisPane* cpuPane = pane.cpuAnalysis)
+            connectGsCpuAnalysis(cpuPane);
         _cardPanes.push_back(pane);
     }
     historyLayout->addWidget(_sideTabs);
@@ -2023,6 +2026,8 @@ void DebuggerWindow::updateSidePane()
                 pane.trace->reset();  // another card: its own trace
             if (pane.analysis)
                 pane.analysis->reset();  // another card: its own counts and marks
+            if (pane.cpuAnalysis)
+                pane.cpuAnalysis->reset();
             _sideTabs->setTabVisible(_sideTabs->indexOf(pane.widget()), cardShown[i]);
         }
     }
@@ -2040,7 +2045,8 @@ void DebuggerWindow::updateSidePane()
         _pcHistoryPane->setRecording(history);
     if (shown && (qobject_cast<ReportPane*>(_sideTabs->currentWidget()) || qobject_cast<BoardPane*>(_sideTabs->currentWidget()) ||
                   qobject_cast<GsLwPane*>(_sideTabs->currentWidget()) || qobject_cast<GsMonitorPane*>(_sideTabs->currentWidget()) ||
-                  qobject_cast<GsAnalysisPane*>(_sideTabs->currentWidget())))
+                  qobject_cast<GsAnalysisPane*>(_sideTabs->currentWidget()) ||
+                  qobject_cast<GsCpuAnalysisPane*>(_sideTabs->currentWidget())))
         _nextPanesTimer->start();
     else
         _nextPanesTimer->stop();
@@ -2055,7 +2061,9 @@ void DebuggerWindow::refreshNextPanes(bool live)
     GsLwPane* inspector = qobject_cast<GsLwPane*>(_sideTabs->currentWidget());
     GsMonitorPane* monitor = qobject_cast<GsMonitorPane*>(_sideTabs->currentWidget());
     GsAnalysisPane* analysisPane = qobject_cast<GsAnalysisPane*>(_sideTabs->currentWidget());
-    if ((!pane && !board && !inspector && !monitor && !analysisPane) || !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
+    GsCpuAnalysisPane* cpuPane = qobject_cast<GsCpuAnalysisPane*>(_sideTabs->currentWidget());
+    if ((!pane && !board && !inspector && !monitor && !analysisPane && !cpuPane) ||
+        !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
         return;
     if (!live && _emulator->IsDirectStepping())
         return;  // the stepping's end refreshes (updateState)
@@ -2070,6 +2078,8 @@ void DebuggerWindow::refreshNextPanes(bool live)
         monitor->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
     else if (analysisPane)
         analysisPane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else if (cpuPane)
+        cpuPane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
     else
         inspector->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
 }
@@ -2122,6 +2132,25 @@ void DebuggerWindow::connectGsAnalysis(GsAnalysisPane* pane)
             QString error;
             if (!pane->turnOn(lease.get(), &error))
                 qWarning() << "GS analysis: a history did not turn on:" << error;
+        }
+        refreshNextPanes(!_emulator->IsPaused());
+    });
+}
+
+void DebuggerWindow::connectGsCpuAnalysis(GsCpuAnalysisPane* pane)
+{
+    // Start / Stop / Clear, On / Off / Reset / Release, Start port trace, the decay: the verbs every plane drives,
+    // then shown at once
+    connect(pane, &GsCpuAnalysisPane::actionRequested, this, [this, pane](const QString& action) {
+        if (!_emulator)
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            QString error;
+            if (!pane->runAction(lease.get(), action, &error))
+                qWarning() << "GS analysis:" << action << "refused:" << error;
         }
         refreshNextPanes(!_emulator->IsPaused());
     });

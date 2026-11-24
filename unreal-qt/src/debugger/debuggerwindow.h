@@ -336,6 +336,8 @@ private:
     void connectGsMonitor(class GsMonitorPane* monitor);
     /// An analysis tab's Turn on (GS unknown, GS writers): its histories to ring under a lease, then refreshed
     void connectGsAnalysis(class GsAnalysisPane* pane);
+    /// A card CPU analysis tab's buttons (Profiler, Events, Coverage, Heat map): its verb under a lease, then refreshed
+    void connectGsCpuAnalysis(class GsCpuAnalysisPane* pane);
     /// The Next tabs on a Next only, the card tabs with a GS card; the PC history records while in front, the live
     /// refresh while a report tab is
     void updateSidePane();

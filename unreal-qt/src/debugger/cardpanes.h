@@ -15,6 +15,7 @@
 class BoardPane;
 class EmulatorContext;
 class GsAnalysisPane;
+class GsCpuAnalysisPane;
 class GsLwPane;
 class GsMonitorPane;
 class QLabel;
@@ -25,7 +26,8 @@ class ZxDmaTraceView;
 
 /// @file cardpanes.h
 /// @brief The General Sound card's panes of the debugger (gs-debugger TODO P5.1, gui-card-debugger.md A5.2): Log, Protocol,
-/// Objects (formerly Firmware), Hardware, Stats; the analysis tabs Dispatch, Unknown, Writers (P5.6, A5.2a: GsAnalysisPane). Each is a ReportPane over a report of the device catalog every automation plane serves (`gs-commands`,
+/// Objects (formerly Firmware), Hardware, Stats; the analysis tabs Dispatch, Unknown, Writers (P5.6, A5.2a: GsAnalysisPane)
+/// and over the card CPU's profiler and code / data analysis Profiler, Events, Coverage, Heat map (GsCpuAnalysisPane). Each is a ReportPane over a report of the device catalog every automation plane serves (`gs-commands`,
 /// the `gs` report's protocol, `gs-firmware`, `gs`, `gs-stats`): the debugger shows what an agent reads, nothing of its own.
 /// On a NeoGS (P5.5, gui-card-debugger.md B3.1-B3.3) the NeoGS board replaces the Hardware pane and two panes join: DMA and
 /// SD · MP3 · Flash, each a BoardPane over the boards the planes read (`neogs`, `neogs_dma`, `neogs_sd`, `neogs_mp3`,
@@ -69,6 +71,7 @@ struct Pane
     ZxDmaTraceView* trace = nullptr;  ///< the board pane's ZX-DMA trace (the NeoGS DMA pane's)
     GsMonitorPane* monitor = nullptr;  ///< the protocol monitor (P5.6, A5.3), else one of the above
     GsAnalysisPane* analysis = nullptr;  ///< an analysis tab (P5.6, A5.2a: Objects, Dispatch, Unknown, Writers)
+    GsCpuAnalysisPane* cpuAnalysis = nullptr;  ///< a card CPU analysis tab (A5.2a: Profiler, Events, Coverage, Heat map)
     QWidget* widget() const;
 };
 
@@ -81,8 +84,8 @@ inline constexpr const char* kSdSlot = "sd.ngs";
 /// error tile, the log following its tail, Pause / Continue; P5.6), GS objects (A5.2a Objects: the profile's structs as
 /// tables, its variables, the window variables; it replaced the fixed GS firmware tab), GS hardware, NeoGS hardware,
 /// NeoGS DMA, NeoGS SD · MP3 · Flash, GS stats, GS interpreter, GS player, then the A5.2a analysis tabs GS dispatch,
-/// GS unknown, GS writers (GsAnalysisPane; the debugger window has no View ▸ Card menu, so they are shown with the
-/// card like the others). `follow`: the CPU tab in front the card-neutral panes follow (null: the main CPU's, i.e. the
+/// GS unknown, GS writers (GsAnalysisPane), GS profiler, GS events, GS coverage, GS heat map (GsCpuAnalysisPane; the
+/// debugger window has no View ▸ Card menu, so they are shown with the card like the others). `follow`: the CPU tab in front the card-neutral panes follow (null: the main CPU's, i.e. the
 /// GS slot's card, else the MultiSound's)
 std::vector<Pane> Create(QWidget* parent, Follow follow = {});
 

@@ -15,6 +15,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/disassembler/z80mcycles.h"
 #include "debugger/gsanalysispane.h"
+#include "debugger/gscpuanalysispane.h"
 #include "debugger/gslwpane.h"
 #include "debugger/gsmonitorpane.h"
 #include "debugger/reportpane.h"
@@ -231,6 +232,25 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
     add(GsAnalysisPane::View::Writers, QObject::tr("GS writers"),
         QObject::tr("The last writer of each card port and of the host's #B3 / #BB / #33: the value, the writer's PC and "
                     "label, the frame"));
+    // A5.2a over the card CPU's profiler (X2, X9, X20) and its code / data analysis (X8, X10, X11): both off by
+    // default, each tab switches its own on
+    const auto addCpu = [&](GsCpuAnalysisPane::View view, const QString& title, const QString& tooltip) {
+        Pane pane{title, tooltip, nullptr, nullptr, Card::Any, nullptr};
+        pane.cpuAnalysis = new GsCpuAnalysisPane(view, follow, parent);
+        panes.push_back(pane);
+    };
+    addCpu(GsCpuAnalysisPane::View::Profiler, QObject::tr("GS profiler"),
+           QObject::tr("The card CPU's profiler: the ISR budget (avg / period, max, headroom, overruns, latency, lost), "
+                       "each command's cost, the routines, the activity per frame; Start / Stop / Clear"));
+    addCpu(GsCpuAnalysisPane::View::Events, QObject::tr("GS events"),
+           QObject::tr("The last profiled frame on a canvas: a row per interrupt period, the ISR as a bar, the host's "
+                       "#B3 / #BB / #33, DAC fetches, page and volume writes, ZX-DMA bytes as dots"));
+    addCpu(GsCpuAnalysisPane::View::Coverage, QObject::tr("GS coverage"),
+           QObject::tr("The card CPU's code / data log per space and page with its ranges, the command handlers executed "
+                       "and not, the reads of RAM never written; On / Off / Reset / Release"));
+    addCpu(GsCpuAnalysisPane::View::HeatMap, QObject::tr("GS heat map"),
+           QObject::tr("The card RAM as a grid coloured by fetch, read, write, DAC, SD-DMA or ZX-DMA heat; the ranges "
+                       "the DAC played in the last frames"));
     return panes;
 }
 
@@ -496,6 +516,8 @@ QWidget* Pane::widget() const
         return monitor;
     if (analysis)
         return analysis;
+    if (cpuAnalysis)
+        return cpuAnalysis;
     return inspector;
 }
 }  // namespace CardPanes

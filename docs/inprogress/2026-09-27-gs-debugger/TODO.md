@@ -465,6 +465,49 @@ what an agent reads):
     never-written list); TTD replay marks like a live run; `pokeCardMemory` writes are not stamped; interrupt entries
     are marked jump, not sub; a `JR $` self-loop is not marked jump; the catalog's mcp field names the tool, not
     an aspect.
+  - Analysis tabs Profiler / Events / Coverage / Heat map, embedded debugger, as built (2026-11-24, branch
+    `gs-firmware`, uncommitted; A5.2a rows Events, Profiler, Coverage, Heat map; X2, X8-X11, X20):
+    `unreal-qt/src/debugger/gscpuanalysispane.{h,cpp}` (one widget `GsCpuAnalysisPane`, four views, plus the two
+    canvases `GsEventsCanvas` and `GsHeatmapCanvas`), after GS writers in `CardPanes::Create` as **GS profiler**,
+    **GS events**, **GS coverage**, **GS heat map**, every card (`Card::Any`, the MultiSound's GS through the
+    follow; `Pane::cpuAnalysis`). The reads are the plane reports in process under the window's lease
+    (`DeviceState::GsProfile` / `GsEvents` / `GsCoverage` / `GsHeatmap`), the buttons their verbs
+    (`GSProfileControl`, `GSAnalysisControl`, the port trace's history to ring) through `actionRequested` ->
+    `DebuggerWindow::connectGsCpuAnalysis` -> `runAction`. Live through the card panes' 200 ms timer while in front;
+    a live refresh within the host frame already read reads nothing. **Profiler**: gauge `ISR avg / period avg ·
+    max · headroom %`, last frame and since start (count, min / avg / max, overruns, latency, lost), the current
+    command, tables Commands (code, name, count, avg / min / max / total), Routines (address, page, label, calls,
+    inclusive, exclusive, avg, max, %; sortable by any header, numeric keys), Activity (newest 32 of 256 frames: ISR
+    / idle / halt / busy %, commands, INTs, overruns, lost, ISR max); Start / Stop / Clear; the states said in a hint
+    bar instead of empty tables: off (and that it slows the card about x2), stopped, "Interrupts off: no interrupt
+    taken in N frames, M requests lost" (the stock firmware idles with DI), "No routine called yet" (routines show
+    when they return: a reset's POST ones at its end, ~120 frames). **Events**: a row (2 px) per interrupt period
+    of the last profiled frame, x = cycle in the period; ISR bars (red past the period), dots for #B3 / #BB / #33,
+    DAC (by channel), page, volume, ZX-DMA; a legend of checkable categories (hide / show); tooltips naming the
+    event or the ISR (accept, end, length, entry); Start profiler / Start port trace; hints: no profiled frame,
+    port trace off, no ISR bars (interrupts off). **Coverage**: a totals row per space (ROM or flash, RAM) and a row
+    per marked page (exec, code, read, write, jump, sub, DAC, written; code / data / DAC ranges as page offsets),
+    the dispatcher's handlers executed and not (name from the profile, handler from the `gs-firmware` dispatch,
+    label, where), the never-written reads (address, page:offset, PC + label, frame, kind); On / Off / Reset /
+    Release; "Break on new code" shown disabled (not in the core). **Heat map**: the RAM grid (at most 16,384 cells,
+    neighbours merged) as an image scaled to square cells, one channel or all blended (fetch green, read blue,
+    write red, DAC yellow, SD-DMA cyan, ZX-DMA magenta), tooltip RAM range, page, offset and each channel's heat;
+    the decay (0-255, applied with `status` + decay), the DAC ranges of the last N frames (default 50). Shared:
+    `GsCardLabels` (the label lookup of `gsanalysispane`, moved to its header). Tests
+    `CardPanes_Test.PanesInTabOrder` (18 panes), `WithoutTheCardEachSaysWhy`,
+    `TheProfilerShowsTheInterruptsOffStateOnTheIdleFirmware`, `TheProfilerShowsTheRoutinesAndTheBudgetOfAProgram`
+    (hand-built ROM: ISR 67 / 320, routines #0180 max 130, #0100 max 237), `TheProfilerShowsTheFirmwareRoutinesAfterACardReset`
+    (gs105a, labelled), `TheEventsTabShowsThePeriodsAndTheIsrBars` (stock: 700+ rows, no bars; hand-built ISR:
+    a bar of 67 cycles per period, the host's #B3 dot named), `TheCoverageTabShowsTheExecutedCodeRanges` (classic:
+    ROM code ranges; NeoGS: RAM), `TheHeatMapShowsTheFetchedCells` (NeoGS), `TheCpuAnalysisTabsAreNotAvailableOnTheLightweightPlayer`.
+    Gaps in the core: no break on the first new code (X8) nor a never-written breakpoint kind (X11); routines are
+    counted at their return only (a long POST routine shows at its end; no open frames in the snapshot); the frame
+    map needs the profiler on (no ISR-less event map from the port trace alone); events of the previous frame are not
+    ghosted (X2); no probe marks (X3) nor SD / MP3 DMA bursts in `gs events`; the heat map covers RAM only (ROM /
+    flash fetches are in the CDL, not in the heat); the `gsporttrace` tracer name drives the slot's card only (the
+    tab uses the port trace history, which covers the MultiSound's GS too). Left in the UI: no X20 time-series graph
+    (a table of the newest 32 frames); the MultiSound's GS not exercised by a test of these tabs; a click on a
+    routine / range does not move the card disassembly.
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 
