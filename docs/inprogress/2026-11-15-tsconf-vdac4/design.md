@@ -4,7 +4,8 @@ How unreal-ng emulates the VDAC4 board for ZX Evolution / TS-Conf, so that the s
 DOOM-VDAC4, R-Type VDAC4, HMM2-VDAC4, the ESP App SPG demos and the VDAC2 programs that the board's FT812
 emulation also runs.
 
-Date: 2026-11-15. Status: design, nothing implemented. Branch `tsconf-vdac4`, worktree `scratch/wt-tsconf-vdac4`.
+Date: 2026-11-15. Status 2026-11-23: phases 1-5 on master (DOOM and R-Type run, the ESP code through a JIT by
+default); phase 6 without TTD. Open items: [TODO.md](TODO.md); the status per phase: §11.
 
 Research notes, with a source reference for every fact (cited as R1 §n, R2 §n, R3 §n):
 
@@ -606,15 +607,15 @@ WebSocket topics are app state changes and log lines, coalesced (owner rule "deb
 Each phase ends with a target build, filtered tests and a report. Landing on master per the branch rules once the
 owner says so.
 
-| Phase | Content | Done when |
-|---|---|---|
-| 1a | `EveHostCard` refactor out of `Vdac2Card` | all VDAC2 tests pass unchanged |
-| 1b | eve-emu VDAC4 profile (§5.2 minus images), `Vdac4Tang`, `TSL-VDAC4`, LINK file, switching | Weather 2, Zuma VDAC2, R-Type Arcade VDAC2 run on `TSL-VDAC4`; profile unit tests (PALETTED8 1-pass and 4-pass, RAM_G 3 MB, reset keeps DL, fault codes, ROM window) |
-| 2 | `unreal-xtensa`: ISA of §7.1, block cache, windowed spills, traps; conformance tests from assembled vectors and QEMU-ESP traces (§12 Q1) | conformance suite green; ≥ 240 MIPS micro-benchmark |
-| 3 | `Vdac4Esp`: slave HD, `EspSpiLink` port, `ZiFiFrameLink` extraction, core commands, module loader and cache | ESP App SPG uploads and starts an ELF; HSD.ELF answers 70-75 and logs its reads |
-| 4 | `EspAppHost`: loader, `zm_core_t`, symbols, newlib math, scheduler, PCM, ft/link, quantum worker | **DOOM1.WAD plays from `_DOOM.SPG`**: title, E1M1, sound, save / load, quit |
-| 5 | R-Type (media path, RTMEM helper, `link_media`, low-latency PCM), HMM2 (3 MB, E6 path, OGG module, `core_back`), images extensions, 3D A0-AF | R-Type demo loop 3 levels; HMM2 to the adventure map with music; DEMO3D |
-| 6 | TTD devices, automation planes, docs chain (command-interface.md → module doc → planes), Linux / Windows builds | TTD seek inside DOOM gameplay reproduces frames; `run_all.py` MCP block; zero warnings gcc / clang / MSVC / MinGW |
+| Phase | Content | Done when | Status 2026-11-23 |
+|---|---|---|---|
+| 1a | `EveHostCard` refactor out of `Vdac2Card` | all VDAC2 tests pass unchanged | done |
+| 1b | eve-emu VDAC4 profile (§5.2 minus images), `Vdac4Tang`, `TSL-VDAC4`, LINK file, switching | Weather 2, Zuma VDAC2, R-Type Arcade VDAC2 run on `TSL-VDAC4`; profile unit tests (PALETTED8 1-pass and 4-pass, RAM_G 3 MB, reset keeps DL, fault codes, ROM window) | the profile, the Tang and switching done (3bc2c72d0; `EveVdac4_Test`, `Vdac4Tang_Test`); the three VDAC2 programs on `TSL-VDAC4` not re-checked since |
+| 2 | `unreal-xtensa`: ISA of §7.1, block cache, windowed spills, traps; conformance tests from assembled vectors and QEMU-ESP traces (§12 Q1) | conformance suite green; ≥ 240 MIPS micro-benchmark | the interpreter and its tests done (`XtensaCpu_Test`; no QEMU traces, §12 Q1 got no answer); the MIPS target was overtaken by a block JIT on top (POC 053, `esp_jit` feature on by default, d93910137, `XtensaJit_Test`; the interpreter stays the fallback) |
+| 3 | `Vdac4Esp`: slave HD, `EspSpiLink` port, `ZiFiFrameLink` extraction, core commands, module loader and cache | ESP App SPG uploads and starts an ELF; HSD.ELF answers 70-75 and logs its reads | done (`Vdac4EspLink_Test`, `Vdac4EspFirmware_Test`, `Vdac4EspElfLoader_Test`) |
+| 4 | `EspAppHost`: loader, `zm_core_t`, symbols, newlib math, scheduler, PCM, ft/link, quantum worker | **DOOM1.WAD plays from `_DOOM.SPG`**: title, E1M1, sound, save / load, quit | done: DOOM runs with sound (3bc2c72d0), the ESP app as jobs on a worker thread (a920e4dbb) |
+| 5 | R-Type (media path, RTMEM helper, `link_media`, low-latency PCM), HMM2 (3 MB, E6 path, OGG module, `core_back`), images extensions, 3D A0-AF | R-Type demo loop 3 levels; HMM2 to the adventure map with music; DEMO3D | R-Type runs (its pictures are the A/B reference of [eve-async-drawing.md](eve-async-drawing.md) §6). The image decoders and the 3D commands are in eve-emu (`eve-decoders.cpp`, `eve-vdac4-3d.cpp`). **Not checked**: HMM2-VDAC4 (`HMM2.DAT` is not shipped) and DEMO3D (not in the collection) |
+| 6 | TTD devices, automation planes, docs chain (command-interface.md → module doc → planes), Linux / Windows builds | TTD seek inside DOOM gameplay reproduces frames; `run_all.py` MCP block; zero warnings gcc / clang / MSVC / MinGW | planes, docs chain and the MCP block (`tools/verification/mcp/test_vdac4.py`) done; builds on every CI platform (no JIT on Windows arm64, b11fee65e). **TTD not done**: no device of §10.1 exists ([TODO.md](TODO.md)) |
 
 ## 12. Open questions for the owner
 

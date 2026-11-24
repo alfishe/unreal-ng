@@ -35,6 +35,11 @@
 #include "emulator/ports/models/portdecoder_atm3.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
+#ifdef ENABLE_VDAC2
+#include "emulator/platforms/tsconf/vdac4/esp/espapphost.h"
+#include "emulator/platforms/tsconf/vdac4/esp/espxtensaruntime.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4board.h"
+#endif
 #include "emulator/ports/portdecoder.h"
 
 namespace
@@ -348,6 +353,10 @@ TEST_F(TTDEngineModels_Fixture, Vdac2MemoryWrittenWhileRecording)
         vdac2Regions += Engine().Regions()[r].ownerType == static_cast<uint16_t>(ttd::PeripheralId::Vdac2Memory) &&
                         !Engine().IsDeviceStateRegion(r);
     ASSERT_EQ(vdac2Regions, 7u) << "RAM_G, DL0, DL1, REG, CMD, SPECIAL, INFLIGHT";
+    // The chip's memory is in those regions only: its device blob is the 8-byte header, not a copy of it all
+    for (uint32_t r = 0; r < Engine().Regions().size(); ++r)
+        if (Engine().IsDeviceStateRegion(r) && Engine().Regions()[r].name.find("vdac2memory") != std::string::npos)
+            EXPECT_LE(Engine().Regions()[r].bytes, ttd::kTTDPieceSize) << Engine().Regions()[r].name;
     uint32_t ramG = 0;
     while (Engine().Regions()[ramG].name != "vdac2.RAM_G")
         ++ramG;
@@ -357,6 +366,56 @@ TEST_F(TTDEngineModels_Fixture, Vdac2MemoryWrittenWhileRecording)
     EXPECT_GE(changed, 30u) << "the frames' RAM_G writes reach the engine as changed pieces";
 
     CheckEveryCheckpoint();
+}
+
+/// The VDAC4 ESP is computed again on a seek, from its keyframe on the input journal (ttd-design.md): a seek
+/// between keyframes is exact, and one the journal cannot reproduce (here: the host's state changed behind the
+/// journal while recording) says so in the seek's check, replay_diverged, not_bit_exact
+TEST_F(TTDEngineModels_Fixture, Vdac4EspSeekReportsAReplayDivergence)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("TSL-VDAC4"));
+    auto* ports = dynamic_cast<PortDecoder_TSConf*>(_emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    Vdac4Board* board = ports->GetVdac4Board();
+    ASSERT_NE(board, nullptr);
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    constexpr int kFrames = 30, kTamperAt = 20;
+    ASSERT_TRUE(_ttd->StartRecording());
+    for (int f = 0; f < kFrames; ++f)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        board->Runtime().WaitIdle();
+        if (f == kTamperAt)
+        {
+            // The host's instruction count one higher, behind the journal (magic, time, slice cycles, then it)
+            std::vector<uint8_t> state;
+            board->Runtime().Host().SaveState(state);
+            ASSERT_GT(state.size(), 28u);
+            ++state[20];
+            ASSERT_TRUE(board->Runtime().Host().LoadState(state.data(), state.size()));
+        }
+    }
+    _ttd->StopRecording();
+    ASSERT_GE(Engine().CheckpointCount(), size_t(kFrames));
+
+    auto seek = [&](size_t i) {
+        const ttd::TTDPosition& p = Engine().Checkpoint(i)->position;
+        EXPECT_TRUE(_ttd->SeekTo({p.frame, static_cast<uint32_t>(p.tInFrame)}));
+        return _ttd->LastEngineCheck();
+    };
+    const ttd::TTDRestoreResult before = seek(10);
+    EXPECT_EQ(before.status, ttd::TTDRestoreStatus::Exact) << before.message;
+
+    const ttd::TTDRestoreResult after = seek(Engine().CheckpointCount() - 3);
+    EXPECT_EQ(after.status, ttd::TTDRestoreStatus::NotBitExact) << after.message;
+    const bool reported = std::any_of(after.issues.begin(), after.issues.end(), [](const ttd::TTDRestoreIssue& i) {
+        return i.kind == ttd::TTDRestoreIssueKind::ReplayDiverged;
+    });
+    EXPECT_TRUE(reported) << after.message;
+
+    // Back before the change: exact again (the issue belongs to the restore that found it)
+    EXPECT_EQ(seek(8).status, ttd::TTDRestoreStatus::Exact);
 }
 
 #endif  // ENABLE_VDAC2

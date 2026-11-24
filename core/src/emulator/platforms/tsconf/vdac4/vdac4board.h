@@ -54,6 +54,21 @@ public:
     uint64_t ClockRestarts() const { return _backSteps; }
     uint64_t ClockOffsetNs() const { return _offsetNs; }
 
+    /// The ESP's monotonic clock (TTD: vdac4-esp)
+    struct ClockState
+    {
+        uint64_t lastNs = 0;
+        uint64_t offsetNs = 0;
+        uint64_t backSteps = 0;
+    };
+    ClockState GetClock() const { return {_lastNs, _offsetNs, _backSteps}; }
+    void SetClock(const ClockState& clock)
+    {
+        _lastNs = clock.lastNs;
+        _offsetNs = clock.offsetNs;
+        _backSteps = clock.backSteps;
+    }
+
     /// Power-on (the board shares the machine's supply)
     void PowerOn();
     /// Once per machine frame: the ESP runs up to now (apps draw and play without the Z80)

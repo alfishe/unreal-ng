@@ -70,6 +70,10 @@ public:
     void DropAfter(uint64_t globalT);
     /// Sealed blocks, their directory and the open block
     size_t HeapBytes() const;
+    /// A measurement's switch (the write and port journals): the size getters walk every block again, as before
+    /// the running sums
+    static void SetWalkBlocksForMeasurement(bool on);
+    static bool WalkBlocksForMeasurement();
     /// Blocks decompressed so far (the work a query did: a counted measure for tests)
     uint64_t BlocksDecoded() const { return _blocksDecoded; }
 
@@ -91,6 +95,9 @@ private:
     std::vector<TTDWriteRecord> _open;   ///< the newest records, not sealed yet
     std::vector<TTDJournalSegment> _segments;
     uint64_t _size = 0;
+    /// The sealed blocks' payload capacities, summed as blocks come and go: HeapBytes is asked at every seek's
+    /// publish and walked every block (177,000 after 240,000 frames, a third of a millisecond; P1.S10 seek format)
+    size_t _payloadHeap = 0;
     uint64_t _memSealed = 0;   ///< memory writes ever sealed since the last Clear (Block::memBefore of the next one)
     uint64_t _droppedUpTo = 0;   ///< the newest record DropBefore released (0: none)
     mutable int64_t _cachedBlock = -1;   ///< the last decoded block (queries scan backward)

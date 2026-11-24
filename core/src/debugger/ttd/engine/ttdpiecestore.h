@@ -10,9 +10,13 @@
 /// - the difference is compressed first; the full piece is compressed too only
 ///   when the difference came out larger than T bytes (default 128), and the
 ///   smaller is kept;
-/// - a chain of Xor versions has at most K - 1 links (default K = 50): a
-///   version that would reach depth K is stored Full instead. There is no
-///   global key frame.
+/// - a chain of difference versions has at most K - 1 versions (default K =
+///   50): the version that would be the K-th is stored Full instead. There is
+///   no global key frame;
+/// - every S-th version of a chain (default S = 7) is a difference from the
+///   version S before it (its anchor) instead of from the previous one, so a
+///   decode applies at most (K - 1) / S + S - 1 differences (12) instead of
+///   K - 1 (49): a seek decodes every piece's chain (P1.S10 seek format).
 /// A version records the version it depends on (its base), so eviction and
 /// damage ranges can follow dependencies (engine decision D5). The store can
 /// be shared by several sessions (D22).
@@ -46,7 +50,10 @@ public:
 
     struct Params
     {
-        uint16_t chainLimit = 50;      ///< K: a version at depth K is stored Full
+        uint16_t chainLimit = 50;      ///< K: the K-th version of a chain is stored Full
+        /// S: every S-th version of a chain builds on the one S before it (Intern's anchor); 0 or 1: each version
+        /// builds on the previous one. Chains of fewer than S versions are the same either way
+        uint16_t skipStride = DefaultSkipStride();
         uint32_t fullThreshold = 128;  ///< T: compress the full piece only when the XOR is larger
         /// A difference whose runs take at most this many bytes is stored as
         /// Ranges at once, without compressing anything (a few bytes changed
@@ -67,6 +74,10 @@ public:
     TTDPieceStore() = default;
     explicit TTDPieceStore(const Params& params) : _params(params) {}
 
+    /// Params::skipStride of the stores made from now on (7 unless set: a measurement's other side)
+    static uint16_t DefaultSkipStride();
+    static void SetDefaultSkipStride(uint16_t stride);
+
     const Params& GetParams() const { return _params; }
 
     /// Store the first version of a piece (no previous one)
@@ -75,7 +86,18 @@ public:
     /// Store the next version of a piece whose current version is @p previous
     /// with content @p previousBytes. Returns @p previous (with one more
     /// reference) when the content did not change
-    TTDPieceId Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes);
+    /// @p anchor, @p anchorBytes: the chain's last anchor point at or before @p previous (IsAnchorPoint) and its
+    /// content, when the caller keeps them: the version that is the next anchor point is stored as a difference
+    /// from it, or is @p anchor itself (one more reference) when the piece is back at its content. Without them
+    /// every version builds on the previous one
+    TTDPieceId Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes,
+                      TTDPieceId anchor = kNone, const uint8_t* anchorBytes = nullptr);
+    /// @p id starts a chain or is the S-th, 2S-th ... version of one: the version S after it builds on it, so a
+    /// caller that passes anchors to Intern keeps its content from here on
+    bool IsAnchorPoint(TTDPieceId id) const
+    {
+        return _params.skipStride > 1 && _versions[id].run % _params.skipStride == 0;
+    }
 
     /// A version as stored elsewhere (a session file, Phase 4): its encoding,
     /// its base (a difference only: one reference is taken on it), depth, the
@@ -105,6 +127,8 @@ public:
 
     Encoding EncodingOf(TTDPieceId id) const { return _versions[id].encoding; }
     uint16_t DepthOf(TTDPieceId id) const { return _versions[id].depth; }
+    /// The version's place in its chain: 0 for a Full or Zero version, the versions since it for a difference
+    uint8_t RunOf(TTDPieceId id) const { return _versions[id].run; }
     TTDPieceId BaseOf(TTDPieceId id) const { return _versions[id].base; }
     uint32_t RefCount(TTDPieceId id) const { return _versions[id].refcount; }
     uint32_t PayloadSize(TTDPieceId id) const { return _versions[id].payload.size; }
@@ -139,7 +163,8 @@ public:
 private:
     /// Ranges encoding (Encoding::Ranges)
     static size_t RangesSize(const uint8_t* diff);
-    TTDPieceId StoreRanges(TTDPieceId previous, uint32_t depth, const uint8_t* diff, size_t size, uint32_t crc);
+    TTDPieceId StoreRanges(TTDPieceId base, uint32_t depth, uint32_t run, const uint8_t* diff, size_t size,
+                           uint32_t crc);
     static bool ApplyRanges(const uint8_t* payload, size_t size, uint8_t* out);
     struct Version
     {
@@ -147,8 +172,11 @@ private:
         TTDPieceId base = kNone;   ///< Xor only: the version this one is a difference from
         uint32_t crc32c = 0;       ///< of the raw 4 KB
         uint32_t refcount = 0;
-        uint16_t depth = 0;        ///< 0 for Full and Zero, base depth + 1 for Xor
+        uint16_t depth = 0;        ///< 0 for Full and Zero, base depth + 1 for a difference
         Encoding encoding = Encoding::Full;
+        /// The versions since the chain's Full or Zero start (saturating at 255; an imported version: its depth).
+        /// Equal to depth while every version builds on the previous one
+        uint8_t run = 0;
     };
 
     TTDPieceId Allocate();

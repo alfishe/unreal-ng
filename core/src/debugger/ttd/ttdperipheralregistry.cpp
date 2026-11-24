@@ -135,8 +135,11 @@ std::vector<TTDDeviceEntry> TTDPeripheralRegistry::DeviceEntries() const
             if (e.regions->TTDStateWithoutRegions(probe))
             {
                 entry.withoutRegions = e.regions;
-                entry.descriptor.stateSize = static_cast<uint32_t>(probe.size());
-                entry.descriptor.variableSize = false;
+                // A fixed blob is as long as the probe; a growing one (the VDAC4 ESP's keyframe state and journal)
+                // up to the source's limit: a longer one would be dropped
+                const size_t limit = e.regions->TTDStateWithoutRegionsLimit();
+                entry.descriptor.stateSize = static_cast<uint32_t>(std::max(probe.size(), limit));
+                entry.descriptor.variableSize = limit != 0;
             }
         }
     }

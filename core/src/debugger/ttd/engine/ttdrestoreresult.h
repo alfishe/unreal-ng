@@ -35,6 +35,7 @@ enum class TTDRestoreIssueKind : uint8_t
     DataDamaged,
     AfterRestoreFailed,
     MediaVersionDiffers,  ///< a medium changed since the checkpoint and cannot go back (Phase 3, Step 4)
+    ReplayDiverged,       ///< a device computed again on restore (the VDAC4 ESP) did not reach the recorded state
 };
 
 /// What a device not restored holds now
@@ -87,6 +88,7 @@ inline const char* TTDRestoreIssueKindName(TTDRestoreIssueKind kind)
     case TTDRestoreIssueKind::DataDamaged: return "data_damaged";
     case TTDRestoreIssueKind::AfterRestoreFailed: return "after_restore_failed";
     case TTDRestoreIssueKind::MediaVersionDiffers: return "media_version_differs";
+    case TTDRestoreIssueKind::ReplayDiverged: return "replay_diverged";
     }
     return "unknown";
 }

@@ -20,6 +20,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <random>
 #include <sstream>
@@ -37,7 +38,11 @@
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtier.h"
 #include "common/filehelper.h"
+#include "debugger/ttd/engine/ttdcontainer.h"
+#include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/engine/ttdrecordingwriter.h"
+#include "debugger/ttd/engine/ttdsessionfile.h"
+#include "debugger/ttd/engine/ttdwriteindex.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
@@ -88,6 +93,17 @@ bool EnvOn(const char* name, bool dflt)
 {
     const char* v = std::getenv(name);
     return v ? v[0] == '1' : dflt;
+}
+
+/// The host's one-minute load average (0 where the system has none): a timing's context
+double HostLoad()
+{
+#ifdef _WIN32
+    return 0.0;
+#else
+    double load[1] = {0.0};
+    return getloadavg(load, 1) == 1 ? load[0] : 0.0;
+#endif
 }
 
 /// The trunk's segment files of a recording folder, by number (the newest last)
@@ -405,7 +421,8 @@ uint64_t MachineHash(EmulatorContext* context)
 /// Seeks into segments evicted to their files against seeks into the resident head segment: @p segmentFrames a
 /// segment (its file in parts of 50 checkpoints), @p frames recorded, a one-segment read-back cache so each seek
 /// into the past reads its segment back. Every seek is checked (the frame replayed against the next checkpoint), and
-/// a frame reached by reading its segment back up to a part lands on the machine reached with the segment read whole
+/// a frame reached by reading a stretch of its segment through the file's seek index lands on the machine reached
+/// with the file read from its start and with the segment read whole
 void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* ttd, uint64_t segmentFrames,
                                 uint64_t frames, int seeks, double& residentMs, double& evictedMs)
 {
@@ -427,6 +444,7 @@ void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* t
     std::mt19937 rng(0x5EE7);
     std::vector<double> resident, evicted;
     const uint64_t loads0 = ttd->GetSessionInfo().readBackLoads;
+    const uint64_t windows0 = ttd->ReadBackWindowLoads();
     for (int i = 0; i < seeks; ++i)
     {
         // Resident: the head segment. Evicted: the segments before, in turn (the cache holds one)
@@ -442,16 +460,26 @@ void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* t
         }
         if (i < 4)
         {
-            // The machine of the part read back equals the machine of the whole segment (a seek to the segment's
-            // last frame reads it whole, as the cache holds one segment)
-            const uint64_t part = MachineHash(context);
-            ASSERT_TRUE(ttd->SeekTo({segments[k].firstFrame + span - 1, 0}));
+            // The machine of the stretch read back equals the machine of the file read from its start, and of the
+            // whole segment (without the seek index a second restore in the segment, past the part read, reads it
+            // whole). Another segment first each time: the cache holds one
+            EXPECT_FALSE(segments[k].Whole()) << "a stretch";
+            const uint64_t stretch = MachineHash(context);
+            const size_t other = (k + 1) % (segments.size() - 1);
+            ttd->SetSegmentWindowReads(false);
+            ASSERT_TRUE(ttd->SeekTo({segments[other].firstFrame + 1, 0}));
             ASSERT_TRUE(ttd->SeekTo({far, 0}));
-            EXPECT_EQ(MachineHash(context), part) << "frame " << far << " of segment " << k;
+            EXPECT_EQ(MachineHash(context), stretch) << "from the file's start: frame " << far << " of segment " << k;
+            ASSERT_TRUE(ttd->SeekTo({segments[k].firstFrame + span - 1, 0}));
+            EXPECT_TRUE(segments[k].Whole());
+            ASSERT_TRUE(ttd->SeekTo({far, 0}));
+            EXPECT_EQ(MachineHash(context), stretch) << "whole: frame " << far << " of segment " << k;
+            ttd->SetSegmentWindowReads(true);
         }
     }
     const ttd::TTDSessionInfo info = ttd->GetSessionInfo();
     EXPECT_GE(info.readBackLoads - loads0, static_cast<uint64_t>(seeks)) << "each seek into the past reads back";
+    EXPECT_GE(ttd->ReadBackWindowLoads() - windows0, static_cast<uint64_t>(seeks) - 4) << "through the seek index";
     EXPECT_EQ(info.readBackFailures, 0u);
     EXPECT_GE(info.seekChecks, static_cast<uint64_t>(2 * seeks));
     EXPECT_EQ(info.seekCheckDivergences, 0u);
@@ -530,19 +558,54 @@ TEST_F(TTDSeekScaling_Folder_Test, LongSession)
     _ttd->StopRecording();
 }
 
-TEST(TTDSeekScaling_Test, Measure)
+namespace
 {
-    const std::vector<uint64_t> lengths = Lengths();
-    if (lengths.empty())
-        GTEST_SKIP() << "diagnostic: set UNREAL_TTD_SEEK_SCALING=10000,50000,...";
-
+/// One recording measured at each length (TTDSeekScaling_Test.Measure): @p ab the side's switches
+void MeasureSide(const std::string& side, const std::string& ab, int round, const std::vector<uint64_t>& allLengths)
+{
+    auto abHas = [&](const char* name) { return ("," + ab + ",").find(std::string(",") + name + ",") != std::string::npos; };
+    /// "<name>=<value>" among the switches ("" when absent)
+    auto abValue = [&](const char* name) {
+        const std::string key = std::string(",") + name + "=";
+        const size_t at = ("," + ab).find(key);
+        if (at == std::string::npos)
+            return std::string();
+        const std::string rest = ab.substr(at + key.size() - 1);
+        return rest.substr(0, rest.find(','));
+    };
+    // len=<a>:<b>:... the side's own lengths (a mechanism measured at two lengths beside sides measured at four)
+    std::vector<uint64_t> lengths = allLengths;
+    if (const std::string own = abValue("len"); !own.empty())
+    {
+        lengths.clear();
+        std::stringstream ss(own);
+        std::string item;
+        while (std::getline(ss, item, ':'))
+            if (!item.empty())
+                lengths.push_back(std::strtoull(item.c_str(), nullptr, 10));
+        std::sort(lengths.begin(), lengths.end());
+    }
     const bool journal = EnvOn("UNREAL_TTD_SEEK_JOURNAL", true);
-    const bool coverage = EnvOn("UNREAL_TTD_SEEK_COVERAGE", false);
+    const bool coverage = EnvOn("UNREAL_TTD_SEEK_COVERAGE", false) || abHas("coverage");
     const bool folder = EnvOn("UNREAL_TTD_SEEK_FOLDER", true);
     const char* limitEnv = std::getenv("UNREAL_TTD_SEEK_LIMIT");
     const uint64_t limit = limitEnv ? std::strtoull(limitEnv, nullptr, 10) : 15000;
     const char* samplesEnv = std::getenv("UNREAL_TTD_SEEK_SAMPLES");
-    const int samples = samplesEnv ? std::atoi(samplesEnv) : 40;
+    const int samples = !abValue("samples").empty() ? std::atoi(abValue("samples").c_str()) : samplesEnv ? std::atoi(samplesEnv) : 40;
+    // The side's switches, each one mechanism as it was before it:
+    //   nowindow         evicted segments are read from their file's start (no seek index used)
+    //   noindex          segment files are written without piece tables and seek index
+    //   packedpieces     segment files store their piece records compressed (zstd), as the other records
+    //   nobaselinereuse  a baseline stores every piece anew
+    //   stride=<n>       the piece store's skip stride (1: every version builds on the previous one)
+    //   walkheap         the journals' size getters walk every block (and check the running sums)
+    //   coverage         the coverage index on (as UNREAL_TTD_SEEK_COVERAGE=1, for this side)
+    //   len=<a>:<b>      the side's own session lengths; samples=<n> its own seeks per kind; rounds=<n> its rounds
+    const std::string stride = abValue("stride");
+    ttd::TTDPieceStore::SetDefaultSkipStride(stride.empty() ? uint16_t{7} : static_cast<uint16_t>(std::atoi(stride.c_str())));
+    ttd::TimeTravelEngine::SetBaselineReuse(!abHas("nobaselinereuse"));
+    ttd::TTDSessionWriter::SetRawPieceRecords(!abHas("packedpieces"));
+    ttd::TTDWriteIndex::SetWalkBlocksForMeasurement(abHas("walkheap"));
 
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
@@ -556,16 +619,20 @@ TEST(TTDSeekScaling_Test, Measure)
     emulator->RunNFrames(50);
 
     const char* rootEnv = std::getenv("UNREAL_TTD_SEEK_ROOT");
-    const std::string root = rootEnv ? rootEnv : TestPathHelper::GetUniqueTestScratchPath("ttd-seek-scaling");
+    const std::string root = (rootEnv ? std::string(rootEnv) : TestPathHelper::GetUniqueTestScratchPath("ttd-seek-scaling")) +
+                             (side.empty() ? std::string() : "/" + side + "-" + std::to_string(round));
     if (folder)
         ttd->SetShadowRecordingRoot(root);
     ttd->SetHistoryLimit(limit, 0);
     ttd->SetEnableWriteJournal(journal);
     ttd->SetEnableCoverageIndex(coverage);
+    ttd->SetSegmentWindowReads(!abHas("nowindow"));
+    ttd->SetSegmentSeekIndex(!abHas("noindex"));
     ASSERT_TRUE(ttd->StartRecording());
     const uint64_t start = context->emulatorState.frame_counter;
-    std::fprintf(stderr, "# journal=%d coverage=%d folder=%d limit=%llu root=%s\n", journal, coverage, folder,
-                 static_cast<unsigned long long>(limit), root.c_str());
+    std::fprintf(stderr, "# side=%s round=%d load=%.0f journal=%d coverage=%d folder=%d limit=%llu ab=[%s] root=%s\n",
+                 side.empty() ? "-" : side.c_str(), round, HostLoad(), journal, coverage, folder,
+                 static_cast<unsigned long long>(limit), ab.c_str(), root.c_str());
 
     auto* keys = context->pDebugManager->GetKeyboardManager();
     std::mt19937 rng(0x5EEC);
@@ -619,20 +686,34 @@ TEST(TTDSeekScaling_Test, Measure)
             bool far;
             bool mid;
             bool step = false;   ///< frame by frame back from a random frame of the window (stepping, scrubbing)
+            bool evicted = false;   ///< only frames whose segment left memory (far: the whole session, the window too)
         };
-        const Kind kinds[] = {{"near/frame", false, false}, {"near/mid", false, true}, {"far/frame", true, false},
-                              {"far/mid", true, true}, {"step/back", false, false, true}};
+        const Kind kinds[] = {{"near/frame", false, false},      {"near/mid", false, true},
+                              {"far/frame", true, false},        {"far/mid", true, true},
+                              {"step/back", false, false, true}, {"evicted/frame", true, false, false, true},
+                              {"evicted/mid", true, true, false, true}};
+        // The frames in memory: the window's segments (an eighth of the limit each, one more held while it fills)
+        const uint64_t windowLo = end.frame > limit ? end.frame - limit : first;
+        const uint64_t evictedHi = windowLo > first + limit / 4 ? windowLo - limit / 4 : first;
         for (const Kind& k : kinds)
         {
-            std::vector<double> total, restore, replay, present, other;
+            if (k.evicted && (evictedHi <= first || ttd->GetEngine().EvictedSegments() == 0))
+                continue;
+            std::vector<double> total, restore, replay, present, other, readBack, seekRestore, decode, pieces, links,
+                parts, imported, readKb;
             uint64_t previous = 0;
+            const uint64_t loads0 = ttd->GetSessionInfo().readBackLoads;
+            const uint64_t windowLoads0 = ttd->ReadBackWindowLoads();
             for (int i = 0; i < samples; ++i)
             {
-                const uint64_t lo = k.far ? first : (end.frame > limit ? end.frame - limit : first);
+                const uint64_t lo = k.far ? first : windowLo;
+                const uint64_t hi = k.evicted ? evictedHi : end.frame;
                 const uint64_t frame = k.step && i > 0 && previous > lo ? previous - 1
-                                                                        : lo + rng() % std::max<uint64_t>(1, end.frame - lo);
+                                                                        : lo + rng() % std::max<uint64_t>(1, hi - lo);
                 previous = frame;
                 const uint32_t t = k.mid ? 1 + static_cast<uint32_t>(rng() % (span - 1)) : 0;
+                const uint64_t readBack0 = ttd->GetPerfCounters().readBackNs;
+                const uint64_t windows0 = ttd->ReadBackWindowLoads();
                 const Clock::time_point s0 = Clock::now();
                 ttd::TTDSeekResult result;
                 const bool ok = ttd->SeekTo({frame, t}, &result);
@@ -645,13 +726,39 @@ TEST(TTDSeekScaling_Test, Measure)
                 replay.push_back(static_cast<double>(perf.lastReplayNs) / 1e6);
                 present.push_back(static_cast<double>(perf.lastPresentNs) / 1e6);
                 other.push_back(ms - present.back() - replay.back());
+                readBack.push_back(static_cast<double>(perf.readBackNs - readBack0) / 1e6);
+                seekRestore.push_back(static_cast<double>(perf.lastSeekRestoreNs) / 1e6 - readBack.back());
+                decode.push_back(static_cast<double>(perf.lastSeekMemoryNs) / 1e6 - readBack.back());
+                pieces.push_back(static_cast<double>(perf.lastSeekPiecesDecoded));
+                links.push_back(static_cast<double>(perf.lastSeekLinksDecoded));
+                if (ttd->ReadBackWindowLoads() != windows0)
+                {
+                    const ttd::TTDSegmentWindowScratch::Work& work = ttd->GetEngine().LastWindowWork();
+                    parts.push_back(work.partsRead);
+                    imported.push_back(work.versionsImported);
+                    readKb.push_back(static_cast<double>(work.bytesRead) / 1024.0);
+                }
             }
             std::fprintf(stderr,
-                         "len=%llu %-10s total p50 %.2f p95 %.2f max %.2f | seek-part p50 %.2f max %.2f | replay p50 %.2f "
-                         "| present p50 %.2f max %.2f | last-restore p50 %.2f ms\n",
+                         "len=%llu %-13s total p50 %.2f p95 %.2f p99 %.2f max %.2f | seek-part p50 %.2f max %.2f | replay p50 "
+                         "%.2f | present p50 %.2f max %.2f | last-restore p50 %.2f ms\n",
                          static_cast<unsigned long long>(length), k.name, Pct(total, 0.5), Pct(total, 0.95),
-                         Pct(total, 1.0), Pct(other, 0.5), Pct(other, 1.0), Pct(replay, 0.5), Pct(present, 0.5),
-                         Pct(present, 1.0), Pct(restore, 0.5));
+                         Pct(total, 0.99), Pct(total, 1.0), Pct(other, 0.5), Pct(other, 1.0), Pct(replay, 0.5),
+                         Pct(present, 0.5), Pct(present, 1.0), Pct(restore, 0.5));
+            // The seek's own restore: the read back from the disk tier, the memory decode, the rest (devices, CPU,
+            // screen); what is left of the seek part is the session's publish and the bookkeeping
+            std::fprintf(stderr,
+                         "    split %-13s read back p50 %.2f p95 %.2f (loads %llu, by index %llu) | decode p50 %.2f | restore "
+                         "rest p50 %.2f | outside restore p50 %.2f ms | pieces p50 %.0f links p50 %.0f p95 %.0f",
+                         k.name, Pct(readBack, 0.5), Pct(readBack, 0.95),
+                         static_cast<unsigned long long>(ttd->GetSessionInfo().readBackLoads - loads0),
+                         static_cast<unsigned long long>(ttd->ReadBackWindowLoads() - windowLoads0), Pct(decode, 0.5),
+                         Pct(seekRestore, 0.5) - Pct(decode, 0.5), Pct(other, 0.5) - Pct(seekRestore, 0.5) - Pct(readBack, 0.5),
+                         Pct(pieces, 0.5), Pct(links, 0.5), Pct(links, 0.95));
+            if (!parts.empty())
+                std::fprintf(stderr, " | by index: parts p50 %.0f p95 %.0f, versions p50 %.0f, read p50 %.0f KB",
+                             Pct(parts, 0.5), Pct(parts, 0.95), Pct(imported, 0.5), Pct(readKb, 0.5));
+            std::fprintf(stderr, "\n");
         }
 
         // UNREAL_TTD_SEEK_LOOP=<kind>:<seconds> at the last length: that kind's seeks over and over, for a profiler
@@ -670,8 +777,9 @@ TEST(TTDSeekScaling_Test, Measure)
             const Clock::time_point l0 = Clock::now();
             while (Ms(l0, Clock::now()) < seconds * 1000.0)
             {
-                const uint64_t lo = kind->far ? first : (end.frame > limit ? end.frame - limit : first);
-                const uint64_t frame = lo + rng() % std::max<uint64_t>(1, end.frame - lo);
+                const uint64_t lo = kind->far ? first : windowLo;
+                const uint64_t hi = kind->evicted ? evictedHi : end.frame;
+                const uint64_t frame = lo + rng() % std::max<uint64_t>(1, hi - lo);
                 if (kindName == "timeline")
                     (void)ttd->QueryTimeline(ttd::TTDTimelineOptions{});
                 else
@@ -699,13 +807,52 @@ TEST(TTDSeekScaling_Test, Measure)
         const ttd::TTDSessionInfo info = ttd->GetSessionInfo();
         const ttd::TTDEngineHeapBreakdown heap = ttd->GetEngine().HeapBreakdown();
         std::fprintf(stderr,
-                     "len=%llu recorded in %.1f s; pause+seek %.2f ms; timeline %.1f ms (%s, %zu phases); write records "
+                     "len=%llu load=%.0f recorded in %.1f s; pause+seek %.2f ms; timeline %.1f ms (%s, %zu phases); write records "
                      "%llu; evicted segments %zu; read back %zu; heap %.1f MB (write journal %.1f MB); folder %.1f MB, newest file %.1f MB\n",
-                     static_cast<unsigned long long>(length), recordS, pauseSeekMs, timelineMs,
+                     static_cast<unsigned long long>(length), HostLoad(), recordS, pauseSeekMs, timelineMs,
                      timeline.error.empty() ? "ok" : timeline.error.c_str(), timeline.phases.size(),
                      static_cast<unsigned long long>(info.writeJournalRecords), ttd->GetEngine().EvictedSegments(), ttd->GetEngine().ReadBackSegments(),
                      static_cast<double>(info.sessionHeapBytes) / 1e6, static_cast<double>(heap.writeJournal) / 1e6,
                      static_cast<double>(folderBytes) / 1e6, static_cast<double>(newestFile) / 1e6);
+
+        // An evicted segment's file by stream: what the seek data adds, what the container's compression saves
+        if (folder && length == lengths.back())
+        {
+            const std::vector<std::string> files = TrunkFiles(ttd->ShadowRecordingFolder());
+            if (files.size() > 2)
+            {
+                const std::string& path = files[files.size() / 2];
+                ttd::TTDFileSource source(path);
+                ttd::TTDContainerReader reader;
+                std::string error;
+                if (source.Valid() && reader.Open(source, error))
+                {
+                    std::map<uint16_t, std::pair<uint64_t, uint64_t>> streams;   // stored, raw
+                    for (const ttd::TTDPartRef& part : reader.Parts())
+                        for (const ttd::TTDRecordRef& record : part.physical)
+                        {
+                            streams[record.streamId].first += record.storedSize;
+                            streams[record.streamId].second += record.rawSize;
+                        }
+                    std::fprintf(stderr, "file %s: %llu bytes, %zu parts, index extra %zu bytes; streams (stored/raw KB):",
+                                 std::filesystem::path(path).filename().string().c_str(),
+                                 static_cast<unsigned long long>(source.Size()), reader.Parts().size(),
+                                 reader.IndexExtra().size());
+                    for (const auto& [id, sizes] : streams)
+                        std::fprintf(stderr, " %u=%.1f/%.1f", id, static_cast<double>(sizes.first) / 1024.0,
+                                     static_cast<double>(sizes.second) / 1024.0);
+                    std::fprintf(stderr, "\n");
+                }
+            }
+            const ttd::TTDEngineHeapBreakdown hb = ttd->GetEngine().HeapBreakdown();
+            std::fprintf(stderr,
+                         "len=%llu engine heap: piece payload %.1f MB, versions %.1f MB (%zu live), arena slack %.1f MB, delta "
+                         "base %.2f MB, tables %.1f MB\n",
+                         static_cast<unsigned long long>(length), static_cast<double>(hb.piecePayload) / 1e6,
+                         static_cast<double>(hb.pieceVersions) / 1e6, ttd->GetEngine().PieceStore().LiveVersions(),
+                         static_cast<double>(hb.arenaSlack) / 1e6, static_cast<double>(hb.deltaBase) / 1e6,
+                         static_cast<double>(hb.referenceTables) / 1e6);
+        }
 
         // Back to the end, recording goes on (as the soak did after each cycle)
         ASSERT_TRUE(ttd->ResumeRecordingFrom(ttd->SessionEndPosition()));
@@ -713,4 +860,48 @@ TEST(TTDSeekScaling_Test, Measure)
     }
     ttd->StopRecording();
     EmulatorTestHelper::CleanupEmulator(emulator);
+    // The switches back to the shipped state
+    ttd::TTDPieceStore::SetDefaultSkipStride(7);
+    ttd::TimeTravelEngine::SetBaselineReuse(true);
+    ttd::TTDSessionWriter::SetRawPieceRecords(true);
+    ttd::TTDWriteIndex::SetWalkBlocksForMeasurement(false);
+}
+}  // namespace
+
+/// The seek harness. UNREAL_TTD_SEEK_SCALING gives the lengths. One recording with the switches of UNREAL_TTD_SEEK_AB,
+/// or an A/B in one process: UNREAL_TTD_SEEK_SIDES=<name>=<switches>;<name>=<switches>;... ("-": no switch) measured
+/// UNREAL_TTD_SEEK_ROUNDS times, the sides one after another, their order reversed every other round. Each
+/// recording's lines follow its "# side=<name> round=<n>" line
+TEST(TTDSeekScaling_Test, Measure)
+{
+    const std::vector<uint64_t> lengths = Lengths();
+    if (lengths.empty())
+        GTEST_SKIP() << "diagnostic: set UNREAL_TTD_SEEK_SCALING=10000,50000,...";
+    std::vector<std::pair<std::string, std::string>> sides;
+    if (const char* env = std::getenv("UNREAL_TTD_SEEK_SIDES"))
+    {
+        std::stringstream ss(env);
+        std::string item;
+        while (std::getline(ss, item, ';'))
+        {
+            const size_t eq = item.find('=');
+            if (item.empty() || eq == std::string::npos)
+                continue;
+            const std::string switches = item.substr(eq + 1);
+            sides.emplace_back(item.substr(0, eq), switches == "-" ? std::string() : switches);
+        }
+    }
+    if (sides.empty())
+        sides.emplace_back(std::string(), std::getenv("UNREAL_TTD_SEEK_AB") ? std::getenv("UNREAL_TTD_SEEK_AB") : "");
+    const char* roundsEnv = std::getenv("UNREAL_TTD_SEEK_ROUNDS");
+    const int rounds = roundsEnv ? std::max(1, std::atoi(roundsEnv)) : 1;
+    for (int round = 1; round <= rounds; ++round)
+        for (size_t k = 0; k < sides.size(); ++k)
+        {
+            const auto& [name, ab] = sides[round % 2 == 0 ? sides.size() - 1 - k : k];
+            // rounds=<n> among a side's switches: the side is measured in the first n rounds only
+            if (const size_t at = ("," + ab).find(",rounds="); at != std::string::npos && round > std::atoi(ab.c_str() + at + 7))
+                continue;
+            ASSERT_NO_FATAL_FAILURE(MeasureSide(name, ab, round, lengths)) << "side " << name << " round " << round;
+        }
 }

@@ -835,6 +835,99 @@ bool TTDContainerReader::ReadRecord(const TTDRecordRef& record, std::vector<uint
     return true;
 }
 
+bool TTDContainerReader::ReadIndexExtra(const ITTDByteSource& source, std::vector<uint8_t>& extra,
+                                        uint64_t& indexOffset, std::string& error)
+{
+    const uint64_t size = source.Size();
+    uint8_t t[kTrailerSize];
+    if (size < kContainerFixedHeader + kTrailerSize || !source.ReadAt(size - kTrailerSize, t, sizeof(t)) ||
+        std::memcmp(t + 16, kTrailerMagic, 4) != 0 || codec::Crc32C(t, 20) != GetU32(t + 20))
+    {
+        error = "no trailer";
+        return false;
+    }
+    std::memcpy(&indexOffset, t, 8);
+    const uint32_t indexSize = GetU32(t + 8);
+    if (indexOffset < kContainerFixedHeader || indexOffset + indexSize != size - kTrailerSize)
+    {
+        error = "damaged trailer";
+        return false;
+    }
+    // The index is read into the caller's buffer, the extra moved to its start
+    extra.resize(indexSize);
+    if (!source.ReadAt(indexOffset, extra.data(), extra.size()) ||
+        codec::Crc32C(extra.data(), extra.size()) != GetU32(t + 12))
+    {
+        error = "damaged index";
+        return false;
+    }
+    ByteReader r(extra.data(), extra.size());
+    uint16_t version = 0, streams = 0;
+    uint32_t parts = 0, extraSize = 0;
+    if (!r.U16(version) || version != kIndexVersion || !r.U32(parts) || r.Left() / 22 < parts ||
+        !r.Skip(static_cast<size_t>(parts) * 22) || !r.U16(streams) || !r.Skip(static_cast<size_t>(streams) * 26) ||
+        !r.U32(extraSize) || extraSize != r.Left())
+    {
+        error = "damaged index (fields)";
+        return false;
+    }
+    extra.erase(extra.begin(), extra.end() - static_cast<std::ptrdiff_t>(extraSize));
+    return true;
+}
+
+bool TTDContainerReader::ReadRecordAt(const ITTDByteSource& source, uint64_t offset, uint32_t storedSize,
+                                      uint16_t streamId, std::vector<uint8_t>& stored, std::vector<uint8_t>& buffer,
+                                      const uint8_t*& data, size_t& size, std::string& error)
+{
+    const uint64_t fileSize = source.Size();
+    if (offset + kRecordHeaderSize + storedSize > fileSize)
+    {
+        error = "a record at " + std::to_string(offset) + " lies past the file's end";
+        return false;
+    }
+    // Header and payload in one read: straight into the caller's buffer when the payload is stored as it is
+    stored.resize(kRecordHeaderSize + storedSize);
+    if (!source.ReadAt(offset, stored.data(), stored.size()))
+    {
+        error = "cannot read the record at " + std::to_string(offset);
+        return false;
+    }
+    const uint8_t* h = stored.data();
+    uint16_t stream = 0, flags = 0;
+    std::memcpy(&stream, h + 4, 2);
+    std::memcpy(&flags, h + 6, 2);
+    const uint32_t rawSize = GetU32(h + 20);
+    if (std::memcmp(h, kSync, 4) != 0 || codec::Crc32C(h, 28) != GetU32(h + 28) || stream != streamId ||
+        GetU32(h + 16) != storedSize || rawSize > kMaxRawSize || (flags & (kFlagPartEnd | kFlagContinued)) != 0 ||
+        ((flags & kFlagCompressed) == 0 && rawSize != storedSize))
+    {
+        error = "the record at " + std::to_string(offset) + " is not the one its index names";
+        return false;
+    }
+    const uint8_t* payload = h + kRecordHeaderSize;
+    if (codec::Crc32C(payload, storedSize) != GetU32(h + 24))
+    {
+        error = "damaged record at " + std::to_string(offset) + " (CRC)";
+        return false;
+    }
+    if ((flags & kFlagCompressed) == 0)
+    {
+        buffer.swap(stored);
+        data = buffer.data() + kRecordHeaderSize;
+        size = storedSize;
+        return true;
+    }
+    buffer.resize(rawSize);
+    if (rawSize > 0 && !codec::Decompress(payload, storedSize, rawSize, buffer.data()))
+    {
+        error = "damaged record at " + std::to_string(offset) + " (decompression)";
+        return false;
+    }
+    data = buffer.data();
+    size = rawSize;
+    return true;
+}
+
 void TTDContainerReader::MarkDamaged(uint32_t partIndex, const std::string& reason)
 {
     if (partIndex >= _parts.size() || _parts[partIndex].damaged)

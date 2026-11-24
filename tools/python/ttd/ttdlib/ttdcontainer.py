@@ -61,7 +61,7 @@ PIECE = 4096
 MAX_RAW = 1 << 30
 
 STREAM_NAMES = {
-    0: "container", 1: "pieces", 3: "checkpoints", 5: "events", 6: "configuration",
+    0: "container", 1: "pieces", 2: "piece-tables", 3: "checkpoints", 5: "events", 6: "configuration",
     7: "write-journal", 13: "bus-reads", 14: "bus-writes", 15: "bus-vectors", 16: "media-reads",
 }
 FRAME_STREAM_FIRST, FRAME_STREAM_LAST = 0x0100, 0x013F    # frame-boundary streams (D19); 0x0100 = screenshot

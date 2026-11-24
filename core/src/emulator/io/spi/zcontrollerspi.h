@@ -86,7 +86,7 @@ public:
     }
 
     const State& GetState() const { return _state; }
-    /// Restore a saved state; every device is told about its chip select again
+    /// Restore a saved state; every device is told about its chip select again (SpiDevice::restoreSelect)
     void SetState(const State& state);
 
 private:

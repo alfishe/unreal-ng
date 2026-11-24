@@ -268,6 +268,15 @@ public:
     void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes);
     /// Two tiers: the read-back cache's capacity in segments (default 4, at least 1)
     void SetReadBackCapacity(size_t segments);
+    /// Two tiers: a restore reads the stretch of an evicted segment it needs through the file's seek index (the
+    /// default); false reads the file from its start up to the checkpoint, as a file without the index is read
+    /// (tests compare the two, measurements have both sides)
+    void SetSegmentWindowReads(bool on) { _segmentWindowReads = on; }
+    /// Two tiers: the segment files written from now on get their piece tables and seek index (the default); false
+    /// writes them as before (tests of a file without them, a measurement's other side)
+    void SetSegmentSeekIndex(bool on) { _segmentSeekIndex = on; }
+    /// Read backs that took one stretch through a seek index (of GetSessionInfo().readBackLoads)
+    uint64_t ReadBackWindowLoads() const { return _readBackWindowLoads; }
     /// Tests (T-C10): completed segment files are held back from the eviction while @p hold is set; clearing it
     /// offers them
     void HoldSegmentFilesForTesting(bool hold);
@@ -311,7 +320,8 @@ public:
     /// engine (Phase 3, Step 4; FR-14): ConfigurationDiffers for each setting
     /// the session was recorded with that this machine lacks (a replay:
     /// NotBitExact; the model or RAM size: Degraded), MediaVersionDiffers for
-    /// a medium that changed since the checkpoint and cannot go back. Exact
+    /// a medium that changed since the checkpoint and cannot go back, ReplayDiverged for a device computed again
+    /// on load that missed its recorded state (NotBitExact). Exact
     /// when everything matches. The restore and the replay run either way
     const TTDRestoreResult& LastEngineCheck() const { return _lastEngineCheck; }
 
@@ -2594,6 +2604,8 @@ private:
     bool _writtenHeld = false;                        ///< PeekWrittenSinceRestore: the next take merges
     std::vector<uint16_t> _writtenPages;              ///< TakeWrittenSinceRestore: the dirty tracker's pages
     std::vector<uint32_t> _writtenScratch;
+    /// The next shadow capture opens a session (its first, or the machine's RAM size changed): a rescan
+    bool ShadowSessionDue(bool baseline) const;
     /// Hand this capture to the shadow engine
     bool FeedShadow(const TTDCheckpoint& out, bool baseline);
     /// Per registry entry: its index in the shadow engine's device table, -1 when it has none (no state). The
@@ -2656,6 +2668,9 @@ private:
     std::vector<uint8_t> _readBackFileBytes;   ///< LoadSegmentFromFile: the last file read (its capacity reused)
     bool _readBackUnbounded = false;           ///< Save, Check: every segment read back for the call
     uint64_t _readBackLoads = 0;               ///< segments read back from their files
+    uint64_t _readBackWindowLoads = 0;         ///< of them: one stretch read through the file's seek index
+    bool _segmentWindowReads = true;           ///< SetSegmentWindowReads
+    bool _segmentSeekIndex = true;             ///< SetSegmentSeekIndex
     uint64_t _readBackFailures = 0;            ///< read backs that failed (the restore reported it)
     bool _holdSegmentFiles = false;            ///< test hook: completed files are noted, not offered for eviction
     std::vector<std::pair<std::pair<uint32_t, size_t>, std::string>> _heldSegmentFiles;
@@ -2724,6 +2739,7 @@ private:
     uint64_t _cardEditFrame = UINT64_MAX;    ///< the frame whose card edits the card targets hold (replay)
     uint64_t _replayRomSignature = 0;       ///< this machine's ROM set (SetReplaySource)
     TTDRestoreResult _lastEngineCheck;      ///< LastEngineCheck
+    std::vector<TTDRestoreIssue> _replayIssues;  ///< the last restore's ReplayDiverged issues (LastEngineCheck)
     /// Settings and media of the replay engine's checkpoint @p index against
     /// this machine (into _lastEngineCheck)
     void CheckEngineCheckpoint(size_t index, bool forReplay);

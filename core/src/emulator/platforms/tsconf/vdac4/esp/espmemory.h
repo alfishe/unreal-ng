@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vdac4
@@ -41,6 +42,9 @@ public:
     bool Contains(uint32_t address) const { return address >= _base && address - _base < _size; }
     uint32_t FreeBytes() const;
     void Clear();
+    /// The block table (TTD): start -> size
+    const std::map<uint32_t, uint32_t>& Blocks() const { return _used; }
+    void SetBlocks(std::map<uint32_t, uint32_t> blocks) { _used = std::move(blocks); }
 
 private:
     uint32_t _base;
@@ -91,6 +95,8 @@ public:
 
     EspHeap& Psram() { return _psramHeap; }
     EspHeap& Sram() { return _sramHeap; }
+    const EspHeap& Psram() const { return _psramHeap; }
+    const EspHeap& Sram() const { return _sramHeap; }
 
     std::vector<uint8_t>& PsramBytes() { return _psram; }
     std::vector<uint8_t>& SramBytes() { return _sram; }

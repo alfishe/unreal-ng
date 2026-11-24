@@ -2,7 +2,7 @@
 
 One page for everything about time travel in this repository: the designs, the plan folders and their status, the
 automation planes, the code, the tests and tools, and the open tasks. Read this first instead of scanning the tree.
-Updated 2026-11-22.
+Updated 2026-11-24.
 
 ## What TTD is here
 
@@ -134,7 +134,7 @@ TTD files in other folders:
 | Hooks, journals, search | `timetravelhooks.*`, `ttdexternalevents.*`, `ttdinputjournal.*`, `ttdinputapply.*`, `ttdv1events.*` (input journal and events into the engine's log), `ttdwritejournal.*`, `ttdportjournal.*`, `ttdportsearch.*`, `ttdportdescribe.*`, `ttdportclassifier.h`, `ttdcoverageindex.*`, `ttdprobe.*` |
 | Device serializers | `ttdperipheralregistry.*`, `ttdmachineperipherals.*`, `ttdperipheralmask.h`, `ttdserializable.h`, chips at the top level (`ttdds12887`, `ttdpit8253`, `ttdppi8255`, `ttdusart8251`, `ttdwd1793context`); per platform in `atm/`, `gmx/`, `ide/`, `network/`, `next/`, `p2666/`, `plus3/`, `profi/`, `scorpion/`, `sprinter/`, `tsconf/` |
 | Benchmark harness | `bench/` (`ttdbench.*`, `ttdtimelinefixture.*`) |
-| File format | `ttd.ksy` (Kaitai, schema 2, `legacy_id` device table, branch and holder streams; checked against the fixtures by `tools/verification/ttd-analyzer/scripts/check_ksy.py`) |
+| File format | `ttd.ksy` (Kaitai, schema 2, `legacy_id` device table, branch and holder streams, a segment file's piece tables and seek index; checked against the fixtures by `tools/verification/ttd-analyzer/scripts/check_ksy.py`) |
 
 Outside it:
 
@@ -221,6 +221,7 @@ Open, by priority:
 | P1.S10 recheck | TSL seek-check divergences, ATM3 determinism | `ttdsoak_test.cpp`, `ttddeterminism_test.cpp` | done 2026-11-22 (12-min TSL and PENTAGON soaks: 16,169 seek checks, 0 divergences, 2,856 loaded compares, 0 mismatches; the old divergences were the read-back bug; ATM3 counts vary by the host-clock RTC anchor and power-on RAM, by design; a frame replay that slowed the clock ran three frames on, fixed) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | P1.S10 seek tails | Seeks into evicted history, a pause and the timeline with coverage, coverage capture | `ttdseekscaling_test.cpp`, `ttdpiecestore_test.cpp`, `ttdportjournal_test.cpp` | done 2026-11-22 (240k frames: an evicted seek p50 / p95 11.4 / 43 -> 4.1 / 5.5 ms by a prefix read back, a window seek 1.74 -> 1.2 ms, the timeline with coverage 13.3 s -> 0.29 s, a first pause with coverage 413 -> 9 ms, coverage capture 19.3 -> 13.0 us a frame; left: PR-6 1 ms is 1.2 ms at 240k, the floor a full decode plus one frame) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | P1.S10 seek A/B | A/B of the seek tails against their parent; stepping back and the timeline with coverage | `frame_profile_benchmark.cpp`, `ttdseekscaling_test.cpp`, `ttdcoverageindex_test.cpp` | done 2026-11-22 (recording with TTD off / on / full inside the A/A; stepping back 1.33 -> 0.93 ms by a decoded copy of memory, the timeline with coverage 287 -> 167 ms at 240k by run unions of coverage blocks; two attempts reverted; left: evicted p95 6.3 ms, PR-6 1.3 ms at 240k) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
+| P1.S10 seek format | Seek to the requirements at 240k frames, in memory and evicted (the format may change) | `ttdseekscaling_test.cpp`, `ttdsegmentwindow_test.cpp`, `ttdpiecestore_test.cpp` | done 2026-11-24 (240k frames: a window seek p50 1.31 -> 0.70 ms, an evicted seek p50 4.7 -> 1.3-2.4 ms, p99 1.8-2.5 ms at moderate load; a seek index and piece tables in segment files, skip-stride chains, baselines reuse unchanged versions; the folder +6 %) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | RSI-cond-ecat | eCat Run Back passes breakpoint conditions to `reverse-continue` (`condition`; the Qt Run Back does) | - | done 2026-11-21 (embedded and remote; `--self-check`) | [RSI README §5](../../../../inprogress/2026-08-20-ttd-reverse-search-index/README.md#5-not-done-and-why) |
 | TD-5 file | Timeline of a `.ttd` file without loading it (option `file`, `branch`) | - | done 2026-11-21 | [timeline design §8](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#8-a-ttd-file-without-loading-it) |
 | TD-5 blobs | Device-state blobs in the timeline (`state` entries, `states_every_frame`) | - | done 2026-11-21 | [timeline design §1](../../../../inprogress/2026-10-31-ttd-timeline-summary/design.md#1-what-the-recording-already-holds) |
