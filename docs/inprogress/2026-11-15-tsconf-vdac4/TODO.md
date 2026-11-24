@@ -22,8 +22,8 @@ jobs on a worker thread) and the board state on every automation plane. Design a
     `not_recorded` empty, and after a seek back 100 frames the ESP memory is neither the recorded one nor
     the present one. Until the devices exist, a recording with the board must be refused (or list the board in
     `not_recorded`).
-  - Implemented 2026-11-23 on branch `vdac4-ttd` (not landed): sparse ESP keyframes and an input journal,
-    [ttd-design.md](ttd-design.md); DOOM recorded at 2.92 ms per frame (1.98 off), 27 KB per frame, 55 of 55 seeks
+  - Landed 2026-11-24 (`1f0154632`, `293d25062`): sparse ESP keyframes and an input journal,
+    [ttd-design.md](ttd-design.md); DOOM recorded at 2.80 ms per frame (1.94 off), 18.7 KB per frame, 55 of 55 seeks
     restore the ESP memory exactly (§9). Open items there (§10).
   - Direction: the ESP app is deterministic from its inputs (the LINK traffic is in the port journal), so
     sparse ESP keyframes (every 25-50 frames, a sync point with the worker only there) plus re-running the ESP

@@ -1,7 +1,6 @@
 # VDAC4 time travel: ESP keyframes and an input journal
 
-Date: 2026-11-23. Status: implemented in `scratch/wt-vdac4-ttd` (branch `vdac4-ttd`), checked live on DOOM (§9);
-not landed. Parent:
+Date: 2026-11-23. Status: landed on master (`1f0154632`, `293d25062`), checked live on DOOM (§9). Parent:
 [design.md §10.1](design.md#101-ttd), open item in [TODO.md](TODO.md).
 
 ## 1. What the numbers say
@@ -167,8 +166,8 @@ Found on the live check, fixed with the devices:
 Before the fixes of §6.1 and §7 the same recording stored 57.8 KB per frame at 5.5 ms per frame, and only seeks to
 a keyframe were right.
 
-Check: `scratch/wt-vdac4-ttd/scratch/ttd/espseek2.py <unreal-qt> [port]` (records, hashes the ESP memory through
-`GET /vdac4/esp/memory` at each mark, seeks to each mark's `/ttd/position`, compares; `PERF=n` measures).
+Check (a WebAPI script, not kept in the repo): record, hash the ESP memory through `GET /vdac4/esp/memory` at each
+mark, seek to each mark's `/ttd/position`, compare the hashes; time the seeks for the numbers above.
 
 ## 10. Open
 
