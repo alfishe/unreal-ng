@@ -204,6 +204,47 @@ to a smooth picture is its display at the machine's rate (`display_rate=match`, 
 Next, should the Deck interpolate: `Decide` split over the pool or its per-block reads laid out by block, the
 window sums only over the rows a vector is allowed in, and the GPU path's read-backs.
 
+### 1.8 The cheap interpolation (2026-11-23)
+
+[POC 055](../../../tools/poc/055-interpolation-low-end/README.md) answered section 1.7's question another way: not
+LayerFlow made cheaper, an interpolation of its own for the machines LayerFlow is too slow on. In the code:
+
+- `core/src/emulator/video/smoothlite.{h,cpp}`: `LiteFlow`, the POC's form `lite19`. Frames as bit planes of colour
+  indices, a block field kept from pair to pair, a pixel's layer picked by masks of whole words. One thread. Its
+  pictures are the POC's byte for byte (the POC binary's `core` filter against `lite19`: 12 suite scenes and 2 game
+  traces), and the same on x86-64 and ARM64. Not its picture: over 256 colours in a pair of frames, a size that is
+  not whole 8 x 8 blocks or over 2048 wide; LayerFlow draws those.
+- `smooth_motion = interpolate-lite` (`[VIDEO] SmoothMotion`, every plane's `smooth_motion`): chosen outright.
+- The step down. `SmoothGuard` (`displayrate.h`) judges every interpolated picture drawn: the presenter's late
+  presents, and the drawing itself taking over 3/4 of a refresh (the software screen and the plain GL swap have no
+  presenter to count lates, and a machine with no GPU is where it matters). 4 of 20: `interpolate` goes on by
+  `LiteFlow` (`present.smooth.stepped_down`, `mode` says `interpolate-lite`); 4 of 20 again, or the mode was
+  `interpolate-lite` already: the blend (`too_slow`). Until the settings are set again. Both screen widgets
+  (`DeviceScreenGLWindow`, `DeviceScreen`).
+- `present.smooth.lite`: the interpolated pictures `LiteFlow` drew.
+
+Cost and quality (POC 055): 0.42-0.81 ms a picture on one quiet Steam Deck thread by trace where LayerFlow takes
+10-36 ms; 1.3 times LayerFlow's error on the suite (58.7 against 43.8, no interpolation 278.8).
+
+In the live window (2026-11-23, Across the Edge, low latency off, 10 s a case after the mode settled):
+
+| Host | Asked | Effects | Draws | Pictures a second | Late presents | A picture on the CPU's clock, p50 / max |
+|------|-------|---------|-------|-------------------|---------------|------------------------------------------|
+| Steam Deck, gamescope 60 Hz, `gl-timed` | `interpolate-lite` | cpu | `interpolate-lite` | 57.0 | 0 | 1.34 / 2.68 ms |
+| | `interpolate` | cpu | `interpolate-lite` (stepped down) | 56.2 | 0 | 1.37 / 2.57 ms |
+| | `interpolate` | gpu | `interpolate-lite` (stepped down) | 56.0 | 0 | 1.38 / 2.54 ms |
+| | `blend` | cpu | `blend` | 57.0 | 0 | 0.51 / 0.86 ms |
+| .238 under load, Xvfb, the software screen | `interpolate-lite` | cpu | `interpolate-lite` | 92.0 | — | — |
+| | `interpolate` | cpu | `interpolate-lite` (stepped down) | 90.9 (11.3 before the guard judged the drawing time) | — | — |
+
+On the Deck `interpolate` used to end as the blend (`too_slow`, section 1.6: 13-30 pictures a second before the
+guard). Now it ends as the cheap interpolation at the refresh's rate with no late present, on the CPU, whichever
+device the effects have; the step's log line: 4 of 20 pictures a refresh late on the CPU, 12 of 20 on the GPU.
+The live MCP scripts on .238: 40 of 41 (`test_gs_debugger.py` fails as it did before these changes).
+
+Not in it: a game profile's cadence modes (`video.smooth` cadence / carry) still draw by `MotionField`; the video
+wall (its tiles have no timed frames yet: per tile, not for the whole wall's picture).
+
 ## 2. Platform by mode, from the code (before the steps)
 
 | | Fixed grid | VRR | Display rate switch | Smooth motion | Low latency |

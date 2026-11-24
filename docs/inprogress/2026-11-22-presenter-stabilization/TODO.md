@@ -14,3 +14,8 @@ fixed, and checked on macOS, Linux (.238), Windows and the Steam Deck where it a
 - [ ] 6. Content and displays. Done: interpolation too slow for the refresh blends (`too_slow`), gamescope's screen
   time offset measured (no false lates), smooth motion by hand only where the display beats. Open: scenes for the
   classes not covered, 75-240 Hz and hi-res measured, the interpolation's cost on the Deck's GPU (README 1.6)
+- [ ] 7. The cheap interpolation (README 1.8, POC 055 `47ef92056`). Done: `LiteFlow` in the core, `interpolate-lite`,
+  the two-step guard (also by drawing time: the software screen), `present.smooth.lite` / `stepped_down`. Measured in the live window on the Steam Deck: 56-57
+  pictures a second, no late present, 1.3 ms a picture (README 1.8). Open: a real low-end machine, Windows and gcc
+  builds of it, the
+  video wall (per tile, needs timed frames there first), the game cadence modes by it
