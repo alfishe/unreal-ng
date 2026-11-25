@@ -181,9 +181,11 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   `kCVImageBufferTransferFunction_sRGB`, NVENC its VUI (h264 / hevc). `tools/verification/recording/colors.py` puts
   the 16 ZX colors on screen, records every way and compares the stored Y'CbCr and what macOS shows: all ways within
   1-2 of the palette, no shift (ProRes through ffmpeg included); NVENC files tagged on Windows (untagged before).
-  Before / after demo videos made with `demo.py`. Found, pre-existing, open: the core NVENC encoder (Windows) loses
-  its last 8 frames at stop and a recording under ~12 frames has no `moov`; h265 through the ffmpeg pipe into `.mp4`
-  fails in the muxer ("Not yet implemented").
+  Before / after demo videos made with `demo.py`. Found, pre-existing, fixed 2026-11-24: the core NVENC encoder (Windows)
+  lost its first 8 frames with the IDR at quality 5+ and a recording under ~12 frames had no `moov` (too few buffers
+  for the lookahead; `NvencEncoder_Test`); h265 through ffmpeg into `.mp4` from the window recorder failed about one
+  time in three in the muxer ("Not yet implemented"): x265 4.3 leaves its B-frame delay time uninitialized until its
+  third picture, and a still screen sent two, so the dts were garbage; the writer now gives libx265 three.
 - ~~Stepped window recording (`video/window/record/frames`) through ffmpeg with sound stalls ("recorded nothing
   within 10 s", then "the recording stopped")~~ fixed 2026-11-21, found under Xvfb on Linux. ffmpeg analysed the raw
   sound input for its default 5 s before reading more picture; a paused machine makes sound only as its pictures are
