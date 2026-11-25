@@ -245,6 +245,9 @@ TEST_F(AnalysisL1_Test, CallGraphTailJump)
     ASSERT_NE(main, nullptr);
     ASSERT_NE(a, nullptr);
     ASSERT_NE(b, nullptr);
+    // The recording picked the run up at `start`: not an entry point of the code (resume, not root)
+    EXPECT_TRUE(main->kinds & entry::kResume) << EntryKindNames(main->kinds);
+    EXPECT_FALSE(main->kinds & entry::kRoot) << EntryKindNames(main->kinds);
     EXPECT_TRUE(a->kinds & entry::kCall);
     EXPECT_TRUE(b->kinds & entry::kCall);
     EXPECT_TRUE(b->kinds & entry::kJump) << EntryKindNames(b->kinds);
@@ -841,6 +844,12 @@ TEST_F(AnalysisL1_Test, PassOverTheImageIsNoUse)
     ASSERT_NE(l1.InstructionAt(table->firstReader), nullptr);
     EXPECT_EQ(l1.InstructionAt(table->firstReader)->z80, At("readtab"));
     EXPECT_EQ(table->firstReader, table->lastReader);
+    // When an instruction ran: the recording's frames of its first and last execution, inside the replay
+    const Instruction* reader = l1.InstructionAt(table->firstReader);
+    EXPECT_GT(reader->executions, 0u);
+    EXPECT_GE(reader->firstFrame, l1.replay.firstFrame);
+    EXPECT_LE(reader->firstFrame, reader->lastFrame);
+    EXPECT_LE(reader->lastFrame, l1.replay.lastFrame);
 }
 
 TEST_F(AnalysisL1_Test, FactSheetBudget)

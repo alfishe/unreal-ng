@@ -131,9 +131,10 @@ const char* SourceKindName(SourceKind kind)
 std::string EntryKindNames(uint16_t kinds)
 {
     static const std::pair<uint16_t, const char*> kNames[] = {
-        {entry::kCall, "call"},         {entry::kRst, "rst"},       {entry::kInterrupt, "interrupt"},
-        {entry::kNmi, "nmi"},           {entry::kDispatch, "dispatch"}, {entry::kIndirect, "indirect"},
-        {entry::kJump, "jump"},         {entry::kShared, "shared"}, {entry::kRoot, "root"}};
+        {entry::kCall, "call"},    {entry::kRst, "rst"},           {entry::kInterrupt, "interrupt"},
+        {entry::kNmi, "nmi"},      {entry::kDispatch, "dispatch"}, {entry::kIndirect, "indirect"},
+        {entry::kJump, "jump"},    {entry::kShared, "shared"},     {entry::kRoot, "root"},
+        {entry::kResume, "resume"}};
     std::string text;
     for (const auto& [bit, name] : kNames)
         if ((kinds & bit) != 0)
@@ -864,6 +865,8 @@ StateNode L1Result::ToStateNode() const
         node.push(ins.executions);
         node.push(ins.tstates);
         node.push(ins.selfModified);
+        node.push(ins.firstFrame);
+        node.push(ins.lastFrame);
         insList.push(std::move(node));
     }
     doc["instructions"] = std::move(insList);

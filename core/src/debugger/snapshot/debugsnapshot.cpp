@@ -25,7 +25,12 @@ namespace DebugSnapshot
 StateNode Registers(EmulatorContext* context)
 {
     Z80* z80 = context && context->pCore ? context->pCore->GetZ80() : nullptr;
-    return z80 ? RegistersOf(*z80) : StateNode::Object();
+    if (!z80)
+        return StateNode::Object();
+    StateNode ret = RegistersOf(*z80);
+    // The moment the registers belong to: the frame next to special.t (the T-state inside it)
+    ret["special"]["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
+    return ret;
 }
 
 StateNode RegistersOf(const Z80State& state)
