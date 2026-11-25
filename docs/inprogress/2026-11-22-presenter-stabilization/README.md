@@ -367,6 +367,35 @@ The wall of 1.9 again on the Deck, 12 tiles of Across the Edge, two runs:
 The wall CPU grows because more tiles stay smooth: the guard now takes a quarter of the tiles down where it took
 three quarters. Off: 148-180 %, as in 1.9.
 
+#### A profiling round of a tile (2026-11-24)
+
+`perf` on the Deck over a tile of one thread (`tilecost`: `Push` a frame, a picture every 60 Hz refresh), gcc -O3
+as the release builds. Four plain costs found, each fixed with the same pictures (the hash of every picture of
+action, Aleste, Dizzy X and Across the Edge, blend and `interpolate-lite`, the flicker masks of `flickbench`):
+
+- `LiteFlow`'s scratch rows are `kMaxWidth` (2048 pixels: 32 words) long and were zeroed whole per pixel row of
+  every vector tried (`rep stos`, a fifth of `KeptField::Score`); only the picture's words are zeroed now.
+- `std::popcount` is a library call (`__popcountdi2`) in a gcc build for x86-64 without a popcnt instruction in
+  its baseline: 7 % of a flickering tile, in `BlockShifts::Explains`. A few word operations there instead
+  (`Ones`). The project sets no `-march`: every gcc x86-64 build has this cost wherever it counts bits.
+- The held flicker pixels were written back with a branch per pixel, mispredicted where flicker and motion mix (a
+  quarter of a blend picture's time): a mask now (`KeepHeld`).
+- `Planes::Pack` read eight pixels of one colour (paper, border) one at a time: one test of the eight now.
+
+A tile, the share of one Deck thread, the median of 5-6 interleaved runs after a warm-up run:
+
+| Clip | Mode | Before | After |
+|------|------|--------|-------|
+| Across the Edge | blend | 5.2 % | 4.3 % |
+| | interpolate-lite | 8.1 % | 6.6 % |
+| action | blend | 2.0 % | 2.0 % |
+| | interpolate-lite | 4.25 % | 3.7 % |
+| Aleste | interpolate-lite | 4.6 % (after the first three) | 4.3 % |
+| Dizzy X | interpolate-lite | 2.2 % (after the first three) | 2.1 % |
+
+What is left is the work itself, spread with no hot spot: `MovesBy` on flickering content, the field search
+(`KeptField::Score`), `Credible`, the drawing and the flicker counts on games.
+
 ## 2. Platform by mode, from the code (before the steps)
 
 | | Fixed grid | VRR | Display rate switch | Smooth motion | Low latency |
