@@ -202,7 +202,8 @@ bool Mp4Muxer::writeVideoFrame(const uint8_t* data, size_t size, bool keyframe, 
 {
     if (!_file.is_open()) return false;
 
-    if (!_gotParams && keyframe)
+    // The parameter sets come with the IDR; looked for in any packet until found, whatever the picture type says
+    if (!_gotParams)
         extractParameterSets(data, size);
 
     std::vector<uint8_t> avccData = convertAnnexBToAvcc(data, size);
