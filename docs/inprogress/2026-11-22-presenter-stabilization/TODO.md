@@ -18,5 +18,6 @@ fixed, and checked on macOS, Linux (.238), Windows and the Steam Deck where it a
   the two-step guard (also by drawing time: the software screen), `present.smooth.lite` / `stepped_down`. Measured in the live window on the Steam Deck: 56-57
   pictures a second, no late present, 1.3 ms a picture (README 1.8). The flicker search of
   `Push` on local bit planes (README 1.8: 6.3 / 16.2 ms to 2.1 / 3.5 ms a frame on the worst content). The video
-  wall per tile with its two guards, measured on the Deck, off at no cost (README 1.9). Open: a real low-end
+  wall per tile with its two guards, measured on the Deck, off at no cost (README 1.9). The flicker search four
+  times faster with the same masks on a corpus of 26 clips; the wall of 12 Across the Edge keeps 9-10 tiles smooth, 3-5 before (README 1.10). Open: a real low-end
   machine, Windows and gcc builds of it, the game cadence modes by it, the wall's software grid
