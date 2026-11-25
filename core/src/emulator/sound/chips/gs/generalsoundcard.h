@@ -523,6 +523,19 @@ public:
     {
         return cardRomPage(page);
     }
+    /// Where the firmware's 16K page `page` (0: low, 1: high, as firmwarePage numbers it) lives, in mapCardAddress
+    /// terms: the code the stock COMHIGH calls with MPAG 0 runs there whatever window 3 maps now. ROM page `page` on a
+    /// GS; NeoGS: RAM page `page` once its main ROM started, else the flash's main-ROM page (soundchip_neogs.h)
+    virtual CardPage firmwareCardPage(uint32_t page) const
+    {
+        CardPage where;
+        if (page <= 1 && firmwarePage(page))
+        {
+            where.kind = CardPage::Rom;
+            where.page = static_cast<uint8_t>(page);
+        }
+        return where;
+    }
     /// The 16K page `page` (0: low, 1: high) of the firmware as it started, the baseline its tables are compared with
     /// (patched dispatch entries, gs-debugger design §8A.9 M4): the ROM on a GS; NeoGS: its RAM copy as the main ROM
     /// started (soundchip_neogs.h)

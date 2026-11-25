@@ -163,6 +163,7 @@ public:
     /// RAM pages 0-1 once the main ROM runs (the loader's copy, or NEOGS.ROM from the SD card), else the flash copy
     /// at FLASH_MAIN_ROM the loader will start
     const uint8_t* firmwarePage(uint32_t page) const override;
+    CardPage firmwareCardPage(uint32_t page) const override;
     /// RAM pages 0-1 as they were when the main ROM started (the loader's copy, or NEOGS.ROM), kept from that moment;
     /// without it (before the start, a state loaded from elsewhere) the flash copy at FLASH_MAIN_ROM
     const uint8_t* firmwareBaselinePage(uint32_t page) const override;

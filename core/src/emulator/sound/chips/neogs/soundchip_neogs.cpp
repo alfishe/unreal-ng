@@ -1903,6 +1903,16 @@ const uint8_t* SoundChip_NeoGS::firmwarePage(uint32_t page) const
     return _flash.data() + FLASH_MAIN_ROM + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
 }
 
+GeneralSoundCard::CardPage SoundChip_NeoGS::firmwareCardPage(uint32_t page) const
+{
+    CardPage where;
+    if (!_cpu || page > 1)
+        return where;
+    where.kind = _mainRomStartTicks >= 0 ? CardPage::Ram : CardPage::Rom;
+    where.page = static_cast<uint8_t>(_mainRomStartTicks >= 0 ? page : FLASH_MAIN_ROM / NeoGSMemory::PAGE_SIZE + page);
+    return where;
+}
+
 const uint8_t* SoundChip_NeoGS::firmwareBaselinePage(uint32_t page) const
 {
     if (!_cpu || page > 1)
