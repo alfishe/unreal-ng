@@ -114,17 +114,15 @@ bool ParseGameMode(const char* text, GameMode& mode)
 
 uint32_t Mix(uint32_t a, uint32_t b, int w)
 {
-    if (a == b)
-        return a;
-    uint32_t out = 0;
-    for (int c = 0; c < 32; c += 8)
-    {
-        const uint32_t va = (a >> c) & 0xFF;
-        const uint32_t vb = (b >> c) & 0xFF;
-        const uint32_t v = (va * static_cast<uint32_t>(kOne - w) + vb * static_cast<uint32_t>(w) + kOne / 2) >> 8;
-        out |= v << c;
-    }
-    return out;
+    // Two channels to a 32-bit word, one in each 16-bit half: a half's sum is at most 255 * 256 + 128 and never
+    // carries into the next one. Two multiplies a channel pair instead of one per channel (a baseline x86-64 build has
+    // no 32-bit vector multiply: SSE4.1 pmulld), and no branch for a == b, which gives a either way
+    constexpr uint32_t kPair = 0x00FF00FFu;
+    const uint32_t wa = static_cast<uint32_t>(kOne - w);
+    const uint32_t wb = static_cast<uint32_t>(w);
+    const uint32_t even = ((a & kPair) * wa + (b & kPair) * wb + 0x00800080u) >> 8;
+    const uint32_t odd = ((a >> 8) & kPair) * wa + ((b >> 8) & kPair) * wb + 0x00800080u;
+    return (even & kPair) | (odd & ~kPair);
 }
 
 int WeightAt(int64_t t, int64_t ta, int64_t tb)

@@ -809,8 +809,9 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_CrcPresetByLastF5)
     for (size_t syncCount : {1u, 3u, 5u})
     {
         DiskImage image(1, 1);
-        std::vector<uint8_t> stream(80, 0x4E);
-        stream.insert(stream.end(), 12, 0x00);
+        // 80 x 4E then 12 x 00, built in place: gcc 16 flags an insert of the zeros here (-Wstringop-overflow)
+        std::vector<uint8_t> stream(80 + 12, 0x00);
+        std::fill_n(stream.begin(), 80, uint8_t{0x4E});
         stream.insert(stream.end(), syncCount, 0xF5);
         stream.insert(stream.end(), {0xFE, 0x01, 0x00, 0x01, 0x01, 0xF7});
         padTrack(stream);

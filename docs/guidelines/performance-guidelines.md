@@ -74,6 +74,7 @@ run).
 | Template instead of a flag | `Z80::ProcessInterruptsImpl<bool UseSource>`, `Memory::MemoryReadContended<Plain, Stats>` | the classic path compiles without the test; statistics exist only in the debug instance |
 | Nullable model hook | `Z80::machineM1Hook`, `Z80::portInterceptor` | one pointer test; acceptable where the path is not per instruction, or as a first version |
 | Lazy allocation | memory tracker, trace buffers (coding-guidelines) | memory and cache footprint only when the feature is on |
+| Run-time ISA choice for one hot routine | `codec::Crc32C` (`core/src/debugger/ttd/ttdcompression.h`): SSE4.2 CRC32 through `__attribute__((target))` + `__builtin_cpu_supports` (gcc / clang / MinGW), CPUID on MSVC | the table CRC in a baseline x86-64 build: TTD recording frames 2-4 % faster on the Deck, the same bytes |
 
 A combined gate in code (`core/src/emulator/cpu/z80.cpp`):
 
@@ -97,6 +98,31 @@ void Z80::SetMachineStepHook(IMachineStepHook* hook)
     _context->SetStepWork(EmulatorContext::kStepWorkMachineStep, hook != nullptr);
 }
 ```
+
+### The x86-64 baseline stays (2026-11-25)
+
+The project builds x86-64 without `-march`. gcc then has no POPCNT (`std::popcount` is a call to libgcc
+`__popcountdi2`) and no SSE4.2. A whole-build `-march=x86-64-v2` was measured on the Steam Deck (Zen 2), 40
+`BM_Prof_*` rows, interleaved, medians of 3 rounds after a warm-up:
+
+| Rows | v2 against the baseline |
+|:--|:--|
+| all 40, geometric mean | +2.2 % (slower) |
+| TS-Conf (4 rows) | +13 … +23 % (slower: code layout) |
+| Pentagon Ship/Bare Turbo | +5 … +7 % (slower) |
+| TTD recording (4 rows) | −3 … −6 % (the CRC32C instruction) |
+| smooth tile, blend | −15 … −25 % of the tile, the same pictures; lite unchanged |
+
+The gain was in two routines, not in the flag, and the baseline build now has it without the flag:
+
+- CRC32C is chosen at run time (the pattern above): TTD recording rows −2 … −4 % on the Deck, the same CRCs.
+- `smoothmotion::Mix` takes two channels to a 32-bit word (16-bit halves never carry), two multiplies a pair instead
+  of a 32-bit vector multiply per channel (SSE4.1 `pmulld`). Blend on an i7-11850H, share of one thread: ATE
+  3.4 → 2.9 % (v2 was 2.7 %), action 1.4 → 0.9 % (v2 1.0 %), the same pictures; exhaustively equal to the
+  per-channel formula.
+
+The flicker search already counts bits with SWAR where the build has no POPCNT (`Ones` in `smoothmotion.cpp`).
+Do not add `-march` / `-mpopcnt` for speed: measure the routine and give it its own path.
 
 ## 4. Measuring: the A/B procedure
 
