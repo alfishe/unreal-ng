@@ -1324,3 +1324,61 @@ TEST(GSCardRunTo_Test, TheMainCpuRunsToAFrameT)
 
     EXPECT_EQ(m.Run("main_t", frame).status, execution::RunReply::Status::BadRequest);
 }
+
+// The lightweight player reports the host side's protocol events as the full card does (it has no CPU of its own, the
+// main CPU's breakpoints are the only ones): host_data with a hit policy stops after the second data byte, host_command
+// after the OUT (#BB), host_reply after the IN (#B3)
+TEST(GSCardTarget_Test, TheLightweightPlayerReportsTheHostsEvents)
+{
+    SoundCardScope sound{TestSound::GeneralSound};
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    if (!FitGeneralSoundCard(context->pSoundManager, GSTypeKind::LW))
+    {
+        EmulatorTestHelper::CleanupEmulator(emulator);
+        FAIL() << "the lightweight player not fitted";
+    }
+    emulator->EnableTurboMode();
+    emulator->DebugOn();
+    BreakpointManager* main = context->pDebugManager->GetBreakpointsManager();
+    auto add = [&](GSCardEvent kind, int value, const char* hits) {
+        BreakpointSpec spec;
+        spec.type = BRK_EVENT;
+        spec.address = static_cast<uint16_t>(kind);
+        if (value >= 0)
+        {
+            spec.nrValue = static_cast<uint8_t>(value);
+            spec.nrMask = 0xFF;
+        }
+        std::string error;
+        if (hits && !BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+            ADD_FAILURE() << error;
+        const uint16_t id = main->AddBreakpoint(spec, error);
+        EXPECT_NE(id, BRK_INVALID) << error;
+        return id;
+    };
+    const uint16_t data = add(GSCardEvent::HostDataWrite, -1, "2");
+    const uint16_t command = add(GSCardEvent::HostCommandWrite, 0x23, nullptr);
+    const uint16_t reply = add(GSCardEvent::HostReplyRead, -1, nullptr);
+    // DI : LD A,#11 : OUT (#B3),A : LD A,#22 : OUT (#B3),A : LD A,#23 : OUT (#BB),A : IN A,(#B3) : JR $
+    const uint8_t program[] = {0xF3, 0x3E, 0x11, 0xD3, 0xB3, 0x3E, 0x22, 0xD3, 0xB3,
+                               0x3E, 0x23, 0xD3, 0xBB, 0xDB, 0xB3, 0x18, 0xFE};
+    for (size_t i = 0; i < sizeof(program); i++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    emulator->GetZ80State()->pc = 0x8000;
+    auto stop = [&](uint16_t id, uint16_t pc) {
+        const uint64_t serial = emulator->LastStop().serial;
+        emulator->RunNFrames(1, false);
+        const Emulator::DebugStop s = emulator->LastStop();
+        EXPECT_NE(s.serial, serial) << "no stop";
+        EXPECT_EQ(s.reason, Emulator::DebugStop::Reason::Breakpoint);
+        EXPECT_EQ(s.breakpoint.breakpointId, id);
+        EXPECT_EQ(s.breakpoint.cpu, DebugCpuId::Main);
+        EXPECT_EQ(emulator->GetZ80State()->pc, pc);
+    };
+    stop(data, 0x8009);
+    stop(command, 0x800D);
+    stop(reply, 0x800F);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

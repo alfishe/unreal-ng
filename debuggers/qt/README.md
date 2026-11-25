@@ -60,6 +60,19 @@ cleared or reconfigured history (`restarted`) starts the table afresh. With the 
 `state/audio/gs/firmware?object=unknown_commands`); nothing pauses. Turn on is `Emulator::gs_command_log` (over the
 WebAPI `POST history/<device>/config {mode}`).
 
+A log row's context menu (gui-card-debugger A5.4): **Break when the game sends #NN** (an event breakpoint
+`host_command` = #NN on the main CPU), **Break when the firmware takes #NN** (`card_command` on the card's CPU, `gs`
+or `ms`; disabled on the lightweight player, which runs no firmware CPU), **Break on data byte N of this upload...**
+(only on an upload's block row: `host_data` on the main CPU with the hit policy `N`, the Nth data byte the host writes
+from the moment it is set, so set it before the upload starts), **Go to this moment** (a TTD seek to the row's frame
+and T; enabled only when the recording holds that moment, otherwise the tooltip says why) and **Copy** (the selected
+rows, tab-separated; Ctrl+C on the log too). The command breaks are on the rows of a command (the command, its
+parameters, replies, the card taking it, its block). The breakpoints are the CPUs' event breakpoints the Breakpoints
+tab lists and edits (in process through the core's manager, over the WebAPI `POST breakpoints` with `hits`); an equal
+one already there is taken, enabled again and its hit count reset, instead of a second. The line over the log says
+what was done. Over the WebAPI the history's time units are not known: on a turbo-clocked model (Scorpion, ATM,
+TS-Conf) the seek lands earlier in the frame than the row.
+
 **The GS send tab** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
 A5.3 "Send console", C11; gs-debugger P5.6): a card tab right after GS monitor, not a dialog; the monitor's
 **Send...** and **Ctrl+Shift+S** bring it to the front. The command is picked from the command set of the profile

@@ -4,10 +4,16 @@
 
 #include <QAction>
 #include <QAbstractButton>
+#include <QApplication>
 #include <QBrush>
+#include <QClipboard>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTableWidget>
@@ -15,6 +21,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cstdio>
 
 #include "addressmenu.h"
@@ -42,6 +49,49 @@ QString plural(uint64_t n, const char * one, const char * many)
 }
 
 const QString kDot = QString(" ") + QChar(0x00B7) + " ";
+
+//A row's record, kept on its first cell
+enum RowRole { RoleFrame = Qt::UserRole, RoleT, RoleCommand, RoleBytes, RoleUpload, RoleHostData };
+
+//The processor of that name ("cpu" the main one, "gs", "ms"), null when none
+CPU * cpu_named(Emulator * e, const std::string &name)
+{
+    if (!e->loaded || e->dm == nullptr) return nullptr;
+    for (CPU * c : e->dm->get_cpus())
+        if (c->name == name) return c;
+    return nullptr;
+}
+
+//An event breakpoint: the user's equal one when there is one (enabled again, a hit policy's count reset to count from
+//now), else a new one. Its id in id (0 when the shim did not list it); false with the reason in error
+bool event_breakpoint(Emulator * e, CPU * c, const std::string &kind, unsigned int value, unsigned int mask,
+                      const std::string &hits, unsigned int &id, bool &existed, std::string &error)
+{
+    existed = false;
+    id = 0;
+    bool ok = false;
+    e->invoke([&]() {
+        auto find = [&]() {
+            for (const EventBreakpoint &b : c->get_event_breakpoints())
+                if (b.kind == kind && b.mask == mask && (b.value & mask) == (value & mask) && b.hits == hits && b.stops) {
+                    id = b.id;
+                    return true;
+                }
+            return false;
+        };
+        if (find()) {
+            existed = true;
+            for (const EventBreakpoint &b : c->get_event_breakpoints())
+                if (b.id == id && !b.enabled) c->enable_event_breakpoint(id, true);
+            if (!hits.empty()) c->reset_event_hits(id);
+            ok = true;
+            return;
+        }
+        ok = c->add_event_breakpoint(kind, value & (mask ? mask : 0xFF), mask, hits, error);
+        if (ok) find();
+    });
+    return ok;
+}
 }
 
 GsMonitorView::GsMonitorView(Emulator * e, QWidget *parent):
@@ -148,6 +198,28 @@ GsMonitorView::GsMonitorView(Emulator * e, QWidget *parent):
                                                      << tr("Text"));
     m_table->horizontalHeader()->setStretchLastSection(true);
     if (QAbstractButton * corner = m_table->findChild<QAbstractButton *>()) corner->setProperty("dbg_mono", true);
+    //The row actions (A5.4): a context menu on a row; Ctrl+C copies the selected rows
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QTableWidget::customContextMenuRequested, this, [this](const QPoint &at) {
+        const int row = m_table->rowAt(at.y());
+        if (row < 0) return;
+        QMenu * menu = row_menu(row, this);
+        menu->exec(m_table->viewport()->mapToGlobal(at));
+        menu->deleteLater();
+    });
+    QAction * copy = new QAction(tr("Copy"), m_table);
+    copy->setShortcut(QKeySequence::Copy);
+    copy->setShortcutContext(Qt::WidgetShortcut);
+    connect(copy, &QAction::triggered, this, [this]() {
+        if (m_table->currentRow() >= 0) QApplication::clipboard()->setText(copy_text(m_table->currentRow()));
+    });
+    m_table->addAction(copy);
+    m_action = new QLabel(this);
+    m_action->setObjectName("gsmonitor:action");
+    m_action->setWordWrap(true);
+    m_action->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_action->hide();
+    layout->addWidget(m_action);
     layout->addWidget(m_table, 1);
     //Scrolling up stops following the tail; back at the bottom it follows again
     connect(m_table->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
@@ -266,6 +338,16 @@ void GsMonitorView::append(const Emulator::GsMonitorRow &r)
         }
         m_table->setItem(at, k, item);
     }
+    //What the row actions read: the moment, the command, a block's bytes and direction (a download, a sector read are
+    //the card's bytes to the host, not an upload)
+    QTableWidgetItem * first = m_table->item(at, ColFrame);
+    const bool block = r.kind == "block";
+    first->setData(RoleFrame, (qlonglong)r.frame);
+    first->setData(RoleT, (qlonglong)r.t);
+    first->setData(RoleCommand, r.command);
+    first->setData(RoleBytes, (qlonglong)(block ? r.bytes : -1));
+    first->setData(RoleUpload, block && r.direction != "read" && r.text.find("download") == std::string::npos);
+    first->setData(RoleHostData, r.host_data);
     if (anomaly) {
         m_anomalies++;
         m_last_anomaly = r.text;
@@ -360,6 +442,7 @@ void GsMonitorView::refresh()
         return;
     }
     show_strip(m);
+    m_ttd_units = std::max(1u, m.ttd_units);
 
     const bool off = m.log_device.empty() || m.log_mode == "off";
     if (m.log_device.empty()) {
@@ -405,4 +488,196 @@ void GsMonitorView::refresh()
     line += (line.isEmpty() ? QString() : kDot) + (m_following ? tr("following") : tr("scrolled up: Follow resumes"));
     m_log_line->setText(line);
     if (m_following) follow();
+}
+
+QMenu * GsMonitorView::row_menu(int row, QWidget * parent)
+{
+    QMenu * menu = new QMenu(parent);
+    menu->setToolTipsVisible(true);
+    const QTableWidgetItem * first = row >= 0 && row < m_table->rowCount() ? m_table->item(row, ColFrame) : nullptr;
+    if (first == nullptr) return menu;
+    const QString kind = m_table->item(row, ColKind)->text();
+    const int command = first->data(RoleCommand).toInt();
+    const qlonglong frame = first->data(RoleFrame).toLongLong(), t = first->data(RoleT).toLongLong();
+    const qlonglong bytes = first->data(RoleBytes).toLongLong();
+    const bool upload = first->data(RoleUpload).toBool() && bytes > 0;
+    //A command the row belongs to: the command itself, its parameters and replies, the card taking it, its block
+    const bool is_command = command >= 0 && !first->data(RoleHostData).toBool() &&
+                            (kind == "command" || kind == "param" || kind == "reply" || kind == "card_took" || kind == "block");
+    const QString code = is_command ? hex2(command) : QString();
+    const QString not_command = tr("This row is not a command's (a command, its parameters, replies or block)");
+    const bool live = !AddressRouter::read_only_at(this) && e->loaded;
+
+    //The card's CPU (none on the lightweight player) and the recorded history, read now
+    CPU * card = cpu_named(e, m_card);
+    std::vector<std::string> kinds = card ? card->event_kinds() : std::vector<std::string>();
+    const bool card_side = card != nullptr && std::find(kinds.begin(), kinds.end(), "card_command") != kinds.end();
+    bool history = false;
+    QString history_why = tr("No time-travel recording: record one (TTD) to go back to a row's moment");
+    if (e->ttd_supported() && e->debug_online()) {
+        const Emulator::TtdAnswer a = e->ttd_call("position", {});
+        const QJsonObject p = QJsonDocument::fromJson(QByteArray::fromStdString(a.json)).object();
+        if (a.ok && p.value("history").toBool()) {
+            const qlonglong first_frame = p.value("first_frame").toInteger();
+            const QJsonObject end = p.value("session_end").toObject();
+            const qlonglong end_frame = end.value("frame").toInteger(), end_t = end.value("tinframe").toInteger();
+            history = frame >= first_frame && (frame < end_frame || (frame == end_frame && t * m_ttd_units <= end_t));
+            history_why = tr("The recording holds frames %1 to %2: this row's moment is not in it").arg(first_frame).arg(end_frame);
+        }
+    }
+
+    auto add = [&](RowAction action, const QString &text, const char * name, bool enabled, const QString &tip) {
+        QAction * a = menu->addAction(text);
+        a->setObjectName(name);
+        a->setEnabled(enabled);
+        a->setToolTip(tip);
+        connect(a, &QAction::triggered, this, [this, action, row, bytes]() {
+            unsigned int byte = 0;
+            if (action == RowAction::BreakUploadByte) {
+                const int max = (int)std::clamp<qlonglong>(bytes, 1, 0x7FFFFFFF);
+                int n = 1;
+                bool ok = false;
+                if (ask_byte)
+                    ok = ask_byte(max, n);
+                else
+                    n = QInputDialog::getInt(this, tr("Break on a data byte of the upload"),
+                                             tr("The data byte to stop on (1 to %1), counted from now:").arg(max), 1, 1, max, 1, &ok);
+                if (!ok) return;
+                byte = (unsigned int)n;
+            }
+            run_row_action(action, row, byte);
+        });
+        return a;
+    };
+    const QString offline = tr("The machine is not connected");
+    add(RowAction::BreakHostSends, is_command ? tr("Break when the game sends %1").arg(code) : tr("Break when the game sends this command"),
+        "gsLogBreakHost", is_command && live,
+        !is_command ? not_command
+        : !live     ? offline
+                    : tr("A protocol breakpoint on the main CPU: the host writes command %1 (OUT #BB), host_command = %1").arg(code));
+    add(RowAction::BreakCardTakes,
+        is_command ? tr("Break when the firmware takes %1").arg(code) : tr("Break when the firmware takes this command"),
+        "gsLogBreakCard", is_command && live && card_side,
+        !is_command  ? not_command
+        : !live      ? offline
+        : !card_side ? tr("This card runs no firmware CPU (the lightweight player): there is no card side to break on")
+                     : tr("A protocol breakpoint on the card's CPU (%1): the firmware reads command %2 (port #01), card_command = %2")
+                           .arg(QString::fromStdString(m_card), code));
+    add(RowAction::BreakUploadByte, tr("Break on data byte N of this upload..."), "gsLogBreakByte", upload && live,
+        !upload ? tr("Only on an upload's row (a block the host wrote)")
+        : !live ? offline
+                : tr("A protocol breakpoint on the main CPU: host_data, stopping at the Nth data byte (OUT #B3) the host "
+                     "writes from now on (hit policy N). Set it before the upload starts: go to the upload's command first "
+                     "when the recording holds it, or before the game uploads again"));
+    add(RowAction::GoTo, tr("Go to this moment"), "gsLogGoTo", history && live,
+        !live ? offline : history ? tr("Time travel to frame %1, T %2 (the recording's seek)").arg(frame).arg(t) : history_why);
+    QAction * copy = add(RowAction::Copy, tr("Copy"), "gsLogCopy", true, tr("The selected rows' text, tab-separated"));
+    copy->setShortcut(QKeySequence::Copy);
+    return menu;
+}
+
+QString GsMonitorView::copy_text(int row) const
+{
+    std::vector<int> rows;
+    const QModelIndexList selected = m_table->selectionModel() ? m_table->selectionModel()->selectedRows() : QModelIndexList();
+    bool in_selection = false;
+    for (const QModelIndex &i : selected) in_selection = in_selection || i.row() == row;
+    if (in_selection)
+        for (const QModelIndex &i : selected) rows.push_back(i.row());
+    else if (row >= 0 && row < m_table->rowCount())
+        rows.push_back(row);
+    std::sort(rows.begin(), rows.end());
+    QStringList lines;
+    for (int r : rows) {
+        QStringList cells;
+        for (int k = 0; k < ColCount; k++) cells << (m_table->item(r, k) ? m_table->item(r, k)->text() : QString());
+        lines << cells.join('\t');
+    }
+    return lines.join('\n');
+}
+
+bool GsMonitorView::run_row_action(RowAction action, int row, unsigned int byte, QString * message)
+{
+    const QTableWidgetItem * first = row >= 0 && row < m_table->rowCount() ? m_table->item(row, ColFrame) : nullptr;
+    QString said;
+    bool ok = false;
+    auto done = [&]() {
+        m_action->setText(said);
+        m_action->setVisible(!said.isEmpty());
+        if (message) *message = said;
+        return ok;
+    };
+    if (first == nullptr) return done();
+    const int command = first->data(RoleCommand).toInt();
+    const qlonglong frame = first->data(RoleFrame).toLongLong(), t = first->data(RoleT).toLongLong();
+    const qlonglong bytes = first->data(RoleBytes).toLongLong();
+    if (action == RowAction::Copy) {
+        const QString text = copy_text(row);
+        QApplication::clipboard()->setText(text);
+        said = tr("Copied %n rows", nullptr, (int)text.count('\n') + 1);
+        ok = !text.isEmpty();
+        return done();
+    }
+    if (AddressRouter::read_only_at(this) || !e->loaded) {
+        said = tr("The machine is not connected: nothing changed");
+        return done();
+    }
+    auto event = [&](CPU * c, const char * cpu_name, const std::string &kind, unsigned int value, unsigned int mask,
+                     const std::string &hits, const QString &words) {
+        if (c == nullptr) {
+            said = tr("Refused: no %1 CPU").arg(cpu_name);
+            return false;
+        }
+        unsigned int id = 0;
+        bool existed = false;
+        std::string error;
+        if (!event_breakpoint(e, c, kind, value, mask, hits, id, existed, error)) {
+            said = tr("Refused: %1").arg(QString::fromStdString(error));
+            return false;
+        }
+        said = (existed ? tr("Already there: breakpoint #%1 on %2: %3") : tr("Breakpoint #%1 on %2: %3")).arg(id).arg(cpu_name, words);
+        emit breakpoints_changed();
+        return true;
+    };
+    switch (action) {
+    case RowAction::BreakHostSends:
+        if (command >= 0)
+            ok = event(cpu_named(e, "cpu"), "main", "host_command", (unsigned int)command, 0xFF, std::string(),
+                       tr("the host sends command %1").arg(hex2(command)));
+        break;
+    case RowAction::BreakCardTakes:
+        if (command >= 0)
+            ok = event(cpu_named(e, m_card), m_card.c_str(), "card_command", (unsigned int)command, 0xFF, std::string(),
+                       tr("the card takes command %1").arg(hex2(command)));
+        break;
+    case RowAction::BreakUploadByte:
+        if (!first->data(RoleUpload).toBool() || byte == 0 || (bytes > 0 && byte > (qulonglong)bytes)) {
+            said = tr("Not an upload's data byte");
+            break;
+        }
+        ok = event(cpu_named(e, "cpu"), "main", "host_data", 0, 0, std::to_string(byte),
+                   tr("the host sends a data byte, hit %1 from now").arg(byte));
+        break;
+    case RowAction::GoTo: {
+        if (!e->ttd_supported()) {
+            said = tr("No time-travel recording");
+            break;
+        }
+        const Emulator::TtdAnswer a = e->ttd_call("seek", {{"frame", std::to_string(frame)}, {"tinframe", std::to_string(t * m_ttd_units)}});
+        const QJsonObject o = QJsonDocument::fromJson(QByteArray::fromStdString(a.json)).object();
+        if (!a.ok)
+            said = o.value("message").toString(tr("The emulator did not answer."));
+        else if (o.contains("reached") && !o.value("reached").toBool())
+            said = o.value("message").toString(tr("The seek did not reach the row's moment"));
+        else {
+            said = tr("At frame %1, T %2").arg(frame).arg(t);
+            ok = true;
+            emit moved();
+        }
+        break;
+    }
+    case RowAction::Copy:
+        break;
+    }
+    return done();
 }

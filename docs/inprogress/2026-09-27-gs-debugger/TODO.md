@@ -394,7 +394,7 @@ what an agent reads):
   in the TTD state.
 - [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
   console, the protocol monitor, the analysis tabs (A5.2a). Owner's order 2026-11-23: analysis tabs (landed
-  4967cd423), then the Send console (built 2026-11-25, below), then the twin timeline; the log row actions (A5.4) still to be asked. With them
+  4967cd423), then the Send console (built 2026-11-25, below), then the log row actions (A5.4, built 2026-11-25, below), then the twin timeline. With them
   (4967cd423): the side tab bars of both debuggers scroll instead of widening the window, an arrow at each end, the
   wheel switches tabs (`unreal-qt/src/widgets/tabscrollarrows.h`, `TabScrollArrows.*`).
   - Protocol monitor prototype, embedded debugger (2026-11-23; owner decision: a card side tab "GS monitor", not a
@@ -406,7 +406,12 @@ what an agent reads):
     mode ring). Live through the card panes' timer (200 ms) while the tab is in front of a shown window. Tests
     `CardPanes_Test.TheMonitor*`. eCat: `debuggers/qt/ecat/dialogs/debugger/gsmonitor.h`, the same tab after "GS
     protocol" in both adapters (shim `read_gs_monitor`, `gs_command_log`; remote plain GETs), 4 Hz in process, 1 Hz
-    remote; self-check `gs monitor:` on every card, in process and --connect. Left: the log row actions (A5.4). Done (2026-11-24): the history read got a cursor
+    remote; self-check `gs monitor:` on every card, in process and --connect. Log row actions (A5.4, 2026-11-25, both
+    debuggers): a row's context menu breaks when the game sends the command (`host_command`, main), when the firmware
+    takes it (`card_command`, the card's CPU; none on the lightweight player), on data byte N of an upload (`host_data`,
+    hit policy N from now), goes to the row's moment (TTD seek, only when the recording holds it) and copies the
+    selected rows; an equal breakpoint is taken instead of a second (design §7.3). Tests
+    `CardPanes_Test.TheMonitorRowActionsBreakGoAndCopy`, self-check `gs log menu:`. Done (2026-11-24): the history read got a cursor
     (`since`, records with `seq`, `next_since` / `missed` / `restarted` on every plane), both monitors page after it,
     so no row is lost between two refreshes (`CardPanes_Test.TheMonitorLosesNoRecordBetweenRefreshes`).
   - Analysis tabs prototype, embedded debugger, as built (2026-11-23; A5.2a rows Objects, Dispatch, Unknown, Writers):

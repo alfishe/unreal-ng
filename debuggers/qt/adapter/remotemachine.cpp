@@ -485,7 +485,9 @@ public:
     std::string breakpoint_condition(unsigned int address) override;
     std::vector<std::string> event_kinds() override { return m_event_kinds; }
     std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override;
-    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override;
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                              std::string &error) override;
+    bool reset_event_hits(unsigned int id) override;
     bool remove_event_breakpoint(unsigned int id) override;
     bool enable_event_breakpoint(unsigned int id, bool on) override;
     void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
@@ -537,7 +539,9 @@ public:
     std::vector<unsigned int> get_breakpoints() override;
     std::vector<std::string> event_kinds() override { return m_event_kinds; }
     std::vector<ecatshim::EventBreakpoint> get_event_breakpoints() override;
-    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override;
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                              std::string &error) override;
+    bool reset_event_hits(unsigned int id) override;
     bool remove_event_breakpoint(unsigned int id) override;
     bool enable_event_breakpoint(unsigned int id, bool on) override;
     void set_event_kinds(std::vector<std::string> kinds) { m_event_kinds = std::move(kinds); }
@@ -981,6 +985,9 @@ public:
             row.name = str(r, "name");
             row.text = str(r, "text");
             row.anomaly = str(r, "anomaly");
+            row.bytes = num(r, "bytes", -1);
+            row.direction = str(r, "direction");
+            row.host_data = r.value("host_data").toBool();
             out.rows.push_back(std::move(row));
         }
         if (out.log_mode == "off") return out;
@@ -1625,6 +1632,13 @@ public:
                     x.value = (unsigned int)b.value("value").toInt();
                     x.mask = (unsigned int)b.value("value_mask").toInt();
                     x.enabled = b.value("active").toBool(true);
+                    const QString mode = b.value("hit_mode").toString();
+                    const QString target = QString::number(b.value("hit_target").toInteger());
+                    x.hits = (mode == "equal"      ? target
+                              : mode == "at_least" ? ">=" + target
+                              : mode == "multiple" ? "%" + target
+                                                   : QString()).toStdString();
+                    x.stops = b.value("stop").toBool(true);
                     l.events.push_back(x);
                     continue;
                 }
@@ -1648,7 +1662,7 @@ public:
         return m_bps[cpu].events;
     }
     bool add_event_breakpoint(const QString &cpu, const std::string &kind, unsigned int value, unsigned int mask,
-                              std::string &error)
+                              const std::string &hits, std::string &error)
     {
         if (value > 0xFF || mask > 0xFF) {
             error = "the value and the mask are bytes (0..255)";
@@ -1659,6 +1673,7 @@ public:
             body["value"] = (int)(value & mask);
             body["value_mask"] = (int)mask;
         }
+        if (!hits.empty()) body["hits"] = QString::fromStdString(hits);
         int status = 0;
         const QJsonObject r = m_http.json("POST", m_base + "/breakpoints", body, &status);
         breakpoints_changed();
@@ -1666,6 +1681,13 @@ public:
         error = r.value("message").toString().toStdString();
         if (error.empty()) error = "the emulator did not add it (HTTP " + std::to_string(status) + ")";
         return false;
+    }
+    bool reset_event_hits(const QString &cpu, unsigned int id)
+    {
+        int status = 0;
+        m_http.json("POST", m_base + "/breakpoints/hits/reset?cpu=" + cpu, QJsonObject{{"id", (int)id}}, &status);
+        breakpoints_changed();
+        return status == 200;
     }
     bool remove_event_breakpoint(const QString &cpu, unsigned int id)
     {
@@ -1792,13 +1814,24 @@ public:
         for (const Breakpoint &b : breakpoints(cpu)) user = user || (!b.run_to && b.address == (address & 0xFFFF));
         // Gone at a stop after this run starts (the run start and the stop each move the seq), not at the stop it
         // was set at, whose answer may come only now
-        drop_run_to();
-        m_run_to_seq = m_seq.load();
-        if (!user) {
-            m_http.json("POST", m_base + "/breakpoints",
-                        QJsonObject{{"type", "execution"}, {"address", (int)(address & 0xFFFF)}, {"group", kRunToGroup},
-                                    {"note", "run to the cursor"}, {"cpu", cpu}});
-            m_run_to_armed = true;
+        {
+            // The waiter's removal of an earlier run-to (by group) never lands after this one is set
+            std::lock_guard<std::mutex> lock(m_run_to_mutex);
+            if (m_run_to_armed.exchange(false)) remove_run_to(m_http, m_base);
+            if (!user) {
+                m_http.json("POST", m_base + "/breakpoints",
+                            QJsonObject{{"type", "execution"}, {"address", (int)(address & 0xFFFF)}, {"group", kRunToGroup},
+                                        {"note", "run to the cursor"}, {"cpu", cpu}});
+                // The emulator's seq now, not the waiter's: the waiter lags behind the edits just made (each poke and
+                // register write moves the seq), and its answer for them, still paused, would count as the stop of
+                // this run and take the breakpoint away before the run starts. A running machine has no run start
+                // to come: its stop alone moves the seq past the mark
+                int status = 0;
+                const QJsonObject now = m_http.json("GET", m_base + "/debug/wait?timeout_ms=0", QJsonObject(), &status);
+                const uint64_t seq = status == 200 ? (uint64_t)now.value("seq").toDouble() : m_seq.load();
+                m_run_to_seq = (status == 200 && now.value("state").toString() != "paused" && seq > 0) ? seq - 1 : seq;
+                m_run_to_armed = true;
+            }
         }
         breakpoints_changed();
         m_arming_run_to = true;
@@ -1900,6 +1933,7 @@ private:
     std::atomic<uint64_t> m_seq{0};
     std::atomic<uint64_t> m_run_to_seq{0};
     std::atomic<bool> m_run_to_armed{false};
+    std::mutex m_run_to_mutex;  // the run-to's arming and removal (views' thread and waiter)
     bool m_arming_run_to = false;
     std::vector<std::shared_ptr<RemoteCardZ80>> m_cards;
     struct BreakpointList {
@@ -1928,6 +1962,7 @@ private:
     // HALT at its address it would stop the run at once)
     void drop_run_to()
     {
+        std::lock_guard<std::mutex> lock(m_run_to_mutex);
         if (m_run_to_armed.exchange(false)) clear_run_to();
     }
     void clear_run_to()
@@ -1984,9 +2019,10 @@ private:
             if (!a.value("changed").toBool()) continue;
             m_seq = (uint64_t)a.value("seq").toDouble();
             m_dirty = true;
-            if (a.value("state").toString() == "paused" && m_seq.load() >= m_run_to_seq.load() + 2 &&
-                m_run_to_armed.exchange(false))
-                remove_run_to(wait, base);
+            if (a.value("state").toString() == "paused" && m_seq.load() >= m_run_to_seq.load() + 2) {
+                std::lock_guard<std::mutex> lock(m_run_to_mutex);
+                if (m_seq.load() >= m_run_to_seq.load() + 2 && m_run_to_armed.exchange(false)) remove_run_to(wait, base);
+            }
             notify();
         }
     }
@@ -2379,9 +2415,15 @@ std::vector<ecatshim::EventBreakpoint> RemoteZ80::get_event_breakpoints()
     return m_m->event_breakpoints("main");
 }
 
-bool RemoteZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+bool RemoteZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                                    std::string &error)
 {
-    return m_m->add_event_breakpoint("main", kind, value, mask, error);
+    return m_m->add_event_breakpoint("main", kind, value, mask, hits, error);
+}
+
+bool RemoteZ80::reset_event_hits(unsigned int id)
+{
+    return m_m->reset_event_hits("main", id);
 }
 
 bool RemoteZ80::remove_event_breakpoint(unsigned int id)
@@ -2399,9 +2441,15 @@ std::vector<ecatshim::EventBreakpoint> RemoteCardZ80::get_event_breakpoints()
     return m_m->event_breakpoints(m_cpu);
 }
 
-bool RemoteCardZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+bool RemoteCardZ80::add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                                    std::string &error)
 {
-    return m_m->add_event_breakpoint(m_cpu, kind, value, mask, error);
+    return m_m->add_event_breakpoint(m_cpu, kind, value, mask, hits, error);
+}
+
+bool RemoteCardZ80::reset_event_hits(unsigned int id)
+{
+    return m_m->reset_event_hits(m_cpu, id);
 }
 
 bool RemoteCardZ80::remove_event_breakpoint(unsigned int id)

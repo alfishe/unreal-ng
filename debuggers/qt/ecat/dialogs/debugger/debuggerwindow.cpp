@@ -172,6 +172,17 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     m_gs_send = new GsSendView(e, m_side_tabs);
     m_side_tabs->setTabVisible(m_side_tabs->insertTab(m_side_tabs->indexOf(m_gs_monitor) + 1, m_gs_send, tr("GS send")), false);
     connect(m_gs_monitor, &GsMonitorView::send_requested, this, [this]() { show_gs_send(); });
+    //The GS monitor's row actions (A5.4): Go to this moment is a move in time like the group's; a breakpoint it made
+    //shows in the list and the listings
+    connect(m_gs_monitor, &GsMonitorView::moved, this, [this]() {
+        if (m_ttd == nullptr) return;
+        m_ttd->poll(true);
+        emit m_ttd->moved();
+    });
+    connect(m_gs_monitor, &GsMonitorView::breakpoints_changed, this, [this]() {
+        refresh_side();
+        update_cursor();
+    });
     {
         QAction * a = new QAction(tr("GS send"), this);
         a->setObjectName("show_gs_send");

@@ -2134,6 +2134,20 @@ void DebuggerWindow::connectGsMonitor(GsMonitorPane* monitor)
         }
         refreshNextPanes(!_emulator->IsPaused());
     });
+    // A log row's action (A5.4): the breakpoint or the seek under the lease, then every view read again (the
+    // breakpoint marks and lists, the machine at the sought moment)
+    connect(monitor, &GsMonitorPane::rowActionRequested, this, [this, monitor](int action, int row, quint32 byte) {
+        if (!_emulator || RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            monitor->runRowAction(lease.get(), static_cast<GsMonitorPane::RowAction>(action), row, byte);
+        }
+        updateState();
+        refreshNextPanes(!_emulator->IsPaused());
+    });
 }
 
 void DebuggerWindow::connectGsSend(GsSendPane* pane)

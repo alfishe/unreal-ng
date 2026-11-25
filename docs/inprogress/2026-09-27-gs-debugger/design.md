@@ -1346,6 +1346,25 @@ the GS slot.
   `debuggercpu::CardSource` in `unreal-qt/src/debugger/debuggercpu.cpp`; widgets' `setCpu`). The card is read
   through `GSCardTarget` on the GUI thread of a paused machine; steps through `RunControl::CardStep`; the time group
   by the card verbs ([TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md)).
+- **The GS monitor's log row actions (U2, gui-card-debugger.md A5.4), 2026-11-25.** A context menu on a log row, in
+  both debuggers: break when the game sends this command (event breakpoint `host_command` = the row's command on the
+  main CPU), break when the firmware takes it (`card_command` on the card's CPU: the GS slot's, or the MultiSound's own
+  GS CPU; disabled on the lightweight player, which has no firmware CPU), break on data byte N of this upload
+  (`host_data` on the main CPU with the hit policy `N`: the Nth data byte the host writes from the moment it is set;
+  only on an upload's block row), go to this moment (a TTD `seek` to the row's frame and T, the T scaled to the
+  history's units; enabled only when the recording holds that moment, otherwise the tooltip says why), Copy (the
+  selected rows, tab-separated; also Ctrl+C on the log). The breakpoints are the managers' own (the breakpoint list
+  and editor show them): Embedded through `BreakpointManager::AddBreakpoint` under the window's lease, eCat through the
+  shim's event breakpoints (in process, or `POST /breakpoints` with `hits` over --connect). An equal user breakpoint
+  already there (same kind, value, mask, hit policy, stopping, no condition) is taken instead of a second: enabled
+  again, a hit policy's count reset. Embedded: `GsMonitorPane::rowMenu` / `runRowAction`, test
+  `CardPanes_Test.TheMonitorRowActionsBreakGoAndCopy`; eCat: `GsMonitorView::row_menu` / `run_row_action`, self-check
+  `gs log menu:`. The lightweight player now reports the host-side events too (`host_data`, `host_command`,
+  `host_reply` from its port handler, as the full card does; before, a host breakpoint on it was accepted and never
+  fired): `GSCardTarget_Test.TheLightweightPlayerReportsTheHostsEvents`. Not done: the host-side events come only
+  from the game's port writes (the debugger's own sends do
+  not stop it); over --connect the history's units are not known, so on a turbo-clocked model the seek lands at the
+  row's T taken as history units (earlier in the frame).
 
 ### 7.4 External debuggers (A3)
 
