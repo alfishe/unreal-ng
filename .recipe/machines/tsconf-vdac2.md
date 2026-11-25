@@ -6,7 +6,9 @@ program selects it with `#77` bit 2, sends display lists and coprocessor command
 over `#57`, and switches the monitor to the FT812 picture with `V_CONFIG` bit 2.
 The FT812's interrupt then replaces TS-Conf's line interrupt. Games for it: R-Type,
 Heroes II, Zuma. The TS-Labs SDK programs are in
-[testdata/machines/tsconf/vdac2-sdk/](../../testdata/machines/tsconf/vdac2-sdk/README.md).
+[testdata/machines/tsconf/vdac2-sdk/](../../testdata/machines/tsconf/vdac2-sdk/README.md). The VDAC4 board (an FT812
+core in an FPGA plus an ESP32-S3 that runs DOOM and R-Type VDAC4) and which of the two to use:
+[tsconf-vdac4.md](tsconf-vdac4.md#vdac2-or-vdac4-which-machine).
 
 Ground truth:
 [vdac2card.h](../../core/src/emulator/platforms/tsconf/vdac2card.h)/[.cpp](../../core/src/emulator/platforms/tsconf/vdac2card.cpp),
