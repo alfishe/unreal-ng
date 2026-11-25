@@ -71,7 +71,7 @@ class TTDVdac4EspCpu : public TTDSerializable, public ITTDRegionSource
 {
 public:
     /// A keyframe at least this often (captures)
-    static constexpr uint32_t kKeyframeFrames = 50;
+    static constexpr uint32_t kKeyframeFrames = 25;
     /// A keyframe once the journal holds this much
     static constexpr size_t kJournalLimit = 256 * 1024;
 

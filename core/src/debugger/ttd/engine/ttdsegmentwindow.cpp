@@ -84,9 +84,11 @@ bool TTDSeekIndex::Decode(const uint8_t* data, size_t size, uint64_t indexOffset
             !r.Varint(p.firstItem) || !r.VarintAs(p.items) || !r.Varint(p.firstFrame) || !r.Varint(tables) ||
             tables > r.Left())
             return false;
-        // The records lie before the index, the versions are numbered one part after another
+        // The records lie before the index, the versions are numbered one part after another, and a file holds
+        // fewer versions than bytes (a version takes eight bytes of a piece record at least): what a reader
+        // allocates per version is bounded by the file's size, whatever the index claims
         if (p.piecesOffset >= indexOffset || p.checkpointsOffset >= indexOffset || p.tablesOffset >= indexOffset ||
-            p.firstItem != nextItem || p.firstItem + p.items > kNoItem)
+            p.firstItem != nextItem || p.firstItem + p.items > kNoItem || p.firstItem + p.items > indexOffset)
             return false;
         nextItem = p.firstItem + p.items;
         uint64_t previous = p.firstFrame;
@@ -189,13 +191,15 @@ bool TTDSessionFile::ReadSegmentWindow(const ITTDByteSource& source, TTDPieceSto
         uint32_t region, piece, item;
     };
     std::vector<Named> tableItems;
+    uint64_t tableCheckpoint = UINT64_MAX;  // the table's checkpoint in its part, as the table record names it
     if (withTable)
     {
         const TTDSeekIndexPart& p = parts[tablePart];
         const uint8_t* data = nullptr;
         size_t size = 0;
-        if (!TTDContainerReader::ReadRecordAt(source, p.tablesOffset, p.tablesStored, tablesId, scratch.stored,
-                                              scratch.record, data, size, error))
+        if (!TTDContainerReader::ReadRecordAt(source, p.tablesOffset, p.tablesStored, tablesId,
+                                              static_cast<uint32_t>(tablePart), scratch.stored, scratch.record, data,
+                                              size, error))
             return fail("piece tables of part " + std::to_string(tablePart) + ": " + error);
         scratch.work.bytesRead += p.tablesStored;
         TTDByteReader r(data, size);
@@ -205,6 +209,8 @@ bool TTDSessionFile::ReadSegmentWindow(const ITTDByteSource& source, TTDPieceSto
         {
             uint64_t ordinal = 0, regions = 0;
             ok = r.Varint(ordinal) && r.Varint(regions) && regions <= r.Left();
+            if (t == tableOrdinal)
+                tableCheckpoint = ordinal;
             for (uint64_t g = 0; ok && g < regions; ++g)
             {
                 uint32_t region = 0, pieces = 0;
@@ -235,7 +241,8 @@ bool TTDSessionFile::ReadSegmentWindow(const ITTDByteSource& source, TTDPieceSto
         size_t size = 0;
         if (p.checkpointsOffset == 0 ||
             !TTDContainerReader::ReadRecordAt(source, p.checkpointsOffset, p.checkpointsStored, checkpointsId,
-                                              scratch.stored, scratch.record, data, size, error))
+                                              static_cast<uint32_t>(k), scratch.stored, scratch.record, data, size,
+                                              error))
             return fail("checkpoints of part " + std::to_string(k) + ": " + error);
         scratch.work.bytesRead += p.checkpointsStored;
         TTDByteReader c(data, size);
@@ -249,6 +256,9 @@ bool TTDSessionFile::ReadSegmentWindow(const ITTDByteSource& source, TTDPieceSto
             const bool inside = frame >= fromFrame && frame <= toFrame;
             if (ok && inside)
                 frames.push_back(frame);
+            // The table read is the one of the first frame's checkpoint, not one the index names so
+            if (ok && withTable && k == tablePart && (frame == fromFrame) != (i == tableCheckpoint))
+                ok = false;
             for (uint64_t g = 0; ok && g < changedRegions; ++g)
             {
                 uint32_t region = 0, changeCount = 0;
@@ -291,7 +301,8 @@ bool TTDSessionFile::ReadSegmentWindow(const ITTDByteSource& source, TTDPieceSto
         const uint8_t* data = nullptr;
         size_t size = 0;
         if (p.piecesOffset == 0 || !TTDContainerReader::ReadRecordAt(source, p.piecesOffset, p.piecesStored, piecesId,
-                                                                    scratch.stored, scratch.pieces[k], data, size, error))
+                                                                     static_cast<uint32_t>(k), scratch.stored,
+                                                                     scratch.pieces[k], data, size, error))
             return fail("pieces of part " + std::to_string(k) + ": " + error);
         scratch.work.bytesRead += p.piecesStored;
         ++scratch.work.partsRead;

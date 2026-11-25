@@ -876,8 +876,9 @@ bool TTDContainerReader::ReadIndexExtra(const ITTDByteSource& source, std::vecto
 }
 
 bool TTDContainerReader::ReadRecordAt(const ITTDByteSource& source, uint64_t offset, uint32_t storedSize,
-                                      uint16_t streamId, std::vector<uint8_t>& stored, std::vector<uint8_t>& buffer,
-                                      const uint8_t*& data, size_t& size, std::string& error)
+                                      uint16_t streamId, uint32_t partIndex, std::vector<uint8_t>& stored,
+                                      std::vector<uint8_t>& buffer, const uint8_t*& data, size_t& size,
+                                      std::string& error)
 {
     const uint64_t fileSize = source.Size();
     if (offset + kRecordHeaderSize + storedSize > fileSize)
@@ -898,8 +899,8 @@ bool TTDContainerReader::ReadRecordAt(const ITTDByteSource& source, uint64_t off
     std::memcpy(&flags, h + 6, 2);
     const uint32_t rawSize = GetU32(h + 20);
     if (std::memcmp(h, kSync, 4) != 0 || codec::Crc32C(h, 28) != GetU32(h + 28) || stream != streamId ||
-        GetU32(h + 16) != storedSize || rawSize > kMaxRawSize || (flags & (kFlagPartEnd | kFlagContinued)) != 0 ||
-        ((flags & kFlagCompressed) == 0 && rawSize != storedSize))
+        GetU32(h + 8) != partIndex || GetU32(h + 16) != storedSize || rawSize > kMaxRawSize ||
+        (flags & (kFlagPartEnd | kFlagContinued)) != 0 || ((flags & kFlagCompressed) == 0 && rawSize != storedSize))
     {
         error = "the record at " + std::to_string(offset) + " is not the one its index names";
         return false;

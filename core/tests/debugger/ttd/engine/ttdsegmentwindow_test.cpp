@@ -15,10 +15,12 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "common/filehelper.h"
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/engine/ttdseekindex.h"
@@ -42,10 +44,10 @@ struct Recording
     std::map<size_t, std::vector<uint8_t>> wanted;   ///< per checkpoint of the active line: the region's bytes
     std::map<size_t, std::vector<uint8_t>> files;    ///< per segment (its first checkpoint): its file
 
-    Recording()
+    explicit Recording(uint32_t tableEvery = kTableEvery)
     {
         engine.SetHistoryPolicy({TTDHistoryMode::Growable, 0, kSegmentFrames});
-        engine.SetSnapshotInterval(kTableEvery);
+        engine.SetSnapshotInterval(tableEvery);
         TTDRegionDesc ram;
         ram.name = "ram";
         ram.pieces = kPieces;
@@ -120,7 +122,7 @@ struct Recording
 /// 120 frames: three segments, the first two written and evicted
 struct Evicted : Recording
 {
-    Evicted()
+    explicit Evicted(uint32_t tableEvery = kTableEvery) : Recording(tableEvery)
     {
         for (int i = 0; i < 120; ++i)
             Frame();
@@ -133,6 +135,45 @@ struct Evicted : Recording
         }
     }
 };
+
+/// @p file's records as they lie, under a seek index changed by @p change: a file whose index lies behind valid
+/// CRCs (the records keep their offsets, so the index still names its file)
+template <typename Change>
+std::vector<uint8_t> WithSeekIndex(const std::vector<uint8_t>& file, Change change)
+{
+    const TTDMemorySource source(file);
+    std::string error;
+    std::vector<uint8_t> extra;
+    uint64_t indexOffset = 0;
+    TTDSeekIndex index;
+    EXPECT_TRUE(TTDContainerReader::ReadIndexExtra(source, extra, indexOffset, error)) << error;
+    EXPECT_TRUE(TTDSeekIndex::Decode(extra.data(), extra.size(), indexOffset, index));
+    change(index, indexOffset);
+    TTDContainerReader reader;
+    EXPECT_TRUE(reader.Open(source, error, TTDSessionFile::KnownStream)) << error;
+    TTDMemorySink sink;
+    TTDContainerWriter writer;
+    EXPECT_TRUE(writer.Begin(sink, reader.Header(), &error)) << error;
+    std::vector<uint8_t> stored;
+    for (const TTDPartRef& part : reader.Parts())
+    {
+        for (const TTDRecordRef& record : part.physical)
+        {
+            EXPECT_TRUE(reader.ReadStored(record, stored, &error)) << error;
+            EXPECT_TRUE(
+                writer.AddStoredRecord(record.streamId, record.flags, stored.data(), stored.size(), record.rawSize));
+        }
+        TTDPartEnd partEnd;
+        partEnd.firstFrame = part.firstFrame;
+        partEnd.frameCount = part.frameCount;
+        partEnd.branch = part.branch;
+        partEnd.dependencies = part.dependencies;
+        partEnd.extra = part.extra;
+        EXPECT_TRUE(writer.EndPart(partEnd));
+    }
+    EXPECT_TRUE(writer.Finalize(index.Encode(indexOffset)));
+    return sink.bytes;
+}
 }  // namespace
 
 /// The seek index round trip, and the two checks that make a moved or foreign one unusable
@@ -346,6 +387,156 @@ TEST(TTDSegmentWindow_Test, DamageInAPartTheStretchNeeds)
 
     ASSERT_TRUE(r.engine.ReadBackSegmentWindow(0, 1, source, error, 45)) << error;
     r.ExpectCheckpoint(45);
+}
+
+namespace
+{
+/// @p rounds damaged copies of the evicted segments' files of a recording with full tables every @p tableEvery
+/// checkpoints, a stretch read of each: refused with nothing left, or every checkpoint it brought in as recorded
+void FuzzStretches(uint32_t tableEvery, int rounds, uint32_t seed)
+{
+    SCOPED_TRACE("full tables every " + std::to_string(tableEvery));
+    Evicted r(tableEvery);
+    const size_t live = r.engine.PieceStore().LiveVersions();
+    std::mt19937 rng(seed);
+    auto pick = [&](uint64_t below) { return std::uniform_int_distribution<uint64_t>(0, below - 1)(rng); };
+    int read = 0, refused = 0;
+    for (int round = 0; round < rounds; ++round)
+    {
+        const size_t segment = round & 1;
+        std::vector<uint8_t> bytes = r.files[segment];
+        const size_t at = static_cast<size_t>(pick(bytes.size()));
+        std::string what = "byte " + std::to_string(at);
+        switch (round % 8)
+        {
+            case 0:  // a flipped bit
+                bytes[at] ^= static_cast<uint8_t>(1u << (rng() % 8));
+                break;
+            case 1:  // cut short
+                bytes.resize(at);
+                break;
+            case 2:  // a size field gone huge
+                for (size_t k = 0; k < 4 && at + k < bytes.size(); ++k)
+                    bytes[at + k] = 0xFF;
+                break;
+            case 3:  // garbage
+                for (size_t k = 0; k < 16 && at + k < bytes.size(); ++k)
+                    bytes[at + k] = static_cast<uint8_t>(rng());
+                break;
+            default:  // the index lies
+                bytes = WithSeekIndex(bytes, [&](TTDSeekIndex& index, uint64_t indexOffset) {
+                    TTDSeekIndexPart& p = index.parts[pick(index.parts.size())];
+                    const TTDSeekIndexPart other = index.parts[pick(index.parts.size())];
+                    uint64_t* offsets[] = {&p.piecesOffset, &p.checkpointsOffset, &p.tablesOffset};
+                    uint32_t* sizes[] = {&p.piecesStored, &p.checkpointsStored, &p.tablesStored};
+                    const uint64_t otherOffsets[] = {other.piecesOffset, other.checkpointsOffset, other.tablesOffset};
+                    const uint32_t otherSizes[] = {other.piecesStored, other.checkpointsStored, other.tablesStored};
+                    const size_t field = pick(3), from = pick(3);
+                    const uint64_t lie = pick(9);
+                    what = "index lie " + std::to_string(lie) + ", part " + std::to_string(&p - index.parts.data()) +
+                           " of " + std::to_string(index.parts.size()) + ", field " + std::to_string(field);
+                    switch (lie)
+                    {
+                        case 0:  // another record of the file, with its size
+                            *offsets[field] = otherOffsets[from];
+                            *sizes[field] = otherSizes[from];
+                            break;
+                        case 1:  // anywhere before the index
+                            *offsets[field] = pick(indexOffset);
+                            break;
+                        case 2:
+                            *sizes[field] = static_cast<uint32_t>(rng() % 3 ? pick(2 * indexOffset) : rng());
+                            break;
+                        case 3:  // the versions of a part: one more or less, or as many as a number holds
+                            p.items = rng() % 4 == 0              ? 0xFFFFFF00u
+                                      : rng() % 2 || p.items == 0 ? p.items + 1
+                                                                  : p.items - 1;
+                            break;
+                        case 4:  // one version moved to the next part
+                            if (p.items)
+                            {
+                                --p.items;
+                                ++index.parts.back().items;
+                            }
+                            break;
+                        case 5:
+                            p.firstFrame = rng() % 2 ? other.firstFrame : p.firstFrame + pick(9);
+                            break;
+                        case 6:  // the tables of other frames
+                            if (p.tableFrames.empty() || rng() % 3 == 0)
+                                p.tableFrames.push_back((p.tableFrames.empty() ? p.firstFrame : p.tableFrames.back()) +
+                                                        1 + pick(4));
+                            else if (p.tableFrames.size() > 1 && rng() % 2)
+                            {
+                                // As many tables, each frame under the number of the table after it
+                                p.tableFrames.erase(p.tableFrames.begin());
+                                p.tableFrames.push_back(p.tableFrames.back() + 2);
+                            }
+                            else if (rng() % 2)
+                                p.tableFrames.pop_back();
+                            else
+                                for (uint64_t& frame : p.tableFrames)
+                                    frame += 1 + pick(3);
+                            break;
+                        case 7:
+                            index.line = static_cast<uint32_t>(pick(3) + 1);
+                            break;
+                        default:  // a part gone
+                            index.parts.erase(index.parts.begin() +
+                                              static_cast<std::ptrdiff_t>(pick(index.parts.size())));
+                            break;
+                    }
+                    uint64_t item = 0;  // numbered one part after another, as a writer numbers them
+                    for (TTDSeekIndexPart& part : index.parts)
+                    {
+                        part.firstItem = item;
+                        item += part.items;
+                    }
+                });
+                break;
+        }
+        const TTDSegmentInfo& info = r.engine.Segments()[segment];
+        const size_t need = info.firstCheckpoint + static_cast<size_t>(pick(kSegmentFrames));
+        const TTDMemorySource source(bytes);
+        std::string error;
+        if (!r.engine.ReadBackSegmentWindow(0, segment, source, error, need))
+        {
+            ++refused;
+            ASSERT_FALSE(info.resident) << "round " << round << ": " << error;
+            ASSERT_EQ(r.engine.PieceStore().LiveVersions(), live) << "round " << round << ": " << error;
+            continue;
+        }
+        ++read;
+        ASSERT_TRUE(info.Holds(need)) << "round " << round;
+        std::vector<uint8_t> got(r.memory.size());
+        for (const std::pair<size_t, size_t>& part : info.residentParts)
+            for (size_t index = part.first; index < part.second; ++index)
+            {
+                ASSERT_TRUE(r.engine.RestoreRegion(index, 0, got.data()).Ok())
+                    << "round " << round << ", checkpoint " << index;
+                ASSERT_TRUE(got == r.wanted.at(index)) << "round " << round << " (" << what << "), need " << need
+                                                       << ", checkpoint " << index << ": other bytes";
+            }
+        ASSERT_TRUE(r.engine.EvictSegment(0, segment, error)) << error;
+        ASSERT_EQ(r.engine.PieceStore().LiveVersions(), live) << "round " << round;
+    }
+    std::printf("[ fuzz     ] tables every %u: %d stretch reads - %d read, %d refused\n", tableEvery, rounds, read,
+                refused);
+    EXPECT_GT(read, rounds / 20) << "damage the stretch did not need";
+    EXPECT_GT(refused, rounds / 4);
+}
+}  // namespace
+
+/// A stretch read of a damaged file never crashes and never restores other bytes than the recording's. Two kinds of
+/// damage: bytes of the file (a flipped bit, a cut, a size gone huge, garbage: the CRCs find it or the stretch did
+/// not need it), and a seek index that lies behind valid CRCs (a record's offset or size, the versions of a part, a
+/// part's first frame, the frames of its tables, the line). A read that fails leaves nothing of the stretch.
+/// 2 x 200 reads; the long tier runs 2 x 15,000 (a lying index that restored other bytes needed 1,837)
+TEST(TTDSegmentWindow_Test, DamageNeverRestoresOtherBytes)
+{
+    const int rounds = TestTier::Long() ? 15000 : 200;
+    FuzzStretches(kTableEvery, rounds, 11);  // a table a part at most
+    FuzzStretches(2, rounds, 12);            // two or three tables a part: the index can name the wrong one
 }
 
 /// A branch's file (its records in the branch streams, its first checkpoint the fork's copy whole): a stretch of it

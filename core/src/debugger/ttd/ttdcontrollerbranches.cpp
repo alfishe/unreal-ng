@@ -304,6 +304,7 @@ bool TimeTravelController::FollowLineageAtBoundary(uint64_t frame)
 
 bool TimeTravelController::ForkBranchAt(const TTDTimePoint& from, const TTDTimePoint& cut)
 {
+    WaitFinishingFiles();   // the folder's files whole before they are cut, forked or released
     const int64_t keep = TimelineIndexAtOrBefore(from);
     if (keep < 0)
         return false;
@@ -716,6 +717,7 @@ bool TimeTravelController::UpdateBranch(uint32_t branch, const TTDBranchUpdate& 
 
 void TimeTravelController::ReleaseBranchLines(const std::vector<uint32_t>& removed)
 {
+    WaitFinishingFiles();   // the folder's files whole before they are cut, forked or released
     std::string error;
     // Their files: the delete records first, then the files (a removed line's open file is abandoned)
     if (_shadowWriter && std::find(removed.begin(), removed.end(), _shadowWriterLine) != removed.end())

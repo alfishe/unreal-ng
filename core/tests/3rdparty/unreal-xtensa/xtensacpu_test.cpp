@@ -512,6 +512,44 @@ TEST_F(XtensaCpu_Test, SelfModifyingCodeIsRedecoded)
     EXPECT_EQ(Call(kIncrement, {5}), 15u);
 }
 
+TEST_F(XtensaCpu_Test, HeldCodeStaysOnlyWhenItsBytesComeBack)
+{
+    EXPECT_EQ(Call(kIncrement, {5}), 6u);
+    const size_t blocks = cpu.BlockCount();
+    ASSERT_GT(blocks, 0u);
+
+    // A restore that brings the same bytes back (and changes bytes that hold no decoded code): the blocks stay
+    const std::vector<uint8_t> saved = iram;
+    cpu.HoldCode();
+    std::fill(iram.begin(), iram.end(), uint8_t{0});
+    std::copy(saved.begin(), saved.end(), iram.begin());
+    dram[16] ^= 0xFF;
+    EXPECT_TRUE(cpu.KeepHeldCode());
+    EXPECT_EQ(cpu.BlockCount(), blocks);
+    EXPECT_EQ(Call(kIncrement, {5}), 6u);
+
+    // One code byte differs (written through the host's pointer, the CPU did not see it): the code is dropped
+    cpu.HoldCode();
+    iram[kIncrement - kIram + 5] = 10;  // ADDI imm8
+    EXPECT_FALSE(cpu.KeepHeldCode());
+    EXPECT_EQ(cpu.BlockCount(), 0u);
+    EXPECT_EQ(Call(kIncrement, {5}), 15u);
+
+    // No hold, a hold already used, code decoded or dropped since the hold: nothing is kept
+    EXPECT_FALSE(cpu.KeepHeldCode());
+    cpu.HoldCode();
+    EXPECT_TRUE(cpu.KeepHeldCode());
+    EXPECT_FALSE(cpu.KeepHeldCode());
+    EXPECT_EQ(cpu.BlockCount(), 0u);
+    EXPECT_EQ(Call(kIncrement, {5}), 15u);
+    cpu.HoldCode();
+    EXPECT_EQ(Call(kAdd3, {1, 2, 3}), 6u);  // decodes blocks the copy does not cover
+    EXPECT_FALSE(cpu.KeepHeldCode());
+    cpu.HoldCode();
+    cpu.InvalidateCode();
+    EXPECT_FALSE(cpu.KeepHeldCode());
+}
+
 // ---- stops, counters, state ----
 
 TEST_F(XtensaCpu_Test, StopReasons)

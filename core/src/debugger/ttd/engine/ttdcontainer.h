@@ -330,12 +330,13 @@ public:
     static bool ReadIndexExtra(const ITTDByteSource& source, std::vector<uint8_t>& extra, uint64_t& indexOffset,
                                std::string& error);
     /// One record whose place is known (a session layer's own index): the header at @p offset checked (its CRC,
-    /// stream @p streamId, @p storedSize bytes stored), the payload's CRC checked, the payload decompressed. Read
-    /// in one read into @p buffer (@p stored: scratch for a compressed payload); @p data / @p size name the payload
-    /// inside @p buffer. False with the reason
+    /// stream @p streamId, part @p partIndex, @p storedSize bytes stored), the payload's CRC checked, the payload
+    /// decompressed. The part is checked so that an index naming another part's record of the same stream is
+    /// refused. Read in one read into @p buffer (@p stored: scratch for a compressed payload); @p data / @p size
+    /// name the payload inside @p buffer. False with the reason
     static bool ReadRecordAt(const ITTDByteSource& source, uint64_t offset, uint32_t storedSize, uint16_t streamId,
-                             std::vector<uint8_t>& stored, std::vector<uint8_t>& buffer, const uint8_t*& data,
-                             size_t& size, std::string& error);
+                             uint32_t partIndex, std::vector<uint8_t>& stored, std::vector<uint8_t>& buffer,
+                             const uint8_t*& data, size_t& size, std::string& error);
 
     void MarkDamaged(uint32_t partIndex, const std::string& reason);
     /// A part is reachable when neither it nor any part it depends on (transitively) is damaged

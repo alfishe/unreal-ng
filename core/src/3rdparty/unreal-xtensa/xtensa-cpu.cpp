@@ -523,6 +523,53 @@ void Cpu::InvalidateCode()
         e->code = nullptr;
     codeEntries_.clear();
     codePages_.clear();
+    codeHeld_ = false;
+}
+
+void Cpu::HoldCode()
+{
+    heldPages_.clear();
+    heldBytes_.clear();
+    heldBytes_.reserve(codePages_.size() * 4096);
+    for (const auto& kv : codePages_)
+    {
+        const uint8_t* page = reinterpret_cast<const uint8_t*>(kv.first);
+        heldPages_.push_back(kv.first);
+        heldBytes_.insert(heldBytes_.end(), page, page + 4096);
+    }
+    codeHeld_ = true;
+}
+
+bool Cpu::KeepHeldCode()
+{
+    bool same = codeHeld_ && heldPages_.size() == codePages_.size();
+    for (size_t p = 0; same && p < heldPages_.size(); ++p)
+    {
+        const auto it = codePages_.find(heldPages_[p]);
+        if (it == codePages_.end())
+        {
+            same = false;
+            break;
+        }
+        const uint8_t* now = reinterpret_cast<const uint8_t*>(heldPages_[p]);
+        const uint8_t* held = heldBytes_.data() + p * 4096;
+        for (size_t w = 0; same && w < 64; ++w)
+        {
+            const uint64_t bits = it->second->bits[w];
+            if (bits == ~0ull)
+                same = std::memcmp(now + w * 64, held + w * 64, 64) == 0;
+            else
+                for (size_t b = 0; same && b < 64; ++b)
+                    if ((bits >> b) & 1)
+                        same = now[w * 64 + b] == held[w * 64 + b];
+        }
+    }
+    codeHeld_ = false;
+    heldPages_.clear();
+    heldBytes_.clear();
+    if (!same)
+        InvalidateCode();
+    return same;
 }
 
 void Cpu::FreeRetired()
@@ -532,6 +579,7 @@ void Cpu::FreeRetired()
 
 void Cpu::MarkCode(uint32_t addr, int len)
 {
+    codeHeld_ = false;  // the copy does not cover these bytes
     for (int i = 0; i < len; ++i)
     {
         const uint32_t a = addr + static_cast<uint32_t>(i);

@@ -1975,8 +1975,13 @@ bool EspAppHost::LoadState(const uint8_t* data, size_t size)
     _memory.Psram().SetBlocks(std::move(psram));
     _memory.Sram().SetBlocks(std::move(sram));
     _startDone = nullptr;
-    InvalidateAllCode();
+    _cpu->KeepHeldCode();
     return true;
+}
+
+void EspAppHost::HoldCode()
+{
+    _cpu->HoldCode();
 }
 
 void EspAppHost::InvalidateAllCode()

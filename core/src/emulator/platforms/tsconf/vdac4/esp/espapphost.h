@@ -145,8 +145,13 @@ public:
     /// running); a StartApp's `done` is not part of it (StartApp is synchronous)
     void SaveState(std::vector<uint8_t>& out) const;
     /// Restore SaveState's bytes; the memory (Memory().PsramBytes() / SramBytes() / RomBytes()) is the caller's,
-    /// before or after. Drops the CPU's predecoded and translated code. False: malformed, the host is Reset
+    /// before or after. Drops the CPU's predecoded and translated code, unless HoldCode() says it may stay.
+    /// False: malformed, the host is Reset
     bool LoadState(const uint8_t* data, size_t size);
+    /// A restore that replaces the memory and then calls LoadState, with the memory in place by then: called
+    /// before the memory changes, it lets that LoadState keep the CPU's code when the bytes under it came back
+    /// the same (a seek inside one run of an app). Covers the next LoadState only
+    void HoldCode();
     /// Drop predecoded and translated code of all guest memory (its bytes were replaced)
     void InvalidateAllCode();
 

@@ -19,7 +19,7 @@ std::string Vdac4StateText(const Json::Value& reply, size_t logLines)
     const Json::Value& audio = reply["audio"];
     std::ostringstream out;
     out << "VDAC4 board: Tang personality " << tang["personality"].asString() << (tang["armed"].asBool() ? ", armed" : "")
-        << (tang["esp_host"].asBool() ? ", ESP host" : "") << ", RAM_G " << (tang["ram_g_3mb"].asBool() ? "3 MB" : "1 MB")
+        << (tang["esp_host"].asBool() ? ", ESP host" : "") << ", RAM_G " << (tang["ram_g_3mb"].asBool() ? "3 MB" : "2 MB")
         << "\nESP: " << esp["phase"].asString() << ", " << esp["ms"].asUInt64() << " ms, boots " << esp["boots"].asUInt64()
         << ", last step " << esp["last_step"].asUInt64() << ", resources " << esp["resources"].asUInt64()
         << ", clock restarts " << esp["clock_restarts"].asUInt64() << ", ahead " << esp["clock_offset_us"].asUInt64() << " us";
