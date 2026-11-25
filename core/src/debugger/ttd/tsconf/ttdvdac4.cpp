@@ -456,6 +456,24 @@ void TTDVdac4EspCpu::TTDBeforeRestore()
         MarkAllMemory();
     // A seek inside one run of an app brings the same code bytes back: the load keeps the translated code then
     _board.Runtime().Host().HoldCode();
+    _regionsLeft = false;
+}
+
+bool TTDVdac4EspCpu::TTDLoadRestoresRegions(const uint8_t* state, size_t size)
+{
+    // The load below goes on from a replay point when one has this keyframe and a journal this one begins with:
+    // it copies the point's memory whole, so the engine need not decode the keyframe's first
+    _regionsLeft = false;
+    Vdac4EspStateReader r(state, size);
+    if (r.U32() != kCpuKeyMagic)
+        return false;
+    std::vector<uint8_t> key, journal;
+    r.Blob(key, kCpuMaxState);
+    r.Blob(journal, kCpuMaxState);
+    if (!r.Ok() || key.empty())
+        return false;
+    _regionsLeft = FindReplayPoint(Hash64(key.data(), key.size()), journal) != nullptr;
+    return _regionsLeft;
 }
 
 size_t TTDVdac4EspCpu::TTDStateWithoutRegionsLimit() const
@@ -499,6 +517,8 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
     const uint64_t prev = r.AtEnd() ? 0 : r.U64();
     if (!r.Ok() || !r.AtEnd())
         return false;
+    const bool regionsLeft = _regionsLeft;
+    _regionsLeft = false;
     if (key.empty())
         return true;  // nothing recorded yet (the registry's probe)
 
@@ -526,6 +546,17 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
         else
             _points.clear();  // cannot happen (its own save): start over from the keyframe
     }
+    if (from == 0 && regionsLeft)
+    {
+        // Cannot happen (the same blob found the point a moment ago, its own save loads): the engine left the
+        // memory to the point, so the keyframe's is not in it
+        ++_stats.divergences;
+        _stats.lastDivergence = _loadDivergence = "replay point lost: the ESP memory was not restored";
+        _keyDue = true;
+        return true;
+    }
+    if (from > 0 && regionsLeft)
+        ++_stats.regionsLeft;
     if (from == 0 && !host.LoadState(key.data(), key.size()))
     {
         ++_stats.divergences;

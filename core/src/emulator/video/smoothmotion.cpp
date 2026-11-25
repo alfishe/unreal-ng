@@ -139,6 +139,17 @@ int WeightAt(int64_t t, int64_t ta, int64_t tb)
     return static_cast<int>(((t - ta) * kOne + span / 2) / span);
 }
 
+/// Flickering pixels (`smooth` 0): the frame due. Without a branch: a held pixel's branch mispredicts where
+/// flicker and motion mix
+void KeepHeld(const std::vector<uint8_t>& smooth, const uint32_t* frame, uint32_t* out)
+{
+    for (size_t p = 0; p < smooth.size(); p++)
+    {
+        const uint32_t held = 0u - static_cast<uint32_t>(smooth[p] == 0);
+        out[p] = (out[p] & ~held) | (frame[p] & held);
+    }
+}
+
 void Blend(const Picture& a, const Picture& b, int w, uint32_t* out)
 {
     const size_t n = static_cast<size_t>(a.width) * a.height;
@@ -700,6 +711,20 @@ size_t SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored&
 
 namespace
 {
+/// The ones of a word. std::popcount without a popcnt instruction in the build's baseline (gcc on x86-64) is a
+/// library call: here a few word operations instead
+inline int Ones(uint64_t word)
+{
+#if defined(__POPCNT__) || defined(__aarch64__) || defined(_M_ARM64) || defined(_MSC_VER)
+    return std::popcount(word);
+#else
+    word = word - ((word >> 1) & 0x5555555555555555ull);
+    word = (word & 0x3333333333333333ull) + ((word >> 2) & 0x3333333333333333ull);
+    word = (word + (word >> 4)) & 0x0F0F0F0F0F0F0F0Full;
+    return static_cast<int>((word * 0x0101010101010101ull) >> 56);
+#endif
+}
+
 /// MovesBy on bit masks, the same answer. The 24 x 24 pixels round the block (its reach each way) of both frames as
 /// planes of the colours' indices among the colours met there; per column shift the block's 8 columns of every row as
 /// a byte, so the block read at a shift (dx, dy) is 8 bytes from row 8 + dy: one word a plane. A pixel outside the
@@ -835,7 +860,7 @@ public:
                 Shift(plane);
             both &= ~(_blockB[plane] ^ Word(_a[plane][kReach - dx], kReach - dy)) &
                     ~(_blockA[plane] ^ Word(_b[plane][kReach + dx], kReach + dy));
-            if (std::popcount(both) < wanted)
+            if (Ones(both) < wanted)
                 return false;
         }
         return true;
@@ -1051,10 +1076,7 @@ bool SmoothMotion::Draw(const Result& r, uint32_t* out)
                 _stats.onDevice++;
             else
                 Blend(pa, pb, r.weight, out);
-            // Flickering pixels: the frame due
-            for (size_t p = 0; p < a->smooth.size(); p++)
-                if (!a->smooth[p])
-                    out[p] = a->pixels[p];
+            KeepHeld(a->smooth, a->pixels.data(), out);
             _stats.blended++;
             break;
         case Kind::Interpolate:
@@ -1077,10 +1099,7 @@ bool SmoothMotion::Draw(const Result& r, uint32_t* out)
                         p = &_frames[i - 1];
                 ComposeLayers(*p, *a, *b, r.weight, out);
             }
-            // Flickering pixels: the frame due
-            for (size_t q = 0; q < a->smooth.size(); q++)
-                if (!a->smooth[q])
-                    out[q] = a->pixels[q];
+            KeepHeld(a->smooth, a->pixels.data(), out);
             _stats.interpolated++;
             break;
         }

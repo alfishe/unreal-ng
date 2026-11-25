@@ -7,12 +7,13 @@
 #include <QPainter>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -23,13 +24,6 @@
 #include <thread>
 #include <vector>
 
-#ifdef Q_OS_UNIX
-#include <fcntl.h>
-#include <signal.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
-
 #include "devicescreenwrapper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -38,6 +32,7 @@
 #include "emulator/video/screen.h"
 #include "osdkeyboard/osdkeyboardwindow.h"
 #include "common/framescaler.h"
+#include "common/named_pipe.h"
 #include "ffmpeg_probe.h"
 #ifdef __APPLE__
 #include "common/encoderconfig.h"
@@ -107,10 +102,10 @@ QByteArray EbmlUint(uint32_t id, uint64_t value)
     return EbmlElement(id, payload);
 }
 
-/// The file's start: one video track of width x height frames in `colourSpace` (the FourCC of uncompressed video:
+/// The file's start: one video track of width x height frames in `colorSpace` (the FourCC of uncompressed video:
 /// "BGRA", or "NV12": the Y plane, then U,V interleaved at half resolution), times in microseconds, the segment's size
 /// unknown (it is a stream)
-QByteArray MatroskaStreamHeader(int width, int height, const char* colourSpace)
+QByteArray MatroskaStreamHeader(int width, int height, const char* colorSpace)
 {
     const QByteArray ebml = EbmlElement(0x1A45DFA3, EbmlUint(0x4286, 1) + EbmlUint(0x42F7, 1) + EbmlUint(0x42F2, 4) +
                                                         EbmlUint(0x42F3, 8) + EbmlElement(0x4282, "matroska") +
@@ -119,7 +114,7 @@ QByteArray MatroskaStreamHeader(int width, int height, const char* colourSpace)
         EbmlElement(0x1549A966, EbmlUint(0x2AD7B1, 1000) + EbmlElement(0x4D80, "unreal-ng") + EbmlElement(0x5741, "unreal-ng"));
     const QByteArray video = EbmlElement(0xE0, EbmlUint(0xB0, static_cast<uint64_t>(width)) +
                                                    EbmlUint(0xBA, static_cast<uint64_t>(height)) +
-                                                   EbmlElement(0x2EB524, colourSpace));
+                                                   EbmlElement(0x2EB524, colorSpace));
     const QByteArray track = EbmlElement(0xAE, EbmlUint(0xD7, 1) + EbmlUint(0x73C5, 1) + EbmlUint(0x83, 1) +
                                                    EbmlElement(0x86, "V_UNCOMPRESSED") + video);
     const QByteArray segment = QByteArray::fromHex("18538067") + QByteArray::fromHex("01FFFFFFFFFFFFFF");
@@ -142,7 +137,7 @@ struct HardwareEncoder
 {
     QString name;            ///< h264_nvenc, hevc_vaapi, ...; empty = none
     QString device;          ///< VA-API: the render node the trial opened (/dev/dri/renderD128)
-    bool full = false;       ///< takes 4:4:4: the CRT's colour mask stays sharp (4:2:0 halves its colour resolution)
+    bool full = false;       ///< takes 4:4:4: the CRT's color mask stays sharp (4:2:0 halves its color resolution)
     bool lowPower = false;   ///< VA-API: the fixed-function encoder (Intel VDENC): the fast one, and HEVC 4:4:4 only there
 };
 
@@ -310,7 +305,10 @@ struct WindowRecorder::Writer
     std::string nativeCodec = "h264";
     uint32_t audioRate = 44100;
     bool audio = false;
-    QString fifoPath;  ///< the sound goes into the same ffmpeg through this FIFO (no muxing afterwards)
+    /// The sound goes into the same ffmpeg through this pipe (no muxing afterwards): a FIFO in soundDir (Unix), a
+    /// named pipe (Windows). Null: the sound goes to a file, muxed at the end
+    std::shared_ptr<NamedPipe> soundPipe;
+    std::shared_ptr<QTemporaryDir> soundDir;  ///< the FIFO's private directory (this user's alone), removed with it
     std::atomic<uint64_t> framesDone{0};
 
     // Timings in microseconds since the writer was made (0 = not reached): the status shows where a late start went
@@ -773,29 +771,25 @@ struct WindowRecorder::Writer
         process.start(ffmpeg, args);
         QFile sound;
         std::string failure;
-        int fifoFd = -1;
-        std::deque<QByteArray> backlog;  // sound waiting for ffmpeg to open the FIFO (it does so after the first frames)
-        // Opens the FIFO once ffmpeg reads it (never blocks), then hands over what the pipe takes. It never waits for
-        // the pipe: ffmpeg reads the sound only as fast as the picture lets it, and a writer stuck on the sound could
-        // not feed the picture (a deadlock). False: ffmpeg is gone
+        std::deque<QByteArray> backlog;  // sound waiting for ffmpeg to open the pipe (it does so after the first frames)
+        // Takes the pipe once ffmpeg has opened it (never waits), then hands over what the pipe takes. It never waits
+        // for the pipe: ffmpeg reads the sound only as fast as the picture lets it, and a writer stuck on the sound
+        // could not feed the picture (a deadlock). False: ffmpeg is gone, or another process opened the pipe
         size_t backlogOffset = 0;
         auto pumpSound = [&]() -> bool {
-#ifdef Q_OS_UNIX
-            if (fifoPath.isEmpty())
+            if (!soundPipe)
                 return true;
-            if (fifoFd < 0)
-            {
-                fifoFd = ::open(fifoPath.toLocal8Bit().constData(), O_WRONLY | O_NONBLOCK);
-                if (fifoFd < 0)
-                    return true;  // no reader yet
-            }
+            if (!soundPipe->tryOpenForWrite())
+                return !soundPipe->failed();  // no reader yet
             while (!backlog.empty())
             {
                 const QByteArray& chunk = backlog.front();
-                const ssize_t n = ::write(fifoFd, chunk.constData() + backlogOffset,
-                                          static_cast<size_t>(chunk.size()) - backlogOffset);
+                const int64_t n = soundPipe->tryWrite(chunk.constData() + backlogOffset,
+                                                      static_cast<size_t>(chunk.size()) - backlogOffset);
                 if (n < 0)
-                    return errno == EAGAIN || errno == EWOULDBLOCK;  // the pipe is full: the rest waits
+                    return false;
+                if (n == 0)
+                    return true;  // the pipe is full: the rest waits
                 backlogOffset += static_cast<size_t>(n);
                 if (backlogOffset == static_cast<size_t>(chunk.size()))
                 {
@@ -803,12 +797,17 @@ struct WindowRecorder::Writer
                     backlogOffset = 0;
                 }
             }
-#endif
             return true;
+        };
+        auto soundFailure = [&]() {
+            return "ffmpeg stopped taking the sound" +
+                   (soundPipe && !soundPipe->getLastError().empty() ? ": " + soundPipe->getLastError() : std::string());
         };
         if (!process.waitForStarted(5000))
             failure = "ffmpeg did not start: " + process.errorString().toStdString();
-        else if (!mux.soundPath.isEmpty())  // no FIFO (Windows): the sound into its own file, muxed at the end
+        else if (soundPipe)
+            soundPipe->setReaderProcess(static_cast<uint64_t>(process.processId()));  // only this ffmpeg may open it
+        else if (!mux.soundPath.isEmpty())  // no sound pipe: the sound into its own file, muxed at the end
         {
             sound.setFileName(mux.soundPath);
             if (!sound.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -849,7 +848,7 @@ struct WindowRecorder::Writer
             takeQueuedSound(queued);
             for (QByteArray& chunk : queued)
             {
-                if (!fifoPath.isEmpty())
+                if (soundPipe)
                     backlog.push_back(std::move(chunk));
                 else if (sound.write(chunk) != chunk.size())
                 {
@@ -859,7 +858,7 @@ struct WindowRecorder::Writer
             }
             if (pumpSound())
                 return true;
-            fail("ffmpeg stopped taking the sound");
+            fail(soundFailure());
             return false;
         };
         // One picture into ffmpeg at its frame's time. No event loop here: the bytes go to ffmpeg only while we wait,
@@ -919,11 +918,11 @@ struct WindowRecorder::Writer
                 continue;  // drain without writing
             if (!job.sound.isEmpty())
             {
-                if (!fifoPath.isEmpty())
+                if (soundPipe)
                 {
                     backlog.push_back(std::move(job.sound));
                     if (!pumpSound())
-                        fail("ffmpeg stopped taking the sound");
+                        fail(soundFailure());
                 }
                 else if (sound.write(job.sound) != job.sound.size())
                     fail("Cannot write the sound: " + sound.errorString().toStdString());
@@ -955,7 +954,7 @@ struct WindowRecorder::Writer
                 }
                 framesDone = job.frameStart + job.repeat;
                 if (!pumpSound())
-                    fail("ffmpeg stopped taking the sound");
+                    fail(soundFailure());
                 pictureHandled(pictureStartUs, send ? "nv12" : "same");
                 continue;
             }
@@ -983,7 +982,7 @@ struct WindowRecorder::Writer
             }
             framesDone = job.frameStart + job.repeat;
             if (!pumpSound())
-                fail("ffmpeg stopped taking the sound");
+                fail(soundFailure());
             pictureHandled(pictureStartUs, send ? "composed" : "same");
         }
         // x265 (4.3) sets its B-frame delay time (Encoder::m_bframeDelayTime) only at its third picture and leaves it
@@ -1008,25 +1007,23 @@ struct WindowRecorder::Writer
         if (failure.empty())
         {
             process.closeWriteChannel();  // the end of the picture first: ffmpeg interleaves the sound with it
-#ifdef Q_OS_UNIX
-            if (!fifoPath.isEmpty())
+            if (soundPipe)
             {
-                // The rest of the sound goes in as ffmpeg takes it (it opens the FIFO only after it has the frames),
-                // then the FIFO closes: that is the end of the sound. A slow encoder is waited for, never killed
-                while ((fifoFd < 0 || !backlog.empty()) && process.state() != QProcess::NotRunning)
+                // The rest of the sound goes in as ffmpeg takes it (it opens the pipe only after it has the frames),
+                // then the pipe closes: that is the end of the sound. Closed only once the last bytes are in the pipe
+                // (a write still in flight would be dropped). A slow encoder is waited for, never killed
+                while ((!soundPipe->isOpen() || !backlog.empty() || !soundPipe->flushed()) &&
+                       process.state() != QProcess::NotRunning)
                 {
                     if (!pumpSound())
                     {
-                        failure = result = "ffmpeg stopped taking the sound";
+                        failure = result = soundFailure();
                         break;
                     }
                     process.waitForFinished(5);
                 }
-                if (fifoFd >= 0)
-                    ::close(fifoFd);
-                fifoFd = -1;
+                soundPipe->close();
             }
-#endif
             // A slow encoder is not a failed one: wait as long as ffmpeg runs (killing it loses the whole file)
             while (!process.waitForFinished(5000) && process.state() != QProcess::NotRunning)
             {
@@ -1045,12 +1042,11 @@ struct WindowRecorder::Writer
             process.kill();
             process.waitForFinished(5000);
         }
-#ifdef Q_OS_UNIX
-        if (fifoFd >= 0)
-            ::close(fifoFd);
-        if (!fifoPath.isEmpty())
-            ::unlink(fifoPath.toLocal8Bit().constData());
-#endif
+        if (soundPipe)
+        {
+            soundPipe->close();
+            NamedPipe::remove(soundPipe->getPath());
+        }
         error = result;
         done = true;
     }
@@ -1238,7 +1234,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     if (request.frameWidth > 0 && request.frameHeight > 0)
     {
         _size = QSize(request.frameWidth & ~1, request.frameHeight & ~1);
-        if (request.fit)  // the picture scaled to the frame, aspect kept, centred (a CRT drawn at its height needs none)
+        if (request.fit)  // the picture scaled to the frame, aspect kept, centered (a CRT drawn at its height needs none)
         {
             // A keyboard below is as wide as the picture: the two, one above the other, fit the frame together. A
             // keyboard beside gets half the width at least (else it is a strip a few keys high)
@@ -1296,7 +1292,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     }
     if (request.transfer == "nv12")
     {
-        // NV12 colours 2x2 blocks: the frame is built in place only on even rectangles (a pixel off the centre)
+        // NV12 colors 2x2 blocks: the frame is built in place only on even rectangles (a pixel off the center)
         const auto even = [](const QRect& rect)
         { return rect.isEmpty() ? rect : QRect(rect.x() & ~1, rect.y() & ~1, rect.width() & ~1, rect.height() & ~1); };
         _screenRect = even(_screenRect);
@@ -1318,25 +1314,37 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     _sampleRate = request.audio ? static_cast<uint32_t>(context->pSoundManager->getCoreRate()) : 0;
     _audioSamples = 0;
 
-    // With sound the picture goes to a file beside the target and the sound to a raw file, muxed at stop
+    // With sound the sound goes to ffmpeg through a pipe; without one, the picture to a file beside the target and the
+    // sound to a raw file, muxed at stop
     const QString path = QString::fromStdString(request.path);
     _videoPath = path;
     _soundPath.clear();
     QString fifo;
+    std::shared_ptr<NamedPipe> soundPipe;
+    std::shared_ptr<QTemporaryDir> soundDir;
     _audio = request.audio;
     if (request.audio && !native)
     {
         const QFileInfo target(path);
-#ifdef Q_OS_UNIX
-        // The sound reaches the same ffmpeg through a FIFO: one file from the start, nothing to mux (and copy) at
-        // the end, however large the picture is
-        fifo = target.dir().filePath("." + target.completeBaseName() + ".sound.fifo");
-        ::unlink(fifo.toLocal8Bit().constData());
-        if (::mkfifo(fifo.toLocal8Bit().constData(), 0600) != 0)
-            fifo.clear();
-        signal(SIGPIPE, SIG_IGN);  // a dead ffmpeg is an error return, not a signal
+        // The sound reaches the same ffmpeg through a pipe: one file from the start, nothing to mux (and copy) at the
+        // end, however large the picture is. Unix: a FIFO in a private directory of its own (this user's alone; any
+        // file system of the target, another emulator's FIFO never in the way); Windows: a named pipe of a name no
+        // other has, open to this user and, once ffmpeg runs, to this ffmpeg alone
+        soundPipe = std::make_shared<NamedPipe>();
+#ifdef Q_OS_WIN
+        const std::string pipeName = NamedPipe::uniqueName("sound");
+#else
+        soundDir = std::make_shared<QTemporaryDir>(QDir::tempPath() + "/unreal-rec-XXXXXX");
+        const std::string pipeName = soundDir->isValid() ? soundDir->filePath("sound.fifo").toStdString() : std::string();
 #endif
-        if (fifo.isEmpty())  // no FIFO (Windows): the picture and the sound in two files, muxed at the end
+        if (!pipeName.empty() && soundPipe->create(pipeName))
+            fifo = QString::fromStdString(NamedPipe::readerPath(pipeName));
+        else
+        {
+            soundPipe.reset();
+            soundDir.reset();
+        }
+        if (fifo.isEmpty())  // no pipe: the picture and the sound in two files, muxed at the end
         {
             _videoPath = target.dir().filePath("." + target.completeBaseName() + ".video." + target.suffix());
             _soundPath = target.dir().filePath("." + target.completeBaseName() + ".sound.s16le");
@@ -1399,7 +1407,9 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // it stopped reading the picture meanwhile, and a paused machine stepped by record/frames makes sound only as the
     // picture is taken: both waited for good ("recorded nothing within 10 s"); running, it only started 5 s late
     if (!fifo.isEmpty())
-        args << "-thread_queue_size" << "512" << "-probesize" << "32" << "-analyzeduration" << "0" << "-f" << "s16le"
+        // No -thread_queue_size: ffmpeg 9 takes it for outputs only and refuses to start with it before an input.
+        // The writer never waits for the sound pipe (it keeps what the pipe does not take), so the default queue does
+        args << "-probesize" << "32" << "-analyzeduration" << "0" << "-f" << "s16le"
              << "-ar" << QString::number(_sampleRate) << "-ac" << QString::number(AUDIO_CHANNELS) << "-i" << fifo
              << "-map" << "0:v:0" << "-map" << "1:a:0";
     // The color: B,G,R,A to Y'CbCr by the BT.709 matrix (swscale's default is BT.601, which HD players decode as
@@ -1474,7 +1484,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         // Software: x264 / x265 4:4:4. Presets measured at 1080p (M1 Ultra, loaded): x264 veryfast 33 fps, ultrafast 42; x265 veryfast 3.4,
         // ultrafast 7.6. Above the native picture the fastest preset; x265 always (far from real time either way)
         const bool large = static_cast<qint64>(_size.width()) * _size.height() > 1000000;
-        // NV12 frames carry 4:2:0 colour: encoded as 4:2:0 (4:4:4 would only repeat the chroma)
+        // NV12 frames carry 4:2:0 color: encoded as 4:2:0 (4:4:4 would only repeat the chroma)
         const char* const pixFmt = nv12 ? "yuv420p" : "yuv444p";
         if (request.codec == "h265")
             args << "-c:v" << "libx265" << "-preset" << "ultrafast" << "-crf" << "14" << "-pix_fmt" << pixFmt;
@@ -1505,7 +1515,8 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     writer->mux.videoPath = _videoPath;
     writer->mux.soundPath = _soundPath;
     writer->mux.sampleRate = _sampleRate;
-    writer->fifoPath = fifo;
+    writer->soundPipe = soundPipe;
+    writer->soundDir = soundDir;
     writer->native = native;
     writer->nv12 = nv12;
     const char* timing = std::getenv("UNREAL_WINDOW_RECORDER_TIMING");

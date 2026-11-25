@@ -188,6 +188,29 @@ ESP memory checked at 72:
 
 K = 25 costs 5 % of the history (the ESP keyframes twice as often) for 6-7 ms of every seek.
 
+### 9.2 Seek time: the ESP memory left to the replay point (2026-11-25)
+
+A profile of the seeks (DOOM, the grid above, `sample` of the seek phase only): of a seek, the memory restore
+decoded the ESP pieces (all marked, `TTDBeforeRestore`) about a fifth of the time, the replay of the journal as
+much, the picture's frame run a fifth, the picture's own restore, the FT812's full save and load in its live
+snapshot the rest. A restore that goes on from a replay point (the picture's restore of the seek's frame always,
+steps back and forth often) copies the point's 8.4 MB over all that decoding. Now the controller asks the device
+first (`ITTDRegionSource::TTDLoadMayRestoreRegions` / `TTDLoadRestoresRegions` with the checkpoint's blob, read
+through the restore's decoded copy, `TimeTravelEngine::DeviceStateForRestore`): when the load will go on from a
+point, `RestoreToMemory` leaves those regions alone (their content unknown to the engine, so the next restore
+writes them whole). A load that was told yes and finds no point reports a replay divergence (cannot happen: the
+same blob, its own save). Same host, 4 interleaved rounds of 216 seeks (random, back, forward), load 7-24:
+
+| | Seek, median | p90 | Fastest |
+|---|---|---|---|
+| Before | 36.2-36.9 ms | 46.6-47.8 ms | 16.9-17.9 ms |
+| Regions left to the point | 35.2-35.3 ms (41.2 at load 24) | 45.3-45.4 ms | 15.6-16.0 ms |
+
+About 1.3 ms of every seek (the 8.4 MB the picture's restore no longer copies twice), 1.6 ms of the fastest. All
+seeks exact; the ESP memory (PSRAM and SRAM, 7.9 MB) hashed after every seek against the recording's. Guard:
+`TTDEngineModels_Fixture.Vdac4EspMemoryWithoutAReplayPointIsRestoredByTheEngine` (no point: the engine still
+restores memory changed behind it).
+
 ## 10. Open
 
 - A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame (about
@@ -195,7 +218,7 @@ K = 25 costs 5 % of the history (the ESP keyframes twice as often) for 6-7 ms of
 - The blob's limit (4 MB) holds: a journal over 256 KB keys the capture that finds it, so the blob carries the host
   state and at most 256 KB of journal whatever one frame sent (an `APP_START` with its ELF). Only a host state over
   3.7 MB would pass it.
-- The rest of a seek: the replay to f itself (on average 12 frames), the ESP pieces the engine decodes on every
-  restore (all marked, `TTDBeforeRestore`) even when a replay point overwrites them, the FT812's full save in the
-  picture's live snapshot.
+- The rest of a seek: the replay to f itself (on average 12 frames), the ESP pieces the engine decodes on a restore
+  no replay point covers (all marked, `TTDBeforeRestore`: the ESP moves on without marks), the FT812's full save and
+  load in the picture's live snapshot.
 - Resources of the firmware (`_resources`) stay in the `vdac4-esp` blob, stored per frame while held.

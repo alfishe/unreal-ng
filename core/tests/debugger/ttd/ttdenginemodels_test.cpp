@@ -36,6 +36,7 @@
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #ifdef ENABLE_VDAC2
+#include "debugger/ttd/tsconf/ttdvdac4.h"
 #include "emulator/platforms/tsconf/vdac4/esp/espapphost.h"
 #include "emulator/platforms/tsconf/vdac4/esp/espxtensaruntime.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4board.h"
@@ -418,6 +419,54 @@ TEST_F(TTDEngineModels_Fixture, Vdac4EspSeekReportsAReplayDivergence)
 
     // Back before the change: exact again (the issue belongs to the restore that found it)
     EXPECT_EQ(seek(8).status, ttd::TTDRestoreStatus::Exact);
+}
+
+/// The engine leaves the ESP regions to the device's load only when that load goes on from a replay point
+/// (TTDLoadRestoresRegions; its hits are checked on DOOM, ttd-design.md §9.2). Without one (no app: an empty
+/// journal keeps none) the engine restores them as before: ESP memory changed behind the engine comes back exact
+TEST_F(TTDEngineModels_Fixture, Vdac4EspMemoryWithoutAReplayPointIsRestoredByTheEngine)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("TSL-VDAC4"));
+    auto* ports = dynamic_cast<PortDecoder_TSConf*>(_emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    Vdac4Board* board = ports->GetVdac4Board();
+    ASSERT_NE(board, nullptr);
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(_ttd->StartRecording());
+    for (int f = 0; f < 40; ++f)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        board->Runtime().WaitIdle();
+    }
+    _ttd->StopRecording();
+    ttd::TTDVdac4EspCpu* esp = nullptr;
+    for (const ttd::TTDDeviceEntry& e : Engine().Devices().Entries())
+        if (auto* d = dynamic_cast<ttd::TTDVdac4EspCpu*>(e.device))
+            esp = d;
+    ASSERT_NE(esp, nullptr);
+
+    vdac4::EspMemory& memory = board->Runtime().Host().Memory();
+    auto seek = [&](size_t i) {
+        const ttd::TTDPosition& p = Engine().Checkpoint(i)->position;
+        EXPECT_TRUE(_ttd->SeekTo({p.frame, static_cast<uint32_t>(p.tInFrame)}));
+        board->Runtime().WaitIdle();
+        return _ttd->LastEngineCheck().status;
+    };
+    EXPECT_EQ(seek(10), ttd::TTDRestoreStatus::Exact);
+    const std::vector<uint8_t> psram = memory.PsramBytes(), sram = memory.SramBytes();
+    for (int round = 0; round < 2; ++round)
+    {
+        for (size_t at = 0; at < memory.PsramBytes().size(); at += 64 * 1024 + 3)
+            memory.PsramBytes()[at] ^= 0xA5;
+        for (size_t at = 0; at < memory.SramBytes().size(); at += 4096 + 1)
+            memory.SramBytes()[at] ^= 0x5A;
+        EXPECT_EQ(seek(round == 0 ? 10 : 30), ttd::TTDRestoreStatus::Exact);
+        EXPECT_EQ(seek(10), ttd::TTDRestoreStatus::Exact);
+        EXPECT_TRUE(memory.PsramBytes() == psram) << "round " << round;
+        EXPECT_TRUE(memory.SramBytes() == sram) << "round " << round;
+    }
+    EXPECT_EQ(esp->GetStats().regionsLeft, 0u) << "no replay point, nothing left to the device";
+    EXPECT_EQ(esp->GetStats().divergences, 0u) << esp->GetStats().lastDivergence;
 }
 
 #endif  // ENABLE_VDAC2

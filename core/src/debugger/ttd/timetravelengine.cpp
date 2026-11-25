@@ -2158,7 +2158,8 @@ uint32_t TimeTravelEngine::VersionAt(size_t index, uint32_t region, uint32_t pie
     }
 }
 
-TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWrittenFn& written, TTDRestoreStats* stats)
+TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWrittenFn& written, TTDRestoreStats* stats,
+                                                  const std::vector<uint8_t>* leave)
 {
     TTDRestoreResult result;
     if (!HasCheckpoint(index))
@@ -2189,6 +2190,12 @@ TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWritte
         const TTDRegionDesc& desc = _regions[r];
         if (!desc.memory && !desc.restorePiece)
             continue;
+        if (leave && r < leave->size() && (*leave)[r])
+        {
+            // Its device's load writes it whole: what it will hold is not a version the engine knows
+            std::fill(_inMemory[r].begin(), _inMemory[r].end(), kUnknown);
+            continue;
+        }
         BuildMap(index, r, map);
         uint8_t piece[kTTDPieceSize];
         for (uint32_t p = 0; p < map.size(); ++p)

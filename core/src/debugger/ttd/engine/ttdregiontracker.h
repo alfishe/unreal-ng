@@ -129,6 +129,19 @@ public:
         (void)size;
         return false;
     }
+    /// Asked before a restore decodes memory, cheap: false, the device's load never writes its regions itself (the
+    /// engine asks no further); true, TTDLoadRestoresRegions may say so for a given state
+    virtual bool TTDLoadMayRestoreRegions() const { return false; }
+    /// Asked before a restore decodes memory, with the state TTDLoadStateWithoutRegions will be given: true when
+    /// that load writes every byte of the device's regions itself (the VDAC4 ESP going on from a replay point), so
+    /// the engine leaves them alone instead of decoding what the load overwrites. A load after a true that cannot
+    /// write them reports a divergence (TTDLoadDiverged)
+    virtual bool TTDLoadRestoresRegions(const uint8_t* state, size_t size)
+    {
+        (void)state;
+        (void)size;
+        return false;
+    }
     /// After TTDLoadStateWithoutRegions: a source that computes part of its state again on load (the VDAC4 ESP
     /// re-runs from a keyframe) and did not reach the recorded state says why; the restore reports
     /// replay_diverged (not_bit_exact). Asked once per load

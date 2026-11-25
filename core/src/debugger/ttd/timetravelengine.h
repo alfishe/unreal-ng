@@ -710,9 +710,10 @@ public:
     /// only the pieces whose content differs (Step 5): a piece is decoded when
     /// the version in live memory is not the target's, or when @p written says
     /// it was written since (null = nothing written). Pieces the session had
-    /// not seen at that point are left alone
+    /// not seen at that point are left alone. @p leave: per region, nonzero = its device's load writes it
+    /// itself (ITTDRegionSource::TTDLoadRestoresRegions): left alone and its content counted as unknown
     TTDRestoreResult RestoreToMemory(size_t index, const TTDWrittenFn& written = nullptr,
-                                     TTDRestoreStats* stats = nullptr);
+                                     TTDRestoreStats* stats = nullptr, const std::vector<uint8_t>* leave = nullptr);
 
     /// Live memory changed behind the engine's back: the next RestoreToMemory
     /// writes every piece
@@ -745,6 +746,15 @@ public:
     bool DeviceStateAt(size_t index, uint32_t device, std::vector<uint8_t>& out) const
     {
         return ReadDeviceState(index, device, out) == DeviceStateRead::Ok;
+    }
+    /// DeviceStateAt through the restore's decoded copy of the state: the RestoreDevices that follows reads it
+    /// again for a copy
+    bool DeviceStateForRestore(size_t index, uint32_t device, std::vector<uint8_t>& out)
+    {
+        if (_decodedStates.size() != _devices.Entries().size())
+            _decodedStates.assign(_devices.Entries().size(), DecodedState{});
+        return device < _decodedStates.size() &&
+               ReadDeviceState(index, device, out, nullptr, &_decodedStates[device]) == DeviceStateRead::Ok;
     }
 
     /// Tests only: damage the stored version of @p piece of @p region at
