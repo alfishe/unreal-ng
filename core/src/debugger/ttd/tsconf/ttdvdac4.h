@@ -100,6 +100,9 @@ public:
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
     size_t TTDStateWithoutRegionsLimit() const override;
     bool TTDLoadDiverged(std::string& detail) override;
+    /// A replay point is kept: a load that goes on from one writes the whole ESP memory itself
+    bool TTDLoadMayRestoreRegions() const override { return !_points.empty(); }
+    bool TTDLoadRestoresRegions(const uint8_t* state, size_t size) override;
     /// endregion
 
     /// Diagnostics (tests, the design's measurements)
@@ -111,6 +114,7 @@ public:
         uint64_t divergences = 0;  ///< a replay that did not fit its journal or ended at another state
         std::string lastDivergence;
         uint64_t replayPointHits = 0;  ///< restores that went on from a replay point, not the keyframe
+        uint64_t regionsLeft = 0;      ///< of them: the engine left the ESP memory to the point (not decoded first)
     };
     /// Replay points kept (each the ESP's whole memory, about 9 MB)
     static constexpr size_t kReplayPoints = 3;
@@ -149,6 +153,7 @@ private:
     mutable std::vector<uint8_t> _scratch;
     Stats _stats;
     std::string _loadDivergence;  ///< the last load's divergence, until the engine takes it (empty: none)
+    bool _regionsLeft = false;    ///< TTDLoadRestoresRegions said yes: the next load must write the memory
 };
 
 }  // namespace ttd

@@ -1950,7 +1950,8 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     _replayIssues.clear();   // this restore's own, below
     CheckEngineCheckpoint(size_t(engineIndex), false);
     SetMediaToCheckpoint(size_t(engineIndex));
-    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore);
+    const std::vector<uint8_t>* leave = RegionsTheirDevicesRestore(size_t(engineIndex));
+    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore, leave);
     _engineMemoryKnown = _knownMemoryDepth > 0 && memory.Ok();
     const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreResult devices =
@@ -1984,6 +1985,34 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     _perf.lastRestoreMemoryNs = elapsedNs(memoryStart, devicesStart);
     _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
     _perf.lastRestoreScreenNs = elapsedNs(devicesEnd, PerfClock::now());
+}
+
+const std::vector<uint8_t>* TimeTravelController::RegionsTheirDevicesRestore(size_t engineIndex)
+{
+    // A device whose load at this checkpoint writes its regions itself (the VDAC4 ESP going on from a replay
+    // point, 8.4 MB) keeps the engine from decoding them first only to be overwritten
+    const std::vector<TTDDeviceEntry>& entries = _engine->Devices().Entries();
+    bool any = false;
+    for (uint32_t i = 0; i < entries.size(); ++i)
+    {
+        ITTDRegionSource* source = entries[i].withoutRegions;
+        if (!source || !source->TTDLoadMayRestoreRegions())
+            continue;
+        if (!_engine->DeviceStateForRestore(engineIndex, i, _leaveState) ||
+            !source->TTDLoadRestoresRegions(_leaveState.data(), _leaveState.size()))
+            continue;
+        if (!any)
+            _leaveRegions.assign(_engine->Regions().size(), 0);
+        any = true;
+        _leaveSourceRegions.clear();
+        source->TTDRegions(_leaveSourceRegions);
+        const std::vector<TTDRegionDesc>& regions = _engine->Regions();
+        for (size_t r = 0; r < regions.size(); ++r)
+            for (const TTDDeviceRegion& d : _leaveSourceRegions)
+                if (regions[r].memory && d.desc.memory == regions[r].memory)
+                    _leaveRegions[r] = 1;
+    }
+    return any ? &_leaveRegions : nullptr;
 }
 
 TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
