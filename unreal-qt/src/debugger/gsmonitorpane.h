@@ -76,12 +76,15 @@ public:
     QPushButton* runButton() const { return _run; }
     QToolButton* clearButton() const { return _clear; }
     QToolButton* followButton() const { return _followButton; }
+    QToolButton* sendButton() const { return _sendButton; }
     /// endregion
 
 signals:
     void turnOnRequested();
     void pauseRequested();
     void continueRequested();
+    /// The strip's Send...: the owner brings the GS send tab to the front
+    void sendConsoleRequested();
 
 private:
     void showUnavailable(const QString& why);
@@ -105,6 +108,7 @@ private:
     QToolButton* _clear = nullptr;
     QTableWidget* _table = nullptr;
     QToolButton* _followButton = nullptr;
+    QToolButton* _sendButton = nullptr;
     QPushButton* _run = nullptr;
     QLabel* _rows = nullptr;
 

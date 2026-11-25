@@ -6,12 +6,14 @@
 #include "debuggerwindow.h"
 #include "gsanalysis.h"
 #include "gsmonitor.h"
+#include "gssend.h"
 #include "gsprofiling.h"
 
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QGraphicsColorizeEffect>
@@ -165,6 +167,18 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     {
         const int after = m_card_tabs.size() > 1 ? m_side_tabs->indexOf(m_card_tabs[1].view) + 1 : m_side_tabs->count();
         m_side_tabs->setTabVisible(m_side_tabs->insertTab(after, m_gs_monitor, tr("GS monitor")), false);
+    }
+    //The send console right after it: the monitor's Send... and Ctrl+Shift+S bring it to the front
+    m_gs_send = new GsSendView(e, m_side_tabs);
+    m_side_tabs->setTabVisible(m_side_tabs->insertTab(m_side_tabs->indexOf(m_gs_monitor) + 1, m_gs_send, tr("GS send")), false);
+    connect(m_gs_monitor, &GsMonitorView::send_requested, this, [this]() { show_gs_send(); });
+    {
+        QAction * a = new QAction(tr("GS send"), this);
+        a->setObjectName("show_gs_send");
+        a->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+        a->setShortcutContext(Qt::WindowShortcut);
+        addAction(a);
+        connect(a, &QAction::triggered, this, [this]() { show_gs_send(); });
     }
     //The analysis tabs after the card tabs, in the design's order of A5.2a
     m_gs_dispatch = new GsDispatchView(e, m_side_tabs);
@@ -933,6 +947,9 @@ void DebuggerWindow::update_next_tabs()
         m_gs_monitor->set_card(card_there ? m_card_source : std::string(),
                                m_card_tabs.empty() ? QString() : m_card_tabs.front().view->caption()->text());
         m_side_tabs->setTabVisible(m_side_tabs->indexOf(m_gs_monitor), card_there);
+        m_gs_send->set_card(card_there ? m_card_source : std::string(),
+                            m_card_tabs.empty() ? QString() : m_card_tabs.front().view->caption()->text());
+        m_side_tabs->setTabVisible(m_side_tabs->indexOf(m_gs_send), card_there);
         for (GsCardTab * t : m_gs_analysis) {
             t->set_card(card_there ? m_card_source : std::string(),
                         m_card_tabs.empty() ? QString() : m_card_tabs.front().view->caption()->text());
@@ -952,6 +969,17 @@ void DebuggerWindow::update_next_tabs()
             m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), shown);
         }
     }
+}
+
+bool DebuggerWindow::show_gs_send()
+{
+    if (m_gs_send == nullptr) return false;
+    const int at = m_side_tabs->indexOf(m_gs_send);
+    if (at < 0 || !m_side_tabs->isTabVisible(at)) return false;
+    m_side_tabs->setCurrentIndex(at);
+    m_gs_send->refresh();
+    m_gs_send->picker()->setFocus();
+    return true;
 }
 
 NextReportView * DebuggerWindow::next_view_in_sight() const
@@ -975,6 +1003,7 @@ void DebuggerWindow::refresh_side()
     update_next_tabs();
     if (NextReportView * v = next_view_in_sight()) v->refresh();
     if (m_gs_monitor != nullptr && side == m_gs_monitor) m_gs_monitor->refresh();
+    if (m_gs_send != nullptr && side == m_gs_send) m_gs_send->refresh();
     for (GsCardTab * t : m_gs_analysis)
         if (side == t) t->refresh();
 }

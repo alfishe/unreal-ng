@@ -4,7 +4,8 @@
 // status register, the mailbox, the debugger's last send), the error tile (the anomalies of the command log and the
 // firmware's unknown commands counted since the tab's Clear, the last anomaly), the command log following its tail
 // (scrolling up stops following, Follow resumes), and the machine's Pause / Continue. With the command log off the
-// tab says so and offers Turn on (history <slot>.commands mode ring)
+// tab says so and offers Turn on (history <slot>.commands mode ring). Send... beside the strip brings the GS send tab
+// to the front (gssend.h)
 
 #pragma once
 
@@ -54,9 +55,14 @@ public:
     QPushButton * clear_button() const { return m_clear; }
     QToolButton * follow_button() const { return m_follow_button; }
     QToolButton * machine_button() const { return m_machine; }
+    QToolButton * send_button() const { return m_send; }
     uint64_t anomalies() const { return m_anomalies; }
     uint64_t unknown_commands() const { return m_unknown_seen; }
     bool following() const { return m_following; }
+
+signals:
+    //Send... (Ctrl+Shift+S in the window): the GS send tab to the front
+    void send_requested();
 
 protected:
     //Live only while in sight: the tab's own timer, every Emulator::live_card_ms while the machine runs
@@ -85,6 +91,7 @@ private:
     QLabel * m_log_line;
     QToolButton * m_follow_button;
     QToolButton * m_machine;
+    QToolButton * m_send;
     QTableWidget * m_table;
     QAction * m_pause = nullptr;
     QAction * m_run = nullptr;

@@ -516,3 +516,37 @@ TEST(GSFirmwareProfile_Test, TheDispatchViewReadsTheStockTables)
     EXPECT_EQ(c00.find("baseline")->s, "#0365");
     EXPECT_TRUE(body.find("instances")->items.empty()) << "only the dispatch was asked for";
 }
+
+/// The command set (object `commands`, the debuggers' GS send tab): only when asked; every named command with its typed
+/// parameters (pre first) and its reply
+TEST(GSFirmwareProfile_Test, TheCommandSetListsTheNamedCommandsWithTheirParameters)
+{
+    FirmwareCard card("rom/gs105a.rom");
+    const GSFirmwareProfile* profile = GSFirmwareProfileOf(*card.chip);
+    ASSERT_NE(profile, nullptr);
+    EXPECT_EQ(GSReadFirmwareObjects(*card.chip, *profile).find("commands"), nullptr) << "not in the full read";
+    const StateNode body = GSReadFirmwareObjects(*card.chip, *profile, "commands");
+    const StateNode* commands = body.find("commands");
+    ASSERT_NE(commands, nullptr);
+    size_t named = 0;
+    for (int code = 0; code < 256; code++)
+        named += profile->Command(static_cast<uint8_t>(code)).name ? 1 : 0;
+    ASSERT_EQ(commands->items.size(), named);
+    const StateNode* volume = nullptr;
+    for (const StateNode& c : commands->items)
+        if (c.find("command")->i == 0x2A)
+            volume = &c;
+    ASSERT_NE(volume, nullptr);
+    EXPECT_EQ(volume->find("name")->s, "Set module master volume");
+    EXPECT_EQ(volume->find("pre")->i, 1);
+    EXPECT_EQ(volume->find("post")->i, 0);
+    ASSERT_EQ(volume->find("params")->items.size(), 1u);
+    EXPECT_EQ(volume->find("params")->items[0].find("name")->s, "volume");
+    EXPECT_EQ(volume->find("params")->items[0].find("kind")->s, "volume");
+    EXPECT_EQ(volume->find("reply")->i, 1);
+    EXPECT_EQ(volume->find("reply_meaning")->s, "the old volume");
+    EXPECT_TRUE(volume->find("documented")->b);
+    EXPECT_NE(GSFirmwareObjectsText(body).find("#2A Set module master volume (volume) -> 1 byte(s): the old volume"),
+              std::string::npos)
+        << GSFirmwareObjectsText(body);
+}

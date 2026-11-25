@@ -701,9 +701,12 @@ ms`: the ZX-MultiSound's General Sound; on the lightweight player the window var
 `source: mirror`): instances (a struct at
 a symbol or address, bound to a physical page, mapped or not) as rows of fields, variables (in memory, in a register
 while the card PC is in a range, in an instruction's operand) and the fixed-window variables of the built-in tables.
-It also gives the command `dispatch` (each command's handler as the card holds it, the ROM baseline, the patched and
-unknown entries; object `dispatch`) and, while the command log records, `unknown_commands` (the commands the host sent
-that no profile names, with counts). Without `--profile` it decodes by the profile of the code running on the card (an
+It also gives the command `dispatch` (each command's handler as the card holds it, the baseline as the firmware
+started, the patched and unknown entries; object `dispatch`) and, while the command log records, `unknown_commands`
+(the commands the host sent that no profile names, with counts). Object `commands`, given only when asked, is the
+profile's command set: each command's name, pre / post byte counts (post -1: variable), its parameters with name and
+kind (pre first), the reply bytes and their meaning, documented, note and transfer; the debuggers' GS send tab picks
+from it and sends with `gs send`. Without `--profile` it decodes by the profile of the code running on the card (an
 upload started by `#13`), else the ROM's. Command log entries carry `card_pc` (the handler from the table) and
 `card_label`.
 `gs firmware profiles` lists the profiles known: the built-in v1.04 / v1.05a / v1.05b and the JSON files of

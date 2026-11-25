@@ -878,6 +878,8 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     {
         const auto respond = [](const std::function<void(const HttpResponsePtr&)>& reply, const GSSendReply& r) {
             Json::Value body = StateNodeToJson(r.body);
+            if (r.status == 200)
+                body["text"] = r.text;  // the conversation's line: "#23 Get number of RAM pages -> #03 (pages)"
             if (r.status != 200)
             {
                 body["message"] = body["error"];

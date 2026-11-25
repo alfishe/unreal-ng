@@ -99,7 +99,15 @@ GsMonitorPane::GsMonitorPane(std::shared_ptr<DebugCpuId> follow, QWidget* parent
     _strip->setWordWrap(true);
     _strip->setTextInteractionFlags(Qt::TextSelectableByMouse);
     _strip->setStyleSheet("QLabel { border-left: 4px solid #E0A020; padding: 2px 6px; }");
-    body->addWidget(_strip);
+    auto* stripRow = new QHBoxLayout();
+    stripRow->setContentsMargins(0, 0, 0, 0);
+    stripRow->addWidget(_strip, 1);
+    _sendButton = new QToolButton(_body);
+    _sendButton->setText(tr("Send..."));
+    _sendButton->setToolTip(tr("The GS send tab: send the card a command as the host would (Ctrl+Shift+S)"));
+    connect(_sendButton, &QToolButton::clicked, this, &GsMonitorPane::sendConsoleRequested);
+    stripRow->addWidget(_sendButton, 0, Qt::AlignTop);
+    body->addLayout(stripRow);
 
     // The command log off: say so, offer Turn on
     _offBar = new QWidget(_body);

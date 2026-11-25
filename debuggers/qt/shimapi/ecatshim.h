@@ -664,6 +664,40 @@ public:
         return {false, std::string(), "This machine has no GS card analysis"};
     }
 
+    // The GS send tab (not in ecat; gui-card-debugger A5.3 "Send console", gs-debugger P5.6). The GS slot's card only
+    // (the host driver addresses it: `gs send`); `card` "ms" is refused with the reason.
+    // The command set of the profile decoding the card now: the `gs-firmware` object `commands` ({profile, commands:
+    // [{command, name, pre, post (-1 variable), params [{name, kind}] (pre first), reply, reply_meaning, documented,
+    // note, transfer}]}). In process GSFirmwareObjectsRead under a lease of the context; over the WebAPI
+    // GET state/audio/gs/firmware?object=commands
+    virtual GsJson gs_commands(const std::string &card)
+    {
+        (void)card;
+        return {false, std::string(), "This machine has no GS send"};
+    }
+    // A send queued, never waited for: the conversation (GSConversation::ToState: id, state queued / running / done /
+    // failed, command, name, pre, params, replies, reply_meaning, error) plus `text`, its line ("#23 Get number of RAM
+    // pages -> #03 (pages)"); not ok: `message` why (a bad request, no card, the queue full). In process GSSend with
+    // waitMs 0; over the WebAPI POST control/audio/gs {action: send, value, pre, params, replies, wait_ms: 0}
+    virtual GsJson gs_send(const std::string &card, int command, std::optional<int> pre, const std::vector<int> &params,
+                           std::optional<int> replies)
+    {
+        (void)card;
+        (void)command;
+        (void)pre;
+        (void)params;
+        (void)replies;
+        return {false, std::string(), "This machine has no GS send"};
+    }
+    // A send by its id, as `gs_send` answers it (how far it got). GSConversationRead; over the WebAPI POST
+    // control/audio/gs {action: conversation, send_id}
+    virtual GsJson gs_conversation(const std::string &card, uint32_t id)
+    {
+        (void)card;
+        (void)id;
+        return {false, std::string(), "This machine has no GS send"};
+    }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {

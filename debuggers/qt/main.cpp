@@ -82,6 +82,7 @@
 #include "dialogs/debugger/gsanalysis.h"
 #include "dialogs/debugger/gsmonitor.h"
 #include "dialogs/debugger/gsprofiling.h"
+#include "dialogs/debugger/gssend.h"
 #include "dialogs/debugger/ttdcontrols.h"
 #include "dialogs/debugger/memoryview.h"
 #include "dialogs/debugger/nextviews.h"
@@ -1175,6 +1176,83 @@ void gs_monitor_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * 
     side->setCurrentWidget(was);
 }
 
+// The GS send tab (gui-card-debugger A5.3 "Send console", gs-debugger P5.6): right after GS monitor, shown with the
+// card; the monitor's Send... and Ctrl+Shift+S bring it to the front; the picker lists the profile's commands, #2A's
+// form names its volume, a field that is not a byte is refused, #23 sent to the booted firmware gets to done with its
+// reply while the machine runs. The MultiSound's card says it has no send
+void gs_send_check(ecatshim::Emulator * m, QWidget * window, const std::function<void(bool, const char *)> &check)
+{
+    auto * dw = dynamic_cast<DebuggerWindow *>(window);
+    QTabWidget * side = tabs_with(window, "Devices");
+    GsSendView * tab = dw != nullptr ? dw->gs_send() : nullptr;
+    GsMonitorView * mon = dw != nullptr ? dw->gs_monitor() : nullptr;
+    check(tab != nullptr && mon != nullptr && side != nullptr && side->indexOf(tab) == side->indexOf(mon) + 1 &&
+              side->tabText(side->indexOf(tab)) == "GS send",
+          "gs send: the tab right after GS monitor");
+    if (tab == nullptr || mon == nullptr || side == nullptr) return;
+    const bool card = side->isTabVisible(side->indexOf(mon));
+    check(side->isTabVisible(side->indexOf(tab)) == card, card ? "gs send: shown with the card" : "gs send: hidden without a card");
+    if (!card) return;
+    QWidget * was = side->currentWidget();
+
+    // The monitor's Send... and the window's Ctrl+Shift+S bring it to the front
+    side->setCurrentWidget(mon);
+    mon->send_button()->click();
+    const bool by_button = side->currentWidget() == tab;
+    side->setCurrentWidget(mon);
+    QAction * shortcut = window->findChild<QAction *>("show_gs_send");
+    if (shortcut != nullptr) shortcut->trigger();
+    check(by_button && shortcut != nullptr && shortcut->shortcut() == QKeySequence("Ctrl+Shift+S") && side->currentWidget() == tab,
+          "gs send: Send... and Ctrl+Shift+S bring the tab to the front");
+
+    ecatshim::CPU * front = dw->card_cpu();
+    const std::string which = CardTabsCard(m, front != nullptr ? front->name : std::string());
+    tab->refresh();
+    if (which == "ms") {
+        check(!tab->body()->isVisibleTo(tab) && tab->line()->text().contains("no send"), "gs send: the MultiSound's card has no send");
+        side->setCurrentWidget(was);
+        return;
+    }
+    // The picker over the profile's command set
+    bool has23 = false;
+    for (int i = 0; i < tab->picker()->count(); i++) has23 = has23 || tab->picker()->itemText(i).startsWith("#23 ");
+    check(tab->body()->isVisibleTo(tab) && tab->command_count() >= 16 && tab->picker()->count() == tab->command_count() && has23,
+          "gs send: the picker lists the profile's commands");
+    printf("  (profile %s: %d commands%s)\n", tab->profile().c_str(), tab->command_count(),
+           tab->body()->isVisibleTo(tab) ? "" : (" / " + tab->line()->text().toStdString()).c_str());
+    // #2A: its volume field, named by the profile
+    tab->select_command(0x2A);
+    check(tab->param_count() >= 1 && tab->param_label(0).contains("volume"), "gs send: #2A's form has the volume field");
+    printf("  (#2A: %s; %s)\n", tab->param_label(0).toUtf8().constData(), tab->note()->text().toUtf8().constData());
+    // A field that is not a byte: refused, nothing sent
+    const int rows_before = tab->table()->rowCount();
+    tab->set_param(0, "zz");
+    QString error;
+    const bool bad_sent = tab->send(&error);
+    check(!bad_sent && error.contains("not a byte") && tab->table()->rowCount() == rows_before && tab->hint()->text().contains("refused"),
+          "gs send: a field that is not a byte is refused");
+    // #23 to the booted firmware: queued while paused, done with its reply once the machine runs
+    tab->select_command(0x23);
+    const bool sent = tab->send(&error);
+    const QString queued = tab->newest_state();
+    m->debug_run(true);
+    const bool done = sent && wait_for([tab]() {
+        tab->refresh();
+        return tab->newest_state() == "done" || tab->newest_state() == "failed";
+    }, 5000);
+    m->debug_pause();
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    tab->refresh();
+    QTableWidget * t = tab->table();
+    const QString row = t->rowCount() > 0 && t->item(0, GsSendView::ColText) ? t->item(0, GsSendView::ColText)->text() : QString();
+    check(sent && done && tab->newest_state() == "done" && t->rowCount() == rows_before + 1 && row.startsWith("#23") &&
+              row.contains(" -> #"),
+          "gs send: #23 sent reaches done with its reply");
+    printf("  (send: %s, then %s: %s%s)\n", queued.toUtf8().constData(), tab->newest_state().toUtf8().constData(),
+           row.toUtf8().constData(), sent ? "" : (" / " + error.toStdString()).c_str());
+    side->setCurrentWidget(was);
+}
+
 // The GS analysis tabs (gui-card-debugger A5.2a): GS dispatch, GS unknown, GS objects, GS writers after the card tabs,
 // shown with the card. Dispatch: rows with the handlers' labels, a patched entry tinted (where the table is in RAM);
 // Unknown: a command the profile does not name, sent twice, shows x2, Clear empties it; Objects: a struct table with
@@ -1968,6 +2046,7 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
     }
 
     gs_monitor_check(m, window, cpu, check);
+    gs_send_check(m, window, check);
     gs_analysis_check(m, window, cpu, check);
     gs_profiling_check(m, window, cpu, check);
 
