@@ -911,7 +911,7 @@ public:
     }
     // The GS monitor over the WebAPI: plain GETs, nothing pauses (the card's report, the command log history, the
     // firmware's unknown commands)
-    GsMonitor read_gs_monitor(const std::string &card, size_t last) override
+    GsMonitor read_gs_monitor(const std::string &card, size_t last, std::optional<uint64_t> since) override
     {
         GsMonitor out;
         if (!m_online.load()) {
@@ -955,16 +955,24 @@ public:
         const QString device = command_log_device(card);
         out.log_device = device.toStdString();
         if (device.isEmpty()) return out;
-        const QJsonObject log = m_http.json("GET", m_base + "/history/" + device + QString("?last=%1").arg((qulonglong)last),
-                                            QJsonObject(), &status);
+        QString query = QString("?last=%1").arg((qulonglong)last);
+        if (since) query += QString("&since=%1").arg((qulonglong)*since);
+        const QJsonObject log = m_http.json("GET", m_base + "/history/" + device + query, QJsonObject(), &status);
         if (status != 200) return out;
         out.log_mode = str(log, "mode");
         out.written = (uint64_t)num(log, "written");
         out.kept = (uint64_t)num(log, "kept");
         out.dropped = (uint64_t)num(log, "dropped");
+        if (log.contains("next_since")) {
+            out.cursor = true;
+            out.next_since = (uint64_t)num(log, "next_since");
+            out.missed = (uint64_t)num(log, "missed");
+            out.restarted = log.value("restarted").toBool();
+        }
         for (const QJsonValue &v : log.value("records").toArray()) {
             const QJsonObject r = v.toObject();
             GsMonitorRow row;
+            row.seq = (uint64_t)num(r, "seq");
             row.frame = num(r, "frame");
             row.t = num(r, "t");
             row.card_cycle = num(r, "card_cycle");

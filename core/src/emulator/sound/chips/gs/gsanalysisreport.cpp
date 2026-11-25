@@ -246,6 +246,7 @@ StateNode Handlers(EmulatorContext* context, const std::string& cpu, const Gener
         node["profile"] = profile->s;
     if (const StateNode* table = dispatch->find("table"))
         node["table"] = table->s;
+    const bool stockSplit = dispatch->find("table_high") != nullptr;
     StateNode executed = StateNode::Array();
     StateNode notExecuted = StateNode::Array();
     int64_t total = 0;
@@ -257,7 +258,14 @@ StateNode Handlers(EmulatorContext* context, const std::string& cpu, const Gener
         if (!handler || handler->s.size() < 2 || (unknown && unknown->b))
             continue;
         const uint16_t address = static_cast<uint16_t>(std::strtoul(handler->s.c_str() + 1, nullptr, 16));
-        const GeneralSoundCard::CardPage where = card.mapCardAddress(address);
+        // The stock split calls its handlers with the firmware paged in (COMHIGH: OUT (MPAG),0), so #8000-#FFFF is the
+        // firmware's 32K image there, not what window 2-3 maps now
+        GeneralSoundCard::CardPage where = card.mapCardAddress(address);
+        if (stockSplit && address >= 0x8000)
+        {
+            where = card.firmwareCardPage((address - 0x8000u) / kPage);
+            where.offset = static_cast<uint16_t>(address % kPage);
+        }
         if (where.kind == GeneralSoundCard::CardPage::None)
             continue;
         total++;

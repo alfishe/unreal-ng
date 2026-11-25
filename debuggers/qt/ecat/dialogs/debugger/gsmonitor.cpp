@@ -212,8 +212,8 @@ void GsMonitorView::update_machine_button()
 void GsMonitorView::restart()
 {
     m_table->setRowCount(0);
-    m_have_key = false;
-    m_written = 0;
+    m_have_cursor = false;
+    m_since = 0;
     m_unseen = 0;
 }
 
@@ -235,17 +235,6 @@ void GsMonitorView::follow()
     m_scrolling = true;
     m_table->scrollToBottom();
     m_scrolling = false;
-}
-
-GsMonitorView::Key GsMonitorView::key_of(const Emulator::GsMonitorRow &r)
-{
-    Key k;
-    k.frame = r.frame;
-    k.t = r.t;
-    k.cycle = r.card_cycle;
-    k.kind = r.kind;
-    k.text = r.text;
-    return k;
 }
 
 void GsMonitorView::append(const Emulator::GsMonitorRow &r)
@@ -319,7 +308,7 @@ void GsMonitorView::show_tile()
             text += "\n" + tr("last: %1 (frame %2)").arg(QString::fromStdString(m_last_anomaly)).arg((qlonglong)m_last_anomaly_frame);
     }
     if (m_unseen > 0)
-        text += "\n" + tr("%1 not read: the log ran ahead of the tab (read every second)").arg(plural(m_unseen, "record", "records"));
+        text += "\n" + tr("%1 missed: gone from the history before the tab read them").arg(plural(m_unseen, "record", "records"));
     m_tile->setText(text);
     QPalette p = palette();
     if (errors) {
@@ -348,7 +337,18 @@ void GsMonitorView::refresh()
 {
     update_machine_button();
     if (m_card.empty() || !e->loaded) return;
-    const Emulator::GsMonitor m = e->read_gs_monitor(m_card, kReadRows);
+    //The records after the newest shown, by the history's cursor; the first read takes the log's counts, the tab then
+    //fills with its newest kReadRows
+    Emulator::GsMonitor m = m_have_cursor ? e->read_gs_monitor(m_card, kReadAfter, m_since)
+                                          : e->read_gs_monitor(m_card, 1, std::nullopt);
+    const bool filling = !m_have_cursor && m.ok && !m.log_device.empty() && m.log_mode != "off";
+    if (filling) {
+        //the newest record's number: a ring numbers its newest `written`, a capture keeps its first `kept`
+        const uint64_t newest = m.log_mode == "capture" ? m.kept : m.written;
+        m_since = newest > kReadRows ? newest - kReadRows : 0;
+        m_have_cursor = true;
+        m = e->read_gs_monitor(m_card, kReadRows, m_since);
+    }
     if (!m.ok) {
         m_strip->setText(QString::fromStdString(m.message));
         return;
@@ -366,32 +366,24 @@ void GsMonitorView::refresh()
     }
     m_off->setVisible(off);
 
-    //The newest records: the ones after the last shown (none of it among them: the log ran ahead, or was cleared)
-    if (m.written < m_written) restart();
-    size_t from = 0;
-    if (m_have_key) {
-        bool found = false;
-        for (size_t i = m.rows.size(); i-- > 0;)
-            if (key_of(m.rows[i]) == m_last) {
-                from = i + 1;
-                found = true;
-                break;
-            }
-        if (!found && m.written > m_written + m.rows.size()) m_unseen += m.written - m_written - m.rows.size();
-        if (!found && m.written == m_written) from = m.rows.size();  //nothing new (a record rewound by time travel)
+    //The records after the cursor, oldest first: a burst over kReadAfter goes on at the next read
+    if (m.cursor) {
+        if (m.restarted) {
+            m_table->setRowCount(0);  //the history started afresh (cleared, configured again)
+            m_unseen = 0;
+        }
+        if (!filling) m_unseen += m.missed;  //the first fill starts where it may
+        m_since = m.next_since;
     }
-    if (from < m.rows.size()) {
+    if (m.cursor && !m.rows.empty()) {
         m_table->setUpdatesEnabled(false);
-        for (size_t i = from; i < m.rows.size(); i++) append(m.rows[i]);
+        for (const Emulator::GsMonitorRow &row : m.rows) append(row);
         const int over = m_table->rowCount() - kMaxRows;
         for (int i = 0; i < over; i++) m_table->removeRow(0);
         m_table->resizeColumnsToContents();
         m_table->horizontalHeader()->setStretchLastSection(true);
         m_table->setUpdatesEnabled(true);
-        m_last = key_of(m.rows.back());
-        m_have_key = true;
     }
-    m_written = m.written;
 
     m_unknown_present = m.unknown_present;
     if (m.unknown_total < m_unknown_base) m_unknown_base = 0;  //the log cleared: its counts start again

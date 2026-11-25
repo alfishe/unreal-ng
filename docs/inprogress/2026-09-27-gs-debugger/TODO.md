@@ -148,10 +148,10 @@ fixed RAM window, 3: high ROM at `#C000`).
    mark-up report; `data/symbols/gs/manifest.json` bundles matched by the card's ROM page SHA-256 load at card boot;
    a test checks every shipped label's bytes against the ROM; R1's build check (v1.05b from the sources = the
    shipped file). Planes: `cpu` on the label and symbol verbs (REST `/labels`, `/symbols`, CLI, Lua, Python, MCP).
-   - Done (uncommitted, worktree `scratch/wt-gs-firmware`): store and bundles as in design §6.2 "As built", `cpu`
+   - Done (landed d770c9b67): store and bundles as in design §6.2 "As built", `cpu`
      on every plane, card breakpoint conditions by name, tests `GSCardTarget_Test.TheFirmwareSymbolsNameTheCardsCode`,
      `TheMachinesCardLoadsItsFirmwareSymbols`, `McpTools_Test.ManageSymbols_Cpu_NamesTheCardsLabels`. The label byte
-     check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, Qt card labels. NeoGS (N5) done (uncommitted): see item 11.
+     check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, Qt card labels. NeoGS (N5) done (landed d770c9b67): see item 11.
 2. [x] **Firmware profiles (F2).** `GSFirmwareProfile` tables for v1.04 / v1.05a / v1.05b from `COMTAB` / `COMTABH`,
    selected by the ROM image SHA-256; the card names its firmware; self-check test: every non-stub handler in the
    ROM's tables has a named command.
@@ -189,7 +189,7 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
    the same structure: `match` (ROM / upload digests), `dispatch`, per-command `handshake`, `structs`, `instances`
    bound to a physical page, `variables` (register in a PC range, SMC operand). Firmware objects read through
    `peekPage` on every plane (the data side of M3 and F5).
-   Done (uncommitted): `gsfirmwareobjects.h`, `cardRamPage`, WebAPI `/state/audio/gs/firmware[/profiles]`, CLI
+   Done (landed d770c9b67): `gsfirmwareobjects.h`, `cardRamPage`, WebAPI `/state/audio/gs/firmware[/profiles]`, CLI
    `gs firmware`, MCP `audio_gs_firmware[.<object>]`, Lua / Python `gs_firmware`; design §8A.9 "As built".
 7. [ ] **F4 extensions.** `reply_read_without_poll`, `data_before_command`, `command_while_busy`,
    `card_reply_stall`, `stale_reply_drain`, `upload_over_running_code`, `command_rejected_in_state`; the handshake
@@ -210,14 +210,14 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
    `card_label`; the unknown-command set with counts (LW default branch, LLE `unknownStub`).
 10. [x] **Generator (M8).** `tools/gsfirmware/profile_from_source.py`: commands from `COMTAB` / `COMTABH`, structs
     from `STRUCT … ENDS` and `EQU` blocks, symbols; the v1.05a profile regenerated equals the committed one (a test).
-    Done (uncommitted, items 9-10): `dispatch` in the firmware objects read (handler, ROM baseline, `patched_by`,
+    Done (landed d770c9b67, items 9-10): `dispatch` in the firmware objects read (handler, ROM baseline, `patched_by`,
     `unknown`), `highFrom`, `stock_split` in JSON; `card_pc` / `card_label` from the table at the command write (no
     per-instruction probe); `UnknownCommands()` in the log; the generator with `gs105a.profile.json` and its check.
     Design §8A.9 "As built" (items 8-10).
 11. [x] **Validation scenarios V-1 to V-6 (§8A.10).** NedoOS fixtures in `testdata/software/nedoos/` (README with the
     revision), `gs_nedoos_scenarios_test.cpp` against golden logs; the `SSTAT.MCRDY` polling and host `IN (#0F)`
     accuracy checks.
-    Progress (uncommitted): the test boots NedoOS on the ZX-Evo from a host folder (long tier); V-1 gstest passes on
+    Progress (landed d770c9b67): the test boots NedoOS on the ZX-Evo from a host folder (long tier); V-1 gstest passes on
     the classic GS against `testdata/software/nedoos/golden/v1-gstest.txt`. It found and closed: the stock test mode
     (`selects` / `leaveFrom`), the `#F4` value poll (`valuePoll`), a transfer stall counted before the card took its
     command. V-2 passes: GP plays a `.mod` on the stock firmware to its end (`v2-gp-mod.txt`: one 61902-byte block,
@@ -236,7 +236,7 @@ Done when the §8A.10 scenarios V-1 to V-6 pass with their golden logs (design �
     ngsplay never sent its `#E6` status poll in 3,000 frames after the autostart, though its loop took keys. It fixed the
     NeoTracker profile (`#E2` / `#E3` take module and sample / order, `#E8` `block256`, `#EA` the new
     `block_pages`) and the decoder, which ended a `block256` only at the next command.
-    N5 (uncommitted): the NeoGS sources (NedoPC SVN r193) in `materials/neogs/ngs-firmware/`; `markup_symbols.py`
+    N5 (landed d770c9b67): the NeoGS sources (NedoPC SVN r193) in `materials/neogs/ngs-firmware/`; `markup_symbols.py`
     rebuilds the main ROM with asl byte for byte and writes `neogs.map`, the `gs:neogs` bundle and `NEOGS-VS-GS.md`;
     the built-in profile `neogs` (v1.05a's tables, the same handlers) with `firmwarePage` (RAM pages 0-1 on NeoGS).
     Design §6.2 "As built (N5)". V-5 passes (`v5-kernel-ngssd.txt`, P2666 + NeoGS via `GeneralSoundFitScope`): needed the P2666 decoder to pass
@@ -370,7 +370,7 @@ what an agent reads):
   the NeoGS DMA pane / tab in both debuggers (Start / Stop / Clear, rows appended by `since`, double-click to the
   host PC's disassembly / the card memory). Tests `GSZxDmaTrace_Test.*`, `NeoGSZxDma.TheTrace*`,
   `CardPanes_Test.TheDmaPaneTracesTheZxDmaBytes`, eCat `--self-check` (17 real bytes, in process and `--connect`).
-  Core data for MPAGEX, the banner (S4) and the wait (S3) (2026-11-23, uncommitted): `NeoGSMemory::lastMpagEx()`
+  Core data for MPAGEX, the banner (S4) and the wait (S3) (2026-11-23, landed 8beff1160): `NeoGSMemory::lastMpagEx()`
   (the last #10 write that took effect, TTD fixed byte 66, a layout 4 blob from before reads 0), NeoGSStateInfo
   `mpagex` / `extendedPaging`, the `gs` report's `neogs.mpag` / `mpagex` / `extended_paging`, the `neogs` board's
   Paging group (`mpagex`, `extended_paging`, header `MPAG=#03 MPAGEX=#05` while EXPAG), the strip `MPAG #03 · MPAGEX
@@ -393,18 +393,22 @@ what an agent reads):
   live only idle (an upload and a module in the Qt test); gs + ms together not run; the LW FX upload counter is not
   in the TTD state.
 - [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
-  console, the protocol monitor, the analysis tabs (A5.2a).
+  console, the protocol monitor, the analysis tabs (A5.2a). Owner's order 2026-11-23: analysis tabs (landed
+  4967cd423), then the Send console, then the twin timeline; the log row actions (A5.4) still to be asked. With them
+  (4967cd423): the side tab bars of both debuggers scroll instead of widening the window, an arrow at each end, the
+  wheel switches tabs (`unreal-qt/src/widgets/tabscrollarrows.h`, `TabScrollArrows.*`).
   - Protocol monitor prototype, embedded debugger (2026-11-23; owner decision: a card side tab "GS monitor", not a
     floating window): `unreal-qt/src/debugger/gsmonitorpane.h`, after "GS protocol" in `CardPanes::Create`, every card
     (`Card::Any`, the MultiSound's GS through the follow). The strip (the `gs` report's protocol, status, mailbox, last
     send), the error tile (anomalies of the command log and `gs-firmware` `unknown_commands` since its Clear, the last
-    anomaly with its frame, tinted), the log (`history read`, newest 200, appended after the last row shown, anomalies
-    tinted, Follow / scroll up), Pause / Continue (the window's actions); log off: Turn on (history `<slot>.commands`
+    anomaly with its frame, tinted), the log (`history read`: fills with the newest 200, then reads after its cursor `since`,
+    anomalies tinted, Follow / scroll up), Pause / Continue (the window's actions); log off: Turn on (history `<slot>.commands`
     mode ring). Live through the card panes' timer (200 ms) while the tab is in front of a shown window. Tests
     `CardPanes_Test.TheMonitor*`. eCat: `debuggers/qt/ecat/dialogs/debugger/gsmonitor.h`, the same tab after "GS
     protocol" in both adapters (shim `read_gs_monitor`, `gs_command_log`; remote plain GETs), 4 Hz in process, 1 Hz
-    remote; self-check `gs monitor:` on every card, in process and --connect. Left: the log row actions (A5.4); rows lost when more than 200 records arrive
-    between two refreshes (the history read has no since cursor).
+    remote; self-check `gs monitor:` on every card, in process and --connect. Left: the log row actions (A5.4). Done (2026-11-24): the history read got a cursor
+    (`since`, records with `seq`, `next_since` / `missed` / `restarted` on every plane), both monitors page after it,
+    so no row is lost between two refreshes (`CardPanes_Test.TheMonitorLosesNoRecordBetweenRefreshes`).
   - Analysis tabs prototype, embedded debugger, as built (2026-11-23; A5.2a rows Objects, Dispatch, Unknown, Writers):
     `unreal-qt/src/debugger/gsanalysispane.h` (one widget, four views), every card (`Card::Any`, the MultiSound's GS
     through the follow). "GS firmware" became **GS objects** (same place; the design's "replaces the Firmware tab"): a
@@ -420,12 +424,14 @@ what an agent reads):
     the other tabs. Live through the card panes' timer while in front, marked at stops. Tests
     `CardPanes_Test.TheDispatch*`, `TheUnknownTab*`, `TheObjectsTab*`, `TheWritersTab*`. Gaps: the port trace's host
     events keep the card's PC (no host PC for #33), no CPU / DMA writer kind, no profile stack accessor in the core,
-    LW's missing commands not tracked (AU6), the uploads of a block's bytes not per byte, the core's dispatch read
-    takes COMTABH (#20-#EF) through window 3 as mapped now (junk while the firmware keeps a RAM page there: the tab
-    then shows the baseline handler) and its ROM baseline from card pages 0-1 (wrong on NeoGS, whose firmware runs
-    from a RAM copy of flash: every word reads "patched", the tab drops the baseline).
+    LW's missing commands not tracked (AU6), the uploads of a block's bytes not per byte. Fixed 2026-11-24: the
+    core's dispatch read took COMTABH through window 3 as mapped now (junk with a RAM page there) and its baseline
+    from ROM pages 0-1 (wrong on NeoGS); it now reads the firmware's own image (`firmwarePage`, as COMHIGH maps page 0)
+    against the firmware as it started (`firmwareBaselinePage`: a NeoGS's RAM copy at its start), and both debuggers
+    dropped their workarounds (column "Baseline"). Tests `GSFirmwareProfile_Test.TheNeoGSDispatchReadsItsRamCopyAgainstItsStart`,
+    `CardPanes_Test.TheDispatchShowsTheHandlersWithTheirLabels` (all 256 labelled on both cards), eCat self-check.
   - Analysis tabs, the core data for Events and Profiler (A5.2a; X2, X9, X20), as built 2026-11-23, branch
-    `gs-an-isr` (not landed): `GSCardProfiler` (`core/src/emulator/sound/chips/gs/gscardprofiler.h`) in every card
+    `gs-an-isr` (landed 4967cd423): `GSCardProfiler` (`core/src/emulator/sound/chips/gs/gscardprofiler.h`) in every card
     with a CPU (classic GS, the MultiSound's GS, NeoGS), reports `gs profile` / `gs events`
     (`gsprofilereport.h`) on every plane (REST `state/audio/gs/profile`, `state/audio/gs/events`, `control/audio/gs`
     `profile_start | profile_stop | profile_clear`; CLI; Lua / Python `gs_profile`, `gs_profile_control`,
@@ -443,7 +449,7 @@ what an agent reads):
     playing x1.9 (251 -> 475 us a frame), NeoGS playing x1.7, GS idle 1.3 -> 3.2 us
     (`BM_*Frame_*_Profiled`).
   - Analysis tabs, core data (A5.2a Coverage / Heat map; requirements §4.13 X8, X10, X11; 2026-11-24, branch
-    `gs-an-cdl`, uncommitted; the tabs themselves not built): `core/src/emulator/sound/chips/gs/gscardanalysis.{h,cpp}`
+    `gs-an-cdl`, landed 4967cd423): `core/src/emulator/sound/chips/gs/gscardanalysis.{h,cpp}`
     (the model: a CDL byte per physical byte of the flash / ROM and the RAM, flags exec / operand / read / write /
     jump / sub / dac / written, OR-merged until reset; a heat map of 16-byte cells, channels fetch / read / write /
     dac / sd_dma / zx_dma, +32 a touch, integer decay per frame (default 8, lazy); never-written RAM reads with
@@ -466,7 +472,7 @@ what an agent reads):
     are marked jump, not sub; a `JR $` self-loop is not marked jump; the catalog's mcp field names the tool, not
     an aspect.
   - Analysis tabs Profiler / Events / Coverage / Heat map, embedded debugger, as built (2026-11-24, branch
-    `gs-firmware`, uncommitted; A5.2a rows Events, Profiler, Coverage, Heat map; X2, X8-X11, X20):
+    `gs-firmware`, landed 4967cd423; A5.2a rows Events, Profiler, Coverage, Heat map; X2, X8-X11, X20):
     `unreal-qt/src/debugger/gscpuanalysispane.{h,cpp}` (one widget `GsCpuAnalysisPane`, four views, plus the two
     canvases `GsEventsCanvas` and `GsHeatmapCanvas`), after GS writers in `CardPanes::Create` as **GS profiler**,
     **GS events**, **GS coverage**, **GS heat map**, every card (`Card::Any`, the MultiSound's GS through the
@@ -509,7 +515,7 @@ what an agent reads):
     (a table of the newest 32 frames); the MultiSound's GS not exercised by a test of these tabs; a click on a
     routine / range does not move the card disassembly.
   - Analysis tabs Profiler / Events / Coverage / Heat map in the eCat debugger (`unreal-debugger`; A5.2a; X2, X8,
-    X9, X10, X11, X20), as built 2026-11-24, branch `gs-ui-ecat`, uncommitted:
+    X9, X10, X11, X20), as built 2026-11-24, branch `gs-ui-ecat`, landed 4967cd423:
     `debuggers/qt/ecat/dialogs/debugger/gsprofiling.{h,cpp}` (`GsReportTab` over `GsCardTab`; `GsProfilerView`
     with `GsBudgetBar` / `GsActivityGraph`, `GsEventsView` / `GsEventsCanvas`, `GsCoverageView`, `GsHeatmapView` /
     `GsHeatCanvas`), `shimapi/ecatshim.h` (`GsJson`, `read_gs_report`, `gs_profiler`, `gs_analysis`, default "not

@@ -1781,9 +1781,14 @@ the same structure):
   profile that named it.
 - **Dispatch view (M4).** `dispatch.kind`: `words` (a word per entry; entries from `#20` on are the commands from
   `highFrom`, NeoTracker's `#E0`) or `stock_split` (COMTAB / COMTABH, as the built-ins). The firmware objects read
-  (`object = dispatch`, or all) adds `dispatch`: each entry's `handler`, its ROM `baseline` (stock split; the table
-  read through the window, so NeoGS's RAM copy shows patches), `patched` with `patched_by` (the `extends` profile
-  that names the command), `unknown` (the stub, or no command named). Without `profile`, the read decodes by the
+  (`object = dispatch`, or all) adds `dispatch`: each entry's `handler`, its `baseline` (stock split), `patched` with
+  `patched_by` (the `extends` profile that names the command), `unknown` (the stub, or no command named). The stock
+  split is read where the firmware keeps it, not through window 3 as mapped now: COMHIGH maps page 0
+  (`OUT (MPAG),0`) before it reads COMTABH, so COMTAB is at its address in the firmware's page 0 and COMTABH at
+  `-#C000` in its page 1 (`GeneralSoundCard::firmwarePage`: a GS's ROM, a NeoGS's RAM copy). The baseline is the
+  firmware as it started (`firmwareBaselinePage`): a GS's ROM; a NeoGS's RAM pages 0-1 copied when the main ROM
+  starts (GSCFG0 `#23`, once per boot; the flash's main ROM before that or after a state loaded from elsewhere), so
+  the stock firmware has nothing patched on either card. Without `profile`, the read decodes by the
   command log's stack top while it records, else by the ROM's.
 - **Handler per command (M4).** Instead of a probe at the dispatch PC (a check on every card instruction), the log
   reads the handler from the dispatch table when the host writes the command: the table does not change between the

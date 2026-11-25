@@ -26,9 +26,10 @@ class GsMonitorView : public QWidget
 {
     Q_OBJECT
 public:
-    //The newest records read each time (the history read has no since cursor: the rows are taken after the last one
-    //shown), and the rows the table keeps
+    //The newest records the tab fills with, then the records read after its cursor (the history's since) each time at
+    //most (the rest next time), and the rows the table keeps
     static constexpr size_t kReadRows = 200;
+    static constexpr size_t kReadAfter = 1600;
     static constexpr int kMaxRows = 2000;
     enum { ColFrame = 0, ColT, ColKind, ColCommand, ColName, ColText, ColCount };
 
@@ -63,15 +64,6 @@ protected:
     void hideEvent(QHideEvent *event) override;
 
 private:
-    struct Key {
-        int64_t frame = 0, t = 0, cycle = 0;
-        std::string kind, text;
-        bool operator==(const Key &o) const
-        {
-            return frame == o.frame && t == o.t && cycle == o.cycle && kind == o.kind && text == o.text;
-        }
-    };
-    static Key key_of(const Emulator::GsMonitorRow &r);
     void restart();
     void append(const Emulator::GsMonitorRow &r);
     void show_strip(const Emulator::GsMonitor &m);
@@ -101,10 +93,9 @@ private:
 
     bool m_following = true;
     bool m_scrolling = false;     //the tab moves the bar itself: not the user scrolling up
-    bool m_have_key = false;
-    Key m_last;                   //the newest record shown
-    uint64_t m_written = 0;       //the history's count at the last read
-    uint64_t m_unseen = 0;        //records written between two reads past the rows read (not shown)
+    bool m_have_cursor = false;   //filled: the next read goes on after m_since
+    uint64_t m_since = 0;         //the number of the newest record shown (the history's cursor)
+    uint64_t m_unseen = 0;        //records gone from the history before the tab read them (not shown)
     uint64_t m_anomalies = 0;     //since Clear
     std::string m_last_anomaly;
     int64_t m_last_anomaly_frame = -1;

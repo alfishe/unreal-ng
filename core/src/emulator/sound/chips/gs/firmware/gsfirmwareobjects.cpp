@@ -77,6 +77,23 @@ public:
         return true;
     }
 
+    /// A little-endian value of 1-2 bytes at `offset` of a 32K firmware image: the firmware the command code runs
+    /// (`baseline` false: GeneralSoundCard::firmwarePage) or as it started (true: firmwareBaselinePage)
+    bool FirmwareValue(bool baseline, uint32_t offset, uint32_t size, uint32_t& out) const
+    {
+        out = 0;
+        for (uint32_t i = 0; i < size; i++)
+        {
+            const uint32_t at = offset + i;
+            const uint32_t page = at / kPageSize;
+            const uint8_t* base = baseline ? _card.firmwareBaselinePage(page) : _card.firmwarePage(page);
+            if (page > 1 || !base)
+                return false;
+            out |= static_cast<uint32_t>(base[at % kPageSize]) << (8 * i);
+        }
+        return true;
+    }
+
 private:
     const GeneralSoundCard& _card;
 };
@@ -270,9 +287,18 @@ StateNode ReadDispatch(const GSFirmwareProfile& profile, const CardBytes& bytes)
     else if (profile.comtab)
     {
         // The stock split (COMINT): COMTAB words for #00-#1F and #F0-#FF, COMTABH low bytes for #20-#EF with the high
-        // bytes 256 later; read through the window (NeoGS runs a RAM copy), the baseline from the ROM pages
+        // bytes 256 later. COMHIGH maps page 0 (OUT (MPAG),0) before it reads COMTABH, so the tables are read where
+        // the firmware keeps them, not through window 3 as mapped now: the firmware's 32K image (the ROM on a GS, the
+        // RAM copy on a NeoGS), against the image as it started
         node["table"] = Hex(profile.comtab, 4);
         node["table_high"] = Hex(profile.comtabh, 4);
+        // COMTAB in window 0, COMTABH in the high half of page 0 (#C000-#FFFF): offsets into the 32K image
+        const bool inImage = profile.comtab < kPageSize && profile.comtabh >= 0xC000;
+        const auto read = [&](bool baseline, uint32_t address, uint32_t size, uint32_t& out) {
+            if (inImage)
+                return bytes.FirmwareValue(baseline, address < kPageSize ? address : address - 0x8000, size, out);
+            return !baseline && bytes.Value(GSPlace::Window, 0, address, size, out);
+        };
         for (uint32_t code = 0; code < 0x100; code++)
         {
             uint32_t handler = 0;
@@ -282,17 +308,16 @@ StateNode ReadDispatch(const GSFirmwareProfile& profile, const CardBytes& bytes)
             if (code < 0x20 || code >= 0xF0)
             {
                 const uint32_t index = code < 0x20 ? code : code - 0xD0;
-                ok = bytes.Value(GSPlace::Window, 0, profile.comtab + 2 * index, 2, handler);
-                base = bytes.Value(GSPlace::Rom, 0, profile.comtab + 2 * index, 2, baseline);
+                ok = read(false, profile.comtab + 2 * index, 2, handler);
+                base = read(true, profile.comtab + 2 * index, 2, baseline);
             }
             else
             {
                 const uint32_t low = profile.comtabh + (code - 0x20);
                 uint32_t lo = 0, hi = 0, blo = 0, bhi = 0;
-                ok = bytes.Value(GSPlace::Window, 0, low, 1, lo) && bytes.Value(GSPlace::Window, 0, low + 0x100, 1, hi);
+                ok = read(false, low, 1, lo) && read(false, low + 0x100, 1, hi);
                 handler = lo | (hi << 8);
-                const uint32_t offset = low - 0xC000;
-                base = bytes.Value(GSPlace::Rom, 1, offset, 1, blo) && bytes.Value(GSPlace::Rom, 1, offset + 0x100, 1, bhi);
+                base = read(true, low, 1, blo) && read(true, low + 0x100, 1, bhi);
                 baseline = blo | (bhi << 8);
             }
             add(static_cast<uint8_t>(code), ok, handler, base, baseline);

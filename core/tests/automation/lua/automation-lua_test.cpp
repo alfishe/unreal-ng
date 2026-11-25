@@ -21,6 +21,7 @@
 #include "automation-lua.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
+#include "debugger/history/devicehistory.h"
 #include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
@@ -896,6 +897,51 @@ TEST_F(AutomationLua_Test, TransferStateAnswersTheReportOfEverySurface)
     ASSERT_TRUE(_lua.executeCode("local r, err = transfer_state{to = 'no-such-instance'}; print(r, err)", message, output))
         << message;
     EXPECT_EQ(output, "nil\tNot Found: Target emulator 'no-such-instance' not found\n");
+}
+
+/// history(device, last, since): a read after a cursor answers the first `last` records numbered after it with their
+/// seq, and next_since / missed / restarted; without since the reply has none of them
+TEST_F(AutomationLua_Test, HistoryReadsAfterACursor)
+{
+    struct TestRecord
+    {
+        int value = 0;
+        void ToState(StateNode& node) const { node["value"] = value; }
+    };
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    struct RemoveAll
+    {
+        EmulatorManager* manager;
+        ~RemoveAll()
+        {
+            for (const auto& emulatorId : manager->GetEmulatorIds())
+                manager->RemoveEmulator(emulatorId);
+        }
+    } removeAll{manager};
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("lua-history", "PENTAGON", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    manager->SetSelectedEmulatorId(emulator->GetId());
+    history::Registered<TestRecord> records(&emulator->GetContext()->histories, "test.dev", "things");
+    std::string error;
+    ASSERT_TRUE(records->Configure({ .mode = history::Mode::Ring, .limit = 4 }, error)) << error;
+    for (int i = 1; i <= 6; i++)
+        records->Push({ i * 10 });
+
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(_lua.executeCode("local r = history('test.dev', 2, 1); "
+                                 "print(#r.records, r.records[1].seq, r.records[1].value, r.records[2].seq, "
+                                 "r.next_since, r.missed, r.restarted)",
+                                 message, output))
+        << message;
+    EXPECT_EQ(output, "2\t3\t30\t4\t4\t1\tfalse\n");
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r = history('test.dev', 2); print(#r.records, r.records[1].value, "
+                                 "r.records[1].seq, r.next_since)",
+                                 message, output))
+        << message;
+    EXPECT_EQ(output, "2\t50\tnil\tnil\n") << "no cursor: the newest, no numbers";
 }
 
 /// Reads of the past from Lua (PLAN #122 S1, V2): ttd_memory_series takes a ranges table of strings and of
