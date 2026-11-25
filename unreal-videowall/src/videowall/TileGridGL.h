@@ -9,6 +9,8 @@
 #include <memory>
 #include <atomic>
 #include <3rdparty/message-center/eventqueue.h>
+#include <common/threadpool.h>
+#include <emulator/video/smoothtile.h>
 
 #include "GLFrameReader.h"
 
@@ -61,6 +63,27 @@ public:
     /// Request repaint of all tiles
     Q_INVOKABLE void repaintAllTiles();
 
+    /// Smooth motion on a display that does not run at the machines' rate: the picture between two frames, per
+    /// tile (off | blend | interpolate | interpolate-lite). Off (the default) costs nothing: no engine, no frame
+    /// kept, the wall draws only when a frame comes, as before
+    void setSmoothMotion(smoothmotion::Mode mode);
+    smoothmotion::Mode smoothMotion() const { return _smoothMode; }
+    struct SmoothStats
+    {
+        int tiles = 0;        ///< with an engine
+        int moving = 0;       ///< drawing between frames at the last refresh
+        int steppedDown = 0;  ///< on the cheap interpolation because the full one was too slow
+        int tooSlow = 0;      ///< blending because the cheap one was too slow
+        int framesOnly = 0;   ///< stepped down to the frames as they are: the wall's refresh did not fit them
+        int wallSteps = 0;    ///< times the wall stepped its costliest tiles down
+        uint64_t pictures = 0;   ///< tile pictures drawn, all tiles
+        uint64_t between = 0;    ///< of them between two frames
+        double lastStepMs = 0.0;  ///< the last refresh's smooth motion, all tiles, wall clock
+        double maxStepMs = 0.0;
+        int threads = 0;
+    };
+    SmoothStats smoothStats() const;
+
     /// Get focused emulator index (-1 if none)
     int focusedIndex() const { return _focusedIndex; }
 
@@ -99,6 +122,11 @@ private:
     void readBackFrame();
     void updateLayout();
     void updateTextures();
+    struct TileState;
+    /// updateTextures with smooth motion on: every tile's picture for the coming refresh, the tiles over the pool
+    void updateTexturesSmooth();
+    void uploadTile(TileState& tile, const uchar* pixels, int width, int height, const PictureGeometry& geometry);
+    int64_t refreshPeriodNs() const;
     QRect calculateTileRect(int index) const;
     void subscribeToNotifications();
     void unsubscribeFromNotifications();
@@ -112,6 +140,8 @@ private:
         double aspect = 4.0 / 3.0;  // Width : height of the picture on the CRT (DisplayGeometry::WindowAspect), kept inside the 4:3 plate
         QRectF source{0.0, 0.0, 1.0, 1.0};  // The working picture (paper) inside the texture, 0..1: where this machine puts it
         bool needsUpdate = true;
+        /// Smooth motion's side of the tile; null while the wall's smooth motion is off
+        std::unique_ptr<smoothmotion::Tile> smooth;
     };
 
     std::vector<TileState> _emulators;
@@ -132,6 +162,17 @@ private:
 
     bool _captureEnabled = false;
     GLFrameReader _reader;
+
+    smoothmotion::Mode _smoothMode = smoothmotion::Mode::Off;
+    std::unique_ptr<ThreadPool> _smoothPool;  ///< made with the first tile engine
+    std::vector<uint8_t> _smoothStep;         ///< per tile: smoothmotion::Tile::Step of this refresh
+    double _smoothLastStepMs = 0.0, _smoothMaxStepMs = 0.0;
+    bool _smoothMoving = false;  ///< a tile is between frames: the next refresh draws too
+    /// All the tiles' smooth motion took most of a refresh too often (4 refreshes of 20): the costliest quarter of
+    /// the tiles steps one level down, again until it fits
+    SmoothGuard _smoothWallGuard;
+    int _smoothWallSteps = 0;
+    std::vector<int> _smoothOrder;
 
     std::atomic<bool> _isRepaintPending{false};
     uint64_t _videoFrameObserverId = 0;

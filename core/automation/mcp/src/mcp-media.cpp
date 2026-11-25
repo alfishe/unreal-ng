@@ -157,6 +157,17 @@ std::string WindowDisplaySummary(const Json::Value& s)
 {
     std::string line = std::string("window gpu ") + (s.get("gpu", false).asBool() ? "on" : "off") +
                        (s.get("gpu_available", false).asBool() ? " (available)" : " (unavailable)");
+    // The renderer and the others offered: the words for renderer (an agent may see only the text)
+    if (s.isMember("renderer"))
+    {
+        std::string offered;
+        for (const Json::Value& name : s.get("renderers", Json::Value(Json::arrayValue)))
+            offered += (offered.empty() ? "" : ", ") + name.asString();
+        const std::string active = s.get("renderer_active", "").asString();
+        line += ", renderer " + s["renderer"].asString() +
+                (!active.empty() && active != s["renderer"].asString() ? " (" + active + " draws)" : "") +
+                " (offered: " + offered + ")";
+    }
     const std::string profile = s.get("crt_profile", "").asString();
     line += ", crt " + (s.get("crt", false).asBool() ? profile : "off (profile " + profile + ")");
     line += std::string(", blending ") + (s.get("blending", false).asBool() ? "on" : "off") + " (" +
@@ -204,7 +215,7 @@ std::string WindowDisplaySummary(const Json::Value& s)
                  : refresh.get("min", 0.0).asDouble() <= 0.0 ? " variable (its low end not reported)"
                                                              : " range from " + NumberText(refresh.get("min", 0.0).asDouble()));
         const std::string presenter = present.get("presenter", "").asString();
-        if (presenter == "metal" || presenter == "dxgi" || presenter == "gl-timed")
+        if (presenter == "metal" || presenter == "dxgi" || presenter == "gl-timed" || presenter == "vulkan")
             line += present.get("vrr", false).asBool() ? ", each frame at its time (vrr)" : ", on the refresh grid (vsync)";
         const Json::Value& vrrSupport = present["vrr_support"];
         if (vrrSupport.isObject() && vrrSupport.get("state", "").asString() != "yes" &&
@@ -295,7 +306,17 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     smooth.get("device", "").asString() + ": " + std::to_string(smooth.get("renders", 0).asUInt64()) +
                     " renders, " + std::to_string(smooth.get("blended", 0).asUInt64()) + " blended, " +
                     std::to_string(smooth.get("interpolated", 0).asUInt64()) + " interpolated, " +
-                    std::to_string(smooth.get("held_flicker", 0).asUInt64()) + " with flicker held";
+                    std::to_string(smooth.get("held_flicker", 0).asUInt64()) + " with flicker held, " +
+                    std::to_string(smooth.get("starved", 0).asUInt64()) + " frames without a next one, " +
+                    std::to_string(smooth.get("behind", 0).asUInt64()) + " refreshes behind the frame due" +
+                    (smooth.get("lite", 0).asUInt64()
+                         ? ", " + std::to_string(smooth.get("lite", 0).asUInt64()) + " by the cheap interpolation"
+                         : std::string()) +
+                    (smooth.get("too_slow", false).asBool()
+                         ? " (the interpolation is too slow on this machine: blended instead)"
+                         : smooth.get("stepped_down", false).asBool()
+                               ? " (the interpolation is too slow on this machine: the cheap one instead)"
+                               : "");
     }
     // The words the setters take: an agent may see only this text
     for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures", "osd_keyboard_styles"})
@@ -517,10 +538,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "mod-tpgwafsd) and audio by the matching extra frames";
     schema["properties"]["display"]["type"] = "object";
     schema["properties"]["display"]["description"] =
-        "window_display_set: any of gpu (bool), crt (bool), crt_profile (one of the window's crt_profiles: "
+        "window_display_set: any of gpu (bool), renderer (gl, vulkan: one of the window's renderers; vulkan on Linux "
+        "builds with a hardware Vulkan 1.3 GPU; re-creates the GPU screen, renderer_active says what draws), "
+        "crt (bool), crt_profile (one of the window's crt_profiles: "
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
-        "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display; "
+        "smooth_motion (off, blend, interpolate, interpolate-lite - the cheap interpolation for a slow machine: the "
+        "shown instance's picture between two frames on a fixed display; "
         "auto: View > Video Synchronization, interpolate only when the display has neither VRR nor a rate fitting the "
         "machine's), "
         "effects_device (gpu, cpu), present_policy (auto, vrr, vsync: how the native presenter shows the frames), "
@@ -536,7 +560,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "display_rate", "view",
+    for (const char* word : {"renderer", "crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "display_rate", "view",
                              "hud_theme", "osd_keyboard_picture", "osd_keyboard_style", "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";

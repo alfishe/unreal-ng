@@ -230,7 +230,7 @@ The frame of `transfer nv12` is now built in NV12 itself (`composeNv12` in the w
   bicubic, ffmpeg's kernel (Keys a = -0.6), Y to the place, U,V to half of it (a third of the samples of the 4K
   B,G,R,A frame), 4 bands;
 - same frames are found by the picture and the keyboard (hundreds of KB), not a 4K memcmp;
-- the layout is made even in `nv12` (a pixel at most: NV12 colours 2x2 blocks). A picture larger than its place
+- the layout is made even in `nv12` (a pixel at most: NV12 colors 2x2 blocks). A picture larger than its place
   (scaled down) keeps the old path (Qt's smooth scaling, `PackedToNv12` of the frame).
 
 Writer time per changed 4K frame (`old`: compose B,G,R,A + `PackedToNv12`; `new`: `composeNv12`), 7th Reality, the
@@ -259,3 +259,23 @@ Quality, `.238`, old vs new path on the same frames: PSNR Y 41-44 dB, U,V 54-62 
 smooth scaling; nothing visible side by side); `picture_height 2160` gives the same bytes (PSNR inf). `.40` has no
 ffmpeg, so Windows was measured on the stages only.
 
+
+## `PlaneScaler` in SIMD, the crop, colors (2026-11-24)
+
+`PlaneScaler` (both passes) has NEON and SSE2 bodies that give the scalar code's bytes (`planescaler/ab.sh` in
+`tools/verification/recording` compares many sizes, noise and a checkerboard: same bytes on every host). Picture
+converted and scaled into a 4K NV12 frame in 4 bands, min ms, median of 6 interleaved rounds, old -> new:
+
+| Case | Mac (M1 Ultra, load 50-67) | `.20` M3 Ultra | `.238` i7-11850H gcc | `.40` 3975WX MSVC |
+|:--|--:|--:|--:|--:|
+| 659x540 to 2636x2160 | 4.14 -> 1.35 | 1.82 -> 0.56 | 3.28 -> 0.99 | 5.85 -> 1.23 |
+| 659x540 to 1708x1400 | 2.17 -> 0.87 | 0.90 -> 0.34 | 1.71 -> 0.63 | 2.94 -> 0.78 |
+| 352x288 to 2640x2160 | 3.34 -> 1.15 | 1.62 -> 0.41 | 2.70 -> 0.68 | 5.06 -> 0.84 |
+| 1320x1080 to 2640x2160 | 5.11 -> 2.20 | 2.35 -> 0.94 | 4.84 -> 2.08 | 7.94 -> 2.38 |
+
+The `picture` path's fast copy took a picture only when it fit the frame: the pipe's frame is made even, so a 659
+wide window picture in a 658 place went through Qt's smooth scaling (soft edges). It now loses its edge pixel
+instead (at most 4 per side), sharp; the live A/B on `.238` was in the noise of the host's load (2.6 / 3.0 ms).
+
+Colors: FrameScaler is BT.709 now and every file is tagged BT.709 / limited / sRGB transfer (the 4K profile plan,
+"Washed-out colors"); `tools/verification/recording/colors.py` checks it.

@@ -1,6 +1,6 @@
 /**
  * @file videosyncwindow.cpp
- * @brief The video synchronization window: the window's present stats, live, in fixed cells.
+ * @brief The video synchronization window: the window's present stats, live, as a head card over tiles.
  */
 
 #include "videosyncwindow.h"
@@ -9,11 +9,15 @@
 #include <chrono>
 
 #include <QCheckBox>
+#include <QEvent>
 #include <QFontMetrics>
+#include <QFrame>
 #include <QGridLayout>
-#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
+#include <QPainter>
+#include <QPainterPath>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -21,6 +25,9 @@ namespace
 {
     constexpr int kRefreshMs = 500;
     constexpr int64_t kRateWindowNs = 1'000'000'000;
+    constexpr int kTileWidth = 280;
+    constexpr int kGap = 10;
+    constexpr int kGraphPoints = 60;
     const QString kNone = QStringLiteral("—");
 
     QString Hz(double hz)
@@ -56,6 +63,17 @@ namespace
         return QString::number(perSecond, 'f', 1) + " /s";
     }
 
+    QString ClockName(const std::string& clock)
+    {
+        if (clock == "audio")
+            return QObject::tr("audio clock");
+        if (clock == "emulated")
+            return QObject::tr("emulated clock");
+        if (clock == "latch")
+            return QObject::tr("latch clock");
+        return QObject::tr("no clock");
+    }
+
     QString ClockText(const std::string& clock, bool lowLatency)
     {
         if (clock == "latch" && lowLatency)
@@ -69,170 +87,347 @@ namespace
         return QObject::tr("none: the frames are not timed");
     }
 
-    QGroupBox* Group(const QString& title, QWidget* parent, QGridLayout*& grid)
+    QColor Mix(const QColor& a, const QColor& b, double t)
     {
-        auto* box = new QGroupBox(title, parent);
-        grid = new QGridLayout(box);
-        grid->setHorizontalSpacing(12);
-        grid->setColumnStretch(4, 1);
-        return box;
+        return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t,
+                                a.blueF() + (b.blueF() - a.blueF()) * t);
     }
 
-    QLabel* Caption(QGridLayout* grid, int row, const QString& text, int column = 0)
+    /// A one-line label that cuts a long text with "..." (the whole text on hover); its width never follows the text
+    class ElideLabel : public QLabel
     {
-        auto* label = new QLabel(text, grid->parentWidget());
-        label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-        grid->addWidget(label, row, column);
-        return label;
-    }
+    public:
+        using QLabel::QLabel;
+        QSize minimumSizeHint() const override { return {1, QLabel::minimumSizeHint().height()}; }
+        QSize sizeHint() const override { return {1, QLabel::sizeHint().height()}; }
 
-    /// A column heading over number cells
-    void Heading(QGridLayout* grid, int row, int column, const QString& text)
+    protected:
+        void paintEvent(QPaintEvent*) override
+        {
+            QPainter p(this);
+            p.setPen(palette().color(foregroundRole()));
+            const QRect area = contentsRect();
+            p.drawText(area, static_cast<int>(alignment()) | Qt::TextSingleLine,
+                       fontMetrics().elidedText(text(), Qt::ElideRight, area.width()));
+        }
+    };
+
+    void SetColor(QWidget* widget, const QColor& color)
     {
-        auto* label = new QLabel(text, grid->parentWidget());
-        label->setAlignment(Qt::AlignRight | Qt::AlignBottom);
-        label->setEnabled(false);  // the palette's dimmed text
-        grid->addWidget(label, row, column);
+        QPalette palette = widget->palette();
+        palette.setColor(QPalette::WindowText, color);
+        widget->setPalette(palette);
     }
 }  // namespace
+
+/// The last values of a rate as a line, the newest at the right: a steady rate is flat, a stutter a notch
+class VideoSyncSparkline : public QWidget
+{
+public:
+    explicit VideoSyncSparkline(QWidget* parent) : QWidget(parent) { setFixedSize(96, 30); }
+
+    void Add(double value)
+    {
+        _values.push_back(value);
+        if (_values.size() > kGraphPoints)
+            _values.erase(_values.begin());
+        update();
+    }
+
+    void Clear()
+    {
+        _values.clear();
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        if (_values.size() < 2)
+            return;
+        const double top = std::max(1.0, *std::max_element(_values.begin(), _values.end()));
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath path;
+        const double step = static_cast<double>(width() - 2) / (kGraphPoints - 1);
+        const double x0 = width() - 1 - step * static_cast<double>(_values.size() - 1);
+        for (size_t i = 0; i < _values.size(); i++)
+        {
+            const QPointF point(x0 + step * static_cast<double>(i), 1 + (height() - 2) * (1.0 - _values[i] / top));
+            if (i == 0)
+                path.moveTo(point);
+            else
+                path.lineTo(point);
+        }
+        p.setPen(QPen(palette().color(QPalette::Highlight), 1.5));
+        p.drawPath(path);
+    }
+
+private:
+    std::vector<double> _values;
+};
 
 VideoSyncWindow::VideoSyncWindow(std::function<WindowDisplaySettings()> settings, QWidget* parent)
     : QWidget(parent), _settings(std::move(settings))
 {
     setWindowTitle(tr("Video Synchronization"));
-    _numberWidth = QFontMetrics(font()).horizontalAdvance(QStringLiteral("00000.00 ms"));
     auto* layout = new QVBoxLayout(this);
+    layout->setSpacing(kGap);
+    layout->setSizeConstraint(QLayout::SetFixedSize);  // the window is as large as the tiles of the mode in effect
 
     _sync = new QCheckBox(tr("Synchronize to the display (VRR, else a fitting display rate, else interpolation)"), this);
     connect(_sync, &QCheckBox::toggled, this, &VideoSyncWindow::syncToggled);
     layout->addWidget(_sync);
 
-    QGridLayout* grid = nullptr;
+    // The head card: the mode in effect and the state, why, the clock and the presenter
+    _head = new QFrame(this);
+    _head->setObjectName(QStringLiteral("syncHead"));
+    _head->setFixedWidth(2 * kTileWidth + kGap);
+    auto* head = new QVBoxLayout(_head);
+    head->setContentsMargins(16, 12, 16, 12);
+    head->setSpacing(8);
+    auto* top = new QHBoxLayout();
+    auto* mode = new ElideLabel(_head);
+    QFont title = font();
+    title.setPointSizeF(title.pointSizeF() * 1.3);
+    title.setBold(true);
+    mode->setFont(title);
+    mode->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _cells["mode"] = mode;
+    top->addWidget(mode, 1);
+    _state = new QLabel(_head);
+    _state->setAlignment(Qt::AlignCenter);
+    _cells["state"] = _state;
+    top->addWidget(_state);
+    head->addLayout(top);
+    auto* why = new QLabel(_head);
+    why->setWordWrap(true);
+    why->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    why->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _cells["why"] = why;
+    head->addWidget(why);
+    auto* chips = new QHBoxLayout();
+    chips->setSpacing(6);
+    for (const char* key : {"clock", "presenter", "smooth", "low_latency"})
+        chips->addWidget(chip(key));
+    chips->addStretch(1);
+    head->addLayout(chips);
+    layout->addWidget(_head);
 
-    // What runs and why
-    layout->addWidget(Group(tr("In effect"), this, grid));
-    Caption(grid, 0, tr("Mode"));
-    cell(grid, "mode", 0, 1, Align::Text, 4);
-    Caption(grid, 1, tr("Why"));
-    QLabel* why = cell(grid, "why", 1, 1, Align::Text, 4);
-    Wrap(why, 4);
-    Caption(grid, 2, tr("Clock"));
-    Wrap(cell(grid, "clock", 2, 1, Align::Text, 4), 2);
+    auto* tiles = new QWidget(this);
+    _tileGrid = new QGridLayout(tiles);
+    _tileGrid->setContentsMargins(0, 0, 0, 0);
+    _tileGrid->setSpacing(kGap);
+    layout->addWidget(tiles);
 
-    // The display and the machine
-    layout->addWidget(Group(tr("Display"), this, grid));
-    Caption(grid, 0, tr("Refresh"));
-    cell(grid, "refresh", 0, 1, Align::Text, 4);
-    Caption(grid, 1, tr("Machine"));
-    cell(grid, "machine", 1, 1, Align::Text, 4);
-    Caption(grid, 2, tr("Display rate"));
-    Wrap(cell(grid, "display_rate", 2, 1, Align::Text, 4), 2);
-    Caption(grid, 3, tr("Presenter"));
-    Wrap(cell(grid, "presenter", 3, 1, Align::Text, 4), 2);
-
-    // How the presents land: counts in one column, percentiles in three
-    layout->addWidget(Group(tr("Presents"), this, grid));
-    Caption(grid, 0, tr("Shown"));
-    cell(grid, "shown", 0, 1, Align::Number);
-    Caption(grid, 1, tr("Dropped"));
-    cell(grid, "dropped", 1, 1, Align::Number);
-    Caption(grid, 2, tr("A refresh late"));
-    cell(grid, "late", 2, 1, Align::Number);
-    Caption(grid, 3, tr("Off the beat"));
-    cell(grid, "off_beat", 3, 1, Align::Number);
-    QLabel* beatShare = cell(grid, "off_beat_share", 3, 2, Align::Text, 3);
-    beatShare->setEnabled(false);
-    Caption(grid, 4, tr("Lead"));
-    cell(grid, "lead", 4, 1, Align::Number);
-    Heading(grid, 5, 1, tr("p50"));
-    Heading(grid, 5, 2, tr("p99"));
-    Heading(grid, 5, 3, tr("max"));
-    _errorCaption = Caption(grid, 6, tr("On screen vs asked"));
-    cell(grid, "error_p50", 6, 1, Align::Number);
-    cell(grid, "error_p99", 6, 2, Align::Number);
-    cell(grid, "error_max", 6, 3, Align::Number);
-    Caption(grid, 7, tr("Screen to sound"));
-    cell(grid, "sound_p50", 7, 1, Align::Number);
-    cell(grid, "sound_p99", 7, 2, Align::Number);
-
-    // Smooth motion's work, per second
-    layout->addWidget(Group(tr("Interpolation"), this, grid));
-    Caption(grid, 0, tr("State"));
-    cell(grid, "smooth", 0, 1, Align::Text, 4);
-    Caption(grid, 1, tr("Frames in"));
-    cell(grid, "frames", 1, 1, Align::Number);
-    Caption(grid, 1, tr("Pictures drawn"), 2);
-    cell(grid, "pictures", 1, 3, Align::Number);
-    Caption(grid, 2, tr("Interpolated"));
-    cell(grid, "interpolated", 2, 1, Align::Number);
-    Caption(grid, 2, tr("Blended"), 2);
-    cell(grid, "blended", 2, 3, Align::Number);
-    Caption(grid, 3, tr("Motion fields"));
-    cell(grid, "motion_fields", 3, 1, Align::Number);
-    Caption(grid, 3, tr("Held as flicker"), 2);
-    cell(grid, "held", 3, 3, Align::Number);
-    layout->addStretch(1);
-
-    // One caption column for all groups: the values start at the same place in each
-    int captionWidth = 0;
-    const QList<QGridLayout*> grids = findChildren<QGridLayout*>();
-    for (QGridLayout* g : grids)
-        for (int row = 0; row < g->rowCount(); row++)
-            if (QLayoutItem* item = g->itemAtPosition(row, 0); item && item->widget())
-                captionWidth = std::max(captionWidth, item->widget()->sizeHint().width());
-    for (QGridLayout* g : grids)
-        g->setColumnMinimumWidth(0, captionWidth);
+    addTile("display", tr("Display"), "refresh", {{tr("Machine"), "machine"}, {tr("Display rate"), "display_rate"}});
+    addTile("frames", tr("Frames on screen"), "shown",
+            {{tr("Dropped"), "dropped"}, {tr("A refresh late"), "late"}, {tr("Off the beat"), "off_beat"}}, true);
+    _errorCaption = addTile("timing", tr("On screen vs asked"), "error_p50",
+                            {{tr("p99"), "error_p99"}, {tr("Max"), "error_max"}, {tr("Lead"), "lead"}})
+                        .caption;
+    addTile("sound", tr("Screen to sound"), "sound_p50",
+            {{tr("p99"), "sound_p99"}, {tr("Clock breaks"), "cuts"}, {tr("Clock carry"), "carry"}});
+    addTile("smooth", tr("Interpolation"), "pictures",
+            {{tr("Frames in"), "frames"}, {tr("Interpolated"), "interpolated"}, {tr("Blended"), "blended"}});
+    addTile("motion", tr("Motion fields"), "motion_fields", {{tr("Held as flicker"), "held"}});
+    showTiles({"display"});
+    applyColors();
 
     _timer = new QTimer(this);
     _timer->setInterval(kRefreshMs);
     connect(_timer, &QTimer::timeout, this, &VideoSyncWindow::refresh);
-    resize(560, sizeHint().height());
 }
 
-void VideoSyncWindow::Wrap(QLabel* label, int lines)
+QLabel* VideoSyncWindow::chip(const char* key)
 {
-    // Long text runs on to the next line instead of being cut; a fixed height keeps the rows below in place
-    label->setWordWrap(true);
-    label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    label->setFixedHeight(QFontMetrics(label->font()).lineSpacing() * lines);
-}
-
-QLabel* VideoSyncWindow::cell(QGridLayout* grid, const char* key, int row, int column, Align align, int span)
-{
-    auto* label = new QLabel(grid->parentWidget());
-    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    if (align == Align::Number)
-    {
-        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        label->setFixedWidth(_numberWidth);
-    }
-    else
-    {
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMinimumWidth(1);  // long text is cut by the cell, never widens the window
-        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    }
-    grid->addWidget(label, row, column, 1, span);
+    auto* label = new QLabel(_head);
+    label->setAlignment(Qt::AlignCenter);
     _cells[key] = label;
     return label;
 }
 
-void VideoSyncWindow::set(const char* key, const QString& text)
+VideoSyncWindow::Tile& VideoSyncWindow::addTile(const char* id, const QString& caption, const char* bigKey,
+                                                const std::vector<std::pair<QString, const char*>>& lines,
+                                                bool sparkline)
+{
+    Tile tile;
+    tile.id = id;
+    tile.frame = new QFrame(_tileGrid->parentWidget());
+    tile.frame->setObjectName(QStringLiteral("syncTile"));
+    tile.frame->setFixedWidth(kTileWidth);
+    auto* box = new QVBoxLayout(tile.frame);
+    box->setContentsMargins(16, 12, 16, 12);
+    box->setSpacing(4);
+
+    tile.caption = new ElideLabel(tile.frame);
+    QFont small = font();
+    small.setPointSizeF(small.pointSizeF() * 0.85);
+    small.setBold(true);
+    small.setCapitalization(QFont::AllUppercase);
+    tile.caption->setFont(small);
+    tile.caption->setText(caption);
+    box->addWidget(tile.caption);
+
+    auto* bigRow = new QHBoxLayout();
+    auto* big = new ElideLabel(tile.frame);
+    QFont large = font();
+    large.setPointSizeF(large.pointSizeF() * 1.7);
+    big->setFont(large);
+    big->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    big->setFixedHeight(QFontMetrics(large).lineSpacing());
+    _cells[bigKey] = big;
+    bigRow->addWidget(big, 1);
+    if (sparkline)
+    {
+        _shownGraph = new VideoSyncSparkline(tile.frame);
+        bigRow->addWidget(_shownGraph);
+    }
+    box->addLayout(bigRow);
+
+    // Three lines in every tile: the tiles of a row are as tall as each other, a line not shown leaves its place
+    auto* grid = new QGridLayout();
+    grid->setHorizontalSpacing(8);
+    grid->setVerticalSpacing(2);
+    grid->setColumnStretch(0, 1);
+    const QFontMetrics metrics(font());
+    const int valueWidth = std::max(metrics.horizontalAdvance(QStringLiteral("0,000,000 (00.00 %)")),
+                                    metrics.horizontalAdvance(QStringLiteral("000.00 Hz · 00.00 ms"))) + 4;
+    const int lineHeight = metrics.lineSpacing();
+    for (int row = 0; row < 3; row++)
+    {
+        grid->setRowMinimumHeight(row, lineHeight);
+        if (static_cast<size_t>(row) >= lines.size())
+            continue;
+        auto* name = new ElideLabel(tile.frame);
+        name->setText(lines[row].first);
+        auto* value = new ElideLabel(tile.frame);
+        value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        value->setFixedWidth(valueWidth);
+        value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        grid->addWidget(name, row, 0);
+        grid->addWidget(value, row, 1);
+        _cells[lines[row].second] = value;
+        _lineCaptions[lines[row].second] = name;
+    }
+    box->addLayout(grid);
+    box->addStretch(1);  // a taller neighbour in the row: the content stays at the top
+    tile.frame->hide();
+    _tiles.push_back(tile);
+    return _tiles.back();
+}
+
+void VideoSyncWindow::applyColors()
+{
+    // The palette's own colours, so a light and a dark theme both work: a card a step off the window, dimmed captions
+    const QColor window = palette().color(QPalette::Window);
+    const QColor text = palette().color(QPalette::WindowText);
+    const QColor cardColor = Mix(window, text, 0.07);
+    const QColor chipColor = Mix(window, text, 0.16);
+    const QColor dim = Mix(text, window, 0.42);
+    const QString card = QStringLiteral("QFrame#%1 { background: %2; border-radius: 8px; }");
+    _head->setStyleSheet(card.arg(QStringLiteral("syncHead"), cardColor.name()));
+    for (const Tile& tile : _tiles)
+    {
+        tile.frame->setStyleSheet(card.arg(QStringLiteral("syncTile"), cardColor.name()));
+        SetColor(tile.caption, dim);
+    }
+    for (const auto& [key, label] : _lineCaptions)
+        SetColor(label, dim);
+    SetColor(_cells["why"], dim);
+    // Round ends: the radius is half the label's height (a larger one is not drawn at all)
+    const int line = QFontMetrics(font()).height();
+    const QString chipSheet = QStringLiteral("background: %1; color: %2; padding: 2px 10px; border-radius: ") +
+                              QString::number((line + 4) / 2) + QStringLiteral("px;");
+    for (const char* key : {"clock", "presenter", "smooth", "low_latency"})
+        _cells[key]->setStyleSheet(chipSheet.arg(chipColor.name(), text.name()));
+    const QString pill = QStringLiteral("background: %1; color: %2; padding: 3px 14px; font-weight: bold; border-radius: ") +
+                         QString::number((line + 6) / 2) + QStringLiteral("px;");
+    if (_uneven)
+        _state->setStyleSheet(pill.arg(QStringLiteral("#c77700"), QStringLiteral("#ffffff")));
+    else if (_state->text() == tr("Steady"))
+        _state->setStyleSheet(pill.arg(palette().color(QPalette::Highlight).name(),
+                                       palette().color(QPalette::HighlightedText).name()));
+    else
+        _state->setStyleSheet(pill.arg(chipColor.name(), text.name()));
+}
+
+void VideoSyncWindow::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange && _head != nullptr)
+        applyColors();
+}
+
+void VideoSyncWindow::set(const char* key, const QString& text, const QString& tip)
 {
     const auto it = _cells.find(key);
     if (it == _cells.end())
         return;
     if (it->second->text() != text)
         it->second->setText(text);
-    // The whole text on hover where the cell cuts it
-    if (it->second->alignment() & Qt::AlignLeft)
-        it->second->setToolTip(text);
+    // The whole text on hover where the cell cuts it; `tip`: the long form of a short value
+    const QString hover = tip.isEmpty() ? text : tip;
+    if (it->second->toolTip() != hover)
+        it->second->setToolTip(hover);
+}
+
+void VideoSyncWindow::showLine(const char* key, bool shown)
+{
+    const auto caption = _lineCaptions.find(key);
+    const auto value = _cells.find(key);
+    if (caption == _lineCaptions.end() || value == _cells.end())
+        return;
+    caption->second->setVisible(shown);
+    value->second->setVisible(shown);
+    if (!shown)
+        set(key, kNone);
+}
+
+void VideoSyncWindow::showTiles(const std::vector<const char*>& ids)
+{
+    std::string joined;
+    for (const char* id : ids)
+        joined += std::string(id) + ",";
+    if (joined == _tilesShown)
+        return;
+    _tilesShown = joined;
+    for (const Tile& tile : _tiles)
+    {
+        _tileGrid->removeWidget(tile.frame);
+        tile.frame->hide();
+    }
+    int place = 0;
+    for (const char* id : ids)
+        for (const Tile& tile : _tiles)
+            if (tile.id == id)
+            {
+                _tileGrid->addWidget(tile.frame, place / 2, place % 2);
+                tile.frame->show();
+                place++;
+            }
+}
+
+bool VideoSyncWindow::tileShown(const char* id) const
+{
+    return _tilesShown.find(std::string(id) + ",") != std::string::npos;
+}
+
+bool VideoSyncWindow::lineShown(const char* key) const
+{
+    const auto it = _lineCaptions.find(key);
+    return it != _lineCaptions.end() && !it->second->isHidden();
 }
 
 void VideoSyncWindow::clearValues()
 {
     for (auto& [key, label] : _cells)
         label->setText(key == "mode" ? tr("— (no machine shown)") : QString());
+    for (const char* key : {"why", "state", "clock", "presenter", "smooth", "low_latency"})
+        _cells[key]->hide();
+    if (_shownGraph)
+        _shownGraph->Clear();
+    showTiles({"display"});
 }
 
 void VideoSyncWindow::setSyncChecked(bool on)
@@ -298,124 +493,192 @@ void VideoSyncWindow::refresh()
         mode = p.vrr ? tr("Low latency: each frame at once (VRR)")
                      : tr("Low latency: each frame at the first refresh after it is made (%1)").arg(Hz(displayHz));
     set("mode", mode);
+    QString why;
     if (p.lowLatency)
-        set("why", tr("The feature lowlatency is on (Machine > Low Latency): frames are not held for their sound, "
-                      "led or interpolated, so the picture comes sooner and leads the sound"));
+        why = tr("The feature lowlatency is on (Machine > Low Latency): frames are not held for their sound, led or "
+                 "interpolated, so the picture comes sooner and leads the sound");
     else if (p.sync == "off")
-        set("why", tr("View > Video Synchronization is off: smooth motion %1, present policy %2, display rate %3")
-                       .arg(QString::fromStdString(s.smoothMotion), QString::fromStdString(s.presentPolicy),
-                            QString::fromStdString(s.displayRate)));
+    {
+        why = tr("View > Video Synchronization is off: smooth motion %1, present policy %2, display rate %3")
+                  .arg(QString::fromStdString(s.smoothMotion), QString::fromStdString(s.presentPolicy),
+                       QString::fromStdString(s.displayRate));
+        // Set by hand and not drawing: the display follows the frames or shows each for whole refreshes
+        if (s.smoothMotion != "off" && p.smooth == "off" && p.clock != "latch")
+            why += tr(". Smooth motion is not drawn: the display does not beat with the machine");
+    }
     else
-        set("why", p.syncReason.empty() ? kNone : QString::fromStdString(p.syncReason));
-    set("clock", ClockText(p.clock, p.lowLatency));
+        why = QString::fromStdString(p.syncReason);  // VRR: nothing came before it, nothing to explain
+    set("why", why);
+    _cells["why"]->setVisible(!why.isEmpty());
+
+    // Screen times: a native presenter's (Metal, DXGI, the timed GL swap, Vulkan). The software screen times its
+    // paints: when the window draws a new frame, not when the screen shows it. The plain GL swap has neither
+    const bool screen = p.timedAt == "screen";
+    const bool painted = p.timedAt == "paint";
+    set("clock", ClockName(p.clock), ClockText(p.clock, p.lowLatency));
+    set("presenter", QString::fromStdString(p.presenter),
+        QString::fromStdString(p.presenter) +
+            (screen    ? (p.vrr ? tr(" - each frame at its time") : tr(" - on the refresh grid"))
+             : painted ? tr(" - the window's own swap: times are its paints, not the screen")
+                       : tr(" - the window's own swap, no screen times")));
+    set("low_latency", tr("low latency"));
+    _cells["clock"]->show();
+    _cells["presenter"]->show();
+    _cells["low_latency"]->setVisible(p.lowLatency);
 
     // The display and the machine
-    set("refresh", p.fixedDisplay           ? tr("fixed %1").arg(Hz(p.maxRefreshHz))
-                   : p.minRefreshHz <= 0.0 ? tr("variable, up to %1").arg(Hz(p.maxRefreshHz))
-                                           : tr("variable %1 - %2").arg(Hz(p.minRefreshHz), Hz(p.maxRefreshHz)));
+    set("refresh", p.fixedDisplay           ? tr("%1 fixed").arg(Hz(p.maxRefreshHz))
+                   : p.minRefreshHz <= 0.0 ? tr("up to %1").arg(Hz(p.maxRefreshHz))
+                                           : tr("%1 – %2").arg(Hz(p.minRefreshHz).chopped(3), Hz(p.maxRefreshHz)));
     // The emulated machine's own frame rate (its frame length at its CPU clock: a Pentagon 48.83 Hz), not a measure
-    set("machine", p.machineHz > 0.0 ? tr("%1: a frame of the emulated machine every %2 ms")
-                                           .arg(Hz(p.machineHz))
-                                           .arg(1000.0 / p.machineHz, 0, 'f', 2)
-                                     : tr("not known yet (paused, turbo)"));
-    if (p.displayState == "matched" && p.originalHz > 0.0)
-        set("display_rate", tr("%1, switched from %2").arg(Hz(p.displayHz), Hz(p.originalHz)));
-    else if (p.displayState == "unchanged")
-        set("display_rate", tr("unchanged: %1").arg(QString::fromStdString(p.displayReason)));
-    else
-        set("display_rate", tr("the display's own"));
-    const bool native = p.presenter == "metal" || p.presenter == "dxgi";
-    // The software screen times its paints: when the window draws a new frame, not when the screen shows it
-    const bool painted = !native && p.timedAt == "paint";
-    set("presenter", QString::fromStdString(p.presenter) +
-                         (native    ? (p.vrr ? tr(" - each frame at its time") : tr(" - on the refresh grid"))
-                          : painted ? tr(" - the window's own swap: times are its paints, not the screen")
-                                    : tr(" - the window's own swap, no screen times")));
+    set("machine", p.machineHz > 0.0 ? tr("%1 · %2 ms").arg(Hz(p.machineHz)).arg(1000.0 / p.machineHz, 0, 'f', 2)
+                                     : tr("not known yet"),
+        p.machineHz > 0.0 ? tr("%1: a frame of the emulated machine every %2 ms")
+                                .arg(Hz(p.machineHz))
+                                .arg(1000.0 / p.machineHz, 0, 'f', 2)
+                          : tr("not known yet (paused, turbo)"));
+    // VRR follows the machine's frames: no display rate to fit
+    const bool rateJudged = !p.vrr || p.displayState != "keep";
+    showLine("display_rate", rateJudged);
+    if (rateJudged)
+    {
+        if (p.displayState == "matched" && p.originalHz > 0.0)
+            set("display_rate", tr("%1, from %2").arg(Hz(p.displayHz), Hz(p.originalHz)));
+        else if (p.displayState == "unchanged")
+            set("display_rate", tr("unchanged"), tr("unchanged: %1").arg(QString::fromStdString(p.displayReason)));
+        else
+            set("display_rate", tr("the display's own"));
+    }
 
     // Rates over the last second: the cells change twice a second, the rates once
     const int64_t now = NowNs();
     const bool rateDue = _lastNs == 0 || now - _lastNs >= kRateWindowNs - kRefreshMs * 500'000LL;
     const double seconds = _lastNs != 0 ? static_cast<double>(now - _lastNs) / 1e9 : 0.0;
-    if (native)
+    // What judges something here: low latency asks for each frame at once (nothing to be late against, no lead); VRR
+    // has no beat with the display; a paint is not a refresh (no grid to be late or off the beat on, no lead)
+    const bool lateJudged = screen && !p.lowLatency;
+    const bool beatJudged = screen && !p.lowLatency && !p.vrr;
+    if (screen || painted)
     {
         if (rateDue)
-            set("shown", _lastNs != 0 ? Rate(PerSecond(p.shown, _last.shown, seconds)) : kNone);
+        {
+            const double rate = PerSecond(p.shown, _last.shown, seconds);
+            set("shown", _lastNs != 0 ? Rate(rate) : kNone);
+            if (_lastNs != 0 && _shownGraph)
+                _shownGraph->Add(rate);
+        }
         set("dropped", Count(p.dropped));
-        // Low latency asks for each frame at once: every frame lands a refresh or so after, nothing to judge
-        set("late", p.lowLatency ? kNone : Count(p.late));
-        set("off_beat", Count(p.offBeat));
-        set("off_beat_share", p.beatFrames > 0 ? tr("of %1 frames (%2 %)")
-                                                     .arg(Count(p.beatFrames))
-                                                     .arg(100.0 * static_cast<double>(p.offBeat) /
-                                                              static_cast<double>(p.beatFrames),
-                                                          0, 'f', 2)
-                                               : QString());
-        set("lead", p.lowLatency ? kNone : Ms(p.leadMs));
+        showLine("late", lateJudged);
+        if (lateJudged)
+            set("late", Count(p.late));
+        showLine("off_beat", beatJudged);
+        if (beatJudged)
+            set("off_beat", p.beatFrames > 0 ? tr("%1 (%2 %)")
+                                                   .arg(Count(p.offBeat))
+                                                   .arg(100.0 * static_cast<double>(p.offBeat) /
+                                                            static_cast<double>(p.beatFrames),
+                                                        0, 'f', 2)
+                                             : Count(p.offBeat),
+                tr("%1 of %2 pictures on screen for a refresh count outside the beat")
+                    .arg(Count(p.offBeat), Count(p.beatFrames)));
         set("error_p50", Ms(p.errorP50Ms));
         set("error_p99", Ms(p.errorP99Ms));
         set("error_max", Ms(p.errorMaxMs));
+        showLine("lead", lateJudged);
+        if (lateJudged)
+            set("lead", Ms(p.leadMs));
+    }
+    if (screen)
+    {
         set("sound_p50", Ms(p.soundOffsetP50Ms));
         set("sound_p99", Ms(p.soundOffsetP99Ms));
-    }
-    else if (painted)
-    {
-        // New frames painted, the ones skipped between them, and when each was painted against its time; no
-        // refresh grid, lead or screen time to judge the rest by
-        if (rateDue)
-            set("shown", _lastNs != 0 ? Rate(PerSecond(p.shown, _last.shown, seconds)) : kNone);
-        set("dropped", Count(p.dropped));
-        for (const char* key : {"late", "off_beat", "lead", "sound_p50", "sound_p99"})
-            set(key, kNone);
-        set("off_beat_share", QString());
-        set("error_p50", Ms(p.errorP50Ms));
-        set("error_p99", Ms(p.errorP99Ms));
-        set("error_max", Ms(p.errorMaxMs));
+        set("cuts", Count(p.cuts), tr("Breaks of the frame sequence: a pause, a seek, a stall, turbo"));
+        set("carry", Ms(p.carryMs), tr("A step of the frames' clock being paid back slowly (a device came or went)"));
     }
     else
     {
-        for (const char* key : {"shown", "dropped", "late", "off_beat", "lead", "error_p50", "error_p99", "error_max",
-                                "sound_p50", "sound_p99"})
+        for (const char* key : {"sound_p50", "sound_p99", "cuts", "carry"})
             set(key, kNone);
-        set("off_beat_share", QString());
+    }
+    if (!screen && !painted)
+    {
+        for (const char* key : {"shown", "dropped", "late", "off_beat", "lead", "error_p50", "error_p99", "error_max"})
+            set(key, kNone);
     }
 
-    // What the error row measures: the screen against the time asked for; low latency asks for each frame at once
-    // (its way from the hand-over to the screen); the software screen has its paints, the time asked for its target
-    // (low latency: its latch)
-    if (_errorCaption)
-        _errorCaption->setText(painted      ? (p.lowLatency ? tr("Made to painted") : tr("Painted vs asked"))
-                               : p.lowLatency ? tr("Handed over to screen")
-                                              : tr("On screen vs asked"));
+    // What the error measures: the screen against the time asked for; low latency asks for each frame at once (its
+    // way from the hand-over to the screen); the software screen has its paints, the time asked for its target (low
+    // latency: its latch)
+    _errorCaption->setText(painted        ? (p.lowLatency ? tr("Made to painted") : tr("Painted vs asked"))
+                           : p.lowLatency ? tr("Handed over to screen")
+                                          : tr("On screen vs asked"));
 
     const bool smoothOn = p.smooth != "off";
-    set("smooth", !smoothOn && p.lowLatency ? tr("off: low latency shows each frame at once")
-                  : smoothOn ? tr("%1 on the %2%3")
-                                 .arg(QString::fromStdString(p.smooth),
-                                      QString::fromStdString(p.smoothDevice).toUpper(),
-                                      p.game ? tr(", the game's cadence") : QString())
-                           : tr("idle"));
-    if (!smoothOn)
+    if (smoothOn)
     {
-        for (const char* key : {"frames", "pictures", "interpolated", "blended", "motion_fields", "held"})
+        set("smooth", tr("%1 · %2%3")
+                          .arg(QString::fromStdString(p.smooth), QString::fromStdString(p.smoothDevice).toUpper(),
+                               p.game ? tr(" · game") : QString()),
+            tr("%1 on the %2%3%4")
+                .arg(QString::fromStdString(p.smooth), QString::fromStdString(p.smoothDevice).toUpper(),
+                     p.game ? tr(", the game's cadence") : QString(),
+                     p.smoothTooSlow       ? tr(": the interpolation's pictures came a refresh late on this "
+                                                "machine, blended instead")
+                     : p.smoothSteppedDown ? tr(": the interpolation's pictures came a refresh late on this "
+                                                "machine, the cheap interpolation instead")
+                                           : QString()));
+        if (rateDue && _lastNs == 0)
+        {
+            for (const char* key : {"frames", "pictures", "interpolated", "blended", "motion_fields", "held"})
+                set(key, kNone);
+        }
+        else if (rateDue)
+        {
+            set("frames", Rate(PerSecond(p.frames, _last.frames, seconds)));
+            set("pictures", Rate(PerSecond(p.renders, _last.renders, seconds)));
+            set("interpolated", Rate(PerSecond(p.interpolated, _last.interpolated, seconds)));
+            set("blended", Rate(PerSecond(p.blended, _last.blended, seconds)));
+            set("motion_fields", Rate(PerSecond(p.motionFields, _last.motionFields, seconds)));
+            set("held", Rate(PerSecond(p.heldFlicker, _last.heldFlicker, seconds)));
+        }
+    }
+    else
+    {
+        for (const char* key : {"frames", "pictures", "interpolated", "blended", "motion_fields", "held", "smooth"})
             set(key, kNone);
     }
-    else if (rateDue && _lastNs == 0)
-    {
-        for (const char* key : {"frames", "pictures", "interpolated", "blended", "motion_fields", "held"})
-            set(key, kNone);
-    }
-    else if (rateDue)
-    {
-        set("frames", Rate(PerSecond(p.frames, _last.frames, seconds)));
-        set("pictures", Rate(PerSecond(p.renders, _last.renders, seconds)));
-        set("interpolated", Rate(PerSecond(p.interpolated, _last.interpolated, seconds)));
-        set("blended", Rate(PerSecond(p.blended, _last.blended, seconds)));
-        set("motion_fields", Rate(PerSecond(p.motionFields, _last.motionFields, seconds)));
-        set("held", Rate(PerSecond(p.heldFlicker, _last.heldFlicker, seconds)));
-    }
+    _cells["smooth"]->setVisible(smoothOn);
+
+    // The state: are frames lost or off their refresh over the last second
     if (rateDue)
     {
+        const uint64_t lost = (p.dropped >= _last.dropped ? p.dropped - _last.dropped : 0) +
+                              (lateJudged && p.late >= _last.late ? p.late - _last.late : 0) +
+                              (beatJudged && p.offBeat >= _last.offBeat ? p.offBeat - _last.offBeat : 0);
+        _uneven = (screen || painted) && _lastNs != 0 && lost > 0;
+        set("state", !(screen || painted) ? tr("Not measured") : _uneven ? tr("Uneven") : tr("Steady"),
+            !(screen || painted) ? tr("This screen gives no times to judge the frames by")
+            : _uneven           ? tr("%n frame(s) dropped, late or off the beat over the last second", nullptr,
+                                     static_cast<int>(lost))
+                                : tr("No frame dropped, late or off the beat over the last second"));
+        _state->show();
+        applyColors();
         _last = p;
         _lastNs = now;
     }
+
+    std::vector<const char*> tiles{"display"};
+    if (screen || painted)
+    {
+        tiles.push_back("frames");
+        tiles.push_back("timing");
+    }
+    if (screen)
+        tiles.push_back("sound");
+    if (smoothOn)
+    {
+        tiles.push_back("smooth");
+        tiles.push_back("motion");
+    }
+    showTiles(tiles);
 }

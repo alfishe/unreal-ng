@@ -17,6 +17,9 @@ add_library(unreal-debugger-views STATIC
     ${ECAT_DIR}/dialogs/debugger/celleditor.cpp
     ${ECAT_DIR}/dialogs/debugger/debuggerwindow.cpp
     ${ECAT_DIR}/dialogs/debugger/disasmview.cpp
+    ${ECAT_DIR}/dialogs/debugger/gsanalysis.cpp
+    ${ECAT_DIR}/dialogs/debugger/gsmonitor.cpp
+    ${ECAT_DIR}/dialogs/debugger/gsprofiling.cpp
     ${ECAT_DIR}/dialogs/debugger/memoryview.cpp
     ${ECAT_DIR}/dialogs/debugger/memorywindow.cpp
     ${ECAT_DIR}/dialogs/debugger/nextviews.cpp
@@ -25,10 +28,13 @@ add_library(unreal-debugger-views STATIC
     ${ECAT_DIR}/dialogs/debugger/sideviews.cpp
     ${ECAT_DIR}/dialogs/debugger/ttdcontrols.cpp
     ${ECAT_DIR}/emulator/disasm_buffer.cpp
+    # unreal-qt's tab bars that scroll (an arrow at each end, the wheel switches tabs): Qt only
+    ${CMAKE_SOURCE_DIR}/unreal-qt/src/widgets/tabscrollarrows.cpp
 )
 set_target_properties(unreal-debugger-views PROPERTIES AUTOMOC ON)
 # shim/emulator/*.h stand for ecat's headers of those names; shimapi/ecatshim.h is the API itself
 target_include_directories(unreal-debugger-views PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/shim ${CMAKE_CURRENT_SOURCE_DIR}/shimapi ${ECAT_DIR})
+target_include_directories(unreal-debugger-views PRIVATE ${CMAKE_SOURCE_DIR}/unreal-qt/src/widgets)
 target_link_libraries(unreal-debugger-views PUBLIC Qt6::Widgets)
 
 # The adapter sees the core and the API, never shim/ (its emulator/emulator.h would shadow the core's). Two

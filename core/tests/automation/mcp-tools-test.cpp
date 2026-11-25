@@ -2343,6 +2343,71 @@ TEST_F(McpTools_Test, InspectState_GsZxDmaAspect_ForwardsLastAndSinceAndPrintsTh
     EXPECT_NE(result.text.find("[audio_gs_zxdma] No NeoGS fitted"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_GsProfileAndEventsAspects_ForwardTheQueryAndPrintTheLines)
+{
+    // The card CPU's profiler and frame map (gs-debugger X9 / X2 / X20): cpu, routines, first and count go to the
+    // routes' query; the text is the server's lines
+    Json::Value profile;
+    profile["available"] = true;
+    profile["text"] = "GS profiler (ms, General Sound): on, 3 frame(s), period 428 cycles\nISR last frame: 67 / 428 avg\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/profile?cpu=ms&routines=5&activity=16"] = {200, profile};
+    Json::Value events;
+    events["available"] = true;
+    events["text"] = "GS events (ms, General Sound): host frame 9, 2 periods\n  p2    INT 3-70 | dac0@12=#80\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/events?cpu=ms&first=2&count=1"] = {200, events};
+
+    Json::Value args;
+    args["aspects"].append("audio_gs_profile");
+    args["aspects"].append("audio_gs_events");
+    args["gs_cpu"] = "ms";
+    args["gs_profile_routines"] = 5;
+    args["gs_events_first"] = 2;
+    args["gs_events_count"] = 1;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/gs/profile?cpu=ms&routines=5&activity=16"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/gs/events?cpu=ms&first=2&count=1"));
+    EXPECT_NE(result.text.find("[audio_gs_profile] GS profiler (ms, General Sound): on"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ISR last frame: 67 / 428 avg"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[audio_gs_events] GS events (ms"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("p2    INT 3-70 | dac0@12=#80"), std::string::npos) << result.text;
+
+    // No card CPU: the server's 404 message
+    Json::Value missing;
+    missing["error"] = "Not Found";
+    missing["message"] = "not available: the General Sound (lightweight) has no card CPU";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/profile?activity=16"] = {404, missing};
+    Json::Value plain;
+    plain["aspects"].append("audio_gs_profile");
+    result = RunTool(*_registry, "inspect_state", plain, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[audio_gs_profile] not available: the General Sound (lightweight) has no card CPU"),
+              std::string::npos)
+        << result.text;
+}
+
+TEST_F(McpTools_Test, EmulatorManage_GsProfileActions_PostControlAudioGsWithCpu)
+{
+    Json::Value response;
+    response["action"] = "start";
+    response["on"] = true;
+    response["text"] = "GS profiler (ms, General Sound): started, on";
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, response};
+    for (const char* action : {"gs_profile_start", "gs_profile_stop", "gs_profile_clear"})
+    {
+        Json::Value args;
+        args["action"] = action;
+        args["gs_cpu"] = "ms";
+        mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+        ASSERT_FALSE(result.isError) << result.text;
+        const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs");
+        ASSERT_NE(call, nullptr);
+        EXPECT_EQ(call->body["action"].asString(), std::string(action).substr(3));
+        EXPECT_EQ(call->body["cpu"].asString(), "ms");
+        EXPECT_NE(result.text.find("GS profiler (ms, General Sound): started"), std::string::npos) << result.text;
+    }
+}
+
 TEST_F(McpTools_Test, InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline)
 {
     // The GS slot's statistics (gs-debugger N7): the section is the route's last part, the baseline and fresh its

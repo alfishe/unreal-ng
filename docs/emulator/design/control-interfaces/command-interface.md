@@ -727,6 +727,75 @@ WebAPI `GET /state/audio/gs/zxdma?last=&since=` (and its WebSocket `call`); MCP 
 `audio_gs_zxdma` (`gs_zxdma_last`, `gs_zxdma_since`); Lua and Python `gs_zxdma(last, since)`; the device catalog's
 `gs-zxdma` ([neogs-zxdma-design §6.4](../../../inprogress/2026-09-19-general-sound/neogs-zxdma-design.md)).
 
+`gs profile [start|stop|clear] [--cpu gs|ms] [--routines N] [--activity N]` drives and reads the card CPU's profiler
+(classic GS, the ZX-MultiSound's GS, NeoGS; the lightweight player has no CPU: "not available"). Off by default;
+`start` clears and switches it on from the card's next run, `stop` keeps the data, `clear` zeroes them. All figures
+are card CPU cycles (NeoGS by its clock at the time):
+- `isr.last_frame` / `isr.since_start`: `count`, `min`, `avg`, `max` of the ISR length (from the INT acknowledge's
+  start to the boundary after the instruction that popped its return address, nested interrupts included),
+  `used_pct` / `headroom_pct` of `period_cycles` (320 on the classic GS, the NeoGS timer's period), `overruns` (an ISR
+  that ended after its period's end), `latency_avg` / `latency_max` (the period start to the acknowledge), `nmis`,
+  `lost` (requests merged into a pending one).
+- `commands[]`: per host command code `count`, `avg`, `min`, `max`, `total` of the card's busy cycles on it (from its
+  read of the command, COMRG, and from each data byte it takes, DATRG, to its next status poll, FLAGS: the firmware
+  back in a wait loop; interrupt time apart; summed until the next command), with `name` / `handler` from the
+  firmware profile; `current_command` the one still running.
+- `routines[]`: the top N by inclusive cycles (`address`, `page_kind`, `page`, `label` from the card CPU's symbols,
+  `calls`, `interrupts`, `inclusive`, `exclusive`, `avg`, `min`, `max`, `inclusive_pct`). A routine starts at a taken
+  CALL / RST, an accepted interrupt starts its handler's frame; a frame ends when SP goes above its return address's
+  slot. Interrupt time never counts in a routine's time; the handler is its own root.
+- `activity[]`: per host frame (up to 256) `cycles`, `isr_pct`, `idle_pct` (the idle poll loop the runner slept
+  through), `halt_pct`, `busy_pct`, `commands`, `interrupts`, `overruns`, `lost`, `isr_max`.
+- `stack_overflows`, `routines_dropped`, `resyncs` (the stack dropped after a time jump: TTD seek, a run not
+  profiled).
+
+`gs events [--cpu gs|ms] [--first N] [--count N] [--rows N]` maps the last complete host frame per card interrupt
+period: `rows[]` {`period`, `start` (cycles from the frame's start), `isr[]` {`accept`, `end`, `length`, `entry`, `nmi`}
+(cycles from the period's start; `end` null: still running at the frame's end), `events[]` `[cycle, kind, value,
+detail]`} with kinds `host_data_write`, `host_data_read`, `host_command`, `host_status`, `host_control`, `dac` (detail:
+the channel), `page` (detail: the port), `volume` (detail: the channel), `zxdma_read`, `zxdma_write`; `totals` per
+kind. The ISR bars come from the profiler, the dots from the GS port trace (`gsporttrace start`). Every plane: WebAPI
+`GET /state/audio/gs/profile?cpu=&routines=&activity=`, `GET /state/audio/gs/events?cpu=&first=&count=&rows=` (and
+their WebSocket `call`), `POST /control/audio/gs` `{action: profile_start | profile_stop | profile_clear, cpu}`; MCP
+`inspect_state` aspects `audio_gs_profile` (`gs_cpu`, `gs_profile_routines`) and `audio_gs_events` (`gs_cpu`,
+`gs_events_first`, `gs_events_count`), `emulator_manage` `gs_profile_start` / `gs_profile_stop` / `gs_profile_clear`
+(`gs_cpu`); Lua and Python `gs_profile(cpu, routines, activity)`, `gs_profile_control(action, cpu)`,
+`gs_events(cpu, first, count, rows)`; the device catalog's `gs-profile`, `gs-events`, `ms-gs-profile`, `ms-gs-events`
+([gs-debugger design §8A.3](../../../inprogress/2026-09-27-gs-debugger/design.md)). The cost: while it is on the card
+runs its record loop (a call per instruction, about the execution history's price); off, one test per card run.
+
+`gs analysis [status|on|off|reset|release] [--cpu gs|ms] [--decay N]`, `gs coverage ...` and `gs heatmap ...` are the
+card CPU analysis of the GS slot's card (`--cpu gs`, the default) or the ZX-MultiSound's GS (`--cpu ms`): classic GS,
+the MultiSound's GS and NeoGS; the lightweight GS has no card CPU ("not available"). It is off by default and costs the
+card CPU nothing while off: `on` allocates the arrays (about 3 MB on a 512 KB NeoGS) and the card installs its marking
+bus callbacks at its next run; `off` stops marking and keeps the data; `reset` clears it; `release` frees it; `--decay`
+sets the heat lost per frame (0-255, default 8).
+
+- `gs coverage [--space rom|ram] [--page N] [--ranges N] [--raw]`: the code / data log, a flag byte per physical byte of
+  the ROM (the flash on NeoGS) and of each 16 KB RAM page, OR-merged over every session since `on` or `reset`: exec 1
+  (an instruction start), operand 2, read 4, write 8 (the CPU, or a DMA master writing RAM), jump 16 (a jump or
+  interrupt target), sub 32 (a CALL / RST target), dac 64 (read by the DAC fetch, #6000-#7FFF), written 128 (RAM
+  written since the last card reset). Per space the totals and the pages with a mark (counts, code / data / DAC ranges as
+  page offsets); `--page` one page with its CALL / RST entries (`--raw`: its 16,384 flags as base64). Then the command
+  handlers of the firmware profile's dispatch table that ran (`handlers.executed` / `not_executed`), and the reads of
+  RAM never written since the card reset (`never_written.rows`: address, page, offset, PC, frame, read or fetch; 1,024
+  kept, `dropped` counts the rest; each byte once per card reset).
+- `gs heatmap [--channels <list>] [--recent <list>] [--frames N] [--cells N] [--format none|hex|base64]`: the card RAM in
+  cells (16 bytes up to 1 MB, at most 65,536 cells), a heat byte per cell and channel - `fetch`, `read`, `write` (the
+  card CPU), `dac`, `sd_dma` (NeoGS SD writes and MP3 reads), `zx_dma` (the host through the NeoGS ZX-DMA window). An
+  access adds 32 (saturating at 255), each host frame takes the decay off. `recent`: the RAM ranges a channel touched in
+  the last N frames (default `dac`, 50 frames: the samples playing), trimmed to the bytes the code / data log marks. The
+  grid (`data` base64, or `rows` hex) is merged by maximum to at most `--cells` cells; the CLI text gives the counts and
+  the ranges (`--format hex` adds the rows).
+
+Every plane: WebAPI `GET /state/audio/gs/analysis|coverage|heatmap` (the options as query parameters) and
+`POST /control/audio/gs/analysis {action, cpu, decay}` (and their WebSocket `call`); MCP tool `gs_analysis`
+(`action` status / on / off / reset / release / coverage / heatmap, the same options); Lua `gs_analysis(action,
+{cpu, decay})`, `gs_coverage({...})`, `gs_heatmap({...})`; Python `gs_analysis(action, cpu, decay)`,
+`gs_coverage(cpu, space, page, ranges, raw)`, `gs_heatmap(cpu, channels, recent, frames, cells, format)`; the device
+catalog's `gs-coverage`, `gs-heatmap`, `ms-gs-coverage`, `ms-gs-heatmap`
+([gs-debugger TODO P5.6](../../../inprogress/2026-09-27-gs-debugger/TODO.md)).
+
 #### 3.1 Memory Commands
 
 The `memory` command provides unified access to emulator memory with two addressing modes:
@@ -2019,13 +2088,16 @@ and its viewport do not: they are the machine's, off on every new Pentagon.
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
 | `video window` / `video window status` | | Show the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `smooth_motion` = off / blend / interpolate / auto (auto: View > Video Synchronization, interpolate only while the display has neither VRR nor a fitting rate) and `effects_device` = gpu / cpu (the shown instance's `[VIDEO] SmoothMotion` / `EffectsDevice` until it restarts; frame presenter design, section 4.3-4.5); `present_policy` = auto / vrr / vsync (the shown instance's `[VIDEO] PresentPolicy`: the native presenter shows each frame at its own time or on the refresh grid, at once; `UNREAL_PRESENT_POLICY` overrides it); `display_rate` = keep / match (the shown instance's `[VIDEO] DisplayRate`: with `match`, while the emulator is the active application, the display under the window runs its mode at the same resolution whose rate fits the machine's, e.g. 50 Hz for a 48.83 Hz Pentagon on a 60 Hz monitor; its own mode back on focus loss, another display, `keep` and quit; macOS and Windows; frame presenter design, section 4.7); `lip_sync_offset_ms` = -200..200 (the shown instance's `[VIDEO] LipSyncOffsetMs`, added to every frame's target time from the next frame, positive = the picture later); `view` = full / screen / content (which part of the frame the window shows, see below); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `renderer` = gl / vulkan (one of `renderers`: re-creates the GPU screen, the other settings carry over; not offered: unavailable); `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `smooth_motion` = off / blend / interpolate / interpolate-lite / auto (interpolate-lite: the cheap interpolation for a machine the full one is too slow on, about 1 / 30 of its time on one thread; auto: View > Video Synchronization, interpolate only while the display has neither VRR nor a fitting rate) and `effects_device` = gpu / cpu (the shown instance's `[VIDEO] SmoothMotion` / `EffectsDevice` until it restarts; frame presenter design, section 4.3-4.5); `present_policy` = auto / vrr / vsync (the shown instance's `[VIDEO] PresentPolicy`: the native presenter shows each frame at its own time or on the refresh grid, at once; `UNREAL_PRESENT_POLICY` overrides it); `display_rate` = keep / match (the shown instance's `[VIDEO] DisplayRate`: with `match`, while the emulator is the active application, the display under the window runs its mode at the same resolution whose rate fits the machine's, e.g. 50 Hz for a 48.83 Hz Pentagon on a 60 Hz monitor; its own mode back on focus loss, another display, `keep` and quit; macOS and Windows; frame presenter design, section 4.7); `lip_sync_offset_ms` = -200..200 (the shown instance's `[VIDEO] LipSyncOffsetMs`, added to every frame's target time from the next frame, positive = the picture later); `view` = full / screen / content (which part of the frame the window shows, see below); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 | `video window crt_params` | `[<name>=<value> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them, set one (clamped to its range), move one by a dial's steps (its own step), reset all or one. A libretro preset (`shader:crt-geom`, ...) has its own (its `preset.json`, 3..177); `basic` and a custom shader take the built-in ones (`curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`, `brightness`, `contrast`, `gamma`); `none` and the beam models (`crt-lottes`, ...) have none. A preset's values are kept per preset across a GPU switch and in the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
-Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
+Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `renderer` (`gl` / `vulkan`, View > Renderer as
+asked, kept across sessions; `UNREAL_RENDERER` overrides it at start), `renderers` (offered: `gl`; `vulkan` in a build
+with it, Linux by default, on a hardware Vulkan 1.3 GPU), `renderer_active` (what the GPU screen draws with now; `""`
+the software screen; `gl` under `vulkan` after a fall back), `crt`, `crt_profile`, `crt_profiles` (offered),
 `blending`, `blending_frames`, `blending_weights`, `blending_decay`, `smooth_motion`, `effects_device`, `present_policy`, `display_rate`, `lip_sync_offset_ms`, `present` (how
 the frames reach the screen: `presenter` metal / dxgi / gl-timed (Linux: a thread swaps GL at the frame's time) /
-gl / software, `fixed_display`, `vrr` (each frame at its own time, else on the refresh grid), `vrr_support` {`state`
+vulkan (the Vulkan renderer's swapchain, `UNREAL_RENDERER=vulkan`) / gl / software, `fixed_display`, `vrr` (each frame at its own time, else on the refresh grid), `vrr_support` {`state`
 yes / no / unknown, `reason`: X11 RandR `vrr_capable` and a fullscreen window, unknown on Wayland and Windows}, `sync` {mode: off / vrr / display_rate / interpolate, reason: why the steps before
 it are not} (View > Video Synchronization's step in effect), `refresh_hz` {min, max}, `clock` (what timed the frame
 on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo or under the feature `lowlatency`, `none`),
@@ -2037,11 +2109,11 @@ path such as a Bluetooth headset or a large lip-sync trim, so it is due `max_del
 picture leads its sound; the one-line summary says so), `max_delay_ms` (9 frames), `clamped_frames`, `early`
 (refreshes that found no frame due yet: start up), `carried` (steps of the frames' clock carried and paid back by
 0.2 ms a frame: a device came or went, an underrun), `cuts` (breaks of the frame sequence: a pause, a seek, turbo),
-`carry_ms` (the carry being paid back now)}, `presented`, `shown`, `dropped`, `late` (a refresh late), `beat` {`frames` judged, `off`: on screen for a refresh count
+`carry_ms` (the carry being paid back now)}, `presented`, `shown`, `dropped`, `late` (a refresh late after its own time; presents at once, the low-latency ones, are not counted), `beat` {`frames` judged, `off`: on screen for a refresh count
 outside floor / ceil of their span over the refresh, a refresh missed, a frame held or never shown}, `lead_ms`,
 `error_ms` {p50, p99, max}, `sound_offset_ms` {p50, p99: screen time minus the picture's sound, the lip-sync trim
 taken out}, `gpu_wait_ms` {p50, max}: the native presenter's last 600 presents (the beat since the start); `gpu_ms` {`smooth`, `smooth_cpu`, `picture`: {p50, max over the last 600, `longest` since the GL context was made, `measured`}: `smooth` the GPU time of smooth motion's passes alone (timer-query segments, the CPU's work between them left out), `smooth_cpu` its whole refresh on the CPU's clock (the readback waits included), `picture` the GPU time of the picture (CRT composition, beam model, custom shader or preset), a pass over 100 ms logged; where GL has no timer (macOS reads 0) `smooth` and `picture` stay `measured` 0; `smooth` {`mode` in effect, `device`, `game`, `frames`, `pictures`,
-`renders`, `blended`, `interpolated`, `motion_fields`, `on_device`, `held_flicker`}; `display` {`state` keep / matched / unchanged, `reason` (why unchanged), `hz` the display's rate now, `original_hz` its own, `machine_hz` the machine's own frame rate: its frame length at its CPU clock, 48.83 on a Pentagon}), `emulator` (the instance the window shows),
+`renders`, `blended`, `interpolated`, `motion_fields`, `on_device`, `held_flicker`, `lite` (interpolated pictures the cheap interpolation drew: `interpolate-lite`, or the step down), `stepped_down` (the interpolation's pictures came a refresh late too often on this machine, 4 of 20: the cheap interpolation instead, until the settings are set again), `too_slow` (the cheap interpolation's pictures were late as well, or it was the mode chosen: blended instead; `mode` says what draws), `behind` (refreshes its newest frame was two or more behind the frame due: that frame was shown as it is), `starved` (frames due with no next frame yet: the lead, the lip-sync trim or the core's delay used up the look-ahead, the picture repeats)}; `display` {`state` keep / matched / unchanged, `reason` (why unchanged), `hz` the display's rate now, `original_hz` its own, `machine_hz` the machine's own frame rate: its frame length at its CPU clock, 48.83 on a Pentagon}), `emulator` (the instance the window shows),
 `fullscreen`, `view` (`full`) with `views` (`full`, `screen`, `content`), `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
 screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`, `retro_zx`, `cyberpunk`,
 `amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD
@@ -4738,7 +4810,7 @@ by its manager's revision.
 | `monitor [all]` | `[instance=]` | Everything: `host`, `clients`, `video`, `devices` (`controllers.devices`), `instances` [{`instance`, `index`, `model`, and each instance name below}] (every instance, or the one named) | ✅ Implemented |
 | `monitor host.stats` | | The process (never per instance): `cpu_percent` (over the last 0.5 s, 100 = one core busy), `cpu_percent_host` (of all `cores`), `rss_bytes`, `peak_rss_bytes`, `virtual_bytes`, `threads`, `cpu_time_s`, `uptime_s`, `interval_s`. macOS task_info / proc_pidinfo, Linux /proc/self/status, Windows GetProcessTimes / GetProcessMemoryInfo; sampled at most twice a second | ✅ Implemented |
 | `monitor host.clients` | | Per plane (`rest` HTTP requests, `ws` `/api/v1/ws` sockets and their `call`s, `events` `/api/v1/companions/events`, `debug_ws` `/api/v1/websocket`, `mcp` POST `/mcp`, `cli` connections and commands): `connections` (open now), `opened`, `requests`, `dropped` (closed by the server for reading too slowly: a `ws` slow consumer); `companions` (paired), `instances`. An MCP tool's own WebAPI calls are not counted as REST | ✅ Implemented |
-| `monitor video.present` | | The GUI window's way to the screen, the parts that change with the setup and never per frame (the counters stay in `video window`): `available` (false headless), `emulator`, `presenter` (metal / dxgi / gl-timed / gl / software), `present_policy`, `fixed_display`, `vrr`, `vrr_support` {`state`, `reason`}, `sync` {`mode` off / vrr / display_rate / interpolate (View > Video Synchronization's step in effect), `reason`}, `refresh_hz` {`min`, `max`}, `smooth` {`setting`, `mode` in effect, `device`, `game`}, `display` {`setting` keep / match, `state` keep / matched / unchanged, `reason`, `hz`, `original_hz`, `machine_hz`}, `delay` {`clamped` (the picture leads its sound: `video window` present.timing), `max_ms`}. The window publishes it when it changes, checked once a second (frame presenter design, section 6.4) | ✅ Implemented |
+| `monitor video.present` | | The GUI window's way to the screen, the parts that change with the setup and never per frame (the counters stay in `video window`): `available` (false headless), `emulator`, `presenter` (metal / dxgi / gl-timed / vulkan / gl / software), `renderer` (gl / vulkan: what the GPU screen draws with, `""` the software screen), `present_policy`, `fixed_display`, `vrr`, `vrr_support` {`state`, `reason`}, `sync` {`mode` off / vrr / display_rate / interpolate (View > Video Synchronization's step in effect), `reason`}, `refresh_hz` {`min`, `max`}, `smooth` {`setting`, `mode` in effect, `device`, `game`}, `display` {`setting` keep / match, `state` keep / matched / unchanged, `reason`, `hz`, `original_hz`, `machine_hz`}, `delay` {`clamped` (the picture leads its sound: `video window` present.timing), `max_ms`}. The window publishes it when it changes, checked once a second (frame presenter design, section 6.4) | ✅ Implemented |
 | `monitor controllers.devices` | | The host input devices (the process): `available` (false without a host input owner: no Qt client), `revision` (one more per change), `devices` [the `controllers devices` entries: `id`, `name`, `family`, `layout`, `backend`, `role`, `pin`, `layers`, `context`, `outputs`, `battery` {`known`, `text`, ...}, `light` {`available`, `reason`}, `notice`]. Published by the owner's poll when it changed, so a read never waits for the GUI thread ([surfaces, the topic](../../../inprogress/2026-10-17-controller-manager/surfaces.md#the-controllersdevices-topic-built)); in `monitor all` as `devices` | ✅ Implemented |
 | `monitor emulator.stats` | `[instance=]` | The measured pace (MainLoop, a 0.5 s window, no lock on the emulation thread): `state`, `measuring` (false while paused or stopped), `fps`, `nominal_fps`, `speed_percent` (emulated time over wall time: fps / nominal × the host multiplier; 2x shows 200, turbo its rate), `frame_time_us` {`avg`, `max`} (the host time a frame's emulation took), `frame_budget_percent` (avg over the frame period), `halted_percent` (T-states in HALT), `interrupts_per_frame` (INTs the CPU accepted), `frame`, `t_states` (cumulative; while it runs taken at the window's end, so the value changes twice a second), `turbo`, `cpu` {`mhz`, `base_mhz`, `multiplier` (host × the machine's own turbo), `host_multiplier`, `hw_turbo_ratio`} | ✅ Implemented |
 | `monitor debug.breakpoints` | `[instance=]` | The user breakpoints: `total`, `active`, `inactive`, `owned` (analyzers', DeZog's, hidden traps: not counted), `by_kind` {`memory`, `exec`, `read`, `write`, `port`, `port_in`, `port_out`, `keyboard`, `nextreg`, `beam`, `copper`, `magic`}, `groups` [{`name`, `total`, `active`}], `last_hit` {`id`, `type`, `address`, `access`, `group`, `note`} or null | ✅ Implemented |

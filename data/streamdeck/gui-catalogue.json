@@ -429,6 +429,20 @@
                         }
                     ],
                     "repeats": false
+                },
+                {
+                    "description": "The picture between two frames on every tile, for a display that does not run at the machines' rate (GPU rendering only). off: every frame as it is, at no cost. interpolate steps down to interpolate-lite, and that to blend, on the tiles whose pictures take too long.",
+                    "label": "Smooth motion",
+                    "method": "tilegrid.smooth_motion",
+                    "params": [
+                        {
+                            "description": "off, blend, interpolate-lite or interpolate",
+                            "kind": "string",
+                            "name": "mode",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
                 }
             ],
             "description": "The video wall's grid of tiles, each showing a machine.",
@@ -438,7 +452,9 @@
                 "tiles",
                 "focused",
                 "single_sync",
-                "layout"
+                "layout",
+                "smooth_motion",
+                "smooth"
             ]
         },
         {

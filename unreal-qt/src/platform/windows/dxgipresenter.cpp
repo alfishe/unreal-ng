@@ -13,6 +13,7 @@
 //   panel's top rate), which is taken off. The same vblanks tell VRR from a fixed display: a VRR panel's vblanks
 //   follow the presents, a fixed one's stay on its grid; the presenter then turns to Present(0) without tearing.
 
+#include "platform/vrrprobe.h"
 #include "platform/nativepresenter.h"
 
 #ifdef _WIN32
@@ -173,7 +174,7 @@ struct Feedback
     bool done = false;  // the vblank thread ended (doneMutex)
 
     std::atomic<double> refreshHz{0.0};
-    std::atomic<bool> panelFollows{false};   // the vblanks follow the presents (CheckVrr; at first: tearing supported)
+    std::atomic<bool> panelFollows{false};   // the vblanks follow the presents (CheckVrr; false until seen)
     std::atomic<int64_t> lastVBlankNs{0};    // the newest vblank (RefreshGrid)
     std::atomic<int64_t> vblankPeriodNs{0};  // the vblank intervals' median (RefreshGrid; 0: too few yet)
     PresentLead lead{kLeadStartNs};
@@ -316,8 +317,9 @@ void RunVBlanks(const std::shared_ptr<Feedback>& shared)
                 fb.errors.Add(static_cast<double>(screen - p.askedNs) / 1e6);
                 // The lead from the frame's own time: a window that handed it over late was late too. Handed over
                 // a refresh or more before its time and still late: the compositor held it, more lead cannot help
-                const int64_t asked = p.atNs > 0 ? p.atNs : p.askedNs;
-                fb.lead.Shown(screen - asked, p.number, std::max(asked, p.handedNs) - p.handedNs);
+                // A present at once has no time of its own to be late against (PresentLead)
+                if (p.atNs > 0)
+                    fb.lead.Shown(screen - p.atNs, p.number, std::max(p.atNs, p.handedNs) - p.handedNs);
                 fb.beat.Shown(p.trace.picture, p.trace.targetNs, screen, static_cast<int64_t>(1e9 / topHz));
             }
             else
@@ -473,8 +475,7 @@ public:
             return false;
         }
 
-        _vrr = _tearing && Policy() != PresentPolicy::Vsync;
-        _fb->panelFollows = _tearing;
+        StartVrr(Policy());
         _fb->refreshHz = MonitorRefreshHz(_hwnd);
 #ifdef UNREAL_TEST_HOOKS
         // UNREAL_TEST_GPU_HANG=d3d:<s>: the recovery test, the first presenter's GPU work never ends that long from
@@ -622,13 +623,27 @@ public:
     {
         return _fb->lead.Margin(refreshPeriodNs);
     }
+    uint64_t LatePresents() const override { return _fb->lead.Late(); }
 
-    /// auto: VRR while the vblanks follow the presents, else vsync (CheckVrr); vrr: Present(0, ALLOW_TEARING) at the
-    /// time, always; vsync: Present(0) without tearing at the time, always. VRR needs tearing supported
+    /// auto: vsync until the vblanks are seen to follow the presents, VRR while they do (CheckVrr, vrrprobe.h); vrr:
+    /// Present(0, ALLOW_TEARING) at the time, always; vsync: Present(0) without tearing at the time, always. VRR needs
+    /// tearing supported. The same policy again changes nothing: what CheckVrr found stays (the window sets its
+    /// policy with every settings change, and a VRR taken anew on a fixed display tore for two seconds each time)
     void SetPolicy(PresentPolicy policy) override
     {
+        if (policy == Policy())
+            return;
         _policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
-        _vrr = _tearing && policy != PresentPolicy::Vsync;
+        StartVrr(policy);
+    }
+
+    /// The VRR state a policy starts with: forced on for `vrr`, else off; auto asks CheckVrr (pending until it knows)
+    void StartVrr(PresentPolicy policy)
+    {
+        _vrr = _tearing && policy == PresentPolicy::Vrr;
+        _vrrPending = _tearing && policy == PresentPolicy::Auto;
+        _probeReset = true;
+        _fb->panelFollows = false;
         std::lock_guard<std::mutex> lock(_fb->statsMutex);
         _fb->vrrNote.clear();
     }
@@ -677,6 +692,17 @@ public:
         s.minRefreshHz = _vrr ? 0.0 : _fb->refreshHz.load();
         s.visible = IsVisible();
         s.vrr = _vrr;
+        s.vrrPending = _vrrPending;
+        if (!_vrr)
+        {
+            // What CheckVrr saw: a grid the frames are not on (else the window's "no query" text stays)
+            std::lock_guard<std::mutex> lock(_fb->statsMutex);
+            if (!_fb->vrrNote.empty())
+            {
+                s.vrrSupport = "no";
+                s.vrrReason = _fb->vrrNote;
+            }
+        }
         return s;
     }
 
@@ -1059,32 +1085,18 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (refreshHz <= 0.0 || vblank <= 0.0 || present <= 0.0)
             return;
         const double refresh = 1000.0 / refreshHz;
-        const bool onGrid = std::abs(vblank - refresh) < refresh * 0.03;
-        const bool follows = std::abs(vblank - present) < present * 0.03;
-        const bool steady = vblankHi - vblankLo < vblank * 0.03;
-        const bool presentsOffGrid = std::abs(present - vblank) > vblank * 0.10;
-        // Off the grid and with the presents: the panel follows them
-        if (follows && !onGrid)
-        {
-            _fb->panelFollows = true;
-            if (Policy() == PresentPolicy::Auto && _tearing && !_vrr)
-            {
-                _vrr = true;
-                {
-                    std::lock_guard<std::mutex> lock(_fb->statsMutex);
-                    _fb->vrrNote.clear();
-                }
-                qInfo().noquote() << "DxgiPresenter: the vblanks follow the frames again (every" << vblank
-                                  << "ms) - VRR, Present(0, ALLOW_TEARING) from now on";
-            }
+        const vrrprobe::Verdict verdict = vrrprobe::Judge(vblank, vblankLo, vblankHi, present, refresh);
+        if (_probeReset.exchange(false))
+            _probe.Reset();
+        if (verdict != vrrprobe::Verdict::Unknown)
+            _fb->panelFollows = verdict == vrrprobe::Verdict::Follows;
+        const bool changed = _probe.Feed(verdict);
+        if (Policy() != PresentPolicy::Auto || !_tearing)
             return;
-        }
-        if (!(onGrid || steady) || !presentsOffGrid)
-            return;
-        _fb->panelFollows = false;
-        if (Policy() == PresentPolicy::Auto && _vrr)
+        _vrrPending = _probe.Pending();
+        if (verdict == vrrprobe::Verdict::Grid)
         {
-            _vrr = false;
+            const bool onGrid = std::abs(vblank - refresh) < refresh * 0.03;
             char note[200];
             if (onGrid)
                 std::snprintf(note, sizeof note, "no VRR: vblanks every %.2f ms while frames come every %.2f ms",
@@ -1094,12 +1106,24 @@ void main(uint3 id : SV_DispatchThreadID) {
                               "no VRR: vblanks every %.2f ms, not the display's %.2f ms (another display's: a remote "
                               "session), while frames come every %.2f ms",
                               vblank, refresh, present);
+            std::lock_guard<std::mutex> lock(_fb->statsMutex);
+            _fb->vrrNote = note;
+        }
+        if (!changed)
+            return;
+        _vrr = _probe.Engaged();
+        if (_probe.Engaged())
+        {
             {
                 std::lock_guard<std::mutex> lock(_fb->statsMutex);
-                _fb->vrrNote = note;
+                _fb->vrrNote.clear();
             }
-            qInfo().noquote() << "DxgiPresenter:" << note << "- Present(0) without tearing from now on";
+            qInfo().noquote() << "DxgiPresenter: the vblanks follow the frames (every" << vblank
+                              << "ms) - VRR, Present(0, ALLOW_TEARING) from now on";
         }
+        else
+            qInfo().noquote() << "DxgiPresenter: the vblanks left the frames (every" << vblank << "ms, frames every"
+                              << present << "ms) - Present(0) without tearing from now on";
     }
 
     HWND _hwnd;
@@ -1134,6 +1158,9 @@ void main(uint3 id : SV_DispatchThreadID) {
 
     std::atomic<uint8_t> _policy{0};  // a PresentPolicy (SetPolicy from the GUI thread)
     std::atomic<bool> _vrr{false};
+    std::atomic<bool> _vrrPending{false};  ///< policy auto: CheckVrr has not told yet (Stats::vrrPending)
+    std::atomic<bool> _probeReset{true};   ///< the presenter thread starts the probe anew (StartVrr)
+    vrrprobe::Probe _probe;                ///< presenter thread
     std::atomic<HRESULT> _removed{S_OK};  // the device gone (LatchRemoved): its reason
     int _sinceCheck = 0;
 

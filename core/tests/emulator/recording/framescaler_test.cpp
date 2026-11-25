@@ -262,17 +262,49 @@ TEST(FrameScaler_Test, ScaleInto_EveryWholeFactorAndWidthMatchesThePixelFormula)
 
 TEST(FrameScaler_Test, PackedToNv12_BlackWhiteAndRed)
 {
-    // 2x2: black, white / red, red: BT.601 limited range
+    // 2x2: black, white / red, red: BT.709 limited range
     const uint8_t px[16] = {0, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255};
     uint8_t y[4];
     uint8_t uv[2];
     FrameScaler::PackedToNv12(px, 8, 2, 2, y, 2, uv, 2);
     EXPECT_EQ(y[0], 16);
     EXPECT_EQ(y[1], 235);
-    EXPECT_EQ(y[2], 82);  // red
+    EXPECT_EQ(y[2], 63);  // red
     // chroma of (0 + 255 + 255 + 255) / 4 = 191 per channel R, (0+255+0+0)/4 = 63 G / B
-    EXPECT_EQ(uv[0], static_cast<uint8_t>(((-38 * 191 - 74 * 63 + 112 * 63 + 128) >> 8) + 128));
-    EXPECT_EQ(uv[1], static_cast<uint8_t>(((112 * 191 - 94 * 63 - 18 * 63 + 128) >> 8) + 128));
+    EXPECT_EQ(uv[0], static_cast<uint8_t>(((-26 * 191 - 86 * 63 + 112 * 63 + 128) >> 8) + 128));
+    EXPECT_EQ(uv[1], static_cast<uint8_t>(((112 * 191 - 102 * 63 - 10 * 63 + 128) >> 8) + 128));
+}
+
+TEST(FrameScaler_Test, PackedToNv12_IsBt709LimitedRangeWithinOneOfTheExactFormula)
+{
+    // HD files are tagged and played as BT.709 (FrameScaler::FfmpegColorTags, the native encoders' tags): the
+    // integer arithmetic must be BT.709's, not BT.601's (a green 30 levels off when played). Flat 2x2 blocks of the
+    // primaries, the secondaries and greys against Kr 0.2126, Kb 0.0722 in doubles
+    const uint32_t colors[] = {0x000000u, 0xFFFFFFu, 0xFF0000u, 0x00FF00u, 0x0000FFu, 0xFFFF00u,
+                                0x00FFFFu, 0xFF00FFu, 0xCDCDCDu, 0x808080u, 0x00C525u, 0xD62816u};
+    for (const uint32_t c : colors)
+    {
+        const int r = static_cast<int>(c >> 16), g = static_cast<int>((c >> 8) & 0xFF), b = static_cast<int>(c & 0xFF);
+        uint8_t px[16];
+        for (int i = 0; i < 4; i++)
+        {
+            px[i * 4] = static_cast<uint8_t>(r);
+            px[i * 4 + 1] = static_cast<uint8_t>(g);
+            px[i * 4 + 2] = static_cast<uint8_t>(b);
+            px[i * 4 + 3] = 255;
+        }
+        uint8_t y[4];
+        uint8_t uv[2];
+        FrameScaler::PackedToNv12(px, 8, 2, 2, y, 2, uv, 2);
+        const double kr = 0.2126, kb = 0.0722, kg = 1 - kr - kb;
+        const double luma = (kr * r + kg * g + kb * b) / 255.0;
+        const double expectY = 16 + 219 * luma;
+        const double expectU = 128 + 224 * (b / 255.0 - luma) / (2 * (1 - kb));
+        const double expectV = 128 + 224 * (r / 255.0 - luma) / (2 * (1 - kr));
+        EXPECT_NEAR(y[0], expectY, 1.0) << std::hex << c;
+        EXPECT_NEAR(uv[0], expectU, 1.0) << std::hex << c;
+        EXPECT_NEAR(uv[1], expectV, 1.0) << std::hex << c;
+    }
 }
 
 TEST(FrameScaler_Test, PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth)
@@ -302,7 +334,7 @@ TEST(FrameScaler_Test, PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth)
             for (uint32_t x = 0; x < w; x++)
             {
                 const uint8_t* p = px + y * srcStride + x * 4;
-                const uint8_t expected = clampByte(((66 * p[0] + 129 * p[1] + 25 * p[2] + 128) >> 8) + 16);
+                const uint8_t expected = clampByte(((47 * p[0] + 157 * p[1] + 16 * p[2] + 128) >> 8) + 16);
                 ASSERT_EQ(yPlane[y * pitch + x], expected) << "Y " << x << "," << y << " width " << w;
             }
         for (uint32_t y = 0; y < h; y += 2)
@@ -313,8 +345,8 @@ TEST(FrameScaler_Test, PackedToNv12_VectorRowsMatchTheFormulaAtEveryWidth)
                 int avg[3];
                 for (int c = 0; c < 3; c++)
                     avg[c] = (a[c] + a[c + 4] + b[c] + b[c + 4]) / 4;
-                const uint8_t u = clampByte(((-38 * avg[0] - 74 * avg[1] + 112 * avg[2] + 128) >> 8) + 128);
-                const uint8_t v = clampByte(((112 * avg[0] - 94 * avg[1] - 18 * avg[2] + 128) >> 8) + 128);
+                const uint8_t u = clampByte(((-26 * avg[0] - 86 * avg[1] + 112 * avg[2] + 128) >> 8) + 128);
+                const uint8_t v = clampByte(((112 * avg[0] - 102 * avg[1] - 10 * avg[2] + 128) >> 8) + 128);
                 ASSERT_EQ(uvPlane[y / 2 * pitch + x], u) << "U " << x << "," << y << " width " << w;
                 ASSERT_EQ(uvPlane[y / 2 * pitch + x + 1], v) << "V " << x << "," << y << " width " << w;
             }
@@ -570,6 +602,93 @@ TEST(FrameScaler_Test, PlaneScaler_BandsAndTheInterleavedPairGiveTheBytesOfWhole
             ASSERT_EQ(pairs[(static_cast<size_t>(y) * dw + x) * 2], wholeU[static_cast<size_t>(y) * stride + x]);
             ASSERT_EQ(pairs[(static_cast<size_t>(y) * dw + x) * 2 + 1], wholeV[static_cast<size_t>(y) * stride + x]);
         }
+}
+
+namespace
+{
+/// The scaler's fixed point written out plainly (weights, folding, both passes): the SIMD bodies must give its bytes
+struct FixedAxis
+{
+    std::vector<int> first, weights;
+};
+
+FixedAxis FixedPointAxis(uint32_t src, uint32_t dst)
+{
+    FixedAxis axis;
+    const int last = static_cast<int>(src) - 1;
+    for (uint32_t i = 0; i < dst; i++)
+    {
+        const double centre = (i + 0.5) * src / dst - 0.5;
+        const int base = static_cast<int>(std::floor(centre)) - 1;
+        double raw[4], sum = 0;
+        for (int k = 0; k < 4; k++)
+            sum += raw[k] = KeysReference(centre - (base + k));
+        int weight[4], total = 0;
+        for (int k = 0; k < 4; k++)
+            total += weight[k] = static_cast<int>(std::lround(raw[k] / sum * 16384));
+        weight[1] += 16384 - total;
+        const int low = std::clamp(base, 0, last - 3);
+        int folded[4] = {0, 0, 0, 0};
+        for (int k = 0; k < 4; k++)
+            folded[std::clamp(base + k, 0, last) - low] += weight[k];
+        axis.first.push_back(low);
+        axis.weights.insert(axis.weights.end(), folded, folded + 4);
+    }
+    return axis;
+}
+
+std::vector<uint8_t> FixedPointScale(const std::vector<uint8_t>& plane, uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh)
+{
+    const FixedAxis ax = FixedPointAxis(sw, dw), ay = FixedPointAxis(sh, dh);
+    std::vector<int> mid(static_cast<size_t>(sh) * dw);
+    for (uint32_t y = 0; y < sh; y++)
+        for (uint32_t x = 0; x < dw; x++)
+        {
+            const uint8_t* p = &plane[static_cast<size_t>(y) * sw + ax.first[x]];
+            const int* w = &ax.weights[static_cast<size_t>(x) * 4];
+            mid[static_cast<size_t>(y) * dw + x] = (p[0] * w[0] + p[1] * w[1] + p[2] * w[2] + p[3] * w[3] + 128) >> 8;
+        }
+    std::vector<uint8_t> out(static_cast<size_t>(dw) * dh);
+    for (uint32_t y = 0; y < dh; y++)
+        for (uint32_t x = 0; x < dw; x++)
+        {
+            const int* w = &ay.weights[static_cast<size_t>(y) * 4];
+            int v = 0;
+            for (int k = 0; k < 4; k++)
+                v += mid[static_cast<size_t>(ay.first[y] + k) * dw + x] * w[k];
+            out[static_cast<size_t>(y) * dw + x] = static_cast<uint8_t>(std::clamp((v + (1 << 19)) >> 20, 0, 255));
+        }
+    return out;
+}
+}  // namespace
+
+TEST(FrameScaler_Test, PlaneScaler_VectorBodiesGiveTheFixedPointBytesAtEveryWidth)
+{
+    // Every output width 1..40 (the 4- and 8-wide bodies and their tails), up and down; noise, and a 0/255
+    // checkerboard whose cubic overshoot must clamp alike
+    for (uint32_t dw = 1; dw <= 40; dw++)
+        for (const uint32_t sw : {4u, 7u, 13u, 64u})
+            for (const bool checker : {false, true})
+            {
+                const uint32_t sh = 9, dh = 23;
+                std::vector<uint8_t> u = NoiseBytes(static_cast<size_t>(sw) * sh, dw * 100 + sw), v = NoiseBytes(u.size(), dw);
+                if (checker)
+                    for (size_t i = 0; i < u.size(); i++)
+                        u[i] = ((i % sw + i / sw) & 1) ? 255 : 0;
+                FrameScaler::PlaneScaler scaler;
+                ASSERT_TRUE(scaler.Prepare(sw, sh, dw, dh));
+                std::vector<uint8_t> out(static_cast<size_t>(dw) * dh), pairs(out.size() * 2);
+                scaler.Rows(u.data(), sw, out.data(), dw, 0, dh);
+                const std::vector<uint8_t> expectU = FixedPointScale(u, sw, sh, dw, dh);
+                const std::vector<uint8_t> expectV = FixedPointScale(v, sw, sh, dw, dh);
+                ASSERT_EQ(out, expectU) << sw << " -> " << dw << (checker ? " checker" : " noise");
+                scaler.RowsInterleaved(u.data(), v.data(), sw, pairs.data(), dw * 2, 0, dh);
+                for (size_t i = 0; i < out.size(); i++)
+                {
+                    ASSERT_EQ(pairs[i * 2], expectU[i]) << sw << " -> " << dw << " at " << i;
+                    ASSERT_EQ(pairs[i * 2 + 1], expectV[i]) << sw << " -> " << dw << " at " << i;
+                }
+            }
 }
 
 TEST(FrameScaler_Test, PlaneScaler_ASourceUnderFourSamplesOrAZeroSizeIsRefused)

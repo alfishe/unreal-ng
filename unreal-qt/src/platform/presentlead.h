@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 
@@ -10,7 +11,16 @@
 /// was held by the system (the compositor a refresh behind under load), and more lead would only queue more presents.
 /// A long run on time narrows it by one, within the bounds. The first vsync a present can make is less than a refresh after the time
 /// asked (smooth motion asks half a refresh before its vsync), so more than a refresh (plus 1 ms of jitter) is a
-/// refresh late.
+/// refresh late. Only presents with a time of their own count: one at once (low-latency video, a repaint) shows at the
+/// first refresh it makes, its submit somewhere in a refresh; judged by the submit its "late" was the compositor's
+/// deadline and the backend's submit point (Vulkan's before the GPU work, GL's after it; Steam Deck, 2026-11-22), and
+/// the margin it widened is not used at once anyway.
+///
+/// The screen times of some systems come a constant little after the vblank (gamescope's are its composition's:
+/// 1.5-2 ms on the Steam Deck, where frames shown at the first refresh after their time read 0.3 to 18.7 ms at
+/// 16.7 ms a refresh, 4 % of them "late", and the margin sat at its bound: smooth motion then drew every other
+/// refresh). That offset is measured, the low end of the errors of the presents on time (their 5th percentile over
+/// the last kOffsetWindow, up to kMaxOffsetNs), and a refresh late is a refresh more than it.
 ///
 /// Shown from the presenter's completion thread, Margin from the drawing one.
 class PresentLead
@@ -21,6 +31,8 @@ public:
     static constexpr int64_t kStepNs = 1'000'000;
     static constexpr uint32_t kOnTimeRun = 600;
     static constexpr int64_t kJitterNs = 1'000'000;
+    static constexpr int64_t kMaxOffsetNs = 3'000'000;
+    static constexpr size_t kOffsetWindow = 64;
 
     explicit PresentLead(int64_t startNs) : _marginNs(std::clamp(startNs, kMinNs, kMaxNs)) {}
 
@@ -40,7 +52,7 @@ public:
         if (period <= 0)
             return;
         const int64_t margin = _marginNs.load(std::memory_order_relaxed);
-        if (errorNs > period + kJitterNs)
+        if (errorNs > period + OffsetNs() + kJitterNs)
         {
             _late.fetch_add(1, std::memory_order_relaxed);
             if (present > _lastLate.load(std::memory_order_relaxed))
@@ -53,6 +65,7 @@ public:
                 _marginNs.store(std::min(margin + kStepNs, kMaxNs), std::memory_order_relaxed);
             return;
         }
+        NoteOnTime(errorNs);
         if (present > _lastOnTime.load(std::memory_order_relaxed))
             _lastOnTime.store(present, std::memory_order_relaxed);
         if (_onTimeRun.fetch_add(1, std::memory_order_relaxed) + 1 >= kOnTimeRun)
@@ -70,9 +83,33 @@ public:
     /// The number of the newest present shown on time (0: none)
     uint64_t LastOnTime() const { return _lastOnTime.load(std::memory_order_relaxed); }
     int64_t MarginNs() const { return _marginNs.load(std::memory_order_relaxed); }
+    /// The screen times' constant offset after the vblank, as measured (kMaxOffsetNs until kOffsetWindow presents came
+    /// on time: the first presents are not judged tighter than the system may turn out to be)
+    int64_t OffsetNs() const { return _offsetNs.load(std::memory_order_relaxed); }
     int64_t PeriodNs() const { return _periodNs.load(std::memory_order_relaxed); }
 
 private:
+    /// Shown's thread: a present on time, its error into the window the offset is taken from
+    void NoteOnTime(int64_t errorNs)
+    {
+        _errors[_errorNext] = std::max<int64_t>(errorNs, 0);
+        _errorNext = (_errorNext + 1) % kOffsetWindow;
+        if (_errorCount < kOffsetWindow)
+        {
+            _errorCount++;
+            return;
+        }
+        if (_errorNext % 8 != 0)  // every eighth present is often enough
+            return;
+        std::array<int64_t, kOffsetWindow> sorted = _errors;
+        std::nth_element(sorted.begin(), sorted.begin() + kOffsetWindow / 20, sorted.end());
+        _offsetNs.store(std::min(sorted[kOffsetWindow / 20], kMaxOffsetNs), std::memory_order_relaxed);
+    }
+
+    std::array<int64_t, kOffsetWindow> _errors{};  ///< Shown's thread
+    size_t _errorNext = 0;
+    size_t _errorCount = 0;
+    std::atomic<int64_t> _offsetNs{kMaxOffsetNs};  ///< the most allowed until it is measured
     std::atomic<int64_t> _marginNs;
     std::atomic<int64_t> _periodNs{0};
     std::atomic<uint64_t> _late{0};

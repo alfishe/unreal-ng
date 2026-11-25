@@ -479,6 +479,73 @@ def test_the_zxdma_trace(s):
            'the catalog lists the report with its planes', r.text)
 
 
+def test_the_card_profiler(s):
+    """The card CPU's profiler (gs-debugger X9 / X2 / X20): off, the aspect says how to start it; started, a running
+    machine profiles the NeoGS firmware from a card reset (the POST's calls): routines with cycles, activity, the ISR
+    budget against the timer's period when the firmware takes interrupts (idle, it keeps them off: the requests merge,
+    `lost`); the frame map's periods; stopped, the data stay; a bad action and an unknown card are refused; the catalog
+    lists both reports"""
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    s.call('emulator_manage', {'action': 'gs_profile_clear'})
+    s.call('emulator_manage', {'action': 'gs_profile_stop'})
+    r = s.call('inspect_state', {'aspects': ['audio_gs_profile']})
+    expect('[audio_gs_profile] GS profiler' in r.text and 'off' in r.text and 'gs_profile_start' in r.text,
+           'off, and how to start', r.text)
+
+    r = s.call('emulator_manage', {'action': 'gs_profile_start'})
+    expect('started' in r.text and 'on' in r.text, 'started', r.text)
+    # The idle firmware calls nothing: the card's reset runs its POST (its routines) under the profiler
+    s.call('emulator_manage', {'action': 'gs_reset_card'})
+    s.call('control_execution', {'action': 'resume'})
+    deadline = time.time() + 5
+    body = {}
+    while time.time() < deadline:
+        r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/profile?routines=4'})
+        body = (r.structured or {}).get('body', {})
+        if body.get('frames', 0) >= 3 and body.get('routines'):
+            break
+        time.sleep(0.05)
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    isr = body.get('isr', {}).get('since_start', {})
+    lost = sum(a.get('lost', 0) for a in body.get('activity', []))
+    budget = (isr.get('count', 0) > 0 and 0 < isr.get('avg', 0) and isr.get('min', 0) <= isr.get('max', 0)) or \
+             (isr.get('count', 0) == 0 and lost > 0)
+    expect(body.get('on') is True and budget and body.get('period_cycles', 0) > 0,
+           'the ISR budget, or the requests merged while the idle firmware keeps interrupts off', str(body)[:600])
+    expect(len(body.get('routines', [])) > 0 and body['routines'][0].get('inclusive', 0) > 0 and
+           len(body.get('routines', [])) <= 4, 'routines by inclusive cycles, top 4', str(body.get('routines'))[:600])
+    expect(len(body.get('activity', [])) > 0 and 'isr_pct' in body['activity'][-1], 'activity per frame',
+           str(body.get('activity'))[-400:])
+
+    r = s.call('inspect_state', {'aspects': ['audio_gs_profile'], 'gs_profile_routines': 3})
+    expect('ISR last frame:' in r.text and 'Routines' in r.text and
+           ('headroom' in r.text if isr.get('count', 0) > 0 else 'no interrupt ended' in r.text), 'the text', r.text)
+    r = s.call('inspect_state', {'aspects': ['audio_gs_events'], 'gs_events_first': 0, 'gs_events_count': 4})
+    expect('[audio_gs_events] GS events' in r.text and 'periods of' in r.text, 'the frame map text', r.text)
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/events?count=8'})
+    ev = (r.structured or {}).get('body', {})
+    rows = ev.get('rows', [])
+    expect(ev.get('periods', 0) > 0 and len(rows) == min(8, ev.get('periods', 0)) and
+           (isr.get('count', 0) == 0 or any(row.get('isr') for row in rows)), 'period rows (ISR bars when taken)',
+           str(ev)[:600])
+
+    s.call('emulator_manage', {'action': 'gs_profile_stop'})
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/profile'})
+    body = (r.structured or {}).get('body', {})
+    expect(body.get('on') is False and body.get('frames', 0) >= 3, 'stopped: the data stay', str(body)[:300])
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/control/audio/gs',
+                              'body': {'action': 'profile_start', 'cpu': 'zz'}}, ok=False)
+    expect('404' in r.text or 'No card CPU' in r.text, 'an unknown card CPU is refused', r.text)
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/profile?routines=x'},
+               ok=False)
+    expect('400' in r.text or 'non-negative' in r.text, 'a bad count is refused', r.text)
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/devices'})
+    ids = {e.get('id'): e for e in (r.structured or {}).get('body', {}).get('reports', [])}
+    expect(ids.get('gs-profile', {}).get('mcp') == 'audio_gs_profile' and
+           ids.get('gs-events', {}).get('cli') == 'gs events', 'the catalog lists both reports', r.text[:400])
+    s.call('emulator_manage', {'action': 'gs_profile_clear'})
+
+
 def test_the_neogs_boards(s):
     """Device boards (gs-debugger N4, N8): the NeoGS card publishes its hardware as boards, read with their values in
     the text; a host folder inserted through the SD board is the medium of the slot sd.ngs in the media list. Last in

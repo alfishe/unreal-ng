@@ -6,12 +6,14 @@
  * fits the machine's (50 or 100 Hz for 48.83 / 50 Hz), and else smooth motion's interpolation on the fixed rate. This
  * window shows which one is in effect, why the ones before it are not, the clock that times the frames, how the
  * presents land (on the beat, late, dropped, the screen-to-sound offset) and while interpolating what the interpolation
- * does, as the audio settings show the dynamic rate control. It reads the window's present stats (the automation's
- * `video.window` `present`).
+ * does. It reads the window's present stats (the automation's `video.window` `present`).
  *
- * Laid out as a form of fixed cells: every value has its own label of a fixed width, right aligned for numbers, and
- * the reason text a fixed height, so nothing moves while the values change. Values refresh twice a second, the rates
- * per second over the last second.
+ * Laid out as the handheld menu's Network page: a head card (the mode in effect, why, the clock and the presenter as
+ * chips, a state pill) over tiles in two columns, each a caption, one large value and up to three lines. A tile or a
+ * line that judges nothing in the mode in effect is not shown: VRR has no beat, no display rate and no interpolation;
+ * low latency no lead and no "late"; a screen without screen times no timing tiles. Every value has a cell of a fixed
+ * size, so nothing moves while the values change; the tiles change only with the mode. Values refresh twice a second,
+ * the rates per second over the last second.
  */
 
 #pragma once
@@ -20,15 +22,18 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <QWidget>
 
 #include "emulator/video/windowview.h"
 
 class QCheckBox;
+class QFrame;
 class QGridLayout;
 class QLabel;
 class QTimer;
+class VideoSyncSparkline;
 
 class VideoSyncWindow : public QWidget
 {
@@ -40,10 +45,15 @@ public:
 
     /// Reads the settings now (the timer calls it; tests too)
     void refresh();
-    /// The text of a value cell (tests), by its key: "mode", "why", "clock", "refresh", "machine", "display_rate",
-    /// "presenter", "shown", "dropped", "late", "off_beat", "error_p50", "error_p99", "error_max", "sound_p50",
-    /// "sound_p99", "lead", "smooth", "frames", "pictures", "interpolated", "blended", "motion_fields", "held"
+    /// The text of a value (tests), by its key: "mode", "why", "state", "clock", "presenter", "refresh", "machine",
+    /// "display_rate", "shown", "dropped", "late", "off_beat", "error_p50", "error_p99", "error_max", "lead",
+    /// "sound_p50", "sound_p99", "cuts", "carry", "pictures", "frames", "interpolated", "blended", "motion_fields",
+    /// "held", "smooth". A value not shown in the mode in effect reads "—"
     QString readout(const char* name) const;
+    /// Is the tile shown (tests): "display", "frames", "timing", "sound", "smooth", "motion"
+    bool tileShown(const char* id) const;
+    /// Is the value's line shown (tests): a key of readout that is a tile's line
+    bool lineShown(const char* key) const;
 
 signals:
     /// The check box: View > Video Synchronization
@@ -55,26 +65,41 @@ public slots:
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
-    enum class Align
+    struct Tile
     {
-        Text,    // left aligned, as wide as the column
-        Number,  // right aligned in a cell of a fixed width
+        std::string id;
+        QFrame* frame = nullptr;
+        QLabel* caption = nullptr;
     };
-    /// A row: its caption in column 0 and value cells from column 1, each `span` columns wide
-    QLabel* cell(QGridLayout* grid, const char* key, int row, int column, Align align, int span = 1);
-    /// A text cell that runs on to `lines` lines (its height fixed to them) instead of being cut
-    static void Wrap(QLabel* label, int lines);
-    void set(const char* key, const QString& text);
+
+    /// A tile: its caption, the large value `bigKey` and a line per {caption, key}
+    Tile& addTile(const char* id, const QString& caption, const char* bigKey,
+                  const std::vector<std::pair<QString, const char*>>& lines, bool sparkline = false);
+    QLabel* chip(const char* key);
+    void set(const char* key, const QString& text, const QString& tip = QString());
+    /// Shows the tile's line or hides it (its value then reads "—")
+    void showLine(const char* key, bool shown);
+    /// The tiles shown, in this order, two a row; the window takes their size
+    void showTiles(const std::vector<const char*>& ids);
+    void applyColors();
     void clearValues();
 
     std::function<WindowDisplaySettings()> _settings;
     QTimer* _timer = nullptr;
     QCheckBox* _sync = nullptr;
+    QFrame* _head = nullptr;
+    QLabel* _state = nullptr;  ///< the pill: "Steady" / "Uneven" / "Not measured"
+    QGridLayout* _tileGrid = nullptr;
+    std::vector<Tile> _tiles;
+    std::string _tilesShown;  ///< the ids of showTiles, joined: laid out again only when they change
     std::map<std::string, QLabel*> _cells;
-    QLabel* _errorCaption = nullptr;  ///< "On screen vs asked"; "Handed over to screen" under low-latency video; "Painted vs asked" / "Made to painted" on the software screen
-    int _numberWidth = 0;
+    std::map<std::string, QLabel*> _lineCaptions;  ///< a line's caption by its value's key
+    QLabel* _errorCaption = nullptr;  ///< the timing tile's caption: what its error measures
+    VideoSyncSparkline* _shownGraph = nullptr;
+    bool _uneven = false;
 
     // The counters a second ago: the rates per second
     WindowPresentStats _last;

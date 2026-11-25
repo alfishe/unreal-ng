@@ -37,6 +37,7 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
 
     // Mailbox overflow drops land in this card's activity counters
     _mb.counters = &_activityCounters;
+    _profiler.Bind(this, &_activityCounters);
 
     // RAM is banked in 32 KB pairs; the original GS card range is 128-512 KB
     // (NeoGS lifts the cap - P2), the MultiSound's 1 or 2 MB (profile range).
@@ -118,6 +119,8 @@ void SoundChip_GeneralSound::resetCard()
         Z80CpuReset(_cpu);
     if (_debugHooks) [[unlikely]]
         _debugHooks->onEvent(GSCardEvent::Reset, 0, 0);
+    if (_analysis) [[unlikely]]
+        _analysis->CardReset();
 
     _mpag = 0;
     applyBanking();
@@ -449,6 +452,7 @@ void SoundChip_GeneralSound::handleFrameEnd(size_t expectedSamples)
     _frameEndCatchUp = true;
     runTo(_frameStartGsCycles + _frameGsCycles);
     _frameEndCatchUp = false;
+    profileFrameEnd(totalGsCycles(), currentFrameNumber());
 
     // Actual samples for this frame - must match what SoundManager mixes
     // (accumulator count preferred, local rounding as fallback)
@@ -1080,7 +1084,11 @@ void SoundChip_GeneralSound::bindBus()
                          this);
         return;
     }
-    Z80CpuSetMemoryBus(_cpu, &SoundChip_GeneralSound::gsMemRead, this, &SoundChip_GeneralSound::gsMemWrite, this);
+    if (_analysis)
+        Z80CpuSetMemoryBus(_cpu, &SoundChip_GeneralSound::gsMemReadAnalysis, this,
+                           &SoundChip_GeneralSound::gsMemWriteAnalysis, this);
+    else
+        Z80CpuSetMemoryBus(_cpu, &SoundChip_GeneralSound::gsMemRead, this, &SoundChip_GeneralSound::gsMemWrite, this);
     // Interface selection: each port rule set has its own handlers (the
     // classic path stays the pre-profile code, no per-access profile test)
     if (_profile.portRules == GSPortRules::MultiSound)
@@ -1092,18 +1100,49 @@ void SoundChip_GeneralSound::bindBus()
 
 void SoundChip_GeneralSound::runToDebug(int64_t targetGsCycles)
 {
+    beginRun();
     if (_classicTiming)
         _runner.runToDebug<ClassicRunPolicy>(targetGsCycles, _debugHooks);
     else
         _runner.runToDebug(targetGsCycles, _debugHooks);
+    endRecordedRun(totalGsCycles());
 }
 
 void SoundChip_GeneralSound::runToRecord(int64_t targetGsCycles)
 {
+    beginRun();
     if (_classicTiming)
         _runner.runToRecord<ClassicRunPolicy>(targetGsCycles);
     else
         _runner.runToRecord(targetGsCycles);
+    endRecordedRun(totalGsCycles());
+}
+
+void SoundChip_GeneralSound::beginRun()
+{
+    beginRecordedRun(totalGsCycles(), _gsCyclesAbs, _intPeriodUnits, _unitsPerCycle,
+                     _context && _context->ttdReplayActive);
+}
+
+void SoundChip_GeneralSound::profileStep(uint16_t pc)
+{
+    const Z80CpuRegisterFile* r = Z80CpuRegisterFilePtr(_cpu);
+    uint8_t op0 = 0;
+    uint8_t op1 = 0;
+    peekCardMemory(pc, op0);
+    peekCardMemory(static_cast<uint16_t>(pc + 1), op1);
+    _profiler.Step(pc, r->sp, op0, op1, totalGsCycles(), (r->halted & 1) != 0, _unitsPerCycle);
+}
+
+void SoundChip_GeneralSound::profileInterrupt(bool nmi, int64_t ackUnits)
+{
+    const Z80CpuRegisterFile* r = Z80CpuRegisterFilePtr(_cpu);
+    uint8_t lo = 0;
+    uint8_t hi = 0;
+    peekCardMemory(r->sp, lo);
+    peekCardMemory(static_cast<uint16_t>(r->sp + 1), hi);
+    _profiler.Interrupt(nmi, totalGsCycles(), ackUnits, r->pc, r->sp, static_cast<uint16_t>(lo | (hi << 8)),
+                        _unitsPerCycle);
 }
 
 bool SoundChip_GeneralSound::setDebugHooks(IGSDebugHooks* hooks)
@@ -1121,6 +1160,8 @@ uint8_t SoundChip_GeneralSound::gsMemReadDebug(Z80CPU* cpu, uint16_t addr, int m
 {
     auto* self = static_cast<SoundChip_GeneralSound*>(userData);
     const uint8_t value = self->readMem(addr);
+    if (self->_analysis) [[unlikely]]
+        self->analysisRead(cpu, addr, value, m1State);
     if (m1State)
         return value;
     return self->_debugHooks->onMemoryRead(Z80CpuInstructionPc(cpu), addr, value);
@@ -1130,7 +1171,80 @@ void SoundChip_GeneralSound::gsMemWriteDebug(Z80CPU* cpu, uint16_t addr, uint8_t
 {
     auto* self = static_cast<SoundChip_GeneralSound*>(userData);
     self->writeMem(addr, value);
+    if (self->_analysis) [[unlikely]]
+        self->analysisWrite(addr);
     self->_debugHooks->onMemoryWrite(Z80CpuInstructionPc(cpu), addr, value);
+}
+
+// Analysis bus (gscardanalysis.h): the plain access, then the mark on the physical byte the window maps
+uint8_t SoundChip_GeneralSound::gsMemReadAnalysis(Z80CPU* cpu, uint16_t addr, int m1State, void* userData)
+{
+    auto* self = static_cast<SoundChip_GeneralSound*>(userData);
+    const uint8_t value = self->readMem(addr);
+    self->analysisRead(cpu, addr, value, m1State);
+    return value;
+}
+
+void SoundChip_GeneralSound::gsMemWriteAnalysis(Z80CPU* /*cpu*/, uint16_t addr, uint8_t value, void* userData)
+{
+    auto* self = static_cast<SoundChip_GeneralSound*>(userData);
+    self->writeMem(addr, value);
+    self->analysisWrite(addr);
+}
+
+namespace
+{
+/// The physical byte behind a window pointer: the ROM or the RAM, the offset in it
+bool GsPhysical(const uint8_t* bank, uint16_t addr, const std::vector<uint8_t>& rom, const std::vector<uint8_t>& ram,
+                GSCardAnalysis::Space& space, uint32_t& offset)
+{
+    const uintptr_t at = reinterpret_cast<uintptr_t>(bank);
+    const uintptr_t romBase = reinterpret_cast<uintptr_t>(rom.data());
+    const uintptr_t ramBase = reinterpret_cast<uintptr_t>(ram.data());
+    const uint32_t inWindow = addr & 0x3FFF;
+    if (at >= romBase && at < romBase + rom.size())
+    {
+        space = GSCardAnalysis::Rom;
+        offset = static_cast<uint32_t>(at - romBase) + inWindow;
+        return true;
+    }
+    if (at >= ramBase && at < ramBase + ram.size())
+    {
+        space = GSCardAnalysis::Ram;
+        offset = static_cast<uint32_t>(at - ramBase) + inWindow;
+        return true;
+    }
+    return false;
+}
+}  // namespace
+
+void SoundChip_GeneralSound::analysisRead(Z80CPU* cpu, uint16_t addr, uint8_t value, int m1State)
+{
+    GSCardAnalysis::Space space;
+    uint32_t offset = 0;
+    if (!GsPhysical(_bankR[(addr >> 14) & 3], addr, _rom, _ram, space, offset))
+        return;
+    _analysis->CpuRead(space, offset, addr, value, m1State, cpu);
+    if ((addr & 0xE000) == 0x6000)
+        _analysis->DacRead(space, offset);
+}
+
+void SoundChip_GeneralSound::analysisWrite(uint16_t addr)
+{
+    const int window = (addr >> 14) & 3;
+    const bool landed = _bankW[window] != nullptr;
+    GSCardAnalysis::Space space;
+    uint32_t offset = 0;
+    if (GsPhysical(landed ? _bankW[window] : _bankR[window], addr, _rom, _ram, space, offset))
+        _analysis->CpuWrite(space, offset, landed);
+}
+
+void SoundChip_GeneralSound::analysisIdle(uint16_t head)
+{
+    GSCardAnalysis::Space space;
+    uint32_t offset = 0;
+    if (GsPhysical(_bankR[(head >> 14) & 3], head, _rom, _ram, space, offset))
+        _analysis->IdleLoop(space, offset);
 }
 
 uint8_t SoundChip_GeneralSound::gsPortReadDebug(Z80CPU* cpu, uint16_t port, void* userData)

@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <map>
 #include <mutex>
 #include <set>
@@ -893,6 +894,503 @@ public:
         return {true, "port trace " + action + ": " + r.value("status").toString().toStdString()};
     }
 
+    // The command log history of a card (`zxbus.1.commands`, the MultiSound's `zxbus.1.gs.commands`): the device the
+    // catalog's command log entry routes to (history/<device>?last=N), "" without one
+    QString command_log_device(const std::string &card)
+    {
+        const QString id = card == "ms" ? "ms-gs-commands" : "gs-commands";
+        for (const QJsonValue &v : catalog().value("reports").toArray()) {
+            const QJsonObject r = v.toObject();
+            if (r.value("id").toString() != id) continue;
+            QString route = r.value("route").toString();
+            if (!route.startsWith("history/")) return QString();
+            route = route.mid(QString("history/").size());
+            return route.left(route.indexOf('?') < 0 ? route.size() : route.indexOf('?'));
+        }
+        return QString();
+    }
+    // The GS monitor over the WebAPI: plain GETs, nothing pauses (the card's report, the command log history, the
+    // firmware's unknown commands)
+    GsMonitor read_gs_monitor(const std::string &card, size_t last) override
+    {
+        GsMonitor out;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        const bool ms = card == "ms";
+        int status = 0;
+        QJsonObject report = m_http.json("GET", m_base + (ms ? "/state/audio/multisound" : "/state/audio/gs"), QJsonObject(), &status);
+        if (status != 200) {
+            out.message = status == 0 ? std::string("No answer from the emulator") : report.value("message").toString().toStdString();
+            return out;
+        }
+        if (ms) report = report.value("gs").toObject();
+        if (report.isEmpty() || (report.contains("available") && !report.value("available").toBool())) {
+            out.message = ms ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted";
+            return out;
+        }
+        out.ok = true;
+        auto str = [](const QJsonObject &o, const char * key) { return o.value(key).toString().toStdString(); };
+        auto num = [](const QJsonObject &o, const char * key, int64_t def = 0) {
+            return o.value(key).isDouble() ? (int64_t)o.value(key).toDouble() : def;
+        };
+        const QJsonObject protocol = report.value("protocol").toObject();
+        out.protocol_on = protocol.value("on").toBool();
+        out.protocol_text = str(protocol, "text");
+        out.status = (int)num(report, "status", -1);
+        out.command_pending = report.value("command_pending").toBool();
+        out.data_pending = report.value("data_pending").toBool();
+        out.command_from_host = (int)num(report, "command_from_host", -1);
+        out.data_from_host = (int)num(report, "data_from_host", -1);
+        out.data_to_host = (int)num(report, "data_to_host", -1);
+        if (report.value("last_send").isObject()) {
+            const QJsonObject send = report.value("last_send").toObject();
+            out.has_last_send = true;
+            out.last_send_command = (int)num(send, "command", -1);
+            out.last_send_name = str(send, "name");
+            out.last_send_state = str(send, "state");
+            for (const QJsonValue &r : send.value("replies").toArray()) out.last_send_replies.push_back(r.toInt());
+        }
+        const QString device = command_log_device(card);
+        out.log_device = device.toStdString();
+        if (device.isEmpty()) return out;
+        const QJsonObject log = m_http.json("GET", m_base + "/history/" + device + QString("?last=%1").arg((qulonglong)last),
+                                            QJsonObject(), &status);
+        if (status != 200) return out;
+        out.log_mode = str(log, "mode");
+        out.written = (uint64_t)num(log, "written");
+        out.kept = (uint64_t)num(log, "kept");
+        out.dropped = (uint64_t)num(log, "dropped");
+        for (const QJsonValue &v : log.value("records").toArray()) {
+            const QJsonObject r = v.toObject();
+            GsMonitorRow row;
+            row.frame = num(r, "frame");
+            row.t = num(r, "t");
+            row.card_cycle = num(r, "card_cycle");
+            row.command = (int)num(r, "command", -1);
+            row.kind = str(r, "kind");
+            row.name = str(r, "name");
+            row.text = str(r, "text");
+            row.anomaly = str(r, "anomaly");
+            out.rows.push_back(std::move(row));
+        }
+        if (out.log_mode == "off") return out;
+        const QJsonObject firmware = m_http.json("GET", m_base + "/state/audio/gs/firmware?object=unknown_commands" +
+                                                            QString(ms ? "&cpu=ms" : ""), QJsonObject(), &status);
+        if (status == 200 && firmware.value("unknown_commands").isArray()) {
+            out.unknown_present = true;
+            for (const QJsonValue &v : firmware.value("unknown_commands").toArray()) {
+                const uint64_t count = (uint64_t)num(v.toObject(), "count");
+                out.unknown.emplace_back((int)num(v.toObject(), "command"), count);
+                out.unknown_total += count;
+            }
+        }
+        return out;
+    }
+    // The command log on or off: POST history/<device>/config {mode}
+    BoardAnswer gs_command_log(const std::string &card, bool on) override
+    {
+        if (!m_online.load()) return {false, "The emulator is not connected"};
+        const QString device = command_log_device(card);
+        if (device.isEmpty()) return {false, "This card has no command log"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/history/" + device + "/config",
+                                          QJsonObject{{"mode", on ? "ring" : "off"}}, &status);
+        if (status == 0) return {false, "No answer from the emulator"};
+        if (status != 200) return {false, (r.value("error").toString() + r.value("message").toString()).toStdString()};
+        {
+            // The History tab's sources read again at their next look
+            std::lock_guard<std::mutex> lock(m_catalog_mutex);
+            m_histories_age.invalidate();
+        }
+        return {true, "command log " + device.toStdString() + (on ? ": ring" : ": off")};
+    }
+
+    // The card's report for the analysis tabs: state/audio/gs, or state/audio/multisound's gs part (empty: not read)
+    QJsonObject gs_report(const std::string &card, std::string &message)
+    {
+        int status = 0;
+        const bool ms = card == "ms";
+        QJsonObject report = m_http.json("GET", m_base + (ms ? "/state/audio/multisound" : "/state/audio/gs"), QJsonObject(), &status);
+        if (status != 200) {
+            message = status == 0 ? std::string("No answer from the emulator") : report.value("message").toString().toStdString();
+            return QJsonObject();
+        }
+        if (ms) report = report.value("gs").toObject();
+        if (report.isEmpty() || (report.contains("available") && !report.value("available").toBool())) {
+            message = ms ? "No ZX-MultiSound with a General Sound" : "General Sound card not fitted";
+            return QJsonObject();
+        }
+        return report;
+    }
+    // A card CPU's symbols (GET labels?cpu=&active=true), by address, kept 30 s or until the profile read changes:
+    // the dispatch's 256 handlers are looked up in it
+    const std::map<unsigned int, std::string> &card_labels(const std::string &card, const std::string &profile)
+    {
+        CardLabels &c = m_card_labels[card];
+        if (!c.age.isValid() || c.age.elapsed() > 30000 || c.profile != profile) {
+            c.by_address.clear();
+            c.profile = profile;
+            c.age.start();
+            int status = 0;
+            const QJsonObject r = m_http.json("GET", m_base + "/labels?active=true&cpu=" + QString::fromStdString(card), QJsonObject(), &status);
+            if (status == 200)
+                for (const QJsonValue &v : r.value("labels").toArray()) {
+                    const QJsonObject l = v.toObject();
+                    c.by_address.emplace((unsigned int)l.value("address").toInt(), l.value("name").toString().toStdString());
+                }
+        }
+        return c.by_address;
+    }
+    // The label at @p pc of a CPU ("main", "gs", "ms"): GET labels/resolve?address= (exact, else the nearest below
+    // within 256 bytes: "NAME+4"), kept 30 s
+    std::string resolve_label(const std::string &cpu, unsigned int pc)
+    {
+        if (!m_resolved_age.isValid() || m_resolved_age.elapsed() > 30000) {
+            m_resolved.clear();
+            m_resolved_age.start();
+        }
+        const auto key = std::make_pair(cpu, pc);
+        auto it = m_resolved.find(key);
+        if (it != m_resolved.end()) return it->second;
+        int status = 0;
+        const QJsonObject r = m_http.json("GET", m_base + QString("/labels/resolve?address=%1").arg(pc) +
+                                                     (cpu == "main" ? QString() : "&cpu=" + QString::fromStdString(cpu)),
+                                          QJsonObject(), &status);
+        std::string label;
+        if (status == 200) {
+            if (r.value("found").toBool()) {
+                label = r.value("label").toObject().value("name").toString().toStdString();
+            } else if (r.value("nearest_below").isObject()) {
+                const QJsonObject below = r.value("nearest_below").toObject();
+                const int distance = below.value("distance").toInt();
+                if (distance > 0 && distance < 0x100) label = below.value("name").toString().toStdString() + "+" + std::to_string(distance);
+            }
+        }
+        m_resolved.emplace(key, label);
+        return label;
+    }
+    static unsigned int hex_value(const QString &s)
+    {
+        QString t = s;
+        if (t.startsWith('#')) t = t.mid(1);
+        bool ok = false;
+        const unsigned int v = t.toUInt(&ok, 16);
+        return ok ? v : 0;
+    }
+    // A struct field's value as a cell (as in process): under 256 decimal, a bigger number #hex, lists in brackets
+    static std::string field_text(const QJsonValue &v)
+    {
+        if (v.isDouble()) {
+            const qint64 i = (qint64)v.toDouble();
+            if (i < 256 || i > 0xFFFF) return std::to_string(i);
+            char b[16];
+            std::snprintf(b, sizeof(b), "#%04X", (unsigned int)i);
+            return b;
+        }
+        if (v.isString()) return v.toString().toStdString();
+        if (v.isArray()) {
+            std::string t = "[";
+            const QJsonArray a = v.toArray();
+            for (int i = 0; i < a.size(); i++) t += (i ? " " : "") + field_text(a.at(i));
+            return t + "]";
+        }
+        if (v.isObject()) {
+            std::string t = "{";
+            const QJsonObject o = v.toObject();
+            bool first = true;
+            for (auto it = o.begin(); it != o.end(); ++it) {
+                t += (first ? "" : ", ") + it.key().toStdString() + " " + field_text(it.value());
+                first = false;
+            }
+            return t + "}";
+        }
+        return std::string();
+    }
+
+    // The firmware objects over the WebAPI: GET state/audio/gs/firmware[?profile=][&cpu=ms] and the card's report
+    GsFirmware read_gs_firmware(const std::string &card, const std::string &profile) override
+    {
+        GsFirmware out;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        const QJsonObject report = gs_report(card, out.message);
+        if (report.isEmpty()) return out;
+        QStringList query;
+        if (!profile.empty()) query << "profile=" + QString::fromStdString(profile);
+        if (card == "ms") query << "cpu=ms";
+        int status = 0;
+        const QJsonObject body = m_http.json("GET", m_base + "/state/audio/gs/firmware" + (query.isEmpty() ? QString() : "?" + query.join('&')),
+                                             QJsonObject(), &status);
+        if (status != 200) {
+            out.message = status == 0 ? std::string("No answer from the emulator")
+                                      : (body.value("error").toString() + body.value("message").toString()).toStdString();
+            return out;
+        }
+        out.ok = true;
+        auto str = [](const QJsonObject &o, const char * key) { return o.value(key).toString().toStdString(); };
+        auto num = [](const QJsonObject &o, const char * key, int64_t def = 0) {
+            return o.value(key).isDouble() ? (int64_t)o.value(key).toDouble() : def;
+        };
+        out.profile = str(body, "profile");
+        out.title = str(body, "title");
+        out.source = str(body, "source");
+        const QJsonObject fp = report.value("firmware_profile").toObject();
+        out.rom_profile = str(fp, "id");
+        out.rom_title = str(fp, "title");
+        const QJsonObject protocol = report.value("protocol").toObject();
+        out.log_on = protocol.value("on").toBool();
+        out.top_profile = str(protocol, "profile");
+        for (const QJsonValue &v : protocol.value("uploads").toArray()) {
+            const QJsonObject u = v.toObject();
+            GsUpload up;
+            up.address = (unsigned int)num(u, "address");
+            up.length = (uint64_t)num(u, "length");
+            up.matched_length = (uint64_t)num(u, "matched_length", (int64_t)up.length);
+            up.sha256 = str(u, "sha256");
+            up.profile = str(u, "profile");
+            up.frame = num(u, "frame");
+            up.started = u.value("started").toBool();
+            out.uploads.push_back(std::move(up));
+        }
+        if (body.value("dispatch").isObject()) {
+            const QJsonObject d = body.value("dispatch").toObject();
+            const std::map<unsigned int, std::string> &labels = card_labels(card == "ms" ? "ms" : "gs", out.profile);
+            out.has_dispatch = true;
+            out.table = str(d, "table");
+            out.table_high = str(d, "table_high");
+            out.patched = num(d, "patched");
+            out.unknown = num(d, "unknown");
+            for (const QJsonValue &v : d.value("entries").toArray()) {
+                const QJsonObject e = v.toObject();
+                GsDispatchEntry de;
+                de.command = (int)num(e, "command");
+                de.name = str(e, "name");
+                de.readable = !e.contains("readable") || e.value("readable").toBool();
+                de.handler = hex_value(e.value("handler").toString());
+                if (de.readable) {
+                    auto it = labels.find(de.handler);
+                    if (it != labels.end()) de.label = it->second;
+                }
+                de.has_baseline = e.contains("baseline");
+                de.baseline = hex_value(e.value("baseline").toString());
+                de.patched = e.value("patched").toBool();
+                de.patched_by = str(e, "patched_by");
+                de.unknown = e.value("unknown").toBool();
+                out.entries.push_back(std::move(de));
+            }
+        }
+        if (body.value("unknown_commands").isArray()) {
+            out.unknown_present = true;
+            for (const QJsonValue &v : body.value("unknown_commands").toArray())
+                out.unknown_commands.emplace_back((int)num(v.toObject(), "command"), (uint64_t)num(v.toObject(), "count"));
+        }
+        for (const QJsonValue &iv : body.value("instances").toArray()) {
+            const QJsonObject inst = iv.toObject();
+            GsStructTable t;
+            t.name = str(inst, "name");
+            t.struct_name = str(inst, "struct");
+            t.at = str(inst, "at");
+            t.count = num(inst, "count");
+            t.size = num(inst, "size");
+            for (const QJsonValue &rv : inst.value("rows").toArray()) {
+                const QJsonObject r = rv.toObject();
+                const QJsonObject fields = r.value("fields").toObject();
+                // QJsonObject sorts its keys: the columns are the schema's order as the first row's members came
+                if (t.columns.empty()) for (const QString &k : fields.keys()) t.columns.push_back(k.toStdString());
+                std::vector<std::string> cells;
+                for (const std::string &k : t.columns) cells.push_back(field_text(fields.value(QString::fromStdString(k))));
+                t.row_at.push_back(str(r, "at"));
+                t.rows.push_back(std::move(cells));
+            }
+            out.structs.push_back(std::move(t));
+        }
+        for (const QJsonValue &vv : body.value("variables").toArray()) {
+            const QJsonObject v = vv.toObject();
+            GsVariable gv;
+            gv.name = str(v, "name");
+            gv.kind = str(v, "kind");
+            gv.at = str(v, "at");
+            if (gv.at.empty()) gv.at = str(v, "register") + " " + str(v, "pc_range");
+            gv.meaning = str(v, "meaning");
+            gv.reason = str(v, "reason");
+            gv.valid = v.value("valid").toBool() && v.contains("value");
+            gv.value = num(v, "value");
+            out.variables.push_back(std::move(gv));
+        }
+        return out;
+    }
+    // The profiles: GET state/audio/gs/firmware/profiles, read once (they are the program's, they do not change)
+    std::vector<GsProfileInfo> gs_firmware_profiles() override
+    {
+        if (!m_profiles.empty() || !m_online.load()) return m_profiles;
+        int status = 0;
+        const QJsonObject r = m_http.json("GET", m_base + "/state/audio/gs/firmware/profiles", QJsonObject(), &status);
+        if (status != 200) return m_profiles;
+        for (const QJsonValue &v : r.value("profiles").toArray()) {
+            const QJsonObject p = v.toObject();
+            GsProfileInfo info;
+            info.id = p.value("id").toString().toStdString();
+            info.title = p.value("title").toString().toStdString();
+            info.source = p.value("source").toString().toStdString();
+            info.commands = (int64_t)p.value("commands").toDouble();
+            info.structs = (int64_t)p.value("structs").toDouble();
+            info.instances = (int64_t)p.value("instances").toDouble();
+            info.variables = (int64_t)p.value("variables").toDouble();
+            m_profiles.push_back(std::move(info));
+        }
+        return m_profiles;
+    }
+
+    // The port writes over the WebAPI: the command log's newest records (history/<device>?last=400) and the port
+    // trace's newest events (state/audio/gs/porttrace?events=N: both sides and the DAC fetches in one ring, no side
+    // filter on the route, the GS slot's card only)
+    GsWrites read_gs_writes(const std::string &card) override
+    {
+        GsWrites out;
+        if (!m_online.load()) {
+            out.message = "The emulator is not connected";
+            return out;
+        }
+        const QJsonObject report = gs_report(card, out.message);
+        if (report.isEmpty()) return out;
+        out.ok = true;
+        out.card_cpu = report.value("implementation").toString() != "lightweight" && !report.value("interpreter").isObject();
+        auto num = [](const QJsonObject &o, const char * key, int64_t def = 0) {
+            return o.value(key).isDouble() ? (int64_t)o.value(key).toDouble() : def;
+        };
+        int status = 0;
+        const QString device = command_log_device(card);
+        out.log_device = device.toStdString();
+        if (!device.isEmpty()) {
+            const QJsonObject log = m_http.json("GET", m_base + "/history/" + device + "?last=400", QJsonObject(), &status);
+            if (status == 200) {
+                out.log_mode = log.value("mode").toString().toStdString();
+                for (const QJsonValue &v : log.value("records").toArray()) {
+                    const QJsonObject r = v.toObject();
+                    const QString kind = r.value("kind").toString();
+                    GsPortWrite w;
+                    w.host = true;
+                    w.kind = kind.toStdString();
+                    if (kind == "command") {
+                        w.port = 0xBB;
+                        w.value = (unsigned int)num(r, "command");
+                    } else if (kind == "param" || kind == "data") {
+                        w.port = 0xB3;
+                        w.value = (unsigned int)num(r, "value");
+                    } else if (kind == "marker") {
+                        w.port = 0x33;
+                        w.value = 0x80;
+                    } else {
+                        continue;
+                    }
+                    w.frame = num(r, "frame");
+                    w.t = num(r, "t");
+                    w.card_cycle = num(r, "card_cycle", -1);
+                    w.has_pc = true;
+                    w.pc = (unsigned int)num(r, "pc");
+                    w.label = resolve_label("main", w.pc);
+                    w.source = "command log";
+                    out.writes.push_back(std::move(w));
+                }
+            }
+        }
+        if (card == "ms") {
+            out.trace_note = "the WebAPI's port trace route reads the GS slot's card only (no cpu=ms)";
+            return out;
+        }
+        const QJsonObject trace = m_http.json("GET", m_base + QString("/state/audio/gs/porttrace?events=%1").arg(kTraceEvents),
+                                              QJsonObject(), &status);
+        if (status != 200) {
+            out.trace_note = "the port trace was not read";
+            return out;
+        }
+        out.trace_present = true;
+        const QJsonObject t = trace.value("trace").toObject();
+        out.trace_capturing = t.value("capturing").toBool();
+        out.trace_kept = (uint64_t)num(t, "event_count");
+        out.trace_evicted = (uint64_t)num(t, "total_evicted");
+        out.trace_note = QString("the trace's newest %1 events (the route has no side filter: the DAC fetches crowd the "
+                                 "ports out)").arg(kTraceEvents).toStdString();
+        for (const QJsonValue &v : trace.value("events").toArray()) {
+            const QJsonObject e = v.toObject();
+            const QString side = e.value("side").toString();
+            if (e.value("direction").toString() != "out") continue;
+            const bool host = side == "host";
+            if (!host && side != "gs") continue;
+            GsPortWrite w;
+            w.host = host;
+            w.port = (unsigned int)num(e, "port") & 0xFF;
+            w.value = (unsigned int)num(e, "value");
+            w.frame = num(e, "frame");
+            w.card_cycle = num(e, "timestamp", -1);
+            if (!host) {
+                w.has_pc = true;
+                w.pc = (unsigned int)num(e, "pc");
+                w.label = resolve_label("gs", w.pc);
+            }
+            w.source = "port trace";
+            out.writes.push_back(std::move(w));
+        }
+        return out;
+    }
+    // The port trace started / stopped: POST control/audio/gs/porttrace {action} (the GS slot's card only)
+    BoardAnswer gs_port_trace(const std::string &card, const std::string &action) override
+    {
+        if (card == "ms") return {false, "The WebAPI's port trace route has no cpu=ms: the MultiSound's GS trace is not reachable"};
+        return zxdma_trace_capture(action);
+    }
+
+    // The profiler and analysis reports over the WebAPI: GET state/audio/gs/<report>?<query>, the body as it came; a
+    // 404 with a message (no such card, the lightweight player has no card CPU) as {available: false, description}
+    GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        QStringList parts;
+        for (const auto &[key, value] : query)
+            if (!value.empty())
+                parts << QString::fromStdString(key) + "=" + QString::fromUtf8(QUrl::toPercentEncoding(QString::fromStdString(value)));
+        QString path = m_base + "/state/audio/gs/" + QString::fromStdString(report);
+        if (!parts.isEmpty()) path += "?" + parts.join('&');
+        QByteArray out;
+        const int status = m_http.request("GET", path, QByteArray(), out);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const QJsonObject body = QJsonDocument::fromJson(out).object();
+        if (status == 404 && body.contains("message")) {
+            const QJsonObject na{{"available", false}, {"description", body.value("message").toString()}};
+            return {true, QJsonDocument(na).toJson(QJsonDocument::Compact).toStdString(), std::string()};
+        }
+        if (status != 200) return {false, std::string(), body.value("message").toString(QString("HTTP %1").arg(status)).toStdString()};
+        return {true, out.toStdString(), std::string()};
+    }
+    GsJson gs_profiler(const std::string &card, const std::string &action) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs",
+                                          QJsonObject{{"action", QString::fromStdString("profile_" + action)},
+                                                      {"cpu", QString::fromStdString(card)}}, &status);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
+        if (status != 200) return {false, json, r.value("message").toString().toStdString()};
+        return {true, json, r.value("text").toString().toStdString()};
+    }
+    GsJson gs_analysis(const std::string &card, const std::string &action, int decay) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        QJsonObject body{{"action", QString::fromStdString(action)}, {"cpu", QString::fromStdString(card)}};
+        if (decay >= 0) body.insert("decay", decay);
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs/analysis", body, &status);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
+        if (status != 200) return {false, json, r.value("message").toString().toStdString()};
+        return {true, json, r.value("text").toString().toStdString()};
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }
@@ -1323,6 +1821,17 @@ private:
     QJsonObject m_histories;
     QElapsedTimer m_histories_age;
     std::mutex m_catalog_mutex;
+    // The analysis tabs' symbols (GUI thread only): a card CPU's by address, and the labels resolved at PCs
+    struct CardLabels {
+        std::map<unsigned int, std::string> by_address;
+        std::string profile;
+        QElapsedTimer age;
+    };
+    std::map<std::string, CardLabels> m_card_labels;
+    std::map<std::pair<std::string, unsigned int>, std::string> m_resolved;
+    QElapsedTimer m_resolved_age;
+    std::vector<GsProfileInfo> m_profiles;
+    static constexpr int kTraceEvents = 3000;
     QString m_id;
     QSettings m_settings;
     ecatshim::DeviceManager m_dm;

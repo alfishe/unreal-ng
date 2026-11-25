@@ -79,6 +79,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /callbacks/{cb_id}/resume",
     "POST /card_run_to",
     "POST /control/audio/gs",
+    "POST /control/audio/gs/analysis",
     "POST /control/audio/gs/porttrace",
     "POST /control/audio/midi",
     "POST /control/isa",

@@ -417,8 +417,16 @@ public:
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmware, "/api/v1/emulator/{id}/state/audio/gs/firmware", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSZxDma, "/api/v1/emulator/{id}/state/audio/gs/zxdma", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSProfile, "/api/v1/emulator/{id}/state/audio/gs/profile", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSEvents, "/api/v1/emulator/{id}/state/audio/gs/events", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSFirmwareProfiles, "/api/v1/emulator/{id}/state/audio/gs/firmware/profiles",
                   drogon::Get);
+    // GS card CPU analysis: coverage / CDL, heat map, never-written reads (implementation: api/gs_analysis_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSAnalysis, "/api/v1/emulator/{id}/state/audio/gs/analysis", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSCoverage, "/api/v1/emulator/{id}/state/audio/gs/coverage", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSHeatmap, "/api/v1/emulator/{id}/state/audio/gs/heatmap", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postControlAudioGSAnalysis, "/api/v1/emulator/{id}/control/audio/gs/analysis",
+                  drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovox, "/api/v1/emulator/{id}/state/audio/covox", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannels, "/api/v1/emulator/{id}/state/audio/channels", drogon::Get);
     // GS control actions (GS design §11.2)
@@ -1635,11 +1643,45 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioGSZxDma(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                               const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/profile?cpu=gs|ms&routines=N&activity=N
+    ///        The card CPU's profiler (gsprofilereport.h, gs-debugger X9 / X20): the ISR budget, the commands' cost,
+    ///        the routines, the activity per frame. Started with POST control/audio/gs {action: profile_start}. 404
+    ///        without a card CPU
+    void getStateAudioGSProfile(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/events?cpu=gs|ms&first=N&count=N&rows=N
+    ///        The last complete host frame per card interrupt period (gs-debugger X2): ISR bars, host accesses, DAC
+    ///        fetches, page and volume writes in card cycles. 404 without a card CPU
+    void getStateAudioGSEvents(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
     /// @brief GET /api/v1/emulator/{id}/state/audio/gs/firmware/profiles — the firmware profiles known (built-in and
     ///        the files of <symbols>/gs/profiles)
     void getStateAudioGSFirmwareProfiles(const drogon::HttpRequestPtr& req,
                                          std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                          const std::string& id) const;
+
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/analysis?cpu=gs|ms — the card CPU analysis switch state
+    ///        (gsanalysisreport.h, gs-debugger P5.6)
+    void getStateAudioGSAnalysis(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/coverage?cpu=&space=&page=&ranges=&raw= — coverage / CDL per
+    ///        physical page, the command handlers executed, the reads of never-written RAM (X8, X11)
+    void getStateAudioGSCoverage(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/heatmap?cpu=&channels=&recent=&frames=&cells=&format= — the
+    ///        card RAM heat map per channel and the ranges touched in the last N frames (X10)
+    void getStateAudioGSHeatmap(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/control/audio/gs/analysis — body {"action": "status|on|off|reset|release",
+    ///        "cpu": "gs|ms", "decay": 0-255}
+    void postControlAudioGSAnalysis(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/control/audio/gs — body:
     ///        {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",

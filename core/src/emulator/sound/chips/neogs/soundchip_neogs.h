@@ -394,6 +394,10 @@ private:
         if (_portTrace.isCapturing()) [[unlikely]]
             traceIdle(head, start, iterations);
         recordExecIdle(head, iterations);
+        if (_runProfile) [[unlikely]]
+            _profiler.Idle(start, _runner.now());
+        if (_analysis) [[unlikely]]
+            analysisIdle(head);
     }
     bool sleepQuietEventsBefore(int64_t end);
     // Forced: the fast and the debug loop both call it, and an outlined call per instruction costs the fast one 4 %
@@ -429,13 +433,23 @@ private:
     static void memWriteDebugCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
     static uint8_t portReadDebugCb(Z80CPU* cpu, uint16_t port, void* userData);
     static void portWriteDebugCb(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
+    // The same with the card analysis told (gscardanalysis.h; bound only while it is on): the access done, then marked
+    static uint8_t memReadAnalysisCb(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
+    static void memWriteAnalysisCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
+    void analysisRead(Z80CPU* cpu, uint16_t addr, uint8_t value, int m1State);
+    void analysisWrite(uint16_t addr);
+    void analysisIdle(uint16_t head);
+    /// The memory and port callbacks for the debugger's hooks and the analysis now
+    void bindBus();
+    void bindAnalysisBus() override { bindBus(); }
     /// The catch-up: the fast loop, or the debug loop while a debugger's hooks are set (one test per run)
     void runTo(int64_t target)
     {
         syncExecHistory();
+        syncAnalysis();
         if (_debugHooks) [[unlikely]]
             runToDebug(target);
-        else if (execRecording()) [[unlikely]]
+        else if (recordLoopWanted()) [[unlikely]]
             runToRecord(target);
         else
             _runner.runTo(target);
@@ -443,6 +457,11 @@ private:
     /// Out of line: the debug loop's and the execution history's code stay away from the fast loop's
     void runToDebug(int64_t target);
     void runToRecord(int64_t target);
+    /// The profiler's part (generalsoundcard.h): SP, the code bytes and the HALT latch before the step at `pc`; an
+    /// acknowledge with its return address; the run's start with the timer's grid
+    void profileStep(uint16_t pc) override;
+    void profileInterrupt(bool nmi, int64_t ackUnits) override;
+    void beginRun();
 
     uint8_t readMem(uint16_t addr)
     {
@@ -482,6 +501,11 @@ private:
             _debugHooks->onEvent(GSCardEvent::DmaDone, finished ? 1 : 0, static_cast<uint8_t>(m));
     }
     void dmaRamWritten(uint32_t offset, uint32_t length) override;
+    void dmaRamRead(uint32_t offset, uint32_t length) override
+    {
+        if (_analysis) [[unlikely]]
+            _analysis->BusMaster(GSCardAnalysis::SdDma, offset, length, false);
+    }
 
     // NeoGSZxDma::Host (neogs-zxdma-design.md §5.5)
     void zxCatchUp() override { flush(); }
@@ -499,6 +523,11 @@ private:
     void zxLateStart(int64_t units) override;
     void zxTrace(bool write, uint32_t address, uint8_t value, uint32_t waitT, bool dropped) override;
     void zxRamWritten(uint32_t offset, uint8_t value) override;
+    void zxRamRead(uint32_t offset) override
+    {
+        if (_analysis) [[unlikely]]
+            _analysis->BusMaster(GSCardAnalysis::ZxDma, offset, 1, false);
+    }
 
     // Lazy sync with the host
     void flush();

@@ -5,11 +5,12 @@
 #include <mutex>
 #include <vector>
 
-#include <qopengl.h>
+namespace gpu
+{
+class Device;
+}
 
-class QOpenGLContext;
-
-/// How long the GPU takes for each of the screen window's passes, from GL timestamps (GL 3.3 / ARB_timer_query):
+/// How long the GPU takes for each of the screen window's passes, from the GPU layer's timestamps (GL timer queries, a Vulkan query pool):
 /// smooth motion's steps and the picture (the CRT composition or a preset). Read back frames later, never waited for,
 /// so measuring stalls nothing. Kept for the GPU resets the system does after a pass runs too long (TDR, ~2 s on
 /// Windows): the times before one show which pass grew, and a pass over kSlowMs is logged at once.
@@ -40,13 +41,13 @@ public:
     static constexpr size_t kWindow = 600;
     static constexpr size_t kSegments = 8;  ///< Begin / End pairs a measurement sums at most (more: unmeasured)
 
-    /// The queries in the current context; false (and nothing measured) without timer queries
-    bool Init(QOpenGLContext* context);
-    /// The current context's queries deleted (current, or lost: then only forgotten)
+    /// The queries on `device`; false (and nothing measured) without timestamps there
+    bool Init(gpu::Device* device);
+    /// The device's queries gone (lost: only forgotten); before the device goes
     void Release(bool contextLost);
     bool Ready() const { return _ready; }
 
-    /// The pass starts / ends in the GL stream (context current). A pass whose earlier slots all wait is skipped
+    /// The pass starts / ends in the device's stream (on its thread). A pass whose earlier slots all wait is skipped
     void Begin(Pass pass);
     void End(Pass pass);
     /// The Begin / End pairs up to Close are one measurement, their sum
@@ -54,7 +55,7 @@ public:
     void Close(Pass pass);
     /// A time measured elsewhere (SmoothCpu)
     void Record(Pass pass, double ms);
-    /// The finished measurements read (context current), never waiting
+    /// The finished measurements read (on the device's thread), never waiting
     void Collect();
 
     Times Get(Pass pass) const;
@@ -63,8 +64,8 @@ private:
     static constexpr size_t kSlots = 8;
     struct Slot
     {
-        std::array<GLuint, kSegments> begin{};
-        std::array<GLuint, kSegments> end{};
+        std::array<int, kSegments> begin{};  ///< the device's query indices
+        std::array<int, kSegments> end{};
         size_t segments = 0;
         bool pending = false;
     };
@@ -88,18 +89,8 @@ private:
     void Finish(PassState& state);
     void Add(Pass pass, PassState& state, double ms);
 
-    using GenQueries = void(QOPENGLF_APIENTRYP)(GLsizei, GLuint*);
-    using DeleteQueries = void(QOPENGLF_APIENTRYP)(GLsizei, const GLuint*);
-    using QueryCounter = void(QOPENGLF_APIENTRYP)(GLuint, GLenum);
-    using GetQueryObjectiv = void(QOPENGLF_APIENTRYP)(GLuint, GLenum, GLint*);
-    using GetQueryObjectui64v = void(QOPENGLF_APIENTRYP)(GLuint, GLenum, GLuint64*);
-
     bool _ready = false;
-    GenQueries _gen = nullptr;
-    DeleteQueries _delete = nullptr;
-    QueryCounter _counter = nullptr;
-    GetQueryObjectiv _available = nullptr;
-    GetQueryObjectui64v _result = nullptr;
+    gpu::Device* _device = nullptr;
     std::array<PassState, PassCount> _passes{};
-    mutable std::mutex _mutex;  ///< the times: read by the WebAPI's report (presentStats), written on the GL thread
+    mutable std::mutex _mutex;  ///< the times: read by the WebAPI's report (presentStats), written on the device's thread
 };

@@ -180,11 +180,33 @@ enum class SwapStep : uint8_t
     Swap   ///< now
 };
 
-/// `nextAtNs` the frame queued after it (0: none), `swapCostNs` how long before its time the swap starts
+/// PlanSwap's `nextAtNs` for frames queued "at once" (low-latency video: no time of their own) that pile up
+constexpr int64_t kNextAtOnce = -1;
+/// Frames at once waiting behind the one in hand that make a pile. One waiting is the usual case and no pile: a frame
+/// came while the swap before it waited for its refresh, both are shown, a refresh each (measured on the Steam Deck,
+/// 48.83 Hz on 60 Hz: giving way to a single waiting frame lost 0.4 frames a second)
+constexpr size_t kAtOncePile = 2;
+
+/// PlanSwap's `nextAtNs` from the queue behind the frame in hand: `queued` frames, the first due at `frontAtNs`
+inline int64_t NextForPlan(size_t queued, int64_t frontAtNs)
+{
+    if (queued == 0)
+        return 0;
+    if (frontAtNs > 0)
+        return frontAtNs;
+    return queued >= kAtOncePile ? kNextAtOnce : 0;
+}
+
+/// `nextAtNs` the frame queued after it (0: none, kNextAtOnce: a pile of frames at once), `swapCostNs` how long
+/// before its time the swap starts. A frame at once gives way to a pile of later ones: with interval 1 each swap
+/// takes a refresh, and frames that come faster than refreshes (a machine faster than the display, low latency) would
+/// queue up, each shown later than the one before. A timed frame keeps its place before frames at once (repaints)
 inline SwapStep PlanSwap(int64_t atNs, int64_t nextAtNs, int64_t nowNs, int64_t swapCostNs, int64_t& wakeNs)
 {
     wakeNs = 0;
     if (nextAtNs > 0 && nextAtNs <= nowNs)
+        return SwapStep::Drop;
+    if (atNs == 0 && nextAtNs == kNextAtOnce)
         return SwapStep::Drop;
     if (atNs > 0 && atNs - swapCostNs > nowNs)
     {

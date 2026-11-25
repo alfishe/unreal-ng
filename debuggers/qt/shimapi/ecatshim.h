@@ -450,6 +450,211 @@ public:
     // card where the machine stands still in this process, a plain GET over the WebAPI; never a pause
     virtual unsigned int live_card_ms() const { return 250; }
 
+    // The GS protocol monitor (not in ecat; gui-card-debugger A5.3, gs-debugger P5.6): one read of a card's conversation
+    // with the host for the GS monitor tab. `card` "gs" (the General Sound or NeoGS) or "ms" (the MultiSound's GS).
+    // In process where the machine stands still (the `gs` report or the `multisound` report's gs part, the command log
+    // history `<slot>.commands` read with `last`, the firmware's unknown commands); over the WebAPI plain GETs
+    // (state/audio/gs or state/audio/multisound, history/<device>?last=N, state/audio/gs/firmware?object=
+    // unknown_commands). The history read has no since cursor: the newest `last` records, oldest first
+    struct GsMonitorRow {
+        int64_t frame = 0;
+        int64_t t = 0;
+        int64_t card_cycle = 0;
+        int command = -1;
+        std::string kind, name, text;
+        std::string anomaly;      // kind "anomaly": its name ("data_overwritten")
+    };
+    struct GsMonitor {
+        bool ok = false;          // read (false: message why)
+        std::string message;
+        // The card's protocol (the gs report): the decoder's line, the status register and its bits, the mailbox
+        bool protocol_on = false;            // the command log decodes (protocol.on)
+        std::string protocol_text;           // protocol.text ("#2C Set current module: not taken yet")
+        int status = -1;                     // the status register (-1: not read)
+        bool command_pending = false, data_pending = false;
+        int command_from_host = -1, data_from_host = -1, data_to_host = -1;
+        bool has_last_send = false;          // the debugger's last send (last_send)
+        int last_send_command = -1;
+        std::string last_send_name, last_send_state;
+        std::vector<int> last_send_replies;
+        // The command log (the history)
+        std::string log_device;              // "zxbus.1.commands"; empty: the card has none
+        std::string log_mode;                // off, ring, capture
+        uint64_t written = 0, kept = 0, dropped = 0;
+        std::vector<GsMonitorRow> rows;      // the newest records, oldest first
+        // The firmware's unknown commands (only with a firmware profile and the log on)
+        bool unknown_present = false;
+        uint64_t unknown_total = 0;          // every count summed
+        std::vector<std::pair<int, uint64_t>> unknown;  // command, count
+    };
+    virtual GsMonitor read_gs_monitor(const std::string &card, size_t last)
+    {
+        (void)card;
+        (void)last;
+        GsMonitor m;
+        m.message = "This machine has no GS monitor";
+        return m;
+    }
+    // The command log of `card` on (history <device> config mode ring): the tab's Turn on (an explicit user action)
+    virtual BoardAnswer gs_command_log(const std::string &card, bool on)
+    {
+        (void)card;
+        (void)on;
+        return {false, "This machine has no GS command log"};
+    }
+
+    // The GS analysis tabs (not in ecat; gui-card-debugger A5.2a Dispatch, Unknown, Objects; requirements M3, M4, M5,
+    // AU6): one read of a card's firmware objects through its profile. In process GSFirmwareObjectsRead where the
+    // machine stands still, with the `gs` report's firmware_profile and protocol (the profile on top, the #14 uploads);
+    // over the WebAPI plain GETs of state/audio/gs/firmware[?profile=][&cpu=ms] and state/audio/gs (or
+    // state/audio/multisound's gs part). The handlers' labels are the card CPU's own symbols (in process its label
+    // manager; over the WebAPI GET labels?cpu=, kept a while)
+    struct GsDispatchEntry {
+        int command = 0;
+        std::string name;              // the command's name in the profile ("" none)
+        bool readable = true;          // the table's bytes could be read
+        unsigned int handler = 0;
+        std::string label;             // the card's symbol at the handler ("" none)
+        bool has_baseline = false;     // the ROM's handler (the stock split COMTAB only)
+        unsigned int baseline = 0;
+        bool patched = false;          // differs from the ROM's
+        std::string patched_by;        // the extension profile that names the command ("" none)
+        bool unknown = false;          // the unknown-command stub, or a code the profile names no command for
+    };
+    struct GsUpload {                  // a #14 block the host sent (M5)
+        unsigned int address = 0;
+        uint64_t length = 0, matched_length = 0;
+        std::string sha256;
+        std::string profile;           // the profile whose upload match it is ("" unknown code)
+        int64_t frame = 0;
+        bool started = false;          // #13 jumped into it
+    };
+    struct GsStructTable {             // a struct instance of the profile (M3): columns from the schema
+        std::string name, struct_name, at;
+        int64_t count = 0, size = 0;
+        std::vector<std::string> columns;            // the struct's fields
+        std::vector<std::string> row_at;             // each row's place ("ram 2:#0100")
+        std::vector<std::vector<std::string>> rows;  // the fields' values as text ("" unreadable)
+    };
+    struct GsVariable {
+        std::string name, kind, at, meaning, reason;
+        bool valid = false;
+        int64_t value = 0;
+    };
+    struct GsFirmware {
+        bool ok = false;
+        std::string message;
+        std::string profile, title, source;          // the profile the read used
+        std::string rom_profile, rom_title;          // the ROM's (the gs report's firmware_profile; "" none)
+        bool log_on = false;                         // the command log records (protocol.on)
+        std::string top_profile;                     // the profile the decoder uses now (protocol.profile)
+        std::vector<GsUpload> uploads;               // the #14 blocks up to now, oldest first
+        bool has_dispatch = false;
+        std::string table, table_high;               // the dispatch table's place(s)
+        int64_t patched = 0, unknown = 0;
+        std::vector<GsDispatchEntry> entries;
+        bool unknown_present = false;                // the command log's counts are there (the log records)
+        std::vector<std::pair<int, uint64_t>> unknown_commands;  // command, count (since the log started)
+        std::vector<GsStructTable> structs;
+        std::vector<GsVariable> variables;           // the profile's memory / register / operand variables
+    };
+    // `profile`: "" the card's active one, else the id to read the card's memory as
+    virtual GsFirmware read_gs_firmware(const std::string &card, const std::string &profile)
+    {
+        (void)card;
+        (void)profile;
+        GsFirmware f;
+        f.message = "This machine has no GS firmware objects";
+        return f;
+    }
+    struct GsProfileInfo {
+        std::string id, title, source;
+        int64_t commands = 0, structs = 0, instances = 0, variables = 0;
+    };
+    // The firmware profiles known (built-in and files): GSFirmwareProfilesState, GET state/audio/gs/firmware/profiles
+    virtual std::vector<GsProfileInfo> gs_firmware_profiles() { return {}; }
+
+    // The Writers tab (gui-card-debugger A5.2a, requirements X7): the writes to the card's ports, oldest first. The
+    // host's #B3 / #BB from the command log (its records carry the main CPU's PC; #33 bit 7 a reset marker), the
+    // card's own OUTs and the host's #33 from the GS port trace (its events carry the card CPU's PC: for the host
+    // side not the writer's). In process the trace's host and card sides read apart (getPortTraceSide); over the
+    // WebAPI the trace's newest events (GET state/audio/gs/porttrace?events=N, the GS slot's card only)
+    struct GsPortWrite {
+        bool host = false;             // a host port (#B3 / #BB / #33); else the card's own port
+        unsigned int port = 0;
+        unsigned int value = 0;
+        int64_t frame = 0;
+        int64_t t = -1;                // the main CPU's T in the frame (command log), -1 unknown
+        int64_t card_cycle = -1;       // the card's clock (port trace), -1 unknown
+        bool has_pc = false;           // the writer's PC is known
+        unsigned int pc = 0;
+        std::string label;             // the writer CPU's symbol at the PC, "NAME" or "NAME+4"
+        std::string source;            // "command log", "port trace"
+        std::string kind;              // the command log's kind (command, param, data, marker); "" from the trace
+    };
+    struct GsWrites {
+        bool ok = false;
+        std::string message;
+        std::string log_device, log_mode;            // the command log ("" none)
+        bool trace_present = false;                  // the port trace could be read
+        std::string trace_note;                      // why not, or how it was read
+        bool trace_capturing = false;
+        uint64_t trace_kept = 0, trace_evicted = 0;
+        bool card_cpu = true;                        // the card has a CPU (the lightweight player has none)
+        std::vector<GsPortWrite> writes;
+    };
+    virtual GsWrites read_gs_writes(const std::string &card)
+    {
+        (void)card;
+        GsWrites w;
+        w.message = "This machine has no GS port writes";
+        return w;
+    }
+    // The GS port trace of `card` started / stopped (the Writers tab's Start; the trace records the card's ports)
+    virtual BoardAnswer gs_port_trace(const std::string &card, const std::string &action)
+    {
+        (void)card;
+        (void)action;
+        return {false, "This machine has no GS port trace"};
+    }
+
+    // The card CPU's profiler and analysis (not in ecat; gui-card-debugger A5.2a Profiler, Events, Coverage, Heat map;
+    // requirements X2, X8-X11, X20): one report as the core renders it, as JSON text, for every plane the same shape
+    // (gsprofilereport.h, gsanalysisreport.h). `report`: profile, events, analysis (the status), coverage, heatmap;
+    // `query` its parameters as the REST query names them (cpu "gs" / "ms", routines, activity, first, count, rows,
+    // space, page, ranges, channels, recent, frames, cells, format). In process DeviceState::GsProfile / GsEvents /
+    // GsAnalysisStatus / GsCoverage / GsHeatmap on the caller's thread (they never park the machine); over the WebAPI
+    // GET state/audio/gs/<report>?<query>. A card without a CPU (the lightweight player) answers ok with `available`
+    // false and the core's `description` (the WebAPI's 404 turned into that)
+    struct GsJson {
+        bool ok = false;               // answered; false: `message` why (no connection, a bad parameter)
+        std::string json;              // the report, or the control's answer
+        std::string message;           // the control's text, or why not
+    };
+    virtual GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query)
+    {
+        (void)report;
+        (void)query;
+        return {false, std::string(), "This machine has no GS card analysis"};
+    }
+    // The profiler of `card` ("gs" / "ms"): start (a new session, cleared then on), stop (the data kept), clear.
+    // GSProfileControl; over the WebAPI POST control/audio/gs {action: profile_<action>, cpu}
+    virtual GsJson gs_profiler(const std::string &card, const std::string &action)
+    {
+        (void)card;
+        (void)action;
+        return {false, std::string(), "This machine has no GS profiler"};
+    }
+    // The analysis (coverage, heat map, never-written reads) of `card`: status, on, off, reset, release; `decay` the
+    // heat lost per frame (0-255; -1 keeps it). GSAnalysisControl; over the WebAPI POST control/audio/gs/analysis
+    virtual GsJson gs_analysis(const std::string &card, const std::string &action, int decay)
+    {
+        (void)card;
+        (void)action;
+        (void)decay;
+        return {false, std::string(), "This machine has no GS card analysis"};
+    }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {

@@ -9,6 +9,16 @@
         field("backend", "string", "How the window draws: gpu or software");
         field("gpu_available", "boolean", "The host can draw with the GPU (OpenGL)");
         field("gpu", "boolean", "GPU acceleration on");
+        field("renderer", "string",
+              "View > Renderer as asked: gl or vulkan (the GPU screen draws with it; kept across sessions, "
+              "UNREAL_RENDERER overrides it at start)");
+        s["properties"]["renderers"]["type"] = "array";
+        s["properties"]["renderers"]["items"]["type"] = "string";
+        s["properties"]["renderers"]["description"] =
+            "Renderers this host offers: gl; vulkan in a build with it (Linux by default) on a hardware Vulkan 1.3 GPU";
+        field("renderer_active", "string",
+              "What the GPU screen draws with now: gl or vulkan; \"\" for the software screen; gl under renderer "
+              "vulkan when the Vulkan device or presenter failed (the log says why)");
         field("crt", "boolean", "CRT effects on (with profile none they show nothing)");
         field("crt_profile", "string", "The CRT profile: one of crt_profiles (none, basic, ..., shader:<name> for a libretro preset or a custom shader)");
         s["properties"]["crt_profiles"]["type"] = "array";
@@ -20,8 +30,8 @@
         field("emulator", "string", "The emulator the window shows, \"\" when none");
         field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
         field("smooth_motion", "string",
-              "The shown instance's [VIDEO] SmoothMotion: off, blend, interpolate or auto (the picture between two "
-              "frames on a fixed display; auto: View > Video Synchronization, present.sync says the step in effect)");
+              "The shown instance's [VIDEO] SmoothMotion: off, blend, interpolate, interpolate-lite (the cheap "
+              "interpolation for a slow machine) or auto (the picture between two frames on a fixed display; auto: View > Video Synchronization, present.sync says the step in effect)");
         field("effects_device", "string", "The shown instance's [VIDEO] EffectsDevice: gpu or cpu (the same bits)");
         field("present_policy", "string", "The shown instance's [VIDEO] PresentPolicy: auto, vrr or vsync");
         field("display_rate", "string", "The shown instance's [VIDEO] DisplayRate: keep or match");
@@ -37,8 +47,8 @@
                 p["properties"][name]["description"] = description;
             };
             pf("presenter", "string",
-               "metal, dxgi, gl-timed (Linux: a thread swaps GL; present at the frame's time), gl (the window's own "
-               "swap), software");
+               "metal, dxgi, gl-timed (Linux: a thread swaps GL; present at the frame's time), vulkan (the Vulkan "
+               "renderer's swapchain, UNREAL_RENDERER=vulkan), gl (the window's own swap), software");
             pf("fixed_display", "boolean", "A fixed refresh rate (false: VRR / ProMotion range)");
             pf("vrr", "boolean",
                "Native presenters: each frame presented at its own time (true) or on the refresh grid (false), as the "
@@ -82,7 +92,10 @@
             pf("smooth", "object",
                "{mode (in effect: off with temporal blending or without timed frames), device (gpu / cpu), game (a "
                "game profile's cadence applies), frames, pictures, renders, blended, interpolated, motion_fields, "
-               "on_device, held_flicker}");
+               "on_device, held_flicker, lite (interpolated pictures the cheap interpolation drew), stepped_down "
+               "(the interpolation came a refresh late too often: the cheap one instead), too_slow (the cheap one "
+               "was late too, or was the mode: blended instead), behind (refreshes it was behind the frame due), starved (frames due "
+               "with no next frame yet)}");
             pf("display", "object",
                "[VIDEO] DisplayRate: {state (keep; matched: the display runs hz for the machine's machine_hz, its own "
                "mode original_hz; unchanged: match asked, nothing switched), reason (why unchanged), hz, original_hz, "

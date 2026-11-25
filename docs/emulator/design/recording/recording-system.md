@@ -552,7 +552,7 @@ caller's row stride; the 33 MB 4K frame is built once and never copied. The macO
 `CVPixelBuffer` of the AVAssetWriter pool (B,G,R,A: the R/B swap is done once per SOURCE pixel before the pixels are
 repeated, 100 thousand pixels instead of 8.3 million); the ffmpeg pipe encoder lends a queue slot from a buffer pool
 (the pool also ends the per-frame 33 MB allocation). The NVENC encoder (Windows) lends its locked NV12 input buffer
-(`FrameTargetFormat::Nv12`): `FrameScaler::ScaleIntoNv12` converts the colors once per SOURCE pixel (BT.601 limited
+(`FrameTargetFormat::Nv12`): `FrameScaler::ScaleIntoNv12` converts the colors once per SOURCE pixel (BT.709 limited
 range, chroma averaged under each 2x2 output block, byte-identical to converting the whole scaled frame) and repeats
 the output pixels that map to it in the converted planes (a whole factor repeats exact k x k blocks, any other
 fit gathers the nearest source column per output column; both byte-identical to scaling to RGBA and converting). Measured on an arm64 laptop at 3840x2160 (scalar, no SIMD): a 352x288
