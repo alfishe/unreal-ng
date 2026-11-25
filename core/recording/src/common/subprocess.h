@@ -83,6 +83,9 @@ public:
     /// @brief Get last exit code (valid after waitForFinished returns >= 0)
     int exitCode() const { return _exitCode; }
 
+    /// The process's id (0: not spawned)
+    uint64_t processId() const;
+
     /// @brief Get last error message
     std::string getLastError() const { return _lastError; }
 
