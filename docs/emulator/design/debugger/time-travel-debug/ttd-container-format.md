@@ -74,6 +74,14 @@ recordings need not stay readable; in fact a file without the seek data still re
 - **A copy whose records moved** (a join, a part dropped by a tool) fails the index-offset check: the seek index is
   ignored and the file read from its start, as an unfinished file (no trailer) and a file written before
   2026-11-23 are. The Python tools copy stream 2 like any ancillary stream; `join` writes no index extra.
+- **An index that lies** (valid CRCs, wrong contents: a crafted file) never restores other bytes: the index only
+  says where to read. A record must carry the number of the part the index lists it under (the header's part index,
+  so another part's record with the same number of versions is refused), the table read must be the one of the
+  stretch's first checkpoint (its ordinal in the table record against the checkpoint record), the versions a part
+  claims must be the ones its checkpoint and piece records hold, and a file cannot claim more versions than it has
+  bytes (what a reader allocates per version is bounded by the file's size). Test
+  `TTDSegmentWindow_Test.DamageNeverRestoresOtherBytes`: damaged bytes and lying indexes, 30,000 reads in the long
+  tier.
 - **Cost in the file:** a table is a few bytes a piece (about 0.4 KB for a 128K machine with its devices), one per
   64 checkpoints; the seek index about 20 bytes a part.
 - **Checks:** `check_ksy.py` compares every table with the versions the checkpoints before it give each piece and

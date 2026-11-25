@@ -170,6 +170,9 @@ inline std::string FormatRegisters(const Json::Value& registers, bool full = fal
     if (full && interrupt.isObject())
         out << " IM " << interrupt["im"].asUInt() << " IFF1=" << interrupt["iff1"].asUInt() << " IFF2="
             << interrupt["iff2"].asUInt();
+    // The moment the registers belong to
+    if (full && special.isObject() && special.isMember("frame"))
+        out << " frame " << special["frame"].asUInt64() << " T " << special["t"].asUInt64();
     return out.str();
 }
 
