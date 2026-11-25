@@ -50,12 +50,13 @@ strip (`#2A Set module master volume: not taken yet, then reply 1 of 1 due` / `s
 F12 / F9); the error tile, the command log's anomalies and the firmware's unknown commands counted since its
 **Clear** (which resets the tab's counters only), the last anomaly's text and frame, tinted while not zero; the
 command log's newest records (Frame, T, Kind, Command, Name, Text; anomalies tinted), following the tail: scrolled up
-it stops, **Follow** resumes. The history read has no since cursor: each read takes the newest 200 records and
-appends the ones after the last row shown (matched by frame, T, card cycle, kind and text; more than 200 between two
-reads are counted as not read). With the command log off the tab says so, and **Turn on** sets history
+it stops, **Follow** resumes. The log reads after a cursor (the history's `since`): it fills with the newest 200
+records, then each read takes up to 1600 records after the newest row shown, so none is lost between two reads; the
+ones gone from the history before they were read (evicted from the ring) are counted as missed in the tile, and a
+cleared or reconfigured history (`restarted`) starts the table afresh. With the command log off the tab says so, and **Turn on** sets history
 `<slot>.commands` mode ring. Read once at every stop and, only while the tab is in sight and the machine runs, every
 250 ms in process (`Emulator::read_gs_monitor` where the machine stands still) and every second over the WebAPI
-(plain GETs of `state/audio/gs` or `state/audio/multisound`, `history/<device>?last=200`,
+(plain GETs of `state/audio/gs` or `state/audio/multisound`, `history/<device>?last=1600&since=S`,
 `state/audio/gs/firmware?object=unknown_commands`); nothing pauses. Turn on is `Emulator::gs_command_log` (over the
 WebAPI `POST history/<device>/config {mode}`).
 

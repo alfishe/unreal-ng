@@ -12,6 +12,8 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorContext;
+struct HistoryRequest;
+struct HistoryReply;
 class QLabel;
 class QPushButton;
 class QTableWidget;
@@ -23,8 +25,10 @@ class QToolButton;
 ///   - the protocol strip: the `gs` report's protocol (the command log's decoder), the mailbox status, the last send;
 ///   - the error tile: the command log's anomalies and the commands the firmware profile does not name (`gs-firmware`
 ///     `unknown_commands`) counted since the tile's Clear, the last anomaly with its frame; tinted when non-zero;
-///   - the log: the command log's newest records (`gs-commands`: frame, t, kind, command, name, text), anomalies tinted,
-///     following the tail; scrolling up stops following, Follow (or scrolling back to the end) resumes;
+///   - the log: the command log's records (`gs-commands`: frame, t, kind, command, name, text), anomalies tinted,
+///     following the tail; scrolling up stops following, Follow (or scrolling back to the end) resumes. It fills with
+///     the newest kReadRows, then reads after its cursor (the history's `since`): every record between two refreshes,
+///     the ones gone from the history before they were read counted as missed;
 ///   - Pause / Continue: the debugger window's own actions (pauseRequested / continueRequested).
 /// With the command log off it says so, with Turn on (turnOnRequested: the owner sets history `<slot>.commands` to ring
 /// through turnOn under its lease). No device code here: the reads are the history and report verbs every plane serves.
@@ -35,8 +39,9 @@ class GsMonitorPane : public QWidget
     Q_OBJECT
 
 public:
-    /// The newest records read per refresh, and the rows the log keeps
+    /// The records read per page (and the first fill), the pages per refresh at most, and the rows the log keeps
     static constexpr size_t kReadRows = 200;
+    static constexpr int kPagesPerRefresh = 8;
     static constexpr int kMaxRows = 1000;
 
     /// `follow`: the debugger CPU tab in front (the card it shows: CardPanes::Front); null: the GS slot's
@@ -64,6 +69,8 @@ public:
     int64_t unknownCommands() const;
     bool following() const { return _following; }
     bool logOff() const { return _off; }
+    int64_t missed() const { return _missed; }
+    QString rowsText() const;
     QTableWidget* table() const { return _table; }
     QPushButton* turnOnButton() const { return _turnOn; }
     QPushButton* runButton() const { return _run; }
@@ -79,7 +86,9 @@ signals:
 private:
     void showUnavailable(const QString& why);
     void showStrip(const StateNode& gs, const StateNode* protocol);
-    void appendRecords(const StateNode& reply);
+    /// Appends `reply`'s page and the pages after it (up to kPagesPerRefresh), moving the cursor; `filling`: the first
+    /// fill, whose start is not counted as missed
+    void appendPages(EmulatorContext* context, HistoryRequest& read, HistoryReply reply, bool filling);
     void appendRow(const StateNode& record);
     void showTile();
     void scrollToTail();
@@ -105,8 +114,9 @@ private:
     bool _scrolling = false;      ///< the pane moves the scroll bar itself (not the user)
     bool _tinted = false;
     std::string _device;          ///< the history the log reads (another one: the log starts afresh)
-    int64_t _written = -1;        ///< the history's records written at the last read (fewer: it was cleared)
-    QString _lastKey;             ///< the newest shown record's identity: the next read appends what follows it
+    bool _hasCursor = false;      ///< the log was filled: the next read goes on after _since
+    uint64_t _since = 0;          ///< the number of the newest record shown (the history's cursor)
+    int64_t _missed = 0;          ///< records gone from the history before they were read, since the log started
     int _anomalies = 0;           ///< since the tile's Clear
     QString _lastAnomaly;         ///< its text and frame
     std::map<int, int64_t> _unknown;         ///< how many times the host sent each unknown command (the log's count)

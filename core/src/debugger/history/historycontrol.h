@@ -6,7 +6,10 @@
 ///
 /// Verbs:
 ///   list    every history of the machine: device (registry id), what it records, mode, limit, counts, stream
-///   read    one device's history: its stats and the newest `last` records (0: all), oldest first
+///   read    one device's history: its stats and the newest `last` records (0: all), oldest first. With `since`
+///           (a cursor: the number of the last record the reader has) the first `last` records numbered after it
+///           instead, each with its "seq", and next_since (the cursor of the next read), missed (records after the
+///           cursor no longer kept) and restarted (the cursor was past the newest record: read from the oldest kept)
 ///   config  mode off / ring / capture, limit (ring size; capture cap, 0 = none), stream (a JSON Lines file, "" =
 ///           none) and streamLimit (records, 0 = none). Fields not given keep their value
 ///   clear   drops the records and the counts; the configuration stays
@@ -27,7 +30,8 @@ struct HistoryRequest
 {
     std::string verb;                           ///< list, read, config, clear, pause, resume
     std::string device;                         ///< the registry id: "beta128", "zxbus.1"
-    size_t last = 0;                            ///< read: the newest N (0: all)
+    size_t last = 0;                            ///< read: the newest N (0: all); with since: the first N after it
+    std::optional<uint64_t> since;              ///< read: the records numbered after this cursor
     std::optional<std::string> mode;            ///< config: off, ring, capture
     std::optional<uint64_t> limit;
     std::optional<std::string> stream;

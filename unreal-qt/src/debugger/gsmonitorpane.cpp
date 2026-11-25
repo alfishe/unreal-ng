@@ -9,7 +9,6 @@
 #include <QToolButton>
 
 #include <algorithm>
-#include <cstdlib>
 
 #include "debugger/cardpanes.h"
 #include "debugger/history/historycontrol.h"
@@ -69,16 +68,6 @@ std::string MultiSoundSlot(EmulatorContext* context)
         if (card && card->DebugGeneralSound())
             return card->SlotId();
     return std::string();
-}
-
-/// A record's identity in the log: the same record read again has the same one (the reads overlap)
-QString Key(const StateNode& record)
-{
-    return QStringLiteral("%1|%2|%3|%4|%5")
-        .arg(Int(record, "frame"))
-        .arg(Int(record, "t"))
-        .arg(Int(record, "card_cycle"))
-        .arg(Str(record, "kind"), Str(record, "text"));
 }
 
 bool IsAnomaly(const StateNode& record)
@@ -238,20 +227,25 @@ void GsMonitorPane::refresh(EmulatorContext* context, bool live)
         gs = DeviceState::Gs(context);
     showStrip(gs, Member(gs, "protocol"));
 
-    // The log: the history's newest records, appended after the last one shown
+    // The log: the records after the newest one shown, by the history's cursor (its records' numbers), page by page
+    // until caught up: none is lost between two refreshes while the history keeps it
     const std::string device = HistoryDevice(context, front);
     if (device != _device)
     {
         _device = device;  // another card: its own log
         _table->setRowCount(0);
-        _lastKey.clear();
-        _written = -1;
+        _hasCursor = false;
+        _missed = 0;
     }
     HistoryRequest read;
     read.verb = "read";
     read.device = device;
     read.last = kReadRows;
-    const HistoryReply reply = HistoryControl::Execute(context, read);
+    if (_hasCursor)
+        read.since = _since;
+    else
+        read.last = 1;  // the first read: the history's state and counts, then the view fills with its newest kReadRows
+    HistoryReply reply = HistoryControl::Execute(context, read);
     if (reply.httpStatus != 200)
     {
         _off = true;
@@ -273,7 +267,19 @@ void GsMonitorPane::refresh(EmulatorContext* context, bool live)
         _rows->clear();
         return;
     }
-    appendRecords(reply.body);
+    const bool filling = !_hasCursor;
+    if (filling)
+    {
+        // The newest record's number: a ring numbers its newest `written`, a capture keeps its first `kept`
+        const int64_t newest = Str(reply.body, "mode") == QLatin1String("capture") ? Int(reply.body, "kept")
+                                                                                     : Int(reply.body, "written");
+        _since = newest > static_cast<int64_t>(kReadRows) ? static_cast<uint64_t>(newest) - kReadRows : 0;
+        _hasCursor = true;
+        read.last = kReadRows;
+        read.since = _since;
+        reply = HistoryControl::Execute(context, read);
+    }
+    appendPages(context, read, reply, filling);
 
     // The commands the firmware's profile does not name (gs-firmware unknown_commands), counted by the log
     GSFirmwareObjectsQuery query;
@@ -323,60 +329,43 @@ void GsMonitorPane::showStrip(const StateNode& gs, const StateNode* protocol)
     _strip->setText(first + QLatin1Char('\n') + second);
 }
 
-void GsMonitorPane::appendRecords(const StateNode& reply)
+void GsMonitorPane::appendPages(EmulatorContext* context, HistoryRequest& read, HistoryReply reply, bool filling)
 {
-    const int64_t written = Int(reply, "written", -1);
-    if (written >= 0 && _written >= 0 && written < _written)
-    {
-        _table->setRowCount(0);  // the history started afresh (cleared, configured again)
-        _lastKey.clear();
-    }
-    const int64_t previous = _lastKey.isEmpty() ? -1 : _written;
-    _written = written;
-    const StateNode* records = Member(reply, "records");
-    if (!records || !records->isArray() || records->items.empty())
-    {
-        _rows->setText(tr("%1 rows").arg(_table->rowCount()));
-        return;
-    }
-    // The reads overlap: what follows the newest record shown is new (all of them when it fell out of the read). The
-    // history's count of records written says where that record should be; its identity confirms it (the count and
-    // the records are two reads: the emulation may write between them). Records alike (a machine that does not run:
-    // the same frame and T) are told apart by the count
-    const int64_t size = static_cast<int64_t>(records->items.size());
-    int64_t expected = -1;  // the newest shown record's index by the count
-    if (previous >= 0 && written >= previous)
-        expected = size - (written - previous) - 1;
-    size_t from = 0;
-    if (!_lastKey.isEmpty())
-    {
-        int64_t best = -1;
-        for (int64_t i = 0; i < size; i++)
-            if (Key(records->items[static_cast<size_t>(i)]) == _lastKey &&
-                (best < 0 || expected < 0 || std::abs(i - expected) <= std::abs(best - expected)))
-                best = i;
-        if (best >= 0)
-            from = static_cast<size_t>(best + 1);
-        else if (expected >= 0)
-            from = static_cast<size_t>(expected + 1);
-    }
-    if (from >= records->items.size())
-    {
-        _rows->setText(tr("%1 rows").arg(_table->rowCount()));
-        return;
-    }
     _scrolling = true;
     _table->setUpdatesEnabled(false);
-    for (size_t i = from; i < records->items.size(); i++)
-        appendRow(records->items[i]);
+    size_t appended = 0;
+    // A burst beyond kPagesPerRefresh pages waits for the next refresh: the cursor keeps its place
+    for (int page = 0; reply.httpStatus == 200; page++)
+    {
+        const StateNode& body = reply.body;
+        if (Flag(body, "restarted"))
+        {
+            _table->setRowCount(0);  // the history started afresh (cleared, configured again)
+            _missed = 0;
+        }
+        if (!filling || page > 0)
+            _missed += Int(body, "missed");  // evicted before they were read (the first fill starts where it may)
+        _since = static_cast<uint64_t>(Int(body, "next_since", static_cast<int64_t>(_since)));
+        const StateNode* records = Member(body, "records");
+        const size_t count = records && records->isArray() ? records->items.size() : 0;
+        for (size_t i = 0; i < count; i++)
+            appendRow(records->items[i]);
+        appended += count;
+        if (count < kReadRows || page + 1 >= kPagesPerRefresh)
+            break;
+        read.since = _since;
+        reply = HistoryControl::Execute(context, read);
+    }
     const int extra = _table->rowCount() - kMaxRows;
     for (int i = 0; i < extra; i++)
         _table->removeRow(0);
     _table->setUpdatesEnabled(true);
     _scrolling = false;
-    _lastKey = Key(records->items.back());
-    _rows->setText(tr("%1 rows").arg(_table->rowCount()));
-    if (_following)
+    QString rows = tr("%1 rows").arg(_table->rowCount());
+    if (_missed > 0)
+        rows += tr(" · %1 missed (gone from the history before they were read)").arg(_missed);
+    _rows->setText(rows);
+    if (_following && appended > 0)
         scrollToTail();
 }
 
@@ -490,6 +479,11 @@ bool GsMonitorPane::turnOn(EmulatorContext* context, QString* error)
         return false;
     }
     return true;
+}
+
+QString GsMonitorPane::rowsText() const
+{
+    return _rows->text();
 }
 
 QString GsMonitorPane::status() const

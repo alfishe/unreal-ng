@@ -28,8 +28,20 @@
         read["parameters"][2]["name"] = "last";
         read["parameters"][2]["in"] = "query";
         read["parameters"][2]["schema"]["type"] = "integer";
-        read["parameters"][2]["description"] = "The newest N records (default 0: all kept)";
-        read["responses"]["200"]["description"] = "the stats and records[]";
+        read["parameters"][2]["description"] = "The newest N records (default 0: all kept); with since: the first N "
+                                               "after the cursor";
+        read["parameters"][3]["name"] = "since";
+        read["parameters"][3]["in"] = "query";
+        read["parameters"][3]["schema"]["type"] = "integer";
+        read["parameters"][3]["description"] =
+            "A cursor: the records numbered after it, oldest first, each with its seq (1 = the first record written "
+            "since the last clear). The reply adds next_since (the cursor of the next read), missed (records after "
+            "the cursor no longer kept: evicted from the ring unread) and restarted (the cursor was past the newest "
+            "record, the history was cleared or configured: read from the oldest kept). A poller pages forward with "
+            "no gap";
+        read["responses"]["200"]["description"] =
+            "the stats and records[]; with since also next_since, missed, restarted and each record's seq";
+        read["responses"]["400"]["description"] = "since is not a record number";
         read["responses"]["404"]["description"] = "no such emulator, or the device has no history";
 
         Json::Value& config = paths["/api/v1/emulator/{id}/history/{device}/config"]["post"];

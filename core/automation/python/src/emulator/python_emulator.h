@@ -5555,14 +5555,18 @@ namespace PythonBindings
                 request.verb = "list";
                 return StateNodeToPy(python_history::Run(self, request));
             }, "Every device history: device (registry id), what, mode, limit, written, kept, dropped, stream")
-            .def("history", [](Emulator& self, const std::string& device, size_t last) -> py::object {
+            .def("history", [](Emulator& self, const std::string& device, size_t last,
+                               std::optional<uint64_t> since) -> py::object {
                 HistoryRequest request;
                 request.verb = "read";
                 request.device = device;
                 request.last = last;
+                request.since = since;
                 return StateNodeToPy(python_history::Run(self, request));
-            }, py::arg("device"), py::arg("last") = 0,
-               "One device's history: stats and records (oldest first, the newest `last`; 0 = all)")
+            }, py::arg("device"), py::arg("last") = 0, py::arg("since") = py::none(),
+               "One device's history: stats and records (oldest first, the newest `last`; 0 = all). since=N: the "
+               "first `last` records numbered after N, each with its seq, and next_since (the next read's cursor), "
+               "missed (records after N no longer kept), restarted (N was past the newest: cleared since)")
             .def("history_config",
                  [](Emulator& self, const std::string& device, std::optional<std::string> mode,
                     std::optional<uint64_t> limit, std::optional<std::string> stream,

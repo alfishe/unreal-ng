@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -454,9 +455,12 @@ public:
     // with the host for the GS monitor tab. `card` "gs" (the General Sound or NeoGS) or "ms" (the MultiSound's GS).
     // In process where the machine stands still (the `gs` report or the `multisound` report's gs part, the command log
     // history `<slot>.commands` read with `last`, the firmware's unknown commands); over the WebAPI plain GETs
-    // (state/audio/gs or state/audio/multisound, history/<device>?last=N, state/audio/gs/firmware?object=
-    // unknown_commands). The history read has no since cursor: the newest `last` records, oldest first
+    // (state/audio/gs or state/audio/multisound, history/<device>?last=N[&since=S], state/audio/gs/firmware?object=
+    // unknown_commands). Without `since` the newest `last` records, oldest first; with it (a cursor: the number of the
+    // last record the tab has) the first `last` records after it, each with its seq, and the cursor's next_since,
+    // missed (records after the cursor gone from the history unread) and restarted (the history was cleared since)
     struct GsMonitorRow {
+        uint64_t seq = 0;         // a read after a cursor: the record's number (1: the first since the last clear)
         int64_t frame = 0;
         int64_t t = 0;
         int64_t card_cycle = 0;
@@ -481,16 +485,21 @@ public:
         std::string log_device;              // "zxbus.1.commands"; empty: the card has none
         std::string log_mode;                // off, ring, capture
         uint64_t written = 0, kept = 0, dropped = 0;
-        std::vector<GsMonitorRow> rows;      // the newest records, oldest first
+        std::vector<GsMonitorRow> rows;      // the newest records (or the ones after the cursor), oldest first
+        bool cursor = false;                 // read after a cursor: the next three apply
+        uint64_t next_since = 0;             // the cursor of the next read
+        uint64_t missed = 0;                 // records after the cursor gone from the history before they were read
+        bool restarted = false;              // the cursor was past the newest record: read from the oldest kept
         // The firmware's unknown commands (only with a firmware profile and the log on)
         bool unknown_present = false;
         uint64_t unknown_total = 0;          // every count summed
         std::vector<std::pair<int, uint64_t>> unknown;  // command, count
     };
-    virtual GsMonitor read_gs_monitor(const std::string &card, size_t last)
+    virtual GsMonitor read_gs_monitor(const std::string &card, size_t last, std::optional<uint64_t> since)
     {
         (void)card;
         (void)last;
+        (void)since;
         GsMonitor m;
         m.message = "This machine has no GS monitor";
         return m;

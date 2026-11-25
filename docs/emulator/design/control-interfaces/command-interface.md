@@ -4366,7 +4366,7 @@ Module doc: [device-history.md](../debugger/device-history.md) (REST, WebSocket,
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `history` | | | Every device history: device, what it records, mode, limit, written, kept, dropped, the stream | ✅ Implemented |
-| `history <device>` | | `[N]` | The device's stats and its newest N records (all by default), oldest first | ✅ Implemented |
+| `history <device>` | | `[N] [since=S]` | The device's stats and its newest N records (all by default), oldest first. `since=S`: a cursor, the first N records numbered after S instead, each with its `seq`, and `next_since` (the next read's S), `missed` (records after S no longer kept), `restarted` (S was past the newest: cleared since); a poller pages forward with no gap ([device-history.md](../debugger/device-history.md#reading-after-a-cursor)) | ✅ Implemented |
 | `history <device> mode` | | `<off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N]` | Configure: ring size or capture cap (0: none); `stream=` a file every record goes to as well, empty to stop it. Starts afresh | ✅ Implemented |
 | `history <device> clear` | | | Drop the records and counts | ✅ Implemented |
 | `history <device> pause` | `resume` | | Hold the history: nothing recorded, the records kept; `resume` goes on | ✅ Implemented |

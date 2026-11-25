@@ -234,6 +234,17 @@ def test_the_command_log_is_a_device_history(s):
         expect(not w.is_error, 'the host port written', w.text)
     r = s.call('device_history', {'action': 'read', 'device': device, 'last': 16})
     expect('#2C' in r.text and 'data #05' in r.text, 'a data and a command record, decoded to text', r.text)
+    expect('next_since' not in r.text and 'seq=' not in r.text, 'a read without a cursor answers as before', r.text)
+    # A read after a cursor: the first `last` records after it, each with its seq, and where the next read starts
+    r = s.call('device_history', {'action': 'read', 'device': device, 'since': 0, 'last': 1})
+    expect(re.search(r'next_since 1, missed 0', r.text) and re.search(r'^\s+seq=1 ', r.text, re.M),
+           'the first record after cursor 0, the next read after 1', r.text)
+    expect(len(re.findall(r'^\s+seq=', r.text, re.M)) == 1, 'one record: last 1 after the cursor', r.text)
+    r = s.call('device_history', {'action': 'read', 'device': device, 'since': 1})
+    expect(re.search(r'^\s+seq=2 ', r.text, re.M) and '#2C' in r.text, 'paged forward: the rest, the command', r.text)
+    expect((r.structured or {}).get('restarted') is False, 'structured: restarted false', r.structured)
+    r = s.call('device_history', {'action': 'read', 'device': device, 'since': 1000})
+    expect('restarted' in r.text, 'a cursor past the newest record: restarted, read from the oldest kept', r.text)
     s.call('device_history', {'action': 'config', 'device': device, 'mode': 'off'})
 
 
