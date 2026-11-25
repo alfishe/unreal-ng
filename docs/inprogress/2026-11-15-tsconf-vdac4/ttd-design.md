@@ -211,6 +211,25 @@ seeks exact; the ESP memory (PSRAM and SRAM, 7.9 MB) hashed after every seek aga
 `TTDEngineModels_Fixture.Vdac4EspMemoryWithoutAReplayPointIsRestoredByTheEngine` (no point: the engine still
 restores memory changed behind it).
 
+### 9.3 Seek time: the FT812 memory blob scanned by words (2026-11-25)
+
+The FT812's memory blob (RAM_G, display lists, registers, command FIFO: 1.1 MB, zero runs of 64+ bytes dropped) is
+written on every live snapshot, twice per seek (the seek's and its picture's). It was scanned a byte at a time;
+`EveHostCard::TtdEncodeZeroRuns` looks at the aligned 8-byte words only (a run of 64 zeros holds whole ones) and
+measures a run both ways from a zero word. Same bytes out (the stream is unchanged), byte scan as the reference:
+`TTDVdac2ZeroRuns_Test.TheWordScanWritesWhatTheByteScanWrote`.
+
+| 1 MB of | Byte scan | Word scan |
+|---|---|---|
+| no zero bytes | 0.37 ms | 0.08 ms |
+| 10 % single zero bytes | 1.15 ms | 0.08 ms |
+| 4 KB zero / 4 KB data | 0.43 ms | 0.09 ms |
+
+In the DOOM seeks (`sample` of the seek phase): the encoder went from 12 % of `PresentPosition` (101 of 843
+samples) to 3.8 % (27 of 702). Wall-clock A/B on a host at load 50-250 does not resolve it (5 rounds, 1080 seeks,
+all exact). What the live snapshot still copies: the ESP memory (`PutSparse`, already by words, 8.4 MB, about 8 %
+of a seek).
+
 ## 10. Open
 
 - A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame (about
@@ -219,6 +238,6 @@ restores memory changed behind it).
   state and at most 256 KB of journal whatever one frame sent (an `APP_START` with its ELF). Only a host state over
   3.7 MB would pass it.
 - The rest of a seek: the replay to f itself (on average 12 frames), the ESP pieces the engine decodes on a restore
-  no replay point covers (all marked, `TTDBeforeRestore`: the ESP moves on without marks), the FT812's full save and
-  load in the picture's live snapshot.
+  no replay point covers (all marked, `TTDBeforeRestore`: the ESP moves on without marks), the ESP memory copied by
+  the picture's live snapshot (`PutSparse`, about 8 %), the FT812's load and `ConfigureOutput` in it.
 - Resources of the firmware (`_resources`) stay in the `vdac4-esp` blob, stored per frame while held.
