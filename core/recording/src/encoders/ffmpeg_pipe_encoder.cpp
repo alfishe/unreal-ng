@@ -1122,6 +1122,7 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
             if (!vf.empty())
                 vf += ",";
             vf += "scale=in_range=full:out_range=limited:out_color_matrix=bt709,";
+            vf += std::string(FrameScaler::FfmpegColorTags) + ",";
             // VA-API encodes GPU surfaces: the 4:2:0 frame uploaded as NV12 to the render node the trial found
             vf += _vaapiDevice.empty() ? "format=yuv420p" : "format=nv12,hwupload";
         }
@@ -1155,7 +1156,7 @@ void FFmpegPipeEncoder::appendVideoCodecArgs(std::vector<std::string>& args, con
             args.push_back("-color_primaries");
             args.push_back("bt709");
             args.push_back("-color_trc");
-            args.push_back("bt709");
+            args.push_back("iec61966-2-1");  // as FrameScaler::FfmpegColorTags, which ffmpeg 7+ needs
             args.push_back("-color_range");
             args.push_back("tv");
         }
@@ -1540,7 +1541,8 @@ std::vector<std::string> FFmpegPipeEncoder::buildSegmentArgs(uint32_t width, uin
     // on whole chroma blocks (even size and offsets): the same bytes as 4:2:0 over the padded frame, 17 % less CPU
     // (4K, Linux), a third fewer pixels in the 4:2:0 step and a 4:2:0 pad. VA-API: the frame uploaded as NV12, the
     // bars added on the GPU (pad_vaapi, ffmpeg 7.0 and later), 25 % less CPU than the 4K frame uploaded
-    const std::string convert = "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv444p";
+    const std::string convert = "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv444p," +
+                                std::string(FrameScaler::FfmpegColorTags);
     const std::string pad = "pad=" + std::to_string(_width) + ":" + std::to_string(_height) + ":" +
                             std::to_string(layout.offsetX) + ":" + std::to_string(layout.offsetY) + ":black";
     const bool vaapi = !_vaapiDevice.empty();

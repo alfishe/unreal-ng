@@ -18,6 +18,17 @@
 /// that map to it are a memcpy of it.
 namespace FrameScaler
 {
+/// ffmpeg's filter that tags frames as this module's YUV is: BT.709 matrix and primaries, limited range, the sRGB
+/// transfer (the emulator's picture is an sRGB one; a BT.709 transfer tag makes macOS show it lighter). A filter, not
+/// -colorspace / -color_primaries / -color_trc: ffmpeg 7 and later write the frame's own primaries and transfer over
+/// those options (unknown from a raw pipe). Put it after the conversion to YUV, before hwupload
+inline constexpr const char* FfmpegColorTags =
+    "setparams=colorspace=bt709:color_primaries=bt709:color_trc=iec61966-2-1:range=tv";
+/// The same tags without the range, for B,G,R,A frames an encoder converts itself (ProRes through VideoToolbox: a
+/// range tag on them stops it)
+inline constexpr const char* FfmpegColorTagsNoRange =
+    "setparams=colorspace=bt709:color_primaries=bt709:color_trc=iec61966-2-1";
+
 /// Where the picture lands in the output
 struct Layout
 {
@@ -40,7 +51,7 @@ bool ScaleInto(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, s
                uint32_t dstH, bool swapRedBlue);
 
 /// The same picture into an NV12 target (the hardware encoders' input: Y plane, then interleaved U,V at half
-/// resolution, BT.601 limited range - the arithmetic of the NVENC converter). The color conversion runs once per
+/// resolution, BT.709 limited range: the matrix HD players assume and the files are tagged with). The color conversion runs once per
 /// SOURCE pixel and the integer blocks are repeated in the converted planes, so a 4K frame costs a few hundred
 /// thousand conversions, not 8.3 million. Chroma of a 2x2 output block is the average of the pixels under it (a
 /// block inside one source pixel is exactly that pixel's chroma; a block on a source edge or on the edge of the

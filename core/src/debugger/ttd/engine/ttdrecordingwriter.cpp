@@ -45,7 +45,11 @@ bool TTDRecordingWriter::Open(const TimeTravelEngine& engine, size_t first, std:
 
 bool TTDRecordingWriter::Close(const TimeTravelEngine& engine, size_t end)
 {
-    const bool ok = _writer->Finish(engine, end);
+    return Closed(_writer->Finish(engine, end));
+}
+
+bool TTDRecordingWriter::Closed(bool ok)
+{
     if (!ok && _error.empty())
         _error = _writer->Error();
     _sink->Close();
@@ -146,11 +150,27 @@ bool TTDRecordingWriter::Collect(TimeTravelEngine& engine)
 
 bool TTDRecordingWriter::Finish(TimeTravelEngine& engine)
 {
+    FinishQueue(engine);
+    return FinishWait();
+}
+
+bool TTDRecordingWriter::FinishQueue(TimeTravelEngine& engine)
+{
+    _queued = false;
     if (!_writer)
-        return !Failed();
+        return _queuedOk = !Failed();
     if (!Collect(engine) && !_writer)
-        return false;
-    return Close(engine, SIZE_MAX);
+        return _queuedOk = false;
+    _queued = true;
+    return _queuedOk = _writer->FinishQueue(engine, SIZE_MAX);
+}
+
+bool TTDRecordingWriter::FinishWait()
+{
+    if (!_queued)
+        return _queuedOk;
+    _queued = false;
+    return Closed(_writer->FinishWait());
 }
 
 /// endregion </Writer>

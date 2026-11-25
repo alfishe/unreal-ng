@@ -14,6 +14,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -319,10 +321,17 @@ struct WindowRecorder::Writer
         return std::max<int64_t>(1, std::chrono::duration_cast<std::chrono::microseconds>(
                                         std::chrono::steady_clock::now() - created).count());
     }
-    /// One picture handled: the first one's time, the slowest one's duration
-    void pictureHandled(int64_t startedUs)
+    /// UNREAL_WINDOW_RECORDER_TIMING: every picture's time on the writer and how it went, on stderr
+    /// (tools/verification/recording); read once per recording
+    bool timing = false;
+
+    /// One picture handled: the first one's time, the slowest one's duration. `how`: `native` (the Mac's writer),
+    /// `nv12` (built in NV12), `composed` (composed B,G,R,A, sent as it is or as NV12), `same` (not sent: as before)
+    void pictureHandled(int64_t startedUs, const char* how)
     {
         const int64_t now = sinceCreatedUs();
+        if (timing)
+            std::fprintf(stderr, "window-recorder frame %s %.3f ms\n", how, static_cast<double>(now - startedUs) / 1000.0);
         int64_t zero = 0;
         firstFrameUs.compare_exchange_strong(zero, now);
         const int64_t took = now - startedUs;
@@ -432,24 +441,30 @@ struct WindowRecorder::Writer
         const bool bgra = frame.format() == QImage::Format_ARGB32 || frame.format() == QImage::Format_ARGB32_Premultiplied;
         if (scale != 1 || !bgra || (!swap && !same))
             return false;
-        if (picture.width() > frame.width() || picture.height() > frame.height() ||
-            std::abs(picture.width() - screenRect.width()) > 4 || std::abs(picture.height() - screenRect.height()) > 4)
+        if (std::abs(picture.width() - screenRect.width()) > 4 || std::abs(picture.height() - screenRect.height()) > 4)
             return false;
-        const int x0 = screenRect.x() + (screenRect.width() - picture.width()) / 2;
-        const int y0 = screenRect.y() + (screenRect.height() - picture.height()) / 2;
-        if (x0 < 0 || y0 < 0 || x0 + picture.width() > frame.width() || y0 + picture.height() > frame.height())
+        // Centered; a picture a few pixels larger than the frame (the pipe's frame is made even: a 659 wide window
+        // picture in 658) loses its edge pixels instead of going through Qt's smooth scaling
+        const int left = screenRect.x() + (screenRect.width() - picture.width()) / 2;
+        const int top = screenRect.y() + (screenRect.height() - picture.height()) / 2;
+        const int fromX = std::max(0, -left);
+        const int fromY = std::max(0, -top);
+        const int x0 = std::max(0, left);
+        const int y0 = std::max(0, top);
+        const int width = std::min(picture.width() - fromX, frame.width() - x0);
+        const int rows = std::min(picture.height() - fromY, frame.height() - y0);
+        if (width <= 0 || rows <= 0 || picture.width() - width > 4 || picture.height() - rows > 4)
             return false;
         // Rows are independent: a few threads write them at once (the encoder's pixel buffer is shared memory, one
         // thread does not fill its bandwidth)
         // The width in a local: read through the QImage in the loop condition it is reloaded after every store (a
         // uint32_t store may alias the image's fields), which kept the loop scalar. A 4K frame on 4 threads / on one:
         // 5.2 / 16+ ms -> 1.2 / 2 (clang, M1), 12.7 / 29 -> 4.9 / 7.1 (gcc 15), 4.4 / 16.8 -> 2.4 / 3.1 (MSVC)
-        const int width = picture.width();
         const auto swapRows = [&](int first, int last)
         {
             for (int y = first; y < last; ++y)
             {
-                const uint32_t* from = reinterpret_cast<const uint32_t*>(picture.constScanLine(y));
+                const uint32_t* from = reinterpret_cast<const uint32_t*>(picture.constScanLine(fromY + y)) + fromX;
                 uint32_t* to = reinterpret_cast<uint32_t*>(frame.scanLine(y0 + y)) + x0;
                 for (int x = 0; x < width; ++x)
                 {
@@ -462,7 +477,6 @@ struct WindowRecorder::Writer
             }
         };
         constexpr int kParts = 4;
-        const int rows = picture.height();
         std::thread helpers[kParts - 1];
         for (int part = 1; part < kParts; ++part)
             helpers[part - 1] = std::thread(swapRows, rows * part / kParts, rows * (part + 1) / kParts);
@@ -498,7 +512,7 @@ struct WindowRecorder::Writer
     }
 
     /// The composed B,G,R,A frame as NV12 into `out` (width x height Y bytes, then the U,V rows): FrameScaler's
-    /// conversion (BT.601 limited, the arithmetic of the NVENC converter), in bands of rows on a few threads as
+    /// conversion (BT.709 limited), in bands of rows on a few threads as
     /// composeFast does. The frame's sides are even (the layout makes them so)
     static void ToNv12(const QImage& frame, uint8_t* out)
     {
@@ -736,7 +750,7 @@ struct WindowRecorder::Writer
             }
             // else: the encoder is stuck for now: this picture stays out, the previous one holds
             framesDone = job.frameStart + job.repeat;
-            pictureHandled(pictureStartUs);
+            pictureHandled(pictureStartUs, "native");
         }
         encoder.Stop();
         error = failure;
@@ -918,7 +932,8 @@ struct WindowRecorder::Writer
                 // Compared by the picture and the keyboard (a few hundred KB, not the 4K frame), built only when sent
                 const bool same = lastSent && lastDirect && job.frameStart < lastSentFrame + resendFrames &&
                                   SameImage(job.picture, lastPicture) && SameImage(job.keyboard, lastKeyboard);
-                if (feedSound() && !same)
+                const bool send = feedSound() && !same;
+                if (send)
                 {
                     Nv12Frame& out = nv12Frames[composing];
                     composeNv12(out, job);
@@ -934,7 +949,7 @@ struct WindowRecorder::Writer
                 framesDone = job.frameStart + job.repeat;
                 if (!pumpSound())
                     fail("ffmpeg stopped taking the sound");
-                pictureHandled(pictureStartUs);
+                pictureHandled(pictureStartUs, send ? "nv12" : "same");
                 continue;
             }
             QImage& frame = frames[composing];
@@ -944,7 +959,8 @@ struct WindowRecorder::Writer
             const bool same = lastSent && !lastDirect && job.frameStart < lastSentFrame + resendFrames &&
                               std::memcmp(frame.constBits(), lastSent->constBits(),
                                           static_cast<size_t>(frame.sizeInBytes())) == 0;
-            if (feedSound() && !same)
+            const bool send = feedSound() && !same;
+            if (send)
             {
                 QByteArrayView bytes(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
                 if (nv12)
@@ -961,7 +977,7 @@ struct WindowRecorder::Writer
             framesDone = job.frameStart + job.repeat;
             if (!pumpSound())
                 fail("ffmpeg stopped taking the sound");
-            pictureHandled(pictureStartUs);
+            pictureHandled(pictureStartUs, send ? "composed" : "same");
         }
         // The last picture once more at the last frame's time: the picture lasts to the end of the sound
         if (failure.empty() && lastSent && mux.frames > lastSentFrame + 1)
@@ -1366,6 +1382,21 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         args << "-thread_queue_size" << "512" << "-probesize" << "32" << "-analyzeduration" << "0" << "-f" << "s16le"
              << "-ar" << QString::number(_sampleRate) << "-ac" << QString::number(AUDIO_CHANNELS) << "-i" << fifo
              << "-map" << "0:v:0" << "-map" << "1:a:0";
+    // The color: B,G,R,A to Y'CbCr by the BT.709 matrix (swscale's default is BT.601, which HD players decode as
+    // BT.709: shifted colors) in the last scaler, which makes the encoder's pixel format in the same pass; NV12
+    // frames are BT.709 already (FrameScaler). Then the tags (FrameScaler::FfmpegColorTags, the sRGB transfer).
+    // ProRes through VideoToolbox takes the B,G,R,A frames themselves and converts them: they get the matrix, primaries
+    // and transfer tags but no range (a YUV range tag on B,G,R,A stops the encoder; it writes limited range itself)
+    if (request.codec == "prores")
+        pipeFilter += QString(pipeFilter.isEmpty() ? "" : ",") + FrameScaler::FfmpegColorTagsNoRange;
+    else
+    {
+        QStringList color;
+        if (!nv12)
+            color << "scale=out_color_matrix=bt709:out_range=tv";
+        color << FrameScaler::FfmpegColorTags;
+        pipeFilter += QString(pipeFilter.isEmpty() ? "" : ",") + color.join(',');
+    }
     const bool h265 = request.codec == "h265";
     const HardwareEncoder hardware =
         request.codec != "prores" && request.hardware ? FfmpegHardwareEncoder(ffmpeg, h265, nv12) : HardwareEncoder{};
@@ -1457,6 +1488,8 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     writer->fifoPath = fifo;
     writer->native = native;
     writer->nv12 = nv12;
+    const char* timing = std::getenv("UNREAL_WINDOW_RECORDER_TIMING");
+    writer->timing = timing && *timing && std::strcmp(timing, "0") != 0;
     writer->fps = _fps;
     writer->nativeCodec = request.codec;
     writer->audioRate = _sampleRate;

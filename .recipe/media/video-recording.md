@@ -148,6 +148,9 @@ ffmpeg -v info -i scratch/run.mp4 -map 0:a -af astats=measure_perchannel=none -f
 - Audio: AAC 48 kHz stereo in the file (the core rate, 44.1 kHz by default, is converted).
 - `duration` of the audio and video streams agree within a millisecond or two; the sound starts
   with the picture (no AAC priming offset).
+- Colors (h264 / h265, every encoder): `-show_entries stream=color_space,color_range,color_primaries,color_transfer`
+  gives `bt709,tv,bt709,iec61966-2-1` (BT.709 limited range, sRGB transfer: players show the emulator's colors).
+  `tools/verification/recording/colors.py` checks the stored values against the palette.
 
 ## Pitfalls
 

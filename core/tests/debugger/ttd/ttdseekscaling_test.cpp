@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -183,11 +184,13 @@ protected:
         ASSERT_TRUE(_ttd->StartRecording());
     }
 
-    /// A browse: the first seek pauses the recording, which finishes the open file. The size of that file
+    /// A browse: the first seek pauses the recording, which finishes the open file (written behind the pause:
+    /// waited for here). The size of that file
     uint64_t PauseAndMeasure()
     {
         const ttd::TTDTimePoint end = _ttd->SessionEndPosition();
         EXPECT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));
+        _ttd->WaitShadowFiles();
         const std::vector<std::string> files = TrunkFiles(_ttd->ShadowRecordingFolder());
         return files.empty() ? 0 : FileBytes(files.back());
     }
@@ -448,11 +451,11 @@ void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* t
     for (int i = 0; i < seeks; ++i)
     {
         // Resident: the head segment. Evicted: the segments before, in turn (the cache holds one)
-        const uint64_t near = head.firstFrame + 1 + rng() % (end.frame - 2 - head.firstFrame);
+        const uint64_t nearFrame = head.firstFrame + 1 + rng() % (end.frame - 2 - head.firstFrame);
         const size_t k = static_cast<size_t>(i) % (segments.size() - 1);
         const uint64_t span = engine.SegmentFrameSpan(0, k);
-        const uint64_t far = segments[k].firstFrame + 1 + rng() % (span - 2);
-        for (const auto& [frame, out] : {std::pair{near, &resident}, std::pair{far, &evicted}})
+        const uint64_t farFrame = segments[k].firstFrame + 1 + rng() % (span - 2);
+        for (const auto& [frame, out] : {std::pair{nearFrame, &resident}, std::pair{farFrame, &evicted}})
         {
             const Clock::time_point s0 = Clock::now();
             ASSERT_TRUE(ttd->SeekTo({frame, 0})) << "frame " << frame;
@@ -468,12 +471,13 @@ void SeekEvictedAgainstResident(Emulator* emulator, ttd::TimeTravelController* t
             const size_t other = (k + 1) % (segments.size() - 1);
             ttd->SetSegmentWindowReads(false);
             ASSERT_TRUE(ttd->SeekTo({segments[other].firstFrame + 1, 0}));
-            ASSERT_TRUE(ttd->SeekTo({far, 0}));
-            EXPECT_EQ(MachineHash(context), stretch) << "from the file's start: frame " << far << " of segment " << k;
+            ASSERT_TRUE(ttd->SeekTo({farFrame, 0}));
+            EXPECT_EQ(MachineHash(context), stretch)
+                << "from the file's start: frame " << farFrame << " of segment " << k;
             ASSERT_TRUE(ttd->SeekTo({segments[k].firstFrame + span - 1, 0}));
             EXPECT_TRUE(segments[k].Whole());
-            ASSERT_TRUE(ttd->SeekTo({far, 0}));
-            EXPECT_EQ(MachineHash(context), stretch) << "whole: frame " << far << " of segment " << k;
+            ASSERT_TRUE(ttd->SeekTo({farFrame, 0}));
+            EXPECT_EQ(MachineHash(context), stretch) << "whole: frame " << farFrame << " of segment " << k;
             ttd->SetSegmentWindowReads(true);
         }
     }
@@ -516,6 +520,41 @@ TEST_F(TTDSeekScaling_Folder_Test, ASeekIntoEvictedHistoryLong)
     EXPECT_LT(evicted, resident * 2.5 + 1.5) << "resident " << resident << " ms";
 }
 
+/// A pause does not wait for the disk: the folder's open file is laid out and written behind it (a loaded host's
+/// writer backlog made pauses of 6-118 ms, 2-92 of them the wait, 2026-11-24). Here the writer threads write nothing
+/// until the test lets them: the pause returns with the file still being written, a resume waits for it, and the
+/// next pause's file and a stop after a pause end whole: the folder loads back every frame
+TEST_F(TTDSeekScaling_Folder_Test, APauseDoesNotWaitForTheDisk)
+{
+    Start(100);
+    _emulator->RunNFrames(250);
+    std::atomic<bool> disk{false};
+    ttd::TTDSessionWriter::SetWriteGateForTesting(&disk);
+    const ttd::TTDTimePoint end = _ttd->SessionEndPosition();
+    ASSERT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));   // the pause: returns with its file not written
+    EXPECT_TRUE(_ttd->ShadowFilesFinishing()) << "the pause's file is written behind it";
+    ASSERT_TRUE(_ttd->SeekTo({end.frame - 50, 0}));   // browsing goes on meanwhile
+    EXPECT_TRUE(_ttd->ShadowFilesFinishing());
+    disk = true;
+    ttd::TTDSessionWriter::SetWriteGateForTesting(nullptr);
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom(_ttd->SessionEndPosition()));   // waits for the paused file
+    EXPECT_FALSE(_ttd->ShadowFilesFinishing());
+    _emulator->RunNFrames(120);
+    const ttd::TTDTimePoint end2 = _ttd->SessionEndPosition();
+    ASSERT_TRUE(_ttd->SeekTo({end2.frame - 1, 0}));   // a second pause
+    _ttd->StopRecording();   // a stop after a pause: the files whole on return
+    EXPECT_FALSE(_ttd->ShadowFilesFinishing());
+
+    const std::vector<std::string> files = TrunkFiles(_ttd->ShadowRecordingFolder());
+    ASSERT_GE(files.size(), 2u);
+    ttd::TimeTravelEngine loaded;
+    std::string error;
+    ttd::TTDSessionLoadReport report;
+    ASSERT_TRUE(ttd::LoadRecording(loaded, files, 0, error, &report)) << error;
+    EXPECT_TRUE(report.complete) << report.stoppedAt;
+    EXPECT_EQ(loaded.CheckpointCount(), _ttd->GetEngine().CheckpointCount()) << "every checkpoint reached the disk";
+}
+
 /// Long tier: a folder recording with the write journal at N and 4N frames (segments of 250 frames). The first seek
 /// of a browse (the pause) and the seeks after it may not follow the length: medians, a loose bound (CI runs
 /// under load). Runtime: 2,000 frames of recording, about 1 s
@@ -525,11 +564,23 @@ TEST_F(TTDSeekScaling_Folder_Test, LongSession)
         GTEST_SKIP() << "long tier (UNREAL_LONG_TESTS=1)";
     Start(250);
     auto measure = [&](uint64_t frames, double& pauseMs, double& seekMs) {
-        _emulator->RunNFrames(static_cast<int>(frames));
-        const ttd::TTDTimePoint end = _ttd->SessionEndPosition();
-        const Clock::time_point p0 = Clock::now();
-        ASSERT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));
-        pauseMs = Ms(p0, Clock::now());
+        // The least of 3 pauses, 100 frames of recording apart: one pause is one sample, and a loaded host stalls
+        // a sample now and then (2 against 92 ms at load 52 on 20 cores, with the pause no longer waiting for the disk)
+        _emulator->RunNFrames(static_cast<int>(frames - 200));
+        ttd::TTDTimePoint end;
+        pauseMs = 1e9;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (i > 0)
+            {
+                ASSERT_TRUE(_ttd->ResumeRecordingFrom(_ttd->SessionEndPosition()));
+                _emulator->RunNFrames(100);
+            }
+            end = _ttd->SessionEndPosition();
+            const Clock::time_point p0 = Clock::now();
+            ASSERT_TRUE(_ttd->SeekTo({end.frame - 1, 0}));
+            pauseMs = std::min(pauseMs, Ms(p0, Clock::now()));
+        }
         const uint64_t first = _ttd->GetEarliestRecordedFrame();
         std::mt19937 rng(9);
         std::vector<double> seeks;
@@ -548,7 +599,7 @@ TEST_F(TTDSeekScaling_Folder_Test, LongSession)
     double pause1 = 0, seek1 = 0, pause4 = 0, seek4 = 0;
     measure(500, pause1, seek1);
     measure(1500, pause4, seek4);   // 2,000 frames: 4x
-    std::printf("[ scaling  ] pause %.2f -> %.2f ms, seek (median of 40) %.3f -> %.3f ms\n", pause1, pause4, seek1, seek4);
+    std::printf("[ scaling  ] pause (least of 3) %.2f -> %.2f ms, seek (median of 40) %.3f -> %.3f ms\n", pause1, pause4, seek1, seek4);
     EXPECT_LT(pause4, pause1 * 2.0 + 20.0) << "the pause follows the history";
     EXPECT_LT(seek4, seek1 * 1.5 + 0.5) << "the seek follows the history";
     const Clock::time_point t0 = Clock::now();
@@ -683,7 +734,7 @@ void MeasureSide(const std::string& side, const std::string& ab, int round, cons
         struct Kind
         {
             const char* name;
-            bool far;
+            bool whole;
             bool mid;
             bool step = false;   ///< frame by frame back from a random frame of the window (stepping, scrubbing)
             bool evicted = false;   ///< only frames whose segment left memory (far: the whole session, the window too)
@@ -706,7 +757,7 @@ void MeasureSide(const std::string& side, const std::string& ab, int round, cons
             const uint64_t windowLoads0 = ttd->ReadBackWindowLoads();
             for (int i = 0; i < samples; ++i)
             {
-                const uint64_t lo = k.far ? first : windowLo;
+                const uint64_t lo = k.whole ? first : windowLo;
                 const uint64_t hi = k.evicted ? evictedHi : end.frame;
                 const uint64_t frame = k.step && i > 0 && previous > lo ? previous - 1
                                                                         : lo + rng() % std::max<uint64_t>(1, hi - lo);
@@ -777,7 +828,7 @@ void MeasureSide(const std::string& side, const std::string& ab, int round, cons
             const Clock::time_point l0 = Clock::now();
             while (Ms(l0, Clock::now()) < seconds * 1000.0)
             {
-                const uint64_t lo = kind->far ? first : windowLo;
+                const uint64_t lo = kind->whole ? first : windowLo;
                 const uint64_t hi = kind->evicted ? evictedHi : end.frame;
                 const uint64_t frame = lo + rng() % std::max<uint64_t>(1, hi - lo);
                 if (kindName == "timeline")

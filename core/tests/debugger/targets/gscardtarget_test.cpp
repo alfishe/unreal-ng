@@ -1184,8 +1184,8 @@ TEST(GSCardRunTo_Test, ACardCycleIsReachedAndReported)
     BreakpointManager* breakpoints = m.context->pDebugManager->GetBreakpointsManager(DebugCpuId::GS);
     const uint16_t id = breakpoints->AddBreakpoint(Exec(kRoutine + 1), error);
     ASSERT_NE(id, BRK_INVALID) << error;
-    const int64_t far = (next.body["card_cycle"].i + frameCycles / 2) % frameCycles;
-    execution::RunReply stopped = m.Run("cycle", static_cast<uint64_t>(far));
+    const int64_t farCycle = (next.body["card_cycle"].i + frameCycles / 2) % frameCycles;
+    execution::RunReply stopped = m.Run("cycle", static_cast<uint64_t>(farCycle));
     ASSERT_TRUE(stopped.Ok()) << stopped.message;
     EXPECT_EQ(Reason(stopped), "breakpoint") << stopped.message;
     EXPECT_FALSE(stopped.body["hit"].b);

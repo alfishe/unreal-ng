@@ -28,6 +28,11 @@
 - **Lazy Buffer Allocation**: Profiling and diagnostic subsystems (e.g., memory tracking, trace buffers) must allocate counters lazily upon feature activation and release them promptly when deactivated.
 
 ## General Architecture
+- **Video colors**: every recording path writes BT.709 limited range YUV tagged BT.709 matrix and primaries, limited
+  range, sRGB transfer (`iec61966-2-1`): untagged or BT.601 files play washed out, a BT.709 transfer tag makes macOS
+  show mid-tones lighter. RGB -> YUV goes through `FrameScaler` (its BT.709 constants); ffmpeg graphs end with
+  `FrameScaler::FfmpegColorTags` (ffmpeg 7+ ignores `-color_primaries` / `-color_trc` for frames from a raw pipe).
+  A new encoder path is checked with `tools/verification/recording/colors.py`.
 - **GUI Decoupling**: Keep `core/` completely decoupled from `unreal-qt/`. The core must remain headless and platform-agnostic.
 - **Instance lifetime in the GUI**: an instance can be removed from any thread (WebAPI, CLI, MCP) at any moment. A
   removal retires it (stopped, refuses execution and changes) and the last `shared_ptr<Emulator>` holder frees it.
