@@ -70,8 +70,10 @@ private:
         std::mutex mutex;
         bool keepSamples = false;
         bool started = false;
-        uint64_t firstFrame = 0;
-        uint64_t lastFrame = 0;
+        /// The emulated frames since the start, counted here: the machine's frame counter goes back to 0 on a reset
+        /// and moves on a snapshot load or a TTD seek (a difference of it wrapped to ~1.8e19 frames, times ffmpeg
+        /// could not mux: "Not yet implemented")
+        uint64_t frames = 0;
         std::vector<FrameSound> pending;
     };
 

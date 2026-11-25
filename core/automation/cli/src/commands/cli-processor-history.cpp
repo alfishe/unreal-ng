@@ -8,7 +8,7 @@
 
 /// region <Device histories>
 
-// history [device [last N] | <device> mode <off|ring|capture> [limit=N] [stream=path] [stream_limit=N] | <device>
+// history [device [last N] [since=S] | <device> mode <off|ring|capture> [limit=N] [stream=path] [stream_limit=N] | <device>
 // clear]: a thin adapter over HistoryControl (core/src/debugger/history/historycontrol.h)
 
 namespace
@@ -16,6 +16,9 @@ namespace
     const char* kHistoryUsage =
         "history                          - every device history: mode, limit, counts, stream\n"
         "history <device> [N]             - the device's history, the newest N records (all by default)\n"
+        "history <device> [N] since=<S>   - the first N records (all by default) numbered after S, each with its\n"
+        "                                   seq; next_since is the S of the next read, missed counts the records\n"
+        "                                   after S no longer kept, restarted a cursor past the newest (cleared)\n"
         "history <device> mode <off|ring|capture> [limit=N] [stream=<file>] [stream_limit=N]\n"
         "                                 - off: zero cost; ring: the last N; capture: up to N (0: no limit);\n"
         "                                   stream: every record to a JSON Lines file as well (stream= stops it)\n"
@@ -100,12 +103,23 @@ void CLIProcessor::HandleHistory(const ClientSession& session, const std::vector
                     error = "unknown or bad option '" + args[i] + "'";
             }
         }
-        else if (args.size() >= 2)
+        else
         {
-            uint64_t last = 0;
-            if (!ParseNumber(args[1], last))
-                error = "'" + args[1] + "' is not a record count";
-            request.last = static_cast<size_t>(last);
+            for (size_t i = 1; i < args.size() && error.empty(); i++)
+            {
+                uint64_t number = 0;
+                if (args[i].rfind("since=", 0) == 0)
+                {
+                    if (ParseNumber(args[i].substr(6), number))
+                        request.since = number;
+                    else
+                        error = "'" + args[i] + "': since needs a record number";
+                }
+                else if (ParseNumber(args[i], number))
+                    request.last = static_cast<size_t>(number);
+                else
+                    error = "'" + args[i] + "' is not a record count";
+            }
         }
     }
     if (!error.empty())

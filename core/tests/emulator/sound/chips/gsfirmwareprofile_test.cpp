@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -248,6 +249,52 @@ TEST(GSFirmwareProfile_Test, TheNeoGSMainRomSelectsItsProfile)
     const auto busy = labels.GetLabelByName("BUSY");
     ASSERT_TRUE(busy);
     EXPECT_EQ(busy->address, neogs->Variable("BUSY")->address);
+}
+
+/// The dispatch view on a NeoGS (M4): COMHIGH maps page 0 before it reads COMTABH, so the core reads the tables in
+/// the firmware's own image (the RAM copy in pages 0-1), whatever window 3 maps, against the copy as the main ROM
+/// started: the stock firmware has nothing patched; a handler written over in the copy is that one entry patched,
+/// its baseline the handler it had
+TEST(GSFirmwareProfile_Test, TheNeoGSDispatchReadsItsRamCopyAgainstItsStart)
+{
+    NeoFirmwareCard card;
+    ASSERT_GE(card.boot(50), 0);
+    const GSFirmwareProfile* neogs = FindGSFirmwareProfileById("neogs");
+    ASSERT_NE(neogs, nullptr);
+    const auto read = [&]() {
+        const StateNode body = GSReadFirmwareObjects(*card.chip, *neogs, "dispatch");
+        const StateNode* dispatch = body.find("dispatch");
+        return dispatch ? *dispatch : StateNode();
+    };
+    StateNode dispatch = read();
+    ASSERT_TRUE(dispatch.isObject());
+    ASSERT_EQ(dispatch.find("entries")->items.size(), 256u);
+    EXPECT_EQ(dispatch.find("patched")->i, 0) << "the stock firmware against its own start";
+    char hex[8];
+    for (int code = 0; code < 256; code++)
+    {
+        const StateNode& e = dispatch.find("entries")->items[static_cast<size_t>(code)];
+        std::snprintf(hex, sizeof(hex), "#%04X", Handler(*card.chip, *neogs, code));
+        ASSERT_NE(e.find("handler"), nullptr) << "command #" << std::hex << code;
+        EXPECT_EQ(e.find("handler")->s, hex) << "command #" << std::hex << code;
+        EXPECT_EQ(e.find("baseline")->s, hex) << "command #" << std::hex << code;
+    }
+
+    // Command #01's word in the copy written over (RAM pages 0-1 are write-protected to the card's CPU in main mode)
+    auto* page0 = const_cast<uint8_t*>(card.chip->cardRamPage(0));
+    ASSERT_NE(page0, nullptr);
+    uint8_t& low = page0[neogs->comtab + 2];
+    const uint8_t old = low;
+    std::snprintf(hex, sizeof(hex), "#%04X", Handler(*card.chip, *neogs, 1));
+    const std::string before = hex;
+    low ^= 0x01;
+    dispatch = read();
+    EXPECT_EQ(dispatch.find("patched")->i, 1);
+    const StateNode& c01 = dispatch.find("entries")->items[1];
+    EXPECT_TRUE(c01.find("patched") && c01.find("patched")->b);
+    EXPECT_EQ(c01.find("baseline")->s, before);
+    EXPECT_NE(c01.find("handler")->s, before);
+    low = old;
 }
 
 /// The commands the guide omits are named from the sources; the 1.05 patch's commands exist only in 1.05

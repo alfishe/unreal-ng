@@ -634,7 +634,7 @@ GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::Au
 GET  /api/v1/emulator/{id}/state/devices       The device catalog: {available, reports[{id, title, available, summary, route, cli, script, mcp}]}, the reports this machine has; ?all=1 the absent ones too, with description (why)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives, command history (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/history             Device histories by registry id: mode, limit, counts, stream (../debugger/device-history.md)
-GET  /api/v1/emulator/{id}/history/{device}    One history: stats + records (?last=N)
+GET  /api/v1/emulator/{id}/history/{device}    One history: stats + records (?last=N); ?since=S: the first N records numbered after the cursor S, each with its seq, + next_since, missed, restarted (../debugger/device-history.md#reading-after-a-cursor)
 POST /api/v1/emulator/{id}/history/{device}/config  {"mode": "off|ring|capture", "limit", "stream", "stream_limit"}
 POST /api/v1/emulator/{id}/history/{device}/clear
 POST /api/v1/emulator/{id}/history/{device}/pause   Hold: nothing recorded, the records kept (/resume goes on)

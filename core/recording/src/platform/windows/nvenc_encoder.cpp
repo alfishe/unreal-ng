@@ -17,6 +17,7 @@
 #include <cstring>
 #include <algorithm>
 #include <mutex>
+#include <string>
 
 // Official FFmpeg nv-codec-headers
 #include "nvEncodeAPI.h"
@@ -64,14 +65,23 @@ struct NvencEncoder::Impl
     bool hasAudio = false;
     std::mutex muxerMutex;
 
-    // Buffer queue for B-frame encoding
-    // Need at least (1 + numBFrames) buffer pairs for proper B-frame pipeline
-    static constexpr int NUM_BUFFERS = 8;
-    NV_ENC_INPUT_PTR inputBuffers[NUM_BUFFERS] = {};
-    NV_ENC_OUTPUT_PTR outputBuffers[NUM_BUFFERS] = {};
-    int encodeIdx = 0;  // Next buffer to encode into
-    int outputIdx = 0;  // Next buffer to read output from
+    // Buffer pairs, a ring in submission order. The encoder keeps up to lookaheadDepth + frameIntervalP frames before
+    // their output exists (the lookahead, the B-frames waiting for their P frame). After each NV_ENC_SUCCESS the
+    // outputs are read down to outputDelay waiting (those older exist); up to frameIntervalP - 1 B-frames then come
+    // back NEED_MORE_INPUT in a row, nothing read, so the ring holds outputDelay + frameIntervalP + 1 (NVIDIA's
+    // NvEncoder sizes it the same way, ffmpeg's nvenc by its async_depth). With 8 buffers and a lookahead of 8 the
+    // oldest output was read before it existed: the lock failed, the frame was lost and its input buffer refilled
+    // while the lookahead still used it (the first 8 frames of every recording gone with their IDR, a short one left
+    // without moov)
+    static constexpr int kMaxBuffers = 32;
+    NV_ENC_INPUT_PTR inputBuffers[kMaxBuffers] = {};
+    NV_ENC_OUTPUT_PTR outputBuffers[kMaxBuffers] = {};
+    int bufferCount = 0;    // Buffers in use: outputDelay + frameIntervalP + 1 (initializeEncoder)
+    int outputDelay = 0;    // Outputs left waiting after a SUCCESS: lookaheadDepth + frameIntervalP + 1
+    int encodeIdx = 0;      // Next buffer to encode into
+    int outputIdx = 0;      // Next buffer to read output from
     int pendingFrames = 0;  // Frames submitted but not yet output
+    uint64_t lostOutputs = 0;  // Outputs that could not be read (a failed lock): never expected
 
     // Encoding state
     // srcWidth/srcHeight = source framebuffer (before integer upscale)
@@ -98,7 +108,8 @@ struct NvencEncoder::Impl
     bool beginFrame(uint8_t*& bufferData, uint32_t& bufferPitch);
     void abortFrame();
     bool finishFrame();
-    void writeOutput();
+    /// Reads the oldest submitted frame's output into the muxer; false when the lock failed (the frame is lost)
+    bool writeOutput();
 
     // Audio encoding
     void encodeAudio(const int16_t* samples, size_t sampleCount, int64_t pts);
@@ -274,6 +285,12 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
     // B-frames improve compression but add latency (acceptable for recording).
     encCfg.frameIntervalP = (q >= 4) ? 3 : 1;
 
+    // The frames the encoder holds before their output exists and one more; the ring also takes the B-frames that
+    // come back NEED_MORE_INPUT before the next SUCCESS
+    const int frameIntervalP = static_cast<int>(encCfg.frameIntervalP);
+    outputDelay = frameIntervalP + (rcParams.enableLookahead ? rcParams.lookaheadDepth : 0) + 1;
+    bufferCount = std::min<int>(kMaxBuffers, outputDelay + frameIntervalP + 1);
+
     // --- Profile & Codec-Specific Config ---
     // The color tags: BT.709 matrix (FrameScaler::ScaleIntoNv12's arithmetic) and primaries, limited range, the sRGB
     // transfer. The picture is an sRGB one: a BT.709 transfer tag makes macOS players show it lighter, an untagged
@@ -344,7 +361,7 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
 
 bool NvencEncoder::Impl::createBuffers()
 {
-    for (int i = 0; i < NUM_BUFFERS; i++)
+    for (int i = 0; i < bufferCount; i++)
     {
         auto inParams = nvencStruct<NV_ENC_CREATE_INPUT_BUFFER>(NV_ENC_CREATE_INPUT_BUFFER_VER);
         inParams.width = width;
@@ -362,6 +379,8 @@ bool NvencEncoder::Impl::createBuffers()
     encodeIdx = 0;
     outputIdx = 0;
     pendingFrames = 0;
+    lostOutputs = 0;
+    frameIdx = 0;
     return true;
 }
 
@@ -433,12 +452,13 @@ bool NvencEncoder::Impl::init(const std::string& filename, const EncoderConfig& 
     return true;
 }
 
-void NvencEncoder::Impl::writeOutput()
+bool NvencEncoder::Impl::writeOutput()
 {
     auto lockOut = nvencStruct<NV_ENC_LOCK_BITSTREAM>(NV_ENC_LOCK_BITSTREAM_VER);
     lockOut.outputBitstream = outputBuffers[outputIdx];
 
-    if (nvenc.nvEncLockBitstream(encoder, &lockOut) == NV_ENC_SUCCESS)
+    const bool locked = nvenc.nvEncLockBitstream(encoder, &lockOut) == NV_ENC_SUCCESS;
+    if (locked)
     {
         bool keyframe = (lockOut.pictureType == NV_ENC_PIC_TYPE_IDR ||
                          lockOut.pictureType == NV_ENC_PIC_TYPE_I);
@@ -450,8 +470,12 @@ void NvencEncoder::Impl::writeOutput()
         nvenc.nvEncUnlockBitstream(encoder, outputBuffers[outputIdx]);
     }
 
-    outputIdx = (outputIdx + 1) % NUM_BUFFERS;
+    else
+        lostOutputs++;
+
+    outputIdx = (outputIdx + 1) % bufferCount;
     pendingFrames--;
+    return locked;
 }
 
 void NvencEncoder::Impl::encodeAudio(const int16_t* samples, size_t sampleCount, int64_t pts)
@@ -495,7 +519,7 @@ void NvencEncoder::Impl::cleanup()
 {
     if (encoder && nvenc.nvEncDestroyEncoder)
     {
-        for (int i = 0; i < NUM_BUFFERS; i++)
+        for (int i = 0; i < kMaxBuffers; i++)
         {
             if (inputBuffers[i]) nvenc.nvEncDestroyInputBuffer(encoder, inputBuffers[i]);
             if (outputBuffers[i]) nvenc.nvEncDestroyBitstreamBuffer(encoder, outputBuffers[i]);
@@ -523,9 +547,10 @@ void NvencEncoder::Impl::cleanup()
 
 bool NvencEncoder::Impl::beginFrame(uint8_t*& bufferData, uint32_t& bufferPitch)
 {
-    // If all buffers are pending, read one output first
-    if (pendingFrames >= NUM_BUFFERS)
-        writeOutput();
+    // finishFrame leaves fewer than bufferCount frames waiting: the buffer at encodeIdx is free. A ring that is
+    // full anyway (never expected) drops the frame instead of refilling a buffer the encoder still holds
+    if (pendingFrames >= bufferCount)
+        return false;
 
     // Lock the input buffer at the current encode index
     auto lockIn = nvencStruct<NV_ENC_LOCK_INPUT_BUFFER>(NV_ENC_LOCK_INPUT_BUFFER_VER);
@@ -563,25 +588,19 @@ bool NvencEncoder::Impl::finishFrame()
 
     NVENCSTATUS status = nvenc.nvEncEncodePicture(encoder, &picParams);
 
+    // NEED_MORE_INPUT: the frame is held (lookahead, B-frame reordering); its output comes later. After SUCCESS the
+    // outputs are read in submission order, and only those older than the encoder's delay: those exist by now (a
+    // synchronous lock waits for the encode in progress, never for input that has not come). NVIDIA's NvEncoder
+    // reads the same way
+    if (status != NV_ENC_SUCCESS && status != NV_ENC_ERR_NEED_MORE_INPUT)
+        return false;
+    encodeIdx = (encodeIdx + 1) % bufferCount;
+    pendingFrames++;
     if (status == NV_ENC_SUCCESS)
     {
-        // Output ready - but in synchronous mode we still track it
-        // Outputs come out IN ORDER OF SUBMISSION
-        encodeIdx = (encodeIdx + 1) % NUM_BUFFERS;
-        pendingFrames++;
-        writeOutput();  // Read output immediately
+        while (pendingFrames > outputDelay)
+            writeOutput();
     }
-    else if (status == NV_ENC_ERR_NEED_MORE_INPUT)
-    {
-        // Frame buffered for B-frame reordering - track as pending
-        encodeIdx = (encodeIdx + 1) % NUM_BUFFERS;
-        pendingFrames++;
-    }
-    else
-    {
-        return false;
-    }
-
     return true;
 }
 
@@ -633,6 +652,8 @@ void NvencEncoder::Stop()
     _isRecording = false;
 
     _impl->finalize();
+    if (_impl->lostOutputs > 0)
+        _lastError = std::to_string(_impl->lostOutputs) + " encoded frame(s) could not be read (nvEncLockBitstream failed)";
     _impl->cleanup();
 }
 

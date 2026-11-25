@@ -5804,11 +5804,16 @@ public:
             request.verb = "list";
             return historyRun(s, request);
         });
-        lua.set_function("history", [historyRun](sol::this_state s, const std::string& device, sol::optional<size_t> last) {
+        // history(device[, last = 0[, since]]): the newest `last` records (0: all); with since the first `last`
+        // numbered after it, each with its seq, and next_since, missed, restarted (a poller pages forward with no gap)
+        lua.set_function("history", [historyRun](sol::this_state s, const std::string& device, sol::optional<size_t> last,
+                                                 sol::optional<uint64_t> since) {
             HistoryRequest request;
             request.verb = "read";
             request.device = device;
             request.last = last.value_or(0);
+            if (since)
+                request.since = *since;
             return historyRun(s, request);
         });
         // history_config(device, {mode = "ring", limit = 256, stream = "fdc.jsonl", stream_limit = 0})

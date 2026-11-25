@@ -306,6 +306,9 @@ private:
         /// (per pixel, non-zero: not in such a block) is empty while none flickers
         size_t flicker = 0;
         std::vector<uint8_t> smooth;
+        /// Per 8 x 8 block, non-zero: the block is the same as in the frame two before (FindFlicker's memory test);
+        /// empty: not known
+        std::vector<uint8_t> sameTwoAgo;
         uint64_t id = 0;  ///< Picture::id: new for every frame pushed
         Picture View(int width, int height) const { return {width, height, pixels.data(), id}; }
     };
@@ -323,13 +326,15 @@ private:
     void Compose(const MotionField& field, const Picture& a, const Picture& b, int w, uint32_t* out,
                  const uint8_t* mask);
     bool ChangedInWindow(const uint32_t* a, const uint32_t* b) const;
-    /// The flickering blocks of `a` on its way to `b` (the frames y, z, a before it, in order)
-    void FindFlicker(const Stored& x, const Stored& y, const Stored& z, Stored& a, const uint32_t* b);
+    /// The flickering blocks of `a` on its way to `b` (the frames y, z, a before it, in order). Returns the pixels
+    /// that differ from a to b; `sameB` gets b's blocks that are as in z (Stored::sameTwoAgo)
+    size_t FindFlicker(const Stored& x, const Stored& y, const Stored& z, Stored& a, const uint32_t* b,
+                       std::vector<uint8_t>& sameB);
     /// FindFlicker's motion look-alike: a shift within a block's size explains at least kFlickerNumerator /
     /// kFlickerDenominator of the block's `changed` pixels both ways (b(p) = a(p - d) and a(p) = b(p + d))
     bool MovesBy(const uint32_t* a, const uint32_t* b, int bx, int by, int x1, int y1, int changed) const;
     /// FindFlicker's per-block counts and verdicts, kept from call to call
-    std::vector<int> _flickerChanged, _flickerAlternating;
+    std::vector<int> _flickerChanged, _flickerAlternating, _flickerSameZ;
     std::vector<uint8_t> _flickerHeld;
     /// MovesBy's answer per block (-1: not asked) at this call of FindFlicker, the one before and the one before that
     std::vector<int8_t> _movesNow, _movesBefore, _movesTwoAgo;

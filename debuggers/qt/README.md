@@ -50,12 +50,13 @@ strip (`#2A Set module master volume: not taken yet, then reply 1 of 1 due` / `s
 F12 / F9); the error tile, the command log's anomalies and the firmware's unknown commands counted since its
 **Clear** (which resets the tab's counters only), the last anomaly's text and frame, tinted while not zero; the
 command log's newest records (Frame, T, Kind, Command, Name, Text; anomalies tinted), following the tail: scrolled up
-it stops, **Follow** resumes. The history read has no since cursor: each read takes the newest 200 records and
-appends the ones after the last row shown (matched by frame, T, card cycle, kind and text; more than 200 between two
-reads are counted as not read). With the command log off the tab says so, and **Turn on** sets history
+it stops, **Follow** resumes. The log reads after a cursor (the history's `since`): it fills with the newest 200
+records, then each read takes up to 1600 records after the newest row shown, so none is lost between two reads; the
+ones gone from the history before they were read (evicted from the ring) are counted as missed in the tile, and a
+cleared or reconfigured history (`restarted`) starts the table afresh. With the command log off the tab says so, and **Turn on** sets history
 `<slot>.commands` mode ring. Read once at every stop and, only while the tab is in sight and the machine runs, every
 250 ms in process (`Emulator::read_gs_monitor` where the machine stands still) and every second over the WebAPI
-(plain GETs of `state/audio/gs` or `state/audio/multisound`, `history/<device>?last=200`,
+(plain GETs of `state/audio/gs` or `state/audio/multisound`, `history/<device>?last=1600&since=S`,
 `state/audio/gs/firmware?object=unknown_commands`); nothing pauses. Turn on is `Emulator::gs_command_log` (over the
 WebAPI `POST history/<device>/config {mode}`).
 
@@ -66,7 +67,7 @@ with every card that carries a General Sound; each reads its card (the General S
 
 | Tab | What |
 |-----|------|
-| GS dispatch | the profile stack (`Profile stack: GS v1.05a ▸ GP gscode.bin`: the ROM's profile, the uploaded code's the command log's decoder took on top), the table's place and counts; a row an entry: Command, Name, Handler, Label (the card's symbol there), ROM (the stock COMTAB's baseline), Patched by. A patched entry is tinted and bold, with the #14 upload that wrote its slot (`GP gscode.bin upload @#4000, 3,212 B, sha 3fa1..., frame 412`; the upload whose profile names the command, else the newest that covers the slot; `no upload seen`); the stub's entries dimmed, **Named and patched only** hides them |
+| GS dispatch | the profile stack (`Profile stack: GS v1.05a ▸ GP gscode.bin`: the ROM's profile, the uploaded code's the command log's decoder took on top), the table's place and counts; a row an entry: Command, Name, Handler, Label (the card's symbol there), Baseline (the entry as the firmware started: a GS's ROM, a NeoGS's RAM copy at its start), Patched by. A patched entry is tinted and bold, with the #14 upload that wrote its slot (`GP gscode.bin upload @#4000, 3,212 B, sha 3fa1..., frame 412`; the upload whose profile names the command, else the newest that covers the slot; `no upload seen`); the stub's entries dimmed, **Named and patched only** hides them |
 | GS unknown | the commands the decoding profile does not name (AU6), a row a command: Since Clear (`×3`), Total, Dispatch (the handler and label, `the unknown-command stub`). **Clear** sets the tab's baseline (the core has no verb to clear the counts: the command log keeps them from its start); with the log off the tab says so, with **Turn on** |
 | GS objects | **Read as** the active profile or a profile that declares structs; a table per struct instance (columns the schema's fields, rows the instances: `smp: struct smp, 32 x 64 bytes @#xxxx`), then the profile's variables (memory, register, operand); a value changed since the last read in the changed colour. The built-in tables' window variables stay in GS firmware, which now shows only the profile and the variables (no instances, dispatch or unknown commands: these tabs have them) |
 | GS writers | a row a port: the host's `#B3` / `#BB` / `#33` and the card's `#00`, `#03`, `#05`, `#06-#09` (and any other port written): Register, Side, Value, Writer PC, Label, Frame (and the host's T), Source, Writes read. The host's #B3 / #BB from the command log (its records carry the main CPU's PC; #33 bit 7 its reset marker); the card's own OUTs and the host's #33 from the GS port trace (the card CPU's PC; the host's writer of #33 is not kept, said in the cell's tooltip). **Turn on the log**, **Start the trace** when off |

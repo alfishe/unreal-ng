@@ -86,18 +86,46 @@ The FDC state report (`state fdc`, `/state/fdc`, `fdc_state()`, MCP aspect `fdc`
 
 | Plane | List | Read | Configure | Clear |
 |-------|------|------|-----------|-------|
-| CLI | `history` | `history <device> [N]` | `history <device> mode <off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N]` | `history <device> clear` |
-| REST, WebSocket `call` | `GET /api/v1/emulator/{id}/history` | `GET .../history/{device}?last=N` | `POST .../history/{device}/config` `{"mode", "limit", "stream", "stream_limit"}` | `POST .../history/{device}/clear` |
-| MCP | `device_history` `action=list` | `action=read device= last=` | `action=config device= mode= limit= stream= stream_limit=` | `action=clear device=` |
-| Python | `emu.history_list()` | `emu.history(device, last=0)` | `emu.history_config(device, mode=None, limit=None, stream=None, stream_limit=None)` | `emu.history_clear(device)` |
-| Lua | `history_list()` | `history(device, last)` | `history_config(device, {mode=, limit=, stream=, stream_limit=})` | `history_clear(device)` |
+| CLI | `history` | `history <device> [N] [since=S]` | `history <device> mode <off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N]` | `history <device> clear` |
+| REST, WebSocket `call` | `GET /api/v1/emulator/{id}/history` | `GET .../history/{device}?last=N[&since=S]` | `POST .../history/{device}/config` `{"mode", "limit", "stream", "stream_limit"}` | `POST .../history/{device}/clear` |
+| MCP | `device_history` `action=list` | `action=read device= last= since=` | `action=config device= mode= limit= stream= stream_limit=` | `action=clear device=` |
+| Python | `emu.history_list()` | `emu.history(device, last=0, since=None)` | `emu.history_config(device, mode=None, limit=None, stream=None, stream_limit=None)` | `emu.history_clear(device)` |
+| Lua | `history_list()` | `history(device, last, since)` | `history_config(device, {mode=, limit=, stream=, stream_limit=})` | `history_clear(device)` |
+
+### Reading after a cursor
+
+A read without `since` answers the stats and the newest `last` records (0: all), oldest first. A poller that must not
+lose a record between two reads gives `since`, a cursor: every record has a number, `seq` (1 for the first record
+written since the last clear or configuration; a record keeps its number while it is kept: a ring evicts the oldest,
+a capture keeps the first `limit`). With `since` the read answers the kept records numbered after it, oldest first, at
+most `last` of them (0: all): the first `last` after the cursor, so the next read goes on where this one stopped. Each
+record carries its `seq`, and the reply adds:
+
+| Field | Meaning |
+|-------|---------|
+| `next_since` | the cursor of the next read: the last returned record's number (`since` itself when nothing came) |
+| `missed` | records numbered after `since` the history no longer keeps: evicted from a ring before they were read; for a capture, once the reader has every kept record, the ones over its cap (then `next_since` goes past them to `written`) |
+| `restarted` | `since` was past the newest number written: the history was cleared or configured since (or time travel cut it back); the read starts from the oldest kept, `missed` counted from 0 |
+
+```json
+{"device": "zxbus.1.commands", "what": "GS host commands, decoded by the firmware profile", "mode": "ring",
+ "limit": 4, "written": 9, "kept": 4, "dropped": 5, "paused": false,
+ "records": [{"seq": 6, "kind": "command", "...": "..."}, {"seq": 7, "kind": "command", "...": "..."}],
+ "next_since": 7, "missed": 2, "restarted": false}
+```
+
+(`GET .../history/zxbus.1.commands?last=2&since=3`: 4 and 5 were evicted unread, 6 and 7 come, 8 and 9 at the next
+read.) Without `since` none of these fields appear and the records have no `seq`. The read walks the kept records once
+under the history's lock and copies only the ones it returns; the emulation thread is never parked. A clear followed
+by more records than the old cursor before the next read is not seen as a restart (the numbers alone cannot tell).
+The GS monitor of both debuggers reads this way: it fills with the newest 200, then pages after its cursor.
 
 Pause and resume: CLI `history <device> pause` / `resume`; REST `POST .../history/{device}/pause` / `/resume`; MCP
 `action=pause` / `resume`; Python `emu.history_pause(device, paused=True)`; Lua `history_pause(device[, paused])`. The
 stats carry `paused`.
 
-Errors: an unknown device is 404 (Python `KeyError`), a bad mode or a stream file that cannot be opened 400 (Python
-`ValueError`); Lua and the CLI answer with the `error` text.
+Errors: an unknown device is 404 (Python `KeyError`), a bad mode, a stream file that cannot be opened or a `since`
+that is not a number 400 (Python `ValueError`); Lua and the CLI answer with the `error` text.
 
 ## Adding a device
 

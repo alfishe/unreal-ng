@@ -75,6 +75,15 @@ struct Stats
     bool paused = false;        ///< held: nothing recorded, the records kept
 };
 
+/// A page of records after a cursor (IDeviceHistory::RecordsSince)
+struct Page
+{
+    StateNode records;          ///< oldest first, each its ToState with its "seq"
+    uint64_t nextSince = 0;     ///< the cursor of the next read: the last returned record's number
+    uint64_t missed = 0;        ///< records after the cursor that are not kept (evicted unread, over a capture's cap)
+    bool restarted = false;     ///< the cursor was past the newest record (cleared, reconfigured): read from the start
+};
+
 /// What the automation planes see of any device's history
 class IDeviceHistory
 {
@@ -95,6 +104,9 @@ public:
 
     /// The newest `last` records (0: all), oldest first, each as its ToState
     virtual StateNode Records(size_t last) const = 0;
+    /// The first `last` kept records (0: all) numbered after `since`, oldest first, so a poller pages forward with
+    /// no gap (DeviceHistory::Select for the numbers)
+    virtual Page RecordsSince(uint64_t since, size_t last) const = 0;
 };
 
 /// The stats of a history as the planes report them
@@ -619,6 +631,50 @@ public:
             list.push(std::move(node));
         }
         return list;
+    }
+
+    Page RecordsSince(uint64_t since, size_t last) const override
+    {
+        std::vector<std::pair<uint64_t, Record>> selected;
+        Page page;
+        {
+            std::lock_guard lock(_mutex);
+            DrainLocked();
+            const size_t size = _records.size();
+            const uint64_t oldest = _config.mode == Mode::Ring && _written >= size ? _written - size + 1 : 1;
+            const uint64_t newestKept = oldest + size - 1;      // oldest - 1 when none is kept
+            if (since > _written)
+            {
+                // Numbered afresh since the poller's cursor (a clear, a configuration, a cut in time travel)
+                page.restarted = true;
+                since = 0;
+            }
+            if (since + 1 < oldest)
+                page.missed = oldest - 1 - since;           // evicted from the ring before they were read
+            const uint64_t first = std::max(since + 1, oldest);
+            uint64_t count = first > newestKept ? 0 : newestKept - first + 1;
+            if (last != 0 && count > last)
+                count = last;
+            selected.reserve(static_cast<size_t>(count));
+            for (uint64_t seq = first; seq < first + count; seq++)
+                selected.emplace_back(seq, _records[(_head + static_cast<size_t>(seq - oldest)) % size]);
+            page.nextSince = count ? first + count - 1 : since;
+            if (page.nextSince >= newestKept && _written > page.nextSince)
+            {
+                // Caught up with a capture over its cap: the records it did not keep are passed over as missed
+                page.missed += _written - page.nextSince;
+                page.nextSince = _written;
+            }
+        }
+        page.records = StateNode::Array();
+        for (const auto& [seq, record] : selected)
+        {
+            StateNode node = StateNode::Object();
+            node["seq"] = static_cast<int64_t>(seq);
+            record.ToState(node);
+            page.records.push(std::move(node));
+        }
+        return page;
     }
 
     /// endregion </IDeviceHistory>

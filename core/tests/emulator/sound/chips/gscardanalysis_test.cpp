@@ -439,16 +439,27 @@ TEST_F(GSAnalysisReport_Test, TheSwitchTheCoverageAndTheHandlersRunOnTheRealFirm
     EXPECT_EQ(Field(on.body, "decay").i, 4);
     EXPECT_GT(Field(on.body, "memory_bytes").i, 512 * 1024);
 
-    // The firmware boots, then the host sends #20 (total RAM): its handler runs
-    for (int i = 0; i < 40; i++)
-        frame();
-    card->portDeviceOutMethod(GeneralSoundCard::PORT_COMMAND, 0x20);
-    for (int i = 0; i < 3; i++)
-        frame();
+    // The host sends #20 (total RAM) until the booted firmware takes it (its start clears the command flag): the
+    // handler read from the firmware's own dispatch table runs
+    const auto handlerRan = [](const StateNode& coverage, int64_t command) {
+        for (const StateNode& h : Field(Field(coverage, "handlers"), "executed").items)
+            if (Field(h, "command").i == command)
+                return true;
+        return false;
+    };
+    GSAnalysisQuery query;
+    StateNode coverage;
+    for (int i = 0; i < 400; i += 10)
+    {
+        card->portDeviceOutMethod(GeneralSoundCard::PORT_COMMAND, 0x20);
+        for (int f = 0; f < 10; f++)
+            frame();
+        coverage = DeviceState::GsCoverage(_ctx, query);
+        if (handlerRan(coverage, 0x20))
+            break;
+    }
     EXPECT_TRUE(Field(DeviceState::GsAnalysisStatus(_ctx), "recording").b);
 
-    GSAnalysisQuery query;
-    StateNode coverage = DeviceState::GsCoverage(_ctx, query);
     ASSERT_TRUE(Field(coverage, "available").b);
     const StateNode& spaces = Field(coverage, "spaces");
     ASSERT_EQ(spaces.size(), 2u);
@@ -463,10 +474,7 @@ TEST_F(GSAnalysisReport_Test, TheSwitchTheCoverageAndTheHandlersRunOnTheRealFirm
     const StateNode& handlers = Field(coverage, "handlers");
     ASSERT_TRUE(Field(handlers, "available").b) << Field(handlers, "description").s;
     EXPECT_GT(Field(handlers, "entries").i, 10);
-    bool ran = false;
-    for (const StateNode& h : Field(handlers, "executed").items)
-        ran = ran || Field(h, "command").i == 0x20;
-    EXPECT_TRUE(ran) << Field(coverage, "text").s;
+    EXPECT_TRUE(handlerRan(coverage, 0x20)) << Field(coverage, "text").s;
     EXPECT_NE(Field(coverage, "text").s.find("handlers executed"), std::string::npos);
 
     // One page with its raw flags; bad parameters

@@ -1077,6 +1077,54 @@ TEST_F(CardPanes_Test, TheMonitorTileCountsAnomaliesUntilClear)
     EXPECT_EQ(monitor.anomalies(), 1) << "a new one counts";
 }
 
+/// The log reads after its cursor: more than one read's worth of records between two refreshes are all shown, in order;
+/// records a small ring evicted before the refresh read them are counted as missed in the rows line
+TEST_F(CardPanes_Test, TheMonitorLosesNoRecordBetweenRefreshes)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    GsMonitorPane monitor;
+    ASSERT_TRUE(monitor.turnOn(_context));
+    monitor.refresh(_context, false);
+    ASSERT_EQ(monitor.table()->rowCount(), 0);
+    const std::string device = GsMonitorPane::HistoryDevice(_context, DebugCpuId::Main);
+    const auto written = [&]() {
+        HistoryRequest read;
+        read.verb = "read";
+        read.device = device;
+        read.last = 1;
+        return HistoryControl::Execute(_context, read).body.find("written")->i;
+    };
+
+    // Commands the card (not running) does not take: each one a row, most with an anomaly row of its own
+    for (int i = 0; i < 160; i++)
+        _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    const int64_t total = written();
+    ASSERT_GT(total, static_cast<int64_t>(GsMonitorPane::kReadRows)) << "more than one read";
+    ASSERT_LT(total, GsMonitorPane::kMaxRows);
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.table()->rowCount(), total) << "every record since the last refresh";
+    EXPECT_EQ(monitor.missed(), 0);
+    EXPECT_FALSE(monitor.rowsText().contains("missed")) << monitor.rowsText().toStdString();
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.table()->rowCount(), total) << "read again: nothing twice";
+
+    // A ring of 50: configuring restarts the log, then 50 of the next records are kept and the rest evicted unread
+    HistoryRequest ring;
+    ring.verb = "config";
+    ring.device = device;
+    ring.mode = "ring";
+    ring.limit = 50;
+    ASSERT_EQ(HistoryControl::Execute(_context, ring).httpStatus, 200);
+    for (int i = 0; i < 60; i++)
+        _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    const int64_t after = written();
+    ASSERT_GT(after, 50);
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.table()->rowCount(), 50) << "restarted: the ring's records only";
+    EXPECT_EQ(monitor.missed(), after - 50);
+    EXPECT_TRUE(monitor.rowsText().contains(QString("%1 missed").arg(after - 50))) << monitor.rowsText().toStdString();
+}
+
 /// The log follows its tail while the machine runs (the debugger's sends, rows appended at each refresh); scrolling up
 /// stops following, Follow resumes it
 TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)
@@ -1138,7 +1186,7 @@ TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)
 }
 
 /// A5.2a Dispatch (M4): the command table as the card holds it, a row per command with its handler and the handler's
-/// label (the card CPU's firmware symbols), the ROM baseline; the profile stack above it. The classic card and a NeoGS
+/// label (the card CPU's firmware symbols), the baseline; the profile stack above it. The classic card and a NeoGS
 TEST_F(CardPanes_Test, TheDispatchShowsTheHandlersWithTheirLabels)
 {
     for (const char* kind : {"gs", "neogs"})
@@ -1161,29 +1209,16 @@ TEST_F(CardPanes_Test, TheDispatchShowsTheHandlersWithTheirLabels)
         ASSERT_GE(row, 0);
         EXPECT_FALSE(dispatch->cell(row, "Name").isEmpty()) << "the profile names #23";
         EXPECT_TRUE(dispatch->cell(row, "Handler").startsWith('#')) << dispatch->cell(row, "Handler").toStdString();
-        const bool neogs = std::string(kind) == "neogs";
-        // The handlers carry the firmware's labels. The classic card: all 256, the COMTAB words (window 0) as read,
-        // the COMTABH entries (#20-#EF, window 3) from the ROM's table while the firmware has a RAM page there. A NeoGS
-        // runs a RAM copy of its flash: the words as read, no ROM baseline (the core reads ROM pages 0-1, erased there)
-        int words = 0, labelled = 0;
+        // The handlers carry the firmware's labels, all 256 on both cards: the core reads the tables where the
+        // firmware keeps them (the ROM; a NeoGS's RAM copy), whatever window 3 maps now, against the firmware as it
+        // started (a NeoGS's copy at its start): the stock firmware has nothing patched
+        int labelled = 0;
         for (int r = 0; r < dispatch->table()->rowCount(); r++)
-        {
-            const bool word = r < 0x20 || r >= 0xF0;
-            words += word ? 1 : 0;
-            labelled += dispatch->cell(r, "Label").isEmpty() || (neogs && !word) ? 0 : 1;
-        }
-        EXPECT_EQ(labelled, neogs ? words : 256) << kind << ": " << dispatch->headline().toStdString();
-        if (neogs)
-        {
-            EXPECT_TRUE(dispatch->headline().contains("no ROM baseline")) << dispatch->headline().toStdString();
-            EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << "nothing patched without a baseline";
-        }
-        else
-        {
-            EXPECT_FALSE(dispatch->cell(row, "ROM").isEmpty()) << "the stock split: the ROM's baseline";
-            EXPECT_FALSE(dispatch->cell(row, "Label").isEmpty()) << kind << ": #23 handler " << dispatch->cell(row, "Handler").toStdString();
-            EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << "the stock ROM: nothing patched";
-        }
+            labelled += dispatch->cell(r, "Label").isEmpty() ? 0 : 1;
+        EXPECT_EQ(labelled, 256) << kind << ": " << dispatch->headline().toStdString();
+        EXPECT_FALSE(dispatch->cell(row, "Baseline").isEmpty()) << kind << ": the stock split's baseline";
+        EXPECT_EQ(dispatch->cell(row, "Baseline"), dispatch->cell(row, "Handler")) << kind;
+        EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << kind << ": " << dispatch->headline().toStdString();
         const int reset = dispatch->findRow("Cmd", "#00");
         ASSERT_GE(reset, 0);
         EXPECT_FALSE(dispatch->cell(reset, "Label").isEmpty()) << kind;

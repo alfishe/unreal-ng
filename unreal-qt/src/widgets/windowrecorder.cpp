@@ -839,6 +839,8 @@ struct WindowRecorder::Writer
         const QImage* lastSent = nullptr;   // the composed frame last sent (compared with the next one)
         QByteArrayView lastSentBytes;       // its bytes as ffmpeg got them (the frame's, or its NV12)
         uint64_t lastSentFrame = 0;
+        uint64_t lastSentUs = 0;            // its time in the stream
+        uint64_t picturesSent = 0;
         const uint64_t resendFrames = std::max<uint64_t>(1, static_cast<uint64_t>(fps / 4));
         // The sound queued behind this picture goes to ffmpeg ahead of it, and again while it waits (see
         // takeQueuedSound): the picture is never ahead of its sound
@@ -864,8 +866,7 @@ struct WindowRecorder::Writer
         // and ffmpeg's pace is the pace. Wait in short slices, the sound flowing meanwhile, until the whole frame is
         // in the pipe. A slow ffmpeg keeps taking bytes; one that took nothing for 15 s is stuck (the sound it waits
         // for is fed here, so that is not a lack of it): the recording fails instead of hanging
-        auto sendFrame = [&](const QImage* frame, QByteArrayView bytes, uint64_t frameIndex) {
-            const uint64_t timeUs = static_cast<uint64_t>(std::llround(static_cast<double>(frameIndex) * 1e6 / fps));
+        auto sendFrameAt = [&](const QImage* frame, QByteArrayView bytes, uint64_t frameIndex, uint64_t timeUs) {
             process.write(MatroskaFrameHeader(timeUs, bytes.size()));
             process.write(bytes.data(), bytes.size());
             int stalledMs = 0;
@@ -887,6 +888,12 @@ struct WindowRecorder::Writer
             lastSent = frame;
             lastSentBytes = bytes;
             lastSentFrame = frameIndex;
+            lastSentUs = timeUs;
+            picturesSent++;
+        };
+        auto sendFrame = [&](const QImage* frame, QByteArrayView bytes, uint64_t frameIndex) {
+            sendFrameAt(frame, bytes, frameIndex,
+                        static_cast<uint64_t>(std::llround(static_cast<double>(frameIndex) * 1e6 / fps)));
         };
 
         for (;;)
@@ -979,9 +986,22 @@ struct WindowRecorder::Writer
                 fail("ffmpeg stopped taking the sound");
             pictureHandled(pictureStartUs, send ? "composed" : "same");
         }
+        // x265 (4.3) sets its B-frame delay time (Encoder::m_bframeDelayTime) only at its third picture and leaves it
+        // uninitialized before: with fewer pictures (a still screen: the first one and the last again) the packets'
+        // dts are pts minus garbage, and the MP4 muxer refused them about one time in three ("pts/dts pair
+        // unsupported": "Not yet implemented in FFmpeg"). The last picture is sent on the frames before the last one
+        // until x265 has three; a recording of one or two frames gets them a microsecond apart
+        const bool x265 = args.contains("libx265");
         // The last picture once more at the last frame's time: the picture lasts to the end of the sound
         if (failure.empty() && lastSent && mux.frames > lastSentFrame + 1)
+        {
+            for (uint64_t frame = std::max(lastSentFrame + 1, mux.frames - std::min<uint64_t>(mux.frames, 2));
+                 x265 && failure.empty() && picturesSent + 1 < 3 && frame < mux.frames - 1; frame++)
+                sendFrame(lastSent, lastSentBytes, frame);
             sendFrame(lastSent, lastSentBytes, mux.frames - 1);
+        }
+        while (x265 && failure.empty() && lastSent && picturesSent < 3)
+            sendFrameAt(lastSent, lastSentBytes, lastSentFrame, lastSentUs + 1);
 
         sound.close();
         std::string result = failure;
@@ -1511,12 +1531,8 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     _tapId = context->pSoundManager->addFrameAudioTap(
         [sink = _sink](const int16_t* samples, size_t sampleFrames, uint64_t frame) {
             std::lock_guard<std::mutex> lock(sink->mutex);
-            if (!sink->started)
-            {
-                sink->started = true;
-                sink->firstFrame = frame;
-            }
-            sink->lastFrame = frame;
+            sink->started = true;
+            sink->frames++;
             FrameSound sound;
             sound.frame = frame;
             if (sink->keepSamples)
@@ -1595,7 +1611,7 @@ void WindowRecorder::onRefreshed()
         std::lock_guard<std::mutex> lock(_sink->mutex);
         if (!_sink->started)
             return;  // a redraw before the first frame ran
-        target = _sink->lastFrame - _sink->firstFrame + 1;
+        target = _sink->frames;
         sounds.swap(_sink->pending);
     }
     // The window shows the frame whose sound is heard now, some frames behind the newest latch (more while ZX DLSS
