@@ -2,7 +2,7 @@
 
 /// @file windowrecorder.h
 /// @brief Records the main window's picture as it draws it (CRT effects and all), optionally with the on-screen
-/// keyboard under it and the machine's sound, to a full-colour file through ffmpeg (ProRes 4444 or H.264 4:4:4: a
+/// keyboard under it and the machine's sound, to a full-color file through ffmpeg (ProRes 4444 or H.264 4:4:4: a
 /// CRT mask a pixel wide does not survive 4:2:0). The clock is the machine's, not the host's: one video frame per
 /// emulated frame at the machine's frame rate (a frame the window did not draw repeats the last picture), and each
 /// frame's own sound samples (SoundManager's frame audio tap), so picture and sound stay together whatever the
@@ -31,7 +31,7 @@ class OsdKeyboardWindow;
 /// give the same file: the format's own codec; the GPU's encoder when View > GPU acceleration is on or the engine is
 /// Native (the Mac's own writer for MP4 / MOV; MKV and the FFmpeg engine take the GPU encoder ffmpeg offers, found
 /// by probing, software only when there is none); a fixed profile frame draws the CRT at
-/// the frame's height (sharp, not scaled up afterwards) and centres it in it
+/// the frame's height (sharp, not scaled up afterwards) and centers it in it
 WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, const QString& codec, bool audio,
                                                   bool gpuAcceleration, const QString& profile,
                                                   const QString& path, int engine = 0);
