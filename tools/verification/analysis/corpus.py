@@ -389,10 +389,10 @@ class Explorer:
 class Machine:
     """The session and the instance's WebAPI (memory reads go there: binary, no MCP text)"""
 
-    def __init__(self, s, port_base):
+    def __init__(self, s, webapi_port):
         self.s = s
         listing = s.call('emulator_manage', {'action': 'list'}, ok=False)
-        self.url = f"http://127.0.0.1:{port_base}/api/v1/emulator/{listing.structured['emulators'][0]['id']}"
+        self.url = f"http://127.0.0.1:{webapi_port}/api/v1/emulator/{listing.structured['emulators'][0]['id']}"
 
     def read(self, address, length):
         with urllib.request.urlopen(f'{self.url}/memory/read/{address}?length={length}&format=binary', timeout=30) as r:
@@ -589,7 +589,7 @@ def run_game(game, args):
     process = mcplib.launch(args.binary, args.port_base)
     began = time.time()
     try:
-        s = mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', game['model'])
+        s = mcplib.Session(mcplib.mcp_url(process), game['model'])
         s.fresh_machine(game['model'], ram_power_on='zero')  # random RAM would make each run another game
         s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'}, ok=False)
         # The plug restarts the machine: wait for the wired stick before anything else touches the machine
@@ -600,7 +600,7 @@ def run_game(game, args):
         s.call('control_execution', {'action': 'pause'}, ok=False)
         s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',
                               'body': {'muted': True}}, ok=False)
-        m = Machine(s, args.port_base)
+        m = Machine(s, process.ports['webapi'])
         report['load_frames'] = load(m, game, media, report, args)
         player = Input(s)
         explorer = Explorer(m, player, out)
@@ -814,7 +814,7 @@ def main():
         p.add_argument('--frames', type=int, default=15000)
         p.add_argument('--load-frames', type=int, default=30000)
         p.add_argument('--disk-boot-frames', type=int, default=1500)
-        p.add_argument('--port-base', type=int, default=9720)
+        p.add_argument('--port-base', type=mcplib.port_base_arg, default=9720)
         p.add_argument('--binary', default=DEFAULT_BINARY)
         p.add_argument('--gallery-limit', type=int, default=60)
         if name == 'run':

@@ -3233,19 +3233,26 @@ public:
             return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
         });
 
-        // key_tap(key [, frames [, count [, gap_frames]]]): count taps in a row (1..100), gap_frames after each release
+        // key_tap(key [, frames [, count [, gap_frames]]]): count taps in a row (1..100), gap_frames after each release.
+        // key_tap / key_press / key_release: `key` is one name, or names held together joined with '+' ("w+o")
         lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames,
                                            sol::optional<uint16_t> count, sol::optional<uint16_t> gapFrames) -> bool {
             Emulator* emulator = effectiveEmulator();
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
-            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+            std::vector<std::string> chord;
+            std::string error;
+            if (!DebugKeyboardManager::ParseKeyChord(keyName, chord, error))
                 return false;  // an unknown name fails, not a silent no-op
             const uint16_t taps = count.value_or(1);
             if (taps < 1 || taps > DebugKeyboardManager::MAX_TAP_COUNT)
                 return false;
-            ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, holdFrames.value_or(2), taps, gapFrames.value_or(0));
+            DebugKeyboardManager* keyboard = ctx->pDebugManager->GetKeyboardManager();
+            if (chord.size() == 1)
+                keyboard->TapKeyRepeated(chord.front(), holdFrames.value_or(2), taps, gapFrames.value_or(0));
+            else
+                keyboard->TapComboRepeated(chord, holdFrames.value_or(2), taps, gapFrames.value_or(0));
             return true;
         });
 
@@ -3254,9 +3261,14 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
-            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+            std::vector<std::string> chord;
+            std::string error;
+            if (!DebugKeyboardManager::ParseKeyChord(keyName, chord, error))
                 return false;  // an unknown name fails, not a silent no-op
-            ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
+            if (chord.size() == 1)
+                ctx->pDebugManager->GetKeyboardManager()->PressKey(chord.front());
+            else
+                ctx->pDebugManager->GetKeyboardManager()->PressCombo(chord);
             return true;
         });
 
@@ -3265,9 +3277,14 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
-            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+            std::vector<std::string> chord;
+            std::string error;
+            if (!DebugKeyboardManager::ParseKeyChord(keyName, chord, error))
                 return false;  // an unknown name fails, not a silent no-op
-            ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
+            if (chord.size() == 1)
+                ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(chord.front());
+            else
+                ctx->pDebugManager->GetKeyboardManager()->ReleaseCombo(chord);
             return true;
         });
 

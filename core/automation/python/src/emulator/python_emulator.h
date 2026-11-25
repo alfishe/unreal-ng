@@ -6607,27 +6607,43 @@ namespace PythonBindings
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames, uint16_t count, uint16_t gapFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
-                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
+                std::vector<std::string> chord;
+                std::string error;
+                if (!DebugKeyboardManager::ParseKeyChord(keyName, chord, error)) return false;  // not a silent no-op
                 if (count < 1 || count > DebugKeyboardManager::MAX_TAP_COUNT) return false;
-                ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, holdFrames, count, gapFrames);
+                if (chord.size() == 1)
+                    ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(chord.front(), holdFrames, count, gapFrames);
+                else
+                    ctx->pDebugManager->GetKeyboardManager()->TapComboRepeated(chord, holdFrames, count, gapFrames);
                 return true;
-            }, "Tap a key (press, hold, release); count taps in a row (1..100), gap_frames to wait after each release "
+            }, "Tap a key, or keys held together joined with '+' ('w+o'): press, hold, release; count taps in a row "
+               "(1..100), gap_frames to wait after each release "
                "(repeats of one key always wait 5 released frames for the ROM)",
                py::arg("key"), py::arg("frames") = 2, py::arg("count") = 1, py::arg("gap_frames") = 0)
             .def("key_press", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
-                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
-                ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
+                std::vector<std::string> chord;
+                std::string error;
+                if (!DebugKeyboardManager::ParseKeyChord(keyName, chord, error)) return false;  // not a silent no-op
+                if (chord.size() == 1)
+                    ctx->pDebugManager->GetKeyboardManager()->PressKey(chord.front());
+                else
+                    ctx->pDebugManager->GetKeyboardManager()->PressCombo(chord);
                 return true;
-            }, "Press and hold a key", py::arg("key"))
+            }, "Press and hold a key, or keys together joined with '+' ('w+o')", py::arg("key"))
             .def("key_release", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
-                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
-                ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
+                std::vector<std::string> chord;
+                std::string error;
+                if (!DebugKeyboardManager::ParseKeyChord(keyName, chord, error)) return false;  // not a silent no-op
+                if (chord.size() == 1)
+                    ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(chord.front());
+                else
+                    ctx->pDebugManager->GetKeyboardManager()->ReleaseCombo(chord);
                 return true;
-            }, "Release a held key", py::arg("key"))
+            }, "Release a held key or chord ('w+o')", py::arg("key"))
             .def("key_combo", [](Emulator& self, const std::vector<std::string>& keyNames, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
