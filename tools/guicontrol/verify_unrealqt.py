@@ -215,7 +215,7 @@ def main():
     parser.add_argument('--binary', default=os.path.join(ROOT, 'cmake-build-agent-release', 'bin', 'unreal-qt.app',
                                                          'Contents', 'MacOS', 'unreal-qt'))
     parser.add_argument('--unreal-gui', default=os.path.join(ROOT, 'cmake-build-agent-release', 'bin', 'unreal-gui'))
-    parser.add_argument('--port-base', type=int, default=28800)
+    parser.add_argument('--port-base', type=mcplib.port_base_arg, default=28800)
     parser.add_argument('--out', default=os.path.join(ROOT, 'scratch', 'guicontrol-verify'))
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -224,7 +224,7 @@ def main():
     os.environ['UNREAL_HANDHELD'] = '1'
     process = mcplib.launch(args.binary, args.port_base)
     try:
-        mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', 'PENTAGON').fresh_machine()
+        mcplib.Session(mcplib.mcp_url(process), 'PENTAGON').fresh_machine()
         gui = None
         for _ in range(40):
             try:
@@ -240,7 +240,7 @@ def main():
             raise SystemExit('the program has no GUI control host with a machine bound')
         with gui:
             check(gui, os.path.join(args.out, 'debugger.png'))
-            check_handheld(gui, args.port_base)
+            check_handheld(gui, process.ports['webapi'])
         mcp = subprocess.run([sys.executable, os.path.join(HERE, 'verify_mcp.py'), args.unreal_gui])
         expect(mcp.returncode == 0, 'verify_mcp.py')
     finally:

@@ -100,18 +100,19 @@ def main():
         BIN, 'unreal-screen-viewer.app', 'Contents', 'MacOS', 'unreal-screen-viewer'))
     parser.add_argument('--unreal-videowall', default=os.path.join(
         BIN, 'unreal-videowall.app', 'Contents', 'MacOS', 'unreal-videowall'))
-    parser.add_argument('--port-base', type=int, default=28820)
+    parser.add_argument('--port-base', type=mcplib.port_base_arg, default=28820)
     parser.add_argument('--wall-port-base', type=int, default=28830)
     parser.add_argument('--out', default=os.path.join(ROOT, 'scratch', 'guicontrol-verify-one-port'))
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
     os.environ['UNREAL_GUI_CONTROL_DIR'] = os.path.join(args.out, 'discovery')
-    port = args.port_base
-    endpoint = f'http://127.0.0.1:{port}'
 
-    processes = [mcplib.launch(args.unreal_qt, port)]
+    processes = [mcplib.launch(args.unreal_qt, args.port_base)]
+    ports = processes[0].ports
+    port = ports['webapi']
+    endpoint = f'http://127.0.0.1:{port}'
     try:
-        session = mcplib.Session(f'http://127.0.0.1:{port + 200}/mcp', 'PENTAGON')
+        session = mcplib.Session(mcplib.mcp_url(processes[0]), 'PENTAGON')
         session.fresh_machine()
         qt = wait_host(processes[0].pid, machine=True)
         machine = qt.state('memory')['instance']['id']
@@ -159,10 +160,11 @@ def main():
                sorted(t for t in tools if t.startswith('gui_')))
         actions = tools.get('gui_memory', {}).get('inputSchema', {}).get('properties', {}).get('action', {})
         expect('goto' in actions.get('enum', []), 'gui_memory: action goto', actions)
-        mcp = WebGui(port, via='mcp')
-        verify_debugger.conform(WebGui(port, host=pids['unreal-qt'], via='mcp'), 'MCP unreal-qt')
-        verify_programs.conform_screen(WebGui(port, host=pids['unreal-screen-viewer'], via='mcp'),
-                                       'MCP unreal-screen-viewer', machine, endpoint)
+        mcp = WebGui(port, via='mcp', mcp_port=ports['mcp'])
+        verify_debugger.conform(WebGui(port, host=pids['unreal-qt'], via='mcp', mcp_port=ports['mcp']), 'MCP unreal-qt')
+        verify_programs.conform_screen(
+            WebGui(port, host=pids['unreal-screen-viewer'], via='mcp', mcp_port=ports['mcp']),
+            'MCP unreal-screen-viewer', machine, endpoint)
         text = mcplib.Result(session.rpc('tools/call', {'name': 'gui_memory', 'arguments': {
             'action': 'goto', 'target': f"{pids['unreal-qt']}/debugger/memory", 'addr': '0x6400'}}))
         expect(not text.is_error and '0x6400' in text.text, 'gui_memory goto: the answer in the text', text.text)
@@ -188,12 +190,12 @@ def main():
                'WebSocket call POST /api/v1/gui/memory.goto', reply)
         expect(rest.state(target)['state']['cursor'] == '0x6500', 'the WebSocket call moved the view')
 
-        answer = cli_line(port + 100, f'gui memory.goto addr=0x6600 target={target}')
+        answer = cli_line(ports['cli'], f'gui memory.goto addr=0x6600 target={target}')
         expect('0x6600' in answer and rest.state(target)['state']['cursor'] == '0x6600',
                'CLI gui memory.goto addr=0x6600 target=...', answer)
-        answer = cli_line(port + 100, 'gui state ' + target)
+        answer = cli_line(ports['cli'], 'gui state ' + target)
         expect('0x6600' in answer, 'CLI gui state <target>', answer)
-        answer = cli_line(port + 100, 'gui memory.goto 0x6600')
+        answer = cli_line(ports['cli'], 'gui memory.goto 0x6600')
         expect('name=value' in answer, 'CLI gui: a word without = is refused with the usage', answer)
 
         for language, code in (

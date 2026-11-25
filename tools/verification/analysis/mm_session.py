@@ -135,7 +135,7 @@ def main():
     parser.add_argument('--out', required=True, help='output directory (L1 JSON, the exports, session.json)')
     parser.add_argument('--ranges', default='4000-FFFF')
     parser.add_argument('--binary', default=DEFAULT_BINARY)
-    parser.add_argument('--port-base', type=int, default=8790)
+    parser.add_argument('--port-base', type=mcplib.port_base_arg, default=8790)
     parser.add_argument('--no-kempston', action='store_true')
     parser.add_argument('--l3', action='store_true', help='also dump findings / review / cover (P5) before the exports')
     parser.add_argument('--cover-budget', type=int, default=64)
@@ -150,7 +150,7 @@ def main():
     process = mcplib.launch(args.binary, args.port_base)
     report = {'snapshot': os.path.abspath(args.snapshot), 'inputs': [], 'ranges': args.ranges}
     try:
-        s = mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', '48K')
+        s = mcplib.Session(mcplib.mcp_url(process), '48K')
         s.fresh_machine('48K')
         if not args.no_kempston:
             s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'})
@@ -198,8 +198,8 @@ def main():
             f.write(r.text)
         report['frames'] = player.frames
         if args.keep:
-            report['kept'] = {'pid': process.pid, 'mcp': f'http://127.0.0.1:{args.port_base + 200}/mcp',
-                              'webapi': f'http://127.0.0.1:{args.port_base}'}
+            report['kept'] = {'pid': process.pid, 'mcp': mcplib.mcp_url(process),
+                              'webapi': f"http://127.0.0.1:{process.ports['webapi']}"}
         with open(os.path.join(out, 'session.json'), 'w') as f:
             json.dump(report, f, indent=1)
     except BaseException:
@@ -207,7 +207,7 @@ def main():
         raise
     finally:
         if args.keep:
-            print(f'kept: pid {process.pid}, MCP http://127.0.0.1:{args.port_base + 200}/mcp')
+            print(f'kept: pid {process.pid}, MCP {mcplib.mcp_url(process)}')
         else:
             process.terminate()
             process.wait(timeout=20)

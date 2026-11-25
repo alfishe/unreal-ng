@@ -5036,11 +5036,11 @@ Programmatic control of emulator input devices for automation and testing.
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `key press <key>` | `<key-name>` | Press a key on the ZX Spectrum keyboard. Key names: `a-z`, `0-9`, `space`, `enter`, `shift`, `symbol`, etc. | 🔮 Planned |
-| `key release <key>` | `<key-name>` | Release a previously pressed key. | 🔮 Planned |
-| `key tap <key> [duration]` | `<key-name> [ms]` | Press and release key. Default duration: 20ms (1 frame). | 🔮 Planned |
+| `key press <key>` | `<key-name>` | Press and hold a key. Key names: `a-z`, `0-9`, `space`, `enter`, `caps`, `symbol`, etc. (`key list`). Keys held together are joined with `+` (`w+o`) on every plane: CLI `key`, Lua / Python `key_press`, WebAPI and MCP `key`. | ✅ Implemented |
+| `key release <key>` | `<key-name>` | Release a held key or chord (`w+o`). | ✅ Implemented |
+| `key tap <key> [frames] [count] [gap_frames]` | `<key-name> [n] [n] [n]` | Press, hold for `frames` (default 2) and release a key or a chord (`caps+5`); `count` taps in a row, `gap_frames` after each release. | ✅ Implemented |
 | `type <text>` | `<string>` | Automatically type a string of text. Handles shift/symbol modifiers automatically. Rate-limited to realistic typing speed. | 🔮 Planned |
-| `key combo <keys>` | `<key1+key2+...>` | Press multiple keys simultaneously (e.g., `CAPS+SHIFT+A` for graphics). | 🔮 Planned |
+| `key combo <key1> <key2> ...` | `<key-name> ...` | Tap several keys together, the keys as separate words (the same as `key tap key1+key2`). | ✅ Implemented |
 | `joystick <action>` | `up\|down\|left\|right\|fire` | Simulate joystick input (Kempston, Sinclair, Cursor). | 🔮 Planned |
 
 **Mouse:** implemented — see [§11 Mouse Input Injection](#11-mouse-input-injection). (The old

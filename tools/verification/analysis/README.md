@@ -108,7 +108,7 @@ numbers), subagent tokens at most `--token-target` (200000). `ab.json` and `ab.m
 ## re_session.py
 
 The mechanics of the reverse-engineering recipe: one live unreal-qt instance per game (offscreen, muted, a Kempston
-card, its own ports from `--port-base`), kept between calls; every file goes into the work folder `--work W` (keep
+card, its own ports from `--port-base`: a number, or `auto` for a free base the emulator picks), kept between calls; every file goes into the work folder `--work W` (keep
 it under `scratch/`). The workflow and the gates: [.recipe/analysis/reverse-engineering.md](../../../.recipe/analysis/reverse-engineering.md).
 
 | Command | What it does |

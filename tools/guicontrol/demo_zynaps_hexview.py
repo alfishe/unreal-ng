@@ -35,7 +35,7 @@ def main():
     parser.add_argument('--tape', required=True, help='Zynaps.tzx (48K)')
     parser.add_argument('--binary', default=os.path.join(ROOT, 'cmake-build-agent-release', 'bin', 'unreal-qt.app',
                                                          'Contents', 'MacOS', 'unreal-qt'))
-    parser.add_argument('--port-base', type=int, default=28700)
+    parser.add_argument('--port-base', type=mcplib.port_base_arg, default=28700)
     parser.add_argument('--out', default=os.path.join(ROOT, 'scratch', 'zynaps-plane'))
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -44,7 +44,7 @@ def main():
 
     process = mcplib.launch(args.binary, args.port_base)
     try:
-        s = mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', '48K')
+        s = mcplib.Session(mcplib.mcp_url(process), '48K')
         s.fresh_machine()
         s.call('load_software', {'path': os.path.abspath(args.tape), 'autostart': True})
         s.call('control_execution', {'action': 'resume'}, ok=False)
