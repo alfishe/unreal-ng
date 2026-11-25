@@ -20,7 +20,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <map>
+#include <random>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -411,6 +413,88 @@ TEST_F(TTDVdac2_Test, PresentedMetricsFollowTheScreen)
         ASSERT_TRUE(_card->PresentedFrameMetrics(m));
         EXPECT_FALSE(m.inFlightKnown) << "a frame target shows a finished FT812 frame";
         EXPECT_EQ(m.frame, ft812Frame) << "the one that finished last by the end of the machine frame";
+    }
+}
+
+namespace
+{
+/// The memory blob's region encoding as it was written first, a byte at a time: the reference the word scan must
+/// match byte for byte (the blob is stored: the stream may not change)
+std::vector<uint8_t> ZeroRunsByteByByte(const std::vector<uint8_t>& region)
+{
+    std::vector<uint8_t> out;
+    auto token = [&](uint32_t t) {
+        const size_t at = out.size();
+        out.resize(at + 4);
+        std::memcpy(out.data() + at, &t, 4);
+    };
+    const uint8_t* p = region.data();
+    const size_t size = region.size();
+    size_t pos = 0, dataStart = 0;
+    auto flush = [&](size_t end) {
+        if (end > dataStart)
+        {
+            token(static_cast<uint32_t>(end - dataStart));
+            out.insert(out.end(), p + dataStart, p + end);
+        }
+    };
+    while (pos < size)
+    {
+        if (p[pos] != 0)
+        {
+            ++pos;
+            continue;
+        }
+        size_t run = 0;
+        while (pos + run < size && p[pos + run] == 0)
+            ++run;
+        if (run >= 64)
+        {
+            flush(pos);
+            token(0x8000'0000u | static_cast<uint32_t>(run));
+            pos += run;
+            dataStart = pos;
+        }
+        else
+            pos += run;
+    }
+    flush(size);
+    return out;
+}
+}  // namespace
+
+/// The chip memory blob's word scan writes what the byte scan wrote: zero runs around 64 bytes at every
+/// alignment, at the region's ends, short runs next to long ones, odd sizes, all zero, none zero
+TEST(TTDVdac2ZeroRuns_Test, TheWordScanWritesWhatTheByteScanWrote)
+{
+    std::mt19937 rng(5);
+    std::vector<std::vector<uint8_t>> regions = {{}, std::vector<uint8_t>(1, 0), std::vector<uint8_t>(63, 0),
+                                                 std::vector<uint8_t>(64, 0), std::vector<uint8_t>(4096, 0),
+                                                 std::vector<uint8_t>(4097, 7)};
+    for (int i = 0; i < 400; ++i)
+    {
+        std::vector<uint8_t> r(1 + rng() % 3000);
+        for (uint8_t& b : r)
+            b = static_cast<uint8_t>(1 + rng() % 255);
+        for (int runs = static_cast<int>(rng() % 12); runs > 0; --runs)
+        {
+            const size_t len = (rng() % 4 == 0) ? 56 + rng() % 17 : rng() % 200;   // around 64 often
+            const size_t at = rng() % r.size();
+            std::fill(r.begin() + static_cast<long>(at), r.begin() + static_cast<long>(std::min(r.size(), at + len)), 0);
+        }
+        if (i % 7 == 0)
+            std::fill(r.begin(), r.begin() + static_cast<long>(std::min<size_t>(r.size(), 64 + i % 9)), 0);
+        if (i % 11 == 0)
+            std::fill(r.end() - static_cast<long>(std::min<size_t>(r.size(), 60 + i % 13)), r.end(), 0);
+        regions.push_back(std::move(r));
+    }
+    for (size_t i = 0; i < regions.size(); ++i)
+    {
+        const std::vector<uint8_t>& r = regions[i];
+        std::vector<uint8_t> out(r.size() + 16);
+        const uint8_t* end = EveHostCard::TtdEncodeZeroRuns(r.data(), r.size(), out.data());
+        out.resize(static_cast<size_t>(end - out.data()));
+        ASSERT_EQ(out, ZeroRunsByteByByte(r)) << "region " << i << ", " << r.size() << " bytes";
     }
 }
 

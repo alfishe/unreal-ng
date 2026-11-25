@@ -38,7 +38,38 @@ Windows `cmd`: `set UNREAL_WEBAPI_PORT=8190` and then the command on the next li
   `UNREAL_SLOTS_TEST` belong to the build wrappers (machine-wide job slots), `UNREAL_SLOTS_FITTED_UPDATE` /
   `UNREAL_SLOTS_MATRIX_UPDATE` to the expansion-slot tests (they rewrite files).
 - **Port switches:** the six server ports each have their own variable. To run a second instance beside a
-  first one, move all of them (example in [`tools/verification/unreal-asm/README.md`](../../tools/verification/unreal-asm/README.md)).
+  first one, move all of them (example in [`tools/verification/unreal-asm/README.md`](../../tools/verification/unreal-asm/README.md)),
+  or let unreal-qt do it: [`--port-base`](#all-six-ports-at-once---port-base-and---ports-file).
+
+### All six ports at once: `--port-base` and `--ports-file`
+
+`unreal-qt --port-base N` sets the six port variables for its own process from one number, over whatever the
+environment holds: WebAPI N (its WebSocket endpoints too), CLI N+100, MCP N+200, GDB N+300, DeZog N+400, ZRCP N+500
+(N from 1 to 65035).
+
+`unreal-qt --port-base auto` picks N itself, so parallel instances (agents, tests) need no bases handed out: the
+first base of 20000, 20600, ... 32000 whose six ports can all be bound at that moment (each is bound on all
+interfaces and released). The search starts at a base taken from the process id and wraps around, so instances
+started together do not try the same base first. A port another process takes between this check and a server's own
+start is reported by that server as before ("Port N is already in use"; the application goes on without it). When no
+base is free the application says so on stderr and exits with code 2.
+
+`--ports-file <path>` (with `--port-base`, a number or `auto`) writes the choice as one JSON object, through a
+temporary file beside it and a rename, so a reader sees no file or the whole one:
+
+```json
+{"port_base": 20600, "webapi": 20600, "cli": 20700, "mcp": 20800, "gdb": 20900, "dezog": 21000, "zrcp": 21100, "pid": 4242}
+```
+
+The file appears when the ports are decided, before the window exists; the servers come up a moment later (poll the
+port, as `mcplib.launch` does). A port is listed whether or not this build has its server. A file that cannot be
+written, a wrong `--port-base` value or `--ports-file` without `--port-base` end the application with code 2.
+
+```bash
+unreal-qt --headless --port-base auto --ports-file scratch/ports.json &
+```
+
+Code: `core/src/common/network/portplan.h` (the search and the file), `unreal-qt/src/main.cpp` (`ApplyPortPlan`).
 
 ## 1. The application at run time
 

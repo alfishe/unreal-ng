@@ -202,6 +202,23 @@ TEST_F(HostActions_Test, AKeyTapsHoldsAndReleasesAndAnUnknownNameIsABadRequest)
     const ActionResult unknown = Run("input.key", Press({{"key", "no-such-key"}}));
     EXPECT_EQ(unknown.error, "Bad Request");
     EXPECT_NE(unknown.message.find("no-such-key"), std::string::npos) << unknown.message;
+    EXPECT_NE(unknown.message.find("joined with '+' (w+o)"), std::string::npos) << "the error says how keys are written";
+
+    // A chord: '+' between the names, in the text and in an item of the list alike (E6); a space does not separate
+    StateNode chordList = StateNode::Array();
+    chordList.items.emplace_back("W+O");
+    const ActionResult listed = Run("input.key", Press({{"keys", chordList}}));
+    ASSERT_TRUE(listed.ok) << listed.message;
+    ASSERT_EQ(listed.body.find("keys")->items.size(), 2u);
+    EXPECT_EQ(listed.body.find("keys")->items[0].s, "W");
+    EXPECT_EQ(listed.body.find("keys")->items[1].s, "O");
+    const ActionResult plusKey = Run("input.key", Press({{"key", "+"}}));
+    ASSERT_TRUE(plusKey.ok) << plusKey.message;
+    EXPECT_EQ(plusKey.body.find("keys")->items.size(), 1u) << "the key '+' stays one key";
+    const ActionResult spaced = Run("input.key", Press({{"key", "W O"}}));
+    EXPECT_EQ(spaced.error, "Bad Request");
+    EXPECT_NE(spaced.message.find("Unknown key 'W O'"), std::string::npos) << spaced.message;
+    EXPECT_NE(spaced.message.find("a space or a comma does not separate keys"), std::string::npos) << spaced.message;
 
     const ActionResult held = Run("input.key", Press({{"key", "a"}, {"hold", true}}));
     ASSERT_TRUE(held.ok) << held.message;

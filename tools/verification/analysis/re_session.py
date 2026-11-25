@@ -426,13 +426,23 @@ def build(args):
         body.update(from_frame=frame, from_tinframe=tinframe)
     if args.to_frame:
         body['to_frame'] = args.to_frame
+    if args.ignore_readers:
+        body['ignore_readers'] = args.ignore_readers
+    sessions = [n if n == 'current' else os.path.abspath(n) for n in args.sessions or []]
+    if sessions:
+        if frame or tinframe or args.to_frame:
+            raise SystemExit('--sessions: a window (--stage, --from-frame, --to-frame) is one recording\'s')
+        body['sessions'] = sessions
     started = time.monotonic()
     r = s.call('analysis', body, ok=False)
     if r.is_error:
         raise SystemExit(r.text)
     if (r.structured or {}).get('job'):
         s.wait_job(r.structured['job'], timeout=3600)  # the jobs long-poll (PLAN #122 S2), no sleep
-    if frame or tinframe:
+    if sessions and sessions[0] != 'current':
+        # The start image is the first session's, and this instance holds another recording (or none)
+        print('no start.bin: the first session is a file (open it and build it alone for its start image)')
+    elif frame or tinframe:
         write_memory(s, os.path.join(out, 'start.bin'), frame, tinframe)
     else:
         # No window: the replay starts at the recording's first keyframe, frame 0 may not be recorded
@@ -441,9 +451,10 @@ def build(args):
         f.write(s.call('analysis', {'action': 'review', 'op': 'list'}).text + '\n')
     with open(os.path.join(out, 'findings.txt'), 'w') as f:
         f.write(s.call('analysis', {'action': 'findings', 'limit': 0}, ok=False).text + '\n')
+    state = s.call('analysis', {'action': 'status'}, ok=False).text
     print(state.splitlines()[-1] if state else '')
-    print(f'window from frame {frame} t {tinframe}' + (f' to {args.to_frame}' if args.to_frame else '') +
-          f', {time.monotonic() - started:.1f} s')
+    print((f'{len(sessions)} sessions' if sessions else f'window from frame {frame} t {tinframe}') +
+          (f' to {args.to_frame}' if args.to_frame else '') + f', {time.monotonic() - started:.1f} s')
 
 
 def stages(args):
@@ -558,6 +569,12 @@ def main():
     p.add_argument('--from-tinframe', type=int, default=0)
     p.add_argument('--to-frame', type=int)
     p.add_argument('--into', help="the stage's own folder (default: --work); later calls take it as --work")
+    p.add_argument('--sessions', nargs='+', metavar='TTD',
+                   help="one L1 over several recordings of the program, in order: 'current' (the loaded one) and "
+                        "saved recordings (captures' session.ttd), all of this machine")
+    p.add_argument('--ignore-readers', metavar='RANGES',
+                   help="Z80 ranges (hex: 5B00-5BFF,FE00-FE7F) of code whose data reads are left out of the byte "
+                        "uses (a depacker)")
     p = sub.add_parser('stages')
     p.add_argument('--work', required=True)
     p = sub.add_parser('interrupts')

@@ -863,6 +863,9 @@ GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, record
 POST /api/v1/emulator/{id}/analysis/build     {frames?, from_frame?, from_tinframe?, to_frame?, path?,
                                                wait?: ms <= 30000}: the L1 build job (a window: one stage,
                                                analysis-layers.md#stages-and-windows)
+                                              {sessions: ["a.ttd", "current"], ignore_readers?: "5B00-5BFF"}:
+                                               one L1 over several recordings, a depacker's reads left out
+                                               (analysis-layers.md#several-sessions)
                                               {job, state, bundle, progress, ready, text}; async: true instead
                                               of wait answers 202 with the job (Jobs below); trace, experiment
                                               and cover take async too
@@ -1629,6 +1632,13 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/combo \
      -H "Content-Type: application/json" \
      -d '{"keys": ["ss", "p"], "frames": 3}'
 ```
+
+Keys held together may also be written as one text with `+` between the names: `{"key": "ss+p"}` on `tap`, `press`
+and `release` (the keys of the chord go down and up together), and as an item of `keys`. A text that is a key name of
+its own stays one key (`+`, the extended keyboard's plus), and a `+` where a name starts is that key (`ss++`). A space
+or a comma does not separate keys. An unknown name is a 400 whose message says so: "Unknown key 'w o': a key is one
+name (a, enter, caps); keys held together are joined with '+' (w+o); a space or a comma does not separate keys. Use
+GET /api/v1/emulator/{id}/keyboard/keys for valid names".
 
 **Type Text** (plain literal characters):
 ```bash

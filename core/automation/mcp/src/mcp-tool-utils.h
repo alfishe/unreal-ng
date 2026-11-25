@@ -102,6 +102,90 @@ inline std::string PrepareRequestPath(const std::string& path)
     return prepared;
 }
 
+/// Levenshtein edit distance of two strings, letters compared without case
+inline size_t EditDistance(const std::string& left, const std::string& right)
+{
+    const auto lower = [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); };
+
+    std::vector<size_t> row(right.size() + 1);
+    for (size_t j = 0; j <= right.size(); ++j)
+        row[j] = j;
+
+    for (size_t i = 1; i <= left.size(); ++i)
+    {
+        size_t diagonal = row[0];
+        row[0] = i;
+        for (size_t j = 1; j <= right.size(); ++j)
+        {
+            const size_t above = row[j];
+            const size_t substitution = diagonal + (lower(left[i - 1]) == lower(right[j - 1]) ? 0u : 1u);
+            row[j] = std::min({above + 1, row[j - 1] + 1, substitution});
+            diagonal = above;
+        }
+    }
+    return row[right.size()];
+}
+
+/// The valid value nearest to a refused one, or "" when none is close: the smallest edit distance within
+/// max(2, length / 3) (and below the length of the shorter of the two), else a valid value that contains the refused one or is contained in it (3 characters or
+/// more, so that a one-letter name does not match everything)
+inline std::string NearestMatch(const std::string& value, const std::vector<std::string>& valid)
+{
+    if (value.empty())
+        return {};
+
+    const size_t limit = std::max<size_t>(2, value.size() / 3);
+    std::string nearest;
+    size_t nearestDistance = limit + 1;
+    std::string containing;
+    size_t containingDistance = 0;
+    for (const std::string& candidate : valid)
+    {
+        if (candidate.empty())
+            continue;
+        const size_t distance = EditDistance(value, candidate);
+        // Within the limit, and less than the shorter name is long: "x" is not a typo of "a"
+        if (distance < nearestDistance && distance < std::min(value.size(), candidate.size()))
+        {
+            nearestDistance = distance;
+            nearest = candidate;
+        }
+        const bool contained = std::min(value.size(), candidate.size()) >= 3 &&
+                               (candidate.find(value) != std::string::npos || value.find(candidate) != std::string::npos);
+        if (contained && (containing.empty() || distance < containingDistance))
+        {
+            containingDistance = distance;
+            containing = candidate;
+        }
+    }
+    return nearest.empty() ? containing : nearest;
+}
+
+/// The answer to a value that is not one of an enumerated set (E1 of the RE API efficiency backlog): names the
+/// refused value, the nearest valid one when one is close and every valid one -
+/// "Unknown action 'slots_plugg'. Did you mean 'slots_plug'? Valid actions: a, b, c". 'what' is the singular name
+/// of the thing ("action", "aspect", "mode"); 'prefix' goes in front ("controllers: ")
+inline std::string UnknownValueText(const std::string& what, const std::string& value, const std::vector<std::string>& valid,
+                                    const std::string& prefix = "")
+{
+    std::string text = prefix + "Unknown " + what + " '" + value + "'.";
+    if (const std::string nearest = NearestMatch(value, valid); !nearest.empty())
+        text += " Did you mean '" + nearest + "'?";
+    text += " Valid " + what + "s: ";
+    for (size_t i = 0; i < valid.size(); ++i)
+        text += (i == 0 ? "" : ", ") + valid[i];
+    return text;
+}
+
+/// Fills a schema property's "enum" from the list the tool's dispatch and its unknown-value answer use, so
+/// that the three cannot drift apart
+inline void SetSchemaEnum(Json::Value& property, const std::vector<std::string>& values)
+{
+    property["enum"] = Json::Value(Json::arrayValue);
+    for (const std::string& value : values)
+        property["enum"].append(value);
+}
+
 /// Extracts a human-readable message from a WebAPI error body ({"error": ..., "message": ...})
 inline std::string DescribeErrorBody(const Json::Value& body)
 {

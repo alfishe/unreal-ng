@@ -114,6 +114,15 @@ bool OptionsFromJson(const HttpRequestPtr& req, analysis::Options& options, std:
             options[name] = Json::writeString(writer, v);
             continue;
         }
+        if (v.isArray() && name == "sessions")
+        {
+            // build: the recordings of one L1, one per line (a path may hold a comma)
+            std::string lines;
+            for (const Json::Value& item : v)
+                lines += (lines.empty() ? "" : "\n") + item.asString();
+            options[name] = lines;
+            continue;
+        }
         if (v.isObject() || v.isArray())
         {
             RespondError(HttpStatusCode::k400BadRequest, "Bad Request", "'" + name + "' must be a number, a string or true / false",

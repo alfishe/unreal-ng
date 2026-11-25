@@ -11,13 +11,16 @@
 #include <QFontDatabase>
 #include <QIcon>
 
+#include <iostream>
 #include <memory>
+#include <string>
 #include <string_view>
 
 #include "common/macosplatform.h"
 #include <QDebug>
 #include <QDir>
 #include <common/filehelper.h>
+#include <common/network/portplan.h>
 #include <emulator/config.h>
 #include <common/threadhelper.h>
 #include <emulator/startupcleanup.h>
@@ -104,6 +107,68 @@ void unregisterFonts()
     }
 }
 
+/// --port-base <N | auto> and --ports-file <path> (common/network/portplan.h): every automation server reads its port
+/// from a variable of its own when it starts, so the plan is those variables, set before the window (and with it the
+/// automation) exists. `auto` takes a base whose every port can be bound now; a port another process takes between
+/// this check and the server's own bind is reported by that server as before ("Port N is already in use").
+/// The ports file is written here, where the values are final: the servers come up a moment later.
+/// False with `error` when the options cannot be honored
+static bool ApplyPortPlan(const QString& portBase, const QString& portsFile, QString& error)
+{
+    if (portBase.isEmpty())
+    {
+        if (!portsFile.isEmpty())
+        {
+            error = QStringLiteral("--ports-file needs --port-base <N | auto>");
+            return false;
+        }
+        return true;
+    }
+
+    const qint64 pid = QCoreApplication::applicationPid();
+    int base = 0;
+    if (portBase.compare(QLatin1String("auto"), Qt::CaseInsensitive) == 0)
+    {
+        // Instances started together begin at different candidates, so they do not race for the same base
+        portplan::SearchRange range;
+        range.startSlot = static_cast<size_t>(pid);
+        std::string why;
+        base = portplan::FindFreePortBase(range, portplan::CanBindTcpPort, &why);
+        if (base == 0)
+        {
+            error = QStringLiteral("--port-base auto: ") + QString::fromStdString(why);
+            return false;
+        }
+    }
+    else
+    {
+        bool isNumber = false;
+        const qlonglong value = portBase.toLongLong(&isNumber);
+        if (!isNumber || !portplan::IsValidPortBase(value))
+        {
+            error = QStringLiteral("--port-base takes a port number from 1 to %1 or auto, not '%2'")
+                        .arg(65535 - portplan::kLastOffset)
+                        .arg(portBase);
+            return false;
+        }
+        base = static_cast<int>(value);
+    }
+
+    for (const portplan::PortRole& role : portplan::kRoles)
+        qputenv(role.envVar, QByteArray::number(base + role.offset));
+
+    if (!portsFile.isEmpty())
+    {
+        std::string why;
+        if (!portplan::WritePortsFile(portsFile.toStdString(), base, static_cast<int64_t>(pid), &why))
+        {
+            error = QStringLiteral("--ports-file: ") + QString::fromStdString(why);
+            return false;
+        }
+    }
+    return true;
+}
+
 int main(int argc, char *argv[])
 {
     ThreadHelper::setThreadName("qt-main");
@@ -182,7 +247,30 @@ int main(int argc, char *argv[])
                                             QStringLiteral("address"));
     parser.addOption(guiControlPortOption);
     parser.addOption(guiControlBindOption);
+    // The automation ports of this instance at once (parallel agents and tests): docs/emulator/environment-variables.md
+    QCommandLineOption portBaseOption(QStringLiteral("port-base"),
+                                      QStringLiteral("Automation ports from one base: WebAPI base, CLI +100, MCP +200, "
+                                                     "GDB +300, DeZog +400, ZRCP +500 (over the UNREAL_*_PORT "
+                                                     "variables); auto: a base whose ports are all free"),
+                                      QStringLiteral("base"));
+    QCommandLineOption portsFileOption(QStringLiteral("ports-file"),
+                                       QStringLiteral("Write the ports of --port-base and the process id to this "
+                                                      "JSON file"),
+                                       QStringLiteral("file"));
+    parser.addOption(portBaseOption);
+    parser.addOption(portsFileOption);
     parser.process(app);
+
+    {
+        QString portPlanError;
+        if (!ApplyPortPlan(parser.value(portBaseOption), parser.value(portsFileOption), portPlanError))
+        {
+            std::cerr << "unreal-qt: " << portPlanError.toStdString() << std::endl;
+            StopStartupCleanup();
+            unregisterFonts();
+            return 2;
+        }
+    }
 
     // Instantiate main application window
     MainWindow window;

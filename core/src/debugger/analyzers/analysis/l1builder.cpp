@@ -130,6 +130,8 @@ struct Node
     uint64_t firstFrame = 0;
     uint64_t lastFrame = ~0ull;
     uint32_t frames = 0;
+    bool ignoredReader = false;  ///< its data reads stay out of the byte uses (L1Builder::IgnoreReaders)
+    std::vector<SessionSpan> sessions;  ///< a build over several sessions: the ones it ran in, in order
 
     std::vector<Succ> succ;
     uint32_t lastSucc = 0;
@@ -649,6 +651,13 @@ struct L1Builder::Impl
     static constexpr size_t kMaxArrivalAccs = 65536;
     uint64_t firstFrameSeen = 0;
     bool frameBaseSet = false;
+    /// A build over several sessions (L1Builder::NextSession): the session folded now, where its frames stand on
+    /// the build's frame axis and its own first frame
+    bool multi = false;
+    uint16_t session = 0;
+    uint64_t sessionBase = 0;
+    uint64_t sessionFirst = 0;
+    std::vector<std::pair<uint16_t, uint16_t>> ignoredReaders;  ///< Z80 ranges, inclusive
     // Pointer provenance of the 8-bit registers, and the pointer uses it found
     Origin origins[kOriginSlots];
     Origin shadowOrigins[6];  ///< B', C', D', E', H', L' (EXX swaps them with origins[0..5])
@@ -840,6 +849,8 @@ struct L1Builder::Impl
             Node& node = nodes.back();
             node.key = MakeKey(page, z80);
             node.z80 = z80;
+            for (const auto& range : ignoredReaders)
+                node.ignoredReader = node.ignoredReader || (z80 >= range.first && z80 <= range.second);
             slot = static_cast<uint32_t>(nodes.size());
         }
         return slot - 1;
@@ -958,6 +969,17 @@ struct L1Builder::Impl
     void NoteUse(uint16_t page, uint16_t address, bool read, uint8_t value, uint32_t node, const OpInfo& op,
                  uint64_t frame, bool word)
     {
+        if (read && nodes[node].ignoredReader)
+        {
+            // A reader the build was told to leave out (a depacker): the byte keeps no trace of the read, the
+            // instruction keeps the range it walked
+            if (op.mem != MemForm::Stack)
+            {
+                Node& reader = nodes[node];
+                AddRange(reader.ranges[0], reader.rangesMore[0], MakeKey(page, address), address);
+            }
+            return;
+        }
         UseAcc& u = UseOf(page, address);
         const auto rel = static_cast<uint32_t>(frame - firstFrameSeen);
         if (u.flags == 0 && u.reads == 0 && u.writes == 0)
@@ -1756,6 +1778,17 @@ struct L1Builder::Impl
                 n.firstFrame = p.frame;
             ++n.frames;
             n.lastFrame = p.frame;
+            if (multi)
+            {
+                const uint64_t own = p.frame - sessionBase + sessionFirst;
+                if (n.sessions.empty() || n.sessions.back().session != session)
+                    n.sessions.push_back(SessionSpan{session, 1, own, own});
+                else
+                {
+                    ++n.sessions.back().frames;
+                    n.sessions.back().lastFrame = own;
+                }
+            }
         }
 
         const auto depth = static_cast<uint32_t>(stack.size() - 1);
@@ -2345,7 +2378,9 @@ struct L1Builder::Impl
             // run up (a loaded snapshot, a window of the history), not an entry of the code
             nodes[current].entryKinds |= pc == 0 ? entry::kRoot : entry::kResume;
             first = false;
-            firstFrameSeen = frame;
+            if (!frameBaseSet)
+                firstFrameSeen = frame;
+            frameBaseSet = true;
             startSp = regs.sp;
         }
         if (interrupted)
@@ -2364,6 +2399,51 @@ struct L1Builder::Impl
         pending.tStart = now;
         pending.frame = frame;
         return false;
+    }
+
+    /// Another machine runs from here (the next session of a build over several): what followed the last one's
+    /// registers, stack and memory contents is gone, what was folded stays. The next instruction is a resume
+    void ForgetMachine()
+    {
+        while (!active.empty())
+            CloseTop(/*complete=*/false);
+        stack.clear();
+        stack.push_back(Frame{});
+        topInterrupt = -1;
+        for (PairTag& tag : pairs)
+            tag = PairTag{};
+        for (PairTag& tag : shadowPairs)
+            tag = PairTag{};
+        hTag = PairTag{};
+        lFromRegSeq = 0;
+        for (Prov& p : prov)
+            p = Prov{};
+        producer = Producer{};
+        blockSeq += 4;
+        anchorValid = false;
+        lastPush.valid = false;
+        for (Origin& o : origins)
+            o = Origin{};
+        for (Origin& o : shadowOrigins)
+            o = Origin{};
+        stackOrigins.clear();
+        spLoaded = false;
+        walkBase = 0;
+        interruptPush = -1;
+        FlushCopy();
+        // Memory holds other bytes now: no byte is the copy of another any more, none awaits a run after a write
+        for (auto& table : usePages)
+            if (table)
+                for (uint32_t i = 0; i < 0x4000; ++i)
+                {
+                    UseAcc& u = table[i];
+                    u.origin = kNoKey;
+                    u.memFrom = kNoKey;
+                    u.memFromPopped = false;
+                }
+        memOriginCount = 0;
+        valueFlow.NewSession();
+        first = true;
     }
 
     L1Result Build(const ReplaySummary& summary, const std::function<std::string(uint16_t)>& pageName);
@@ -2413,9 +2493,45 @@ void L1Builder::Flush(const Regs& regs, uint64_t now)
     _spill.clear();
 }
 
+void L1Builder::IgnoreReaders(std::vector<std::pair<uint16_t, uint16_t>> ranges)
+{
+    _impl->ignoredReaders = std::move(ranges);
+}
+
+void L1Builder::NextSession(PageOf pageOf, uint64_t frameBase, uint64_t firstFrame)
+{
+    Impl& impl = *_impl;
+    impl.pending.active = false;
+    _eventCount = 0;
+    _spill.clear();
+    if (!impl.multi)
+    {
+        // The frames folded so far were session 0's own: its spans are what the instructions hold
+        impl.multi = true;
+        for (Node& n : impl.nodes)
+            if (n.frames != 0)
+                n.sessions.push_back(SessionSpan{0, n.frames, n.firstFrame, n.lastFrame});
+    }
+    ++impl.session;
+    impl.sessionBase = frameBase;
+    impl.sessionFirst = firstFrame;
+    impl.pageOf = std::move(pageOf);
+    impl.ForgetMachine();
+}
+
 uint64_t L1Builder::Instructions() const
 {
     return _impl->instructions;
+}
+
+uint64_t L1Builder::TStates() const
+{
+    return _impl->tstates;
+}
+
+uint64_t L1Builder::Interrupts() const
+{
+    return _impl->interrupts;
 }
 
 size_t L1Builder::MemoryBytes() const
@@ -2977,7 +3093,8 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         ins.selfModified = n.smc;
         ins.firstFrame = n.frames != 0 ? n.firstFrame : 0;
         ins.lastFrame = n.frames != 0 ? n.lastFrame : 0;
-        out.instructions.push_back(ins);
+        ins.sessions = n.sessions;
+        out.instructions.push_back(std::move(ins));
         out.instructionRoutine.push_back(routineOf[u]);
     }
 

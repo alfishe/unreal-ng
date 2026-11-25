@@ -34,7 +34,8 @@
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["description"] =
         "Each name in 'keys' may be a ZX matrix key or a physical PC key with no ZX "
         "equivalent at all (e.g. 'f12', 'rshift'), mixed freely - needed for host-level "
-        "combos such as TS-Conf's BIOS Setup entry, Right Shift + F12 ({\"keys\": [\"rshift\", \"f12\"]}).";
+        "combos such as TS-Conf's BIOS Setup entry, Right Shift + F12 ({\"keys\": [\"rshift\", \"f12\"]}). "
+        "An item may hold several names joined with '+' (\"w+o\"); tap / press / release take such a chord as 'key' too.";
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["keys"]["type"] = "array";
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
@@ -128,7 +129,7 @@
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["key"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["key"]["description"] = "Key name (e.g., 'a', 'enter', 'cs'), or a physical PC key name for a PS/2 machine such as the ZX-Evo or the Profi with its PROFI-XT controller ('f1', 'home', 'esc', 'pc.up')";
+         ["properties"]["key"]["description"] = "Key name (e.g., 'a', 'enter', 'cs'), or a physical PC key name for a PS/2 machine such as the ZX-Evo or the Profi with its PROFI-XT controller ('f1', 'home', 'esc', 'pc.up'); keys held together are joined with '+' ('w+o')";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["200"]["description"] = "Key pressed";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["400"]["description"] = "Invalid key name";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["404"]["description"] = "Emulator not found";
@@ -146,7 +147,7 @@
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["key"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["key"]["description"] = "Key name to release (ZX or PC key name)";
+         ["properties"]["key"]["description"] = "Key name to release (ZX or PC key name), or the keys of a chord joined with '+' ('w+o')";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["200"]["description"] = "Key released";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["400"]["description"] = "Invalid key name";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["404"]["description"] = "Emulator not found";

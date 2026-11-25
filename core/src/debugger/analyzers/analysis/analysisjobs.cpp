@@ -95,6 +95,19 @@ L1Jobs::~L1Jobs()
 bool L1Jobs::Start(const std::string& emulatorId, TraceBundle bundle, ReplayOptions options, const std::string& path,
                    uint64_t& id, std::string& error)
 {
+    std::vector<TraceBundle> bundles;
+    bundles.push_back(std::move(bundle));
+    return Start(emulatorId, std::move(bundles), std::move(options), path, id, error);
+}
+
+bool L1Jobs::Start(const std::string& emulatorId, std::vector<TraceBundle> bundles, ReplayOptions options,
+                   const std::string& path, uint64_t& id, std::string& error)
+{
+    if (bundles.empty())
+    {
+        error = "no recording to build from";
+        return false;
+    }
     std::shared_ptr<Job> previous;
     std::shared_ptr<Job> job = std::make_shared<Job>();
     uint64_t frames = 0;
@@ -108,8 +121,17 @@ bool L1Jobs::Start(const std::string& emulatorId, TraceBundle bundle, ReplayOpti
         }
         previous = slot.job;
         job->path = path;
-        job->bundle = bundle.ToStateNode();
-        frames = bundle.endFrame > bundle.firstFrame ? bundle.endFrame - bundle.firstFrame : 0;
+        job->bundle = bundles.front().ToStateNode();
+        if (bundles.size() > 1)
+        {
+            StateNode list = StateNode::Array();
+            for (const TraceBundle& b : bundles)
+                list.push(b.name);
+            job->bundle["sessions"] = std::move(list);
+        }
+        // A session file's frames are known once it is loaded: the progress finds the total as it goes
+        for (const TraceBundle& b : bundles)
+            frames += b.endFrame > b.firstFrame ? b.endFrame - b.firstFrame : 0;
         job->total = frames;
         if (options.maxFrames != 0 && job->total > options.maxFrames)
             job->total = options.maxFrames;
@@ -117,12 +139,15 @@ bool L1Jobs::Start(const std::string& emulatorId, TraceBundle bundle, ReplayOpti
     }
 
     // One job of the registry (S2): queued in the instance's analysis lane, run on a registry worker
-    auto kept = std::make_shared<const TraceBundle>(std::move(bundle));
+    const size_t sessions = bundles.size();
+    auto kept = std::make_shared<const std::vector<TraceBundle>>(std::move(bundles));
     jobs::Spec spec;
     spec.kind = "analysis.build";
     spec.emulatorId = emulatorId;
     spec.lane = "analysis@" + emulatorId;
-    spec.summary = "build " + std::to_string(job->total.load()) + " of " + std::to_string(frames) + " frames" +
+    spec.summary = (sessions > 1 ? "build " + std::to_string(sessions) + " sessions"
+                                 : "build " + std::to_string(job->total.load()) + " of " + std::to_string(frames) +
+                                       " frames") +
                    (path.empty() ? std::string() : " path=" + path);
     spec.cancellable = true;
     spec.onCancel = [job] { job->cancel = true; };
@@ -167,8 +192,8 @@ bool L1Jobs::Start(const std::string& emulatorId, TraceBundle bundle, ReplayOpti
     return true;
 }
 
-void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, std::shared_ptr<const TraceBundle> kept,
-                 ReplayOptions options, jobs::Context& context)
+void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job,
+                 std::shared_ptr<const std::vector<TraceBundle>> kept, ReplayOptions options, jobs::Context& context)
 {
     Job& j = *job;
     {
@@ -217,7 +242,8 @@ void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, std::s
         {
             it->second.result = result;
             it->second.structure = structure;
-            it->second.bundle = kept;
+            // The recording L3 replays again: a build of one keeps it, a build over several has none
+            it->second.bundle = kept->size() == 1 ? std::make_shared<const TraceBundle>(kept->front()) : nullptr;
             it->second.regions = structure->store.Size();
             it->second.conflicts = conflicts;
             it->second.resultJob = j.id;

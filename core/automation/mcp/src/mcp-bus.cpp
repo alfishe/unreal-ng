@@ -229,8 +229,7 @@ void RegisterBusAnalyzer(ToolRegistry& registry)
                 known = known || action == a;
             if (!known)
             {
-                done(ToolResult::Error("action: '" + action +
-                                       "' is not one of list, enable, disable, clear, events, findings, sd_timing, export"));
+                done(ToolResult::Error(UnknownValueText("action", action, std::vector<std::string>(std::begin(kActions), std::end(kActions)))));
                 return;
             }
             const bool control = action == "enable" || action == "disable" || action == "clear";

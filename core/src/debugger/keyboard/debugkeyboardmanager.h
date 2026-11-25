@@ -313,6 +313,16 @@ public:
     /// A ZX key name, or a physical PC key name ("f1", "home", "pc.up"; pckey.h)
     /// that reaches a machine's PS/2 keyboard controller (ZX-Evo)
     static bool IsKnownKeyName(const std::string& name);
+
+    /// The keys of a chord written as one text: names held together joined with '+' ("w+o", "caps+1"), spaces
+    /// around a name dropped. A text that is a key name of its own stays one key (the key "+"), and a '+' where
+    /// a name starts is that key ("ss++": symbol shift and "+"). The names are not checked here
+    static std::vector<std::string> SplitKeyChord(const std::string& text);
+
+    /// The refusal of a key name: what was refused and how keys are written - one name per key, '+' between keys
+    /// held together; a name with a space or a comma in it gets the note that those do not separate keys. The
+    /// caller adds where its plane lists the names
+    static std::string DescribeUnknownKey(const std::string& name);
     
     /// Convert enum to display name
     /// @param key Key enum
