@@ -6,9 +6,11 @@
 #include <cstdlib>
 #include <fstream>
 #include <optional>
+#include <sstream>
 
 #include "base/featuremanager.h"
 #include "common/base64.h"
+#include "common/filehelper.h"
 #include "debugger/analyzers/analysis/accesstrace.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/l2export.h"
@@ -93,8 +95,8 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
 {
     static const std::vector<std::string> none;
     static const std::vector<std::string> start = {"level", "mode", "record"};
-    static const std::vector<std::string> build = {"frames",     "path",          "wait",     "from_frame",
-                                                   "from_tinframe", "to_frame",   "async"};
+    static const std::vector<std::string> build = {"frames",        "path",     "wait",  "from_frame",    "from_tinframe",
+                                                   "to_frame",      "async",    "sessions", "ignore_readers"};
     static const std::vector<std::string> explain = {"address", "page", "what"};
     static const std::vector<std::string> query = {"kind", "range", "limit"};
     static const std::vector<std::string> exportOptions = {"format", "path", "ranges", "width"};
@@ -484,6 +486,9 @@ std::string DistinctName(uint8_t distinct)
     }
 }
 
+/// Sessions one build folds: Instruction::sessions names them in 16 bits, and each is a clone made and a replay run
+constexpr size_t kMaxBuildSessions = 64;
+
 Reply Build(Emulator& emulator, const Options& options, bool async)
 {
     ReplayOptions replay;
@@ -508,6 +513,48 @@ Reply Build(Emulator& emulator, const Options& options, bool async)
         return Refuse(Error::BadRequest, "give async (answer at once, then jobs wait) or wait (block up to N ms), not both");
     const auto pathIt = options.find("path");
     const std::string path = pathIt != options.end() ? pathIt->second : std::string();
+    if (const auto it = options.find("ignore_readers"); it != options.end() && !it->second.empty())
+    {
+        std::vector<ExportRange> ranges;
+        if (!ParseZ80Ranges(it->second, ranges))
+            return Refuse(Error::BadRequest, "ignore_readers: Z80 ranges of the code whose data reads are left out "
+                                             "of the byte uses (a depacker), hex, comma separated: 5B00-5BFF,FE00-FE7F");
+        for (const ExportRange& range : ranges)
+            replay.ignoreReaders.emplace_back(range.start, range.end);
+    }
+    // sessions: the recordings to fold into one L1, in order: 'current' (this instance's own) and session files
+    // (a 'ttd dump'); one per line, or comma separated
+    std::vector<std::string> sessionNames;
+    if (const auto it = options.find("sessions"); it != options.end())
+    {
+        const char separator = it->second.find('\n') != std::string::npos ? '\n' : ',';
+        std::string item;
+        std::istringstream stream(it->second);
+        while (std::getline(stream, item, separator))
+        {
+            const size_t from = item.find_first_not_of(" \t\r");
+            const size_t to = item.find_last_not_of(" \t\r");
+            if (from != std::string::npos)
+                sessionNames.push_back(item.substr(from, to - from + 1));
+        }
+        if (sessionNames.empty())
+            return Refuse(Error::BadRequest, "sessions: the recordings to build one L1 from, 'current' or session "
+                                             "files ('ttd dump'), comma separated or one per line");
+        if (sessionNames.size() > kMaxBuildSessions)
+            return Refuse(Error::BadRequest, "sessions: at most " + std::to_string(kMaxBuildSessions) + " in one build");
+        if (std::count(sessionNames.begin(), sessionNames.end(), "current") > 1)
+            return Refuse(Error::BadRequest, "sessions: 'current' is named twice");
+        if (sessionNames.size() > 1 &&
+            (replay.maxFrames != 0 || replay.fromFrame != 0 || replay.fromTInFrame != 0 || replay.toFrame != 0))
+            return Refuse(Error::BadRequest, "frames, from_frame, from_tinframe and to_frame are a window of one "
+                                             "recording: leave them out of a build over several sessions");
+        for (const std::string& name : sessionNames)
+            if (name != "current" && !FileHelper::IsFile(name))
+                return Refuse(Error::NotFound, "sessions: no session file '" + name + "'");
+    }
+    else
+        sessionNames.emplace_back("current");
+    const bool wantsCurrent = std::count(sessionNames.begin(), sessionNames.end(), "current") != 0;
 
     const std::string id = emulator.GetId();
     L1Jobs& jobs = L1Jobs::Instance();
@@ -520,15 +567,41 @@ Reply Build(Emulator& emulator, const Options& options, bool async)
     {
         // The session file is written from the source's history: its CPU stands still meanwhile
         Emulator::CpuHold hold(emulator, "analysis build");
-        captured = TraceBundle::Capture(emulator, bundle, error);
+        captured = wantsCurrent ? TraceBundle::Capture(emulator, bundle, error)
+                                : TraceBundle::Describe(emulator, bundle, error);
     }
     if (!captured)
         return Refuse(Error::Conflict, error);
-    jobs.NoteRecording(id, false);  // Capture ended the recording
-    const StateNode bundleNode = bundle.ToStateNode();
-    const uint64_t frames = bundle.endFrame > bundle.firstFrame ? bundle.endFrame - bundle.firstFrame : 0;
+    if (wantsCurrent)
+        jobs.NoteRecording(id, false);  // Capture ended the recording
+    // A session file runs on a machine made like this one: its model, its cards, its media
+    std::vector<TraceBundle> bundles;
+    for (const std::string& name : sessionNames)
+    {
+        if (name == "current")
+        {
+            bundles.push_back(bundle);
+            continue;
+        }
+        TraceBundle file = bundle;
+        if (!file.UseSessionFile(name, error))
+            return Refuse(Error::Conflict, error);
+        bundles.push_back(std::move(file));
+    }
+    StateNode bundleNode = bundles.front().ToStateNode();
+    if (bundles.size() > 1)
+    {
+        StateNode list = StateNode::Array();
+        for (const TraceBundle& b : bundles)
+            list.push(b.name);
+        bundleNode["sessions"] = std::move(list);
+    }
+    const bool several = bundles.size() > 1;
+    const bool fromFile = !several && !wantsCurrent;
+    const uint64_t frames = bundle.endFrame > bundle.firstFrame && wantsCurrent ? bundle.endFrame - bundle.firstFrame : 0;
+    const size_t sessionCount = bundles.size();
     uint64_t job = 0;
-    if (!jobs.Start(id, std::move(bundle), std::move(replay), path, job, error))
+    if (!jobs.Start(id, std::move(bundles), std::move(replay), path, job, error))
         return Refuse(Error::Conflict, error);
     if (wait != 0)
         jobs.Wait(id, static_cast<int>(wait));
@@ -546,8 +619,11 @@ Reply Build(Emulator& emulator, const Options& options, bool async)
     reply.body["bundle"] = bundleNode;
     reply.body["progress"] = view.ProgressNode();
     reply.body["ready"] = view.ReadyNode();
-    reply.text = "L1 build job " + std::to_string(job) + ": replaying " + std::to_string(frames) +
-                 " recorded frames on an analysis instance";
+    reply.text = "L1 build job " + std::to_string(job) + ": replaying " +
+                 (several    ? std::to_string(sessionCount) + " sessions, one after another,"
+                  : fromFile ? "the session file " + sessionNames.front()
+                             : std::to_string(frames) + " recorded frames") +
+                 " on an analysis instance";
     if (async)
         reply.text += ". " + jobs::AcceptedText(job);
     else if (view.state == "running" || view.state == "queued")

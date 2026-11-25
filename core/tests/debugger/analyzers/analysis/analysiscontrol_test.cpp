@@ -20,6 +20,7 @@
 #include "debugger/analyzers/analysis/analysiscontrol.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/assembler/z80textassembler.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -247,6 +248,61 @@ loop:   ld (hl),b
     Emulator* _emulator = nullptr;
     uint16_t _fill = 0;
 };
+
+TEST_F(AnalysisControlL1_Test, BuildOverSeveralSessions)
+{
+    // A recording dumped to a file, then another one live: one L1 over the file and the current recording
+    ASSERT_TRUE(analysis::Execute(*_emulator, "start", {{"record", "true"}}).Ok());
+    _emulator->RunNFrames(2);
+    ttd::TimeTravelController* ttd = _emulator->GetContext()->pTimeTravelController;
+    ASSERT_NE(ttd, nullptr);
+    ttd->StopRecording();
+    const std::string file = TestPathHelper::GetUniqueTestScratchPath("analysis-session.ttd");
+    ASSERT_TRUE(ttd->DumpSession(file).ok);
+    ASSERT_TRUE(analysis::Execute(*_emulator, "stop").Ok());
+    ASSERT_TRUE(analysis::Execute(*_emulator, "start", {{"record", "true"}}).Ok());
+    _emulator->RunNFrames(3);
+
+    // Refusals: a file that is not there, a window, 'current' twice
+    EXPECT_EQ(analysis::Execute(*_emulator, "build", {{"sessions", file + ".none"}}).error, analysis::Error::NotFound);
+    EXPECT_EQ(analysis::Execute(*_emulator, "build", {{"sessions", file + ",current"}, {"frames", "1"}}).error,
+              analysis::Error::BadRequest);
+    EXPECT_EQ(analysis::Execute(*_emulator, "build", {{"sessions", "current,current"}}).error,
+              analysis::Error::BadRequest);
+    EXPECT_EQ(analysis::Execute(*_emulator, "build", {{"ignore_readers", "nowhere"}}).error,
+              analysis::Error::BadRequest);
+
+    const analysis::Reply built =
+        analysis::Execute(*_emulator, "build", {{"sessions", file + ", current"}, {"wait", "20000"}});
+    ASSERT_TRUE(built.Ok()) << built.message;
+    ASSERT_EQ(Member(built.body, "state").s, "done") << built.text;
+    EXPECT_NE(built.text.find("2 sessions"), std::string::npos) << built.text;
+    EXPECT_EQ(Member(Member(built.body, "bundle"), "sessions").size(), 2u);
+
+    const std::shared_ptr<const analysis::L1Result> l1 = analysis::L1Jobs::Instance().Result(_emulator->GetId());
+    ASSERT_NE(l1, nullptr);
+    ASSERT_EQ(l1->sessions.size(), 2u);
+    EXPECT_EQ(l1->sessions[0].name, file);
+    EXPECT_EQ(l1->sessions[0].frames, 2u);
+    EXPECT_EQ(l1->sessions[1].name, "current");
+    EXPECT_EQ(l1->sessions[1].frames, 3u);
+    EXPECT_EQ(l1->replay.frames, 5u);
+    EXPECT_EQ(l1->replay.diverged, 0u);
+    // The fact sheet works on it as on any build; what replays one recording says why it cannot
+    EXPECT_TRUE(analysis::Execute(*_emulator, "explain", {{"address", std::to_string(_fill)}}).Ok());
+    const analysis::Reply cover = analysis::Execute(*_emulator, "cover");
+    EXPECT_EQ(cover.error, analysis::Error::Conflict);
+    EXPECT_NE(cover.message.find("2 sessions"), std::string::npos) << cover.message;
+
+    // One session file alone, on this machine
+    const analysis::Reply one = analysis::Execute(*_emulator, "build", {{"sessions", file}, {"wait", "20000"}});
+    ASSERT_TRUE(one.Ok()) << one.message;
+    ASSERT_EQ(Member(one.body, "state").s, "done") << one.text;
+    const std::shared_ptr<const analysis::L1Result> single = analysis::L1Jobs::Instance().Result(_emulator->GetId());
+    ASSERT_NE(single, nullptr);
+    EXPECT_TRUE(single->sessions.empty());
+    EXPECT_EQ(single->replay.frames, 2u);
+}
 
 TEST_F(AnalysisControlL1_Test, BuildThenExplainARoutine)
 {

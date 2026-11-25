@@ -5615,7 +5615,53 @@ TEST_F(McpTools_Test, TimeTravel_UnknownAction_Errors)
     mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
 
     EXPECT_TRUE(result.isError);
-    EXPECT_NE(result.text.find("Unknown action"), std::string::npos);
+    EXPECT_NE(result.text.find("Unknown action 'rewind'."), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Valid actions: status, start, stop"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("Did you mean"), std::string::npos) << "nothing is close to 'rewind': " << result.text;
+}
+
+// An unknown action answers with the nearest valid one and the whole list (E1): the list is the schema enum's
+TEST_F(McpTools_Test, EmulatorManage_UnknownAction_ListsValidOnesAndSuggestsTheNearest)
+{
+    Json::Value args;
+    args["action"] = "slots_plugg";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Unknown action 'slots_plugg'. Did you mean 'slots_plug'?"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Valid actions: create, switch_model, list"), std::string::npos) << result.text;
+
+    const mcp::ToolDefinition* tool = _registry->Find("emulator_manage");
+    ASSERT_NE(tool, nullptr);
+    const Json::Value& offered = tool->inputSchema["properties"]["action"]["enum"];
+    ASSERT_TRUE(offered.isArray());
+    ASSERT_GT(offered.size(), 0u);
+    for (const Json::Value& action : offered)
+        EXPECT_NE(result.text.find(action.asString()), std::string::npos) << "the answer lists " << action.asString();
+}
+
+// 'slots_unplug' is 'slots_remove' under the name agents asked for (E1)
+TEST_F(McpTools_Test, EmulatorManage_SlotsUnplug_IsAnAliasOfSlotsRemove)
+{
+    Json::Value args;
+    args["action"] = "slots_unplug";
+    mcp::ToolResult noSlot = RunTool(*_registry, "emulator_manage", args, *_caller);
+    EXPECT_TRUE(noSlot.isError) << "unplug needs a slot, as remove does";
+    EXPECT_NE(noSlot.text.find("requires 'slot'"), std::string::npos) << noSlot.text;
+
+    args["slot"] = "zxbus.1";
+    args["dry_run"] = true;
+    RunTool(*_registry, "emulator_manage", args, *_caller);
+    const auto* remove = _caller->Last("POST", "/api/v1/emulator/emu-1/slots/zxbus.1/remove");
+    ASSERT_NE(remove, nullptr);
+    EXPECT_TRUE(remove->body["dryRun"].asBool());
+
+    const mcp::ToolDefinition* tool = _registry->Find("emulator_manage");
+    ASSERT_NE(tool, nullptr);
+    bool offered = false;
+    for (const Json::Value& action : tool->inputSchema["properties"]["action"]["enum"])
+        offered = offered || action.asString() == "slots_unplug";
+    EXPECT_TRUE(offered) << "the schema offers the alias";
 }
 
 // ===========================================================================
@@ -6463,6 +6509,45 @@ TEST_F(McpTools_Test, ControlExecution_BpListOneLinePerBreakpoint)
 }
 
 /// A small structured result as key=value text: nested keys joined with '.', scalar arrays inline, the rest counted
+// The answer to a value outside an enumerated set (E1): the refused value, the nearest valid one, every valid one
+TEST(McpToolUtils_Test, EditDistanceIsLevenshteinWithoutCase)
+{
+    EXPECT_EQ(mcp::EditDistance("kitten", "sitting"), 3u);
+    EXPECT_EQ(mcp::EditDistance("", "abc"), 3u);
+    EXPECT_EQ(mcp::EditDistance("abc", ""), 3u);
+    EXPECT_EQ(mcp::EditDistance("Remove", "remove"), 0u);
+    EXPECT_EQ(mcp::EditDistance("slots_plugg", "slots_plug"), 1u);
+}
+
+TEST(McpToolUtils_Test, NearestMatchSuggestsOnlyACloseValue)
+{
+    const std::vector<std::string> actions = {"slots_plug", "slots_remove", "slots_set", "status"};
+
+    EXPECT_EQ(mcp::NearestMatch("slots_plugg", actions), "slots_plug") << "one letter away";
+    EXPECT_EQ(mcp::NearestMatch("staus", actions), "status");
+    EXPECT_EQ(mcp::NearestMatch("remove", actions), "slots_remove") << "far by distance, but a part of the valid name";
+    EXPECT_EQ(mcp::NearestMatch("rewind", actions), "") << "nothing close: no suggestion";
+    EXPECT_EQ(mcp::NearestMatch("", actions), "");
+    EXPECT_EQ(mcp::NearestMatch("x", {"a", "b"}), "") << "a one-letter name is not a suggestion for another";
+}
+
+TEST(McpToolUtils_Test, UnknownValueTextListsTheValidOnes)
+{
+    const std::vector<std::string> actions = {"slots_plug", "slots_remove"};
+
+    EXPECT_EQ(mcp::UnknownValueText("action", "slots_plugg", actions),
+              "Unknown action 'slots_plugg'. Did you mean 'slots_plug'? Valid actions: slots_plug, slots_remove");
+    EXPECT_EQ(mcp::UnknownValueText("mode", "zzz", {"strict", "tolerant"}), "Unknown mode 'zzz'. Valid modes: strict, tolerant");
+    EXPECT_EQ(mcp::UnknownValueText("action", "", actions, "tool: "),
+              "tool: Unknown action ''. Valid actions: slots_plug, slots_remove");
+
+    Json::Value property;
+    mcp::SetSchemaEnum(property, actions);
+    ASSERT_EQ(property["enum"].size(), 2u);
+    EXPECT_EQ(property["enum"][0].asString(), "slots_plug");
+    EXPECT_EQ(property["enum"][1].asString(), "slots_remove");
+}
+
 TEST(McpToolUtils_Test, FlatFieldsShowsTheValues)
 {
     Json::Value v;

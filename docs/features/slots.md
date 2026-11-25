@@ -254,7 +254,7 @@ A configuration with `[SLOTS]` ignores the old keys.
 |---|---|---|
 | CLI | `slots`, `slots catalog [slot]`, `slots matrix [table]` | `slots plug / remove / set / gs` with `--replace`, `--dry-run`, `--media`, `--json` ([command-interface.md section 14](../emulator/design/control-interfaces/command-interface.md#14-zx-bus-slots)) |
 | WebAPI | `GET /emulator/{id}/slots`, `/slots/catalog[?slot=]`, `/slots/matrix` | `POST /slots/{slot}/plug`, `/remove`, `PUT /slots/{slot}/options`; refusal = 409 with the plan ([webapi-interface.md](../emulator/design/control-interfaces/webapi-interface.md#zx-bus-slots), OpenAPI tag `Slots`) |
-| MCP | `inspect_state` aspect `slots`; `emulator_manage` `slots_catalog`, `slots_matrix` | `emulator_manage` `slots_plug`, `slots_remove`, `slots_set` ([mcp/README.md](mcp/README.md)) |
+| MCP | `inspect_state` aspect `slots`; `emulator_manage` `slots_catalog`, `slots_matrix` | `emulator_manage` `slots_plug`, `slots_remove` (alias `slots_unplug`), `slots_set` ([mcp/README.md](mcp/README.md)) |
 | Lua | `slots_state()`, `slots_catalog([slot])`, `slots_matrix()` | `slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([lua-interface.md](../emulator/design/control-interfaces/lua-interface.md#zx-bus-slots)) |
 | Python | `unreal.slots_state()`, `slots_catalog(slot=)`, `slots_matrix()` | `unreal.slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([python-interface.md](../emulator/design/control-interfaces/python-interface.md#zx-bus-slots)) |
 | Qt | Machine > Slots | the same window: plug, remove, options, the plan preview, Undo |

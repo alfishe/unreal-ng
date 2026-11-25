@@ -11,6 +11,7 @@ coverage run (cover.txt, cover.json), so the exported draft carries the coverage
 Input scripts are zx-reaper's tests/inputs format (tools/zxrun.py): one line per change, the keys held until the next
 line; "FRAME KEYS..." (A-Z 0-9 ENTER SPACE CS SS, Kempston KF KL KR KU KD), "FRAME -" releases all, "FRAME END" ends
 the script, "+N" counts from the previous line. Each script's frames count from where the previous one ended.
+Keys held together are separate words ("100 W O"); one word "W+O" is the same chord (type_input takes it as a key).
 
   mm_session.py --snapshot run-B/re/orig.z80 --inputs run-B/tests/inputs/{demo-kempston,cheat-tour,play,demo}.txt \\
       --out scratch/p3/mm --ranges 5900-59FF,8000-FFFF

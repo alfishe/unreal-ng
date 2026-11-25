@@ -68,7 +68,7 @@ inspect_state   {"aspects":["slots"]}
 
 emulator_manage {"action":"slots_set","slot":"zxbus.4","options":"ctrlMask=classic"}   # options of a fitted card
 #   slots: applied ... restarted: emulator ed55c5ad-... -> 3444c8d8-... (running)
-emulator_manage {"action":"slots_remove","slot":"zxbus.4"}
+emulator_manage {"action":"slots_remove","slot":"zxbus.4"}                            # 'slots_unplug' is the same action
 emulator_manage {"action":"slots_matrix","table":"card-x-card"}                       # the compatibility table
 
 # The General Sound personality is the same kind of change (Q10): the card in the GS slot replaced, a restart

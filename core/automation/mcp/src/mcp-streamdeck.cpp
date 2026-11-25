@@ -203,9 +203,7 @@ void RegisterStreamDeck(ToolRegistry& registry)
                 known = known || v == verb;
             if (!known)
             {
-                done(ToolResult::Error("unknown action '" + verb +
-                                       "' (status, start, stop, restart, settings, pairing, pair, pair_cancel, revoke, "
-                                       "brightness, packs, pack, udev)"));
+                done(ToolResult::Error(UnknownValueText("action", verb, StreamDeckToolVerbs())));
                 return;
             }
             const bool sendBody = method == "POST" || method == "PUT";

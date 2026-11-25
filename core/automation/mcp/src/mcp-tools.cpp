@@ -150,13 +150,10 @@ ToolResult SlotReplyResult(int status, Json::Value response, const std::string& 
     return ToolResult::Error(text);
 }
 
-void RegisterEmulatorManage(ToolRegistry& registry)
+/// The emulator_manage actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& EmulatorManageActions()
 {
-    Json::Value schema;
-    schema["type"] = "object";
-    schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "switch_model", "list", "list_models", "list_machines", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
+    static const std::vector<std::string> actions = {"create", "switch_model", "list", "list_models", "list_machines", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_send", "gs_conversation",
@@ -164,11 +161,17 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "gs_stereo_mode", "gs_reset_counters", "gs_profile_start", "gs_profile_stop",
                                "gs_profile_clear", "board_action",
                                "rom_flash_status", "rom_flash_save", "rom_flash_discard",
-                               "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
-                               "network_configure", "switches", "switch"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+                               "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_unplug", "slots_set",
+                               "network_configure", "switches", "switch"};
+    return actions;
+}
+
+void RegisterEmulatorManage(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    SetSchemaEnum(schema["properties"]["action"], EmulatorManageActions());
     schema["properties"]["action"]["description"] =
         "Lifecycle operation. 'reset' is soft (the reset button) unless 'hard': true (a power cycle). 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
@@ -220,7 +223,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "'slots_catalog' lists every card with its options and how it fits this machine (slot, fit real / adapter / "
         "unrealistic, outcome fits / needs-replace / refused); 'slots_matrix' the compatibility tables (optional "
         "'table'); 'slots_plug' puts 'card' into 'slot' (zxbus.next, ay-socket, auto) with optional 'options' "
-        "(\"dip=ym,saa gsRam=2m\"), 'slots_remove' takes the card out of 'slot', 'slots_set' changes its 'options'. "
+        "(\"dip=ym,saa gsRam=2m\"), 'slots_remove' (alias 'slots_unplug') takes the card out of 'slot', 'slots_set' changes its 'options'. "
         "A change is planned first: one that would remove a card (or fit one unrealistically) is refused with the "
         "plan unless 'replace_if_incompatible' is true; 'dry_run' returns the plan only; 'media_disposition' "
         "save | discard for unsaved media of a removed card. Applied, the machine restarts with the new slot set: "
@@ -804,8 +807,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         done(SlotReplyResult(status, std::move(response), "network"));
                     });
                 }
-                else if (action == "slots_plug" || action == "slots_remove" || action == "slots_set")
+                else if (action == "slots_plug" || action == "slots_remove" || action == "slots_unplug" || action == "slots_set")
                 {
+                    // 'slots_unplug' is another name of 'slots_remove' (agents asked for it; E1)
+                    const bool removeCard = action == "slots_remove" || action == "slots_unplug";
                     const std::string slot = args.get("slot", "").asString();
                     if (slot.empty() && action != "slots_plug")
                     {
@@ -832,7 +837,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         body["dryRun"] = args["dry_run"].asBool();
                     if (args.isMember("media_disposition") && args["media_disposition"].isString())
                         body["mediaDisposition"] = args["media_disposition"].asString();
-                    const std::string verb = action == "slots_plug" ? "plug" : action == "slots_remove" ? "remove" : "options";
+                    const std::string verb = action == "slots_plug" ? "plug" : removeCard ? "remove" : "options";
                     caller.Call("POST", Endpoint(id, "/slots/" + (slot.empty() ? std::string("auto") : slot) + "/" + verb), &body,
                                 [done](int status, Json::Value response) { done(SlotReplyResult(status, std::move(response))); });
                 }
@@ -987,7 +992,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 }
                 else
                 {
-                    done(ToolResult::Error("Unknown action '" + action + "'"));
+                    done(ToolResult::Error(UnknownValueText("action", action, EmulatorManageActions())));
                 }
                 (void)args;
             };
@@ -1455,21 +1460,24 @@ std::string FormatCallbackList(const Json::Value& list)
     return text;
 }
 
+/// The control_execution actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& ControlExecutionActions()
+{
+    static const std::vector<std::string> actions = {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
+                               "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
+                               "run_until_pc", "card_run_to", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
+                               "bp_list", "bp_reset_hits", "bp_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
+                               "callbacks", "callback_resume", "callback_remove", "callback_policy",
+                               "set_register", "port_out", "select_cpu", "wait", "take_control", "release_control"};
+    return actions;
+}
+
 void RegisterControlExecution(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
-                               "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
-                               "run_until_pc", "card_run_to", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "bp_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
-                               "callbacks", "callback_resume", "callback_remove", "callback_policy",
-                               "set_register", "port_out", "select_cpu", "wait", "take_control", "release_control"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+    SetSchemaEnum(schema["properties"]["action"], ControlExecutionActions());
     schema["properties"]["action"]["description"] =
         "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
         "(bp_add switches the breakpoints feature on). run_frame / run_to_interrupt skip breakpoints: to stop at one, "
@@ -2559,7 +2567,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     }
                     else
                     {
-                        done(ToolResult::Error("Unknown action '" + action + "'"));
+                        done(ToolResult::Error(UnknownValueText("action", action, ControlExecutionActions())));
                         return;
                     }
 
@@ -2878,14 +2886,10 @@ std::string FormatTtdStatus(const Json::Value& status)
     return out.str();
 }
 
-void RegisterInspectState(ToolRegistry& registry)
+/// The inspect_state aspects: the schema enum and the unknown-aspect answer read this one list
+const std::vector<std::string>& InspectStateAspects()
 {
-    Json::Value schema;
-    schema["type"] = "object";
-    schema["properties"]["aspects"]["type"] = "array";
-    schema["properties"]["aspects"]["items"]["type"] = "string";
-    Json::Value allowed(Json::arrayValue);
-    for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
+    static const std::vector<std::string> aspects = {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
@@ -2893,11 +2897,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
                                "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
-                               "audio_gs_firmware_profiles", "audio_gs_zxdma", "audio_gs_profile", "audio_gs_events"})
-    {
-        allowed.append(aspect);
-    }
-    schema["properties"]["aspects"]["items"]["enum"] = allowed;
+                               "audio_gs_firmware_profiles", "audio_gs_zxdma", "audio_gs_profile", "audio_gs_events"};
+    return aspects;
+}
+
+void RegisterInspectState(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["aspects"]["type"] = "array";
+    schema["properties"]["aspects"]["items"]["type"] = "string";
+    SetSchemaEnum(schema["properties"]["aspects"]["items"], InspectStateAspects());
     schema["properties"]["aspects"]["default"] = Json::Value(Json::arrayValue);
     schema["properties"]["aspects"]["default"].append("registers");
     schema["properties"]["aspects"]["default"].append("disasm");
@@ -3278,9 +3288,8 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "audio_gs_firmware_profiles" && aspect != "audio_gs_zxdma" && aspect != "audio_gs_profile" &&
                     aspect != "audio_gs_events")
                 {
-                    done(ToolResult::Error("Unknown aspect '" + aspect +
-                                            "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>, audio_gs_stats[.<section>], audio_gs_firmware[.<object>], audio_gs_firmware_profiles, audio_gs_zxdma, audio_gs_profile, audio_gs_events"));
+                    done(ToolResult::Error(UnknownValueText("aspect", aspect, InspectStateAspects()) +
+                                            "; also board.<id>, audio_gs_stats.<section>, audio_gs_firmware.<object>"));
                     return;
                 }
             }
@@ -5741,16 +5750,19 @@ void RegisterInspectState(ToolRegistry& registry)
 namespace
 {
 
+/// The type_input actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& TypeInputActions()
+{
+    static const std::vector<std::string> actions = {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys", "route"};
+    return actions;
+}
+
 void RegisterTypeInput(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys", "route"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+    SetSchemaEnum(schema["properties"]["action"], TypeInputActions());
     schema["properties"]["action"]["description"] =
         "Input operation. 'type' sends text (auto-shift; a line end presses ENTER; a character no key types refuses the text); 'tap' presses a key for N frames (count: N taps in a row); 'combo' presses several keys at once; "
         "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
@@ -5765,10 +5777,11 @@ void RegisterTypeInput(ToolRegistry& registry)
     schema["properties"]["text"]["type"] = "string";
     schema["properties"]["text"]["description"] = "Text for 'type' (BASIC command when tokenized=true)";
     schema["properties"]["key"]["type"] = "string";
-    schema["properties"]["key"]["description"] = "Single key name for tap/press/release (see list_keys)";
+    schema["properties"]["key"]["description"] =
+        "Key name for tap/press/release (see list_keys), or keys held together joined with '+' (\"w+o\", \"caps+1\")";
     schema["properties"]["keys"]["type"] = "array";
     schema["properties"]["keys"]["items"]["type"] = "string";
-    schema["properties"]["keys"]["description"] = "Key names for 'combo'";
+    schema["properties"]["keys"]["description"] = "Key names for 'combo': a list, one name per item ([\"w\", \"o\"])";
     schema["properties"]["name"]["type"] = "string";
     schema["properties"]["name"]["description"] = "Macro name for 'macro'";
     schema["properties"]["frames"]["type"] = "integer";
@@ -5885,7 +5898,7 @@ void RegisterTypeInput(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action + "'"));
+            done(ToolResult::Error(UnknownValueText("action", action, TypeInputActions())));
         });
 }
 
@@ -5898,16 +5911,19 @@ void RegisterTypeInput(ToolRegistry& registry)
 namespace
 {
 
+/// The mouse_input actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& MouseInputActions()
+{
+    static const std::vector<std::string> actions = {"move", "glide", "press", "release", "click", "buttons", "wheel", "release_all", "status"};
+    return actions;
+}
+
 void RegisterMouseInput(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"move", "glide", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+    SetSchemaEnum(schema["properties"]["action"], MouseInputActions());
     schema["properties"]["action"]["description"] =
         "The machine's own mouse (relative device): Kempston interface, the Sprinter's serial mouse, the ZX-Evo / "
         "TS-Conf PS/2 mouse; a machine without a mouse refuses with 409. 'move' shifts by dx/dy emulated pixels "
@@ -6119,7 +6135,7 @@ void RegisterMouseInput(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action + "'"));
+            done(ToolResult::Error(UnknownValueText("action", action, MouseInputActions())));
         });
 }
 
@@ -6132,16 +6148,19 @@ void RegisterMouseInput(ToolRegistry& registry)
 namespace
 {
 
+/// The joystick_input actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& JoystickInputActions()
+{
+    static const std::vector<std::string> actions = {"press", "release", "set", "tap", "status"};
+    return actions;
+}
+
 void RegisterJoystickInput(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"press", "release", "set", "tap", "status"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+    SetSchemaEnum(schema["properties"]["action"], JoystickInputActions());
     schema["properties"]["action"]["description"] =
         "Kempston joystick (reads at IN #1F on the machines whose board decodes it: Pentagon, Scorpion, Profi, ZX-Evo "
         "BaseConf, TS-Conf, Sprinter, Next; not the 48K / 128K / +2 / +2A / +3 or the ATM Turbo 2+). 'press' holds buttons, 'release' lets them go, "
@@ -6250,7 +6269,7 @@ void RegisterJoystickInput(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action + "' (press, release, set, tap, status)"));
+            done(ToolResult::Error(UnknownValueText("action", action, JoystickInputActions())));
         });
 }
 
@@ -6715,13 +6734,10 @@ std::string FormatCardMove(const Json::Value& b)
     return text;
 }
 
-void RegisterTimeTravel(ToolRegistry& registry)
+/// The time_travel actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& TimeTravelActions()
 {
-    Json::Value schema;
-    schema["type"] = "object";
-    schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
+    static const std::vector<std::string> actions = {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_step_over", "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
@@ -6731,10 +6747,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "export_clip",
                                "memory_at", "memory_series", "memory_diff", "screen_at", "card_seek", "card_step", "card_reverse_continue",
                                "card_reverse_step_over", "card_step_over", "card_step_out", "card_run_to_cursor",
-                               "card_position"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+                               "card_position"};
+    return actions;
+}
+
+void RegisterTimeTravel(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    SetSchemaEnum(schema["properties"]["action"], TimeTravelActions());
     schema["properties"]["action"]["description"] =
         "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; journal=true "
         "also records the write journal; black_box=true records the last 'minutes' and leaves turbo free), "
@@ -8977,7 +8999,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
                 else
                 {
-                    done(ToolResult::Error("Unknown action '" + action + "'"));
+                    done(ToolResult::Error(UnknownValueText("action", action, TimeTravelActions())));
                 }
                 (void)args;
             };
@@ -9117,6 +9139,13 @@ std::string MemoryReadText(const Json::Value& body)
 
 }  // namespace
 
+/// The memory_access actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& MemoryAccessActions()
+{
+    static const std::vector<std::string> actions = {"regions", "read", "write", "save", "load"};
+    return actions;
+}
+
 /// memory_access: every memory of the machine by name (memory-spaces design, step 1): the Z80 view ("cpu") and the
 /// device memory regions - the ones machines declare (Sprinter video RAM, TS-Conf CRAM / SFILE, the CMOS) and every
 /// memory time travel records (NeoGS RAM and flash, General Sound RAM, MoonSound wave memory, VDAC2, EEPROMs,
@@ -9126,8 +9155,7 @@ void RegisterMemoryAccess(ToolRegistry& registry)
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    for (const char* action : {"regions", "read", "write", "save", "load"})
-        schema["properties"]["action"]["enum"].append(action);
+    SetSchemaEnum(schema["properties"]["action"], MemoryAccessActions());
     schema["properties"]["action"]["description"] =
         "regions: list the machine's memories (name, aliases, size, writable, ttd_region); read / write bytes; save "
         "to / load from a file on the emulator's machine (regions only)";
@@ -9182,7 +9210,7 @@ void RegisterMemoryAccess(ToolRegistry& registry)
             const unsigned length = args.isMember("length") && args["length"].isIntegral() ? args["length"].asUInt() : 128u;
             if (action != "regions" && action != "read" && action != "write" && action != "save" && action != "load")
             {
-                done(ToolResult::Error("memory_access: action must be regions, read, write, save or load"));
+                done(ToolResult::Error(UnknownValueText("action", action, MemoryAccessActions(), "memory_access: ")));
                 return;
             }
             if (cpu && (action == "save" || action == "load"))
@@ -9306,15 +9334,19 @@ void RegisterMemoryAccess(ToolRegistry& registry)
         });
 }
 
+/// The rzx_playback actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& RzxPlaybackActions()
+{
+    static const std::vector<std::string> actions = {"play", "stop", "status", "seek"};
+    return actions;
+}
+
 void RegisterRzxPlayback(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"].append("play");
-    schema["properties"]["action"]["enum"].append("stop");
-    schema["properties"]["action"]["enum"].append("status");
-    schema["properties"]["action"]["enum"].append("seek");
+    SetSchemaEnum(schema["properties"]["action"], RzxPlaybackActions());
     schema["properties"]["action"]["description"] =
         "play a recording, stop playing, report the playback, or seek to a frame";
     schema["properties"]["frame"]["type"] = "integer";
@@ -9392,7 +9424,7 @@ void RegisterRzxPlayback(ToolRegistry& registry)
             }
             if (action != "play")
             {
-                done(ToolResult::Error("Unknown action '" + action + "': expected play, stop, status or seek"));
+                done(ToolResult::Error(UnknownValueText("action", action, RzxPlaybackActions())));
                 return;
             }
 
@@ -9455,6 +9487,13 @@ void RegisterRzxPlayback(ToolRegistry& registry)
 
 /// region <companion_manage>
 
+/// The companion_manage actions: the schema enum and the unknown-action answer read this one list
+static const std::vector<std::string>& CompanionManageActions()
+{
+    static const std::vector<std::string> actions = {"list", "revoke", "revoke_all"};
+    return actions;
+}
+
 /// companion_manage (docs/inprogress/2026-10-16-companion-client/surfaces.md §4): list and revoke companion clients -
 /// paired devices acting as the user's hands. An agent never acts as one, pairs or approves; it revokes only when the
 /// user asks
@@ -9463,9 +9502,7 @@ void RegisterCompanionManage(ToolRegistry& registry)
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"].append("list");
-    schema["properties"]["action"]["enum"].append("revoke");
-    schema["properties"]["action"]["enum"].append("revoke_all");
+    SetSchemaEnum(schema["properties"]["action"], CompanionManageActions());
     schema["properties"]["action"]["description"] =
         "list the companions and pending pairings; revoke one (id or name); revoke every one";
     schema["properties"]["id"]["type"] = "string";
@@ -9538,7 +9575,7 @@ void RegisterCompanionManage(ToolRegistry& registry)
                 });
                 return;
             }
-            done(ToolResult::Error("unknown action '" + action + "': list, revoke or revoke_all"));
+            done(ToolResult::Error(UnknownValueText("action", action, CompanionManageActions())));
         });
 }
 

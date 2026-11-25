@@ -89,7 +89,16 @@
   `JobRegistry_Test`, `JobControl_Test`, `JobsVerbs_Test`, `WebAPIJobsRoutes_Test`, `McpTools_Test.*Async*` /
   `Jobs_*`; live `tools/verification/mcp/test_jobs.py`.
 - [ ] S3: server-side input script player with TTD recording (M).
-- [ ] V1: L1 over several sessions (M).
+- [x] V1: L1 over several sessions (M). As built (2026-11-25): `analysis build sessions=<list>` (`current` and
+  `ttd dump` files, in order, at most 64) replays each session on its own clone into one `L1Builder`
+  (`NextSession`: counts, routines, call graph and byte uses add up; the call stack, open loops and provenance are
+  dropped at the boundary; a session's first instruction is a `resume`). `replay.sessions[]` gives each session's
+  own frames and its `frame_base` on the build's one frame axis; an instruction row ends with `[session, frames,
+  first_frame, last_frame]` per session it ran in. A build of one is unchanged byte for byte. No window; L3
+  experiment / cover answer 409 on such a build. Planes: REST / MCP `sessions` (an array), CLI / Lua / Python
+  `sessions=a.ttd,current`; `re_session build --sessions`. Tests `AnalysisL1_Test.SeveralSessionsFoldIntoOneL1`,
+  `AnalysisControlL1_Test.BuildOverSeveralSessions`. Docs:
+  [several sessions](../../emulator/analysis/analysis-layers.md#several-sessions).
 - [x] V2: `screen_at` (shown / normal / shadow) at a past frame (S). As built 2026-11-19: verb `screen-at`
   (`TimeTravelController::ReadScreenAt`): `which` shown (the frame's final picture, composed as a seek by frame shows
   it, PNG via the Screenshotter, `area` full / screen) or normal / shadow (RAM page 5 / 7 at the frame's end, a 256 x
@@ -100,7 +109,18 @@
   the live picture captured when the frame ended, the bytes equal the live RAM pages (a guest flipping the shown screen
   every 64 loops).
 - [ ] V3: lab machine preset in one call; `keys set` (M).
-- [ ] E1: unknown action / value lists the valid ones, "did you mean" (S).
+- [x] E1: unknown action / value lists the valid ones, "did you mean" (S). As built (2026-11-25): one helper,
+  `UnknownValueText` (`mcp-tool-utils.h`, with `EditDistance` / `NearestMatch` / `SetSchemaEnum`): "Unknown action
+  'slots_plugg'. Did you mean 'slots_plug'? Valid actions: ..."; the nearest by Levenshtein distance within max(2,
+  length / 3), else a name that contains the refused one. Every MCP tool but `analysis` answers with it, from the one
+  list its schema `enum` is built from (`emulator_manage`, `control_execution`, `time_travel`, `type_input`,
+  `mouse_input`, `joystick_input`, `memory_access`, `rzx_playback`, `companion_manage`, `capture_media`,
+  `manage_symbols`, `asm_source`, `signature_info`, `streamdeck`, `audio_mixer`, `gs_analysis`, `controllers`,
+  `bus_analyzer`, `device_history`, `jobs`, `gui_*`; `inspect_state` for an unknown aspect). `media` and `actions` forward
+  the action to the WebAPI, which answers. `slots_unplug` is an alias of `slots_remove`. Tests:
+  `McpToolUtils_Test.EditDistanceIsLevenshteinWithoutCase`, `.NearestMatchSuggestsOnlyACloseValue`,
+  `.UnknownValueTextListsTheValidOnes`, `McpTools_Test.EmulatorManage_UnknownAction_ListsValidOnesAndSuggestsTheNearest`,
+  `.EmulatorManage_SlotsUnplug_IsAnAliasOfSlotsRemove`, `.TimeTravel_UnknownAction_Errors`.
 - [ ] E2: features in MCP (`kempstonmouse` off), mouse / Kempston notes in tool descriptions, Bumpy retry (S).
 
 ### P3
@@ -135,12 +155,23 @@
   rows expand to the record's summary and its first / newest 200 hits (hit, frame, T, PC, address, value, kind, card
   time), polled at 4 Hz through `GetHitLog` only while open, the records read only when the counts moved. Tests:
   `BreakpointHits_Test.*` (unreal-qt-tests).
-- [ ] V5: L1 first / last frame per instruction; reader-PC filter (S). Verified 2026-11-24, partly there: first /
+- [x] V5: L1 first / last frame per instruction; reader-PC filter (S). Verified 2026-11-24, partly there: first /
   last frame per routine, byte, block copy, branch and replay. Per instruction 2026-11-24: `instructions[]` rows
   end with `first_frame, last_frame` (`[z80, page, code, class, count, tstates, smc, first_frame, last_frame]`,
-  the recording's frames). Left: the reader-PC filter of reads.
+  the recording's frames). Reader filter 2026-11-25: `analysis build
+  ignore_readers=5B00-5BFF,...` (Z80 ranges of a depacker): the data reads of instructions there set no flag, reader
+  or count on the bytes; their writes and code are folded as ever. Test `AnalysisL1_Test.IgnoredReadersLeaveNoReads`.
 - [ ] V6: GS firmware state view (M).
-- [ ] V7: `--port-base auto` and a ports file (S).
+- [x] V7: `--port-base auto` and a ports file (S). As built (2026-11-25, uncommitted on `re-backlog2`): unreal-qt
+  had no port option (six `UNREAL_*_PORT` variables set by each script); it takes `--port-base <N | auto>` now and
+  sets them for itself before automation starts (WebAPI N, CLI +100, MCP +200, GDB +300, DeZog +400, ZRCP +500).
+  `auto`: the first base of 20000, 20600, ... 32000 whose six ports all bind (a real bind on all interfaces, then
+  closed), the search starting at a base taken from the process id so instances started together do not race for
+  one; none free = stderr and exit code 2. `--ports-file <path>` writes `{"port_base", "webapi", "cli", "mcp",
+  "gdb", "dezog", "zrcp", "pid"}` by temp file + rename when the ports are decided. `mcplib.launch(binary, 'auto')`
+  (`run_all.py --port-base auto`) uses both and gives `process.ports`. Tests: `PortPlan_Test.*` (core-tests). Docs:
+  [environment-variables](../../emulator/environment-variables.md#all-six-ports-at-once---port-base-and---ports-file).
+  Left: `re_session.py` and the other launchers still take a number.
 - [x] E3: `frame` in `/registers` and run answers (S). Run answers in `c3ab886b3`; 2026-11-24: `special.frame` next
   to `special.t` in `GET /registers` (and the `regs` of `/debug/snapshot`), the MCP register text ends with
   "frame N T t". Test `DebugSnapshot_Test.RegistersCarryEveryGroup`.
@@ -153,7 +184,17 @@
 - [x] E5: `capture.json` script start frame (S). 2026-11-24: `re_session capture` writes `script_start_frame` (the
   emulator / TTD frame of the play's frame 0) and, for `--inputs`, `scripts`: each script's path, text and its own
   `start_frame`.
-- [ ] E6: key script error explains the separator (S).
+- [x] E6: key script error explains the separator (S). As built (2026-11-25): the script with spaces is
+  `mm_session.py`'s (zx-reaper's format); its word "W+O" went to `type_input press` as one key name. Now `+` joins
+  keys held together wherever a key text is taken: `DebugKeyboardManager::SplitKeyChord` ("w+o", "caps+1"; the key
+  `+` stays a key, "ss++" is symbol shift and `+`), used by the WebAPI `keyboard/tap` / `press` / `release` (`key`)
+  and `combo` (an item of `keys`), so by MCP `type_input`, and by the `input.key` action for an item of `keys` (its
+  text form split at `+` already). The refusal says how keys are written (`DescribeUnknownKey`): "Unknown key 'W O':
+  a key is one name (a, enter, caps); keys held together are joined with '+' (w+o); a space or a comma does not
+  separate keys". CLI `key press` / Python / Lua key verbs still take one name. Tests:
+  `DebugKeyboardManager_test.SplitKeyChord_PlusJoinsKeysHeldTogether`, `.SplitKeyChord_TheKeyPlusStaysAKey`,
+  `.DescribeUnknownKey_SaysHowKeysAreWritten`,
+  `HostActions_Test.AKeyTapsHoldsAndReleasesAndAnUnknownNameIsABadRequest`.
 - [ ] E7: RZX seek discoverability (S).
 - [x] E8: capability check before a session (S). 2026-11-24: `mcplib.launch(..., needs=)` compares the binary's
   `tools/list` with the tools the caller uses and refuses at launch ("has no MCP tool analysis: build current

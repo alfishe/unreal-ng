@@ -61,6 +61,9 @@ public:
     void Instruction(const OpInfo& op, const Access* accesses, int count, PhysKey writer, uint64_t frame);
     /// A byte a tool edit wrote (past the bus): its own source from now on, not the byte a copy brought before
     void Forget(PhysKey key);
+    /// Another machine runs from here (L1Builder::NextSession): registers and memory hold other values, so their
+    /// sources are forgotten and the drawing pass ends. What was drawn stays
+    void NewSession();
 
     /// The source bytes drawn to the screen, sorted by key
     std::vector<DrawnByte> Build() const;
