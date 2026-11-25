@@ -16,6 +16,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "debugger/analyzers/analysis/l2model.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
@@ -66,6 +67,10 @@ public:
     /// Start a build of @p bundle for @p emulatorId; false with @p error when one is running
     bool Start(const std::string& emulatorId, TraceBundle bundle, ReplayOptions options, const std::string& path,
                uint64_t& id, std::string& error);
+    /// One L1 over several sessions (ReplayBuild's list form), in the order given. No recording is kept for the
+    /// result: the experiments and the coverage of L3 replay one recording
+    bool Start(const std::string& emulatorId, std::vector<TraceBundle> bundles, ReplayOptions options,
+               const std::string& path, uint64_t& id, std::string& error);
     JobView View(const std::string& emulatorId) const;
     std::shared_ptr<const L1Result> Result(const std::string& emulatorId) const;
     /// The L2 the detectors made from that L1 (on the worker, right after the replay)
@@ -111,8 +116,8 @@ private:
         uint64_t resultJob = 0;
     };
 
-    void Run(const std::string& emulatorId, std::shared_ptr<Job> job, std::shared_ptr<const TraceBundle> bundle,
-             ReplayOptions options, jobs::Context& context);
+    void Run(const std::string& emulatorId, std::shared_ptr<Job> job,
+             std::shared_ptr<const std::vector<TraceBundle>> bundles, ReplayOptions options, jobs::Context& context);
     static void End(Job& job, const std::string& state, const std::string& error);
     /// Until the job has ended (cancelled first by the caller)
     static void WaitEnded(Job& job);

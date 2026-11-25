@@ -144,15 +144,15 @@ void RegisterInterface(ToolRegistry& registry, const Json::Value& spec)
         [name, tool, actions](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
             bool known = false;
-            std::string offered;
+            std::vector<std::string> offered;
             for (const Json::Value& each : actions)
             {
                 known = known || each.asString() == action;
-                offered += (offered.empty() ? "" : ", ") + each.asString();
+                offered.push_back(each.asString());
             }
             if (!known)
             {
-                done(ToolResult::Error(tool + ": action is one of " + offered));
+                done(ToolResult::Error(UnknownValueText("action", action, offered, tool + ": ")));
                 return;
             }
             const std::string method = name + "." + action;

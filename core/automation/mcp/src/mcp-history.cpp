@@ -134,7 +134,7 @@ void RegisterDeviceHistory(ToolRegistry& registry)
                 known = known || action == a;
             if (!known)
             {
-                done(ToolResult::Error("action: '" + action + "' is not one of list, read, config, clear, pause, resume"));
+                done(ToolResult::Error(UnknownValueText("action", action, std::vector<std::string>(std::begin(kActions), std::end(kActions)))));
                 return;
             }
             const std::string device = args["device"].asString();

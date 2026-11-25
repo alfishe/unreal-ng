@@ -20,6 +20,7 @@ add_library(unreal-debugger-views STATIC
     ${ECAT_DIR}/dialogs/debugger/gsanalysis.cpp
     ${ECAT_DIR}/dialogs/debugger/gsmonitor.cpp
     ${ECAT_DIR}/dialogs/debugger/gsprofiling.cpp
+    ${ECAT_DIR}/dialogs/debugger/gssend.cpp
     ${ECAT_DIR}/dialogs/debugger/memoryview.cpp
     ${ECAT_DIR}/dialogs/debugger/memorywindow.cpp
     ${ECAT_DIR}/dialogs/debugger/nextviews.cpp

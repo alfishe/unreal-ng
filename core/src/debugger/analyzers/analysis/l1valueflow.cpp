@@ -950,6 +950,22 @@ void ValueFlow::Forget(PhysKey key)
     _impl->SetShadow(key, kNoKey, kNoKey);
 }
 
+void ValueFlow::NewSession()
+{
+    Impl& impl = *_impl;
+    impl.EndPass();
+    for (Value& v : impl.regs)
+        v = Value{};
+    for (Value& v : impl.alt)
+        v = Value{};
+    impl.shadow.clear();
+    impl.maskShadow.clear();
+    impl.fanout.clear();
+    impl.lastFrame = ~0ull;
+    impl.blockWriter = kNoKey;
+    impl.blockAt = 0;
+}
+
 std::vector<DrawnByte> ValueFlow::Build() const
 {
     std::vector<DrawnByte> out;

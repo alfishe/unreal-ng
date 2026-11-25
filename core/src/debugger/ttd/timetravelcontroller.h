@@ -1902,6 +1902,13 @@ private:
     /// @param cp Checkpoint to apply. Read-only; no refs are taken or released.
     void RestoreCheckpoint(const TTDCheckpoint& cp);
 
+    /// Per engine region, nonzero: its device's load at checkpoint @p engineIndex writes it itself
+    /// (ITTDRegionSource::TTDLoadRestoresRegions); null when none does
+    const std::vector<uint8_t>* RegionsTheirDevicesRestore(size_t engineIndex);
+    std::vector<uint8_t> _leaveRegions;
+    std::vector<uint8_t> _leaveState;
+    std::vector<TTDDeviceRegion> _leaveSourceRegions;
+
     /// @brief The pieces a replay may have written since the engine last restored memory: the RAM pages and the
     /// device pieces their trackers marked (taken and cleared), every piece of a region no tracker watches. Valid
     /// only while _engineMemoryKnown holds

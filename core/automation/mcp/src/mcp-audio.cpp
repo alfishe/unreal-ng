@@ -169,8 +169,7 @@ void RegisterAudioMixer(ToolRegistry& registry)
                 known = known || a == requested;
             if (!known)
             {
-                done(ToolResult::Error("unknown action '" + requested +
-                                       "' (get, source, set, mute, unmute, levels, settings, set_setting)"));
+                done(ToolResult::Error(UnknownValueText("action", requested, AudioMixerToolActions())));
                 return;
             }
             // mute / unmute: set muted, of the master unless a source is named

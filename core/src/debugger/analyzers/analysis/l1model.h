@@ -63,6 +63,15 @@ enum class EdgeKind : uint8_t
 };
 const char* EdgeKindName(EdgeKind kind);
 
+/// A build over several sessions: one session an instruction ran in
+struct SessionSpan
+{
+    uint16_t session = 0;     ///< index into L1Result::sessions
+    uint32_t frames = 0;      ///< frames of that session it ran in
+    uint64_t firstFrame = 0;  ///< the session's own frames of its first and last run there
+    uint64_t lastFrame = 0;
+};
+
 /// One instruction location, as executed
 struct Instruction
 {
@@ -77,6 +86,8 @@ struct Instruction
     bool selfModified = false;  ///< its bytes were seen to change
     uint64_t firstFrame = 0;    ///< the recording's frame of its first execution
     uint64_t lastFrame = 0;     ///< the recording's frame of its last execution
+    /// A build over several sessions: the sessions it ran in, in order (empty in a build of one)
+    std::vector<SessionSpan> sessions;
 };
 
 struct Edge
@@ -502,9 +513,31 @@ struct ReplaySummary
     uint64_t builderBytes = 0;  ///< what L1Builder held at the end (not serialized: hash tables grow by host policy)
 };
 
+/// One recording of a build over several (L1Result::sessions). Every frame the build names (a routine's, a
+/// byte's, a copy's, an arrival's) lies on one axis: session 0 keeps its own frames, the next one follows where
+/// the one before ended. A frame F of the build is frame F - frameBase + firstFrame of the session whose
+/// [frameBase, frameBase + frames) holds it
+struct SessionInfo
+{
+    std::string name;           ///< "current", or the session file's path
+    uint64_t firstFrame = 0;    ///< its own first and end frame (exclusive)
+    uint64_t lastFrame = 0;
+    uint64_t frames = 0;
+    uint64_t frameBase = 0;     ///< where its first frame stands on the build's axis
+    uint64_t instructions = 0;
+    uint64_t tstates = 0;
+    uint64_t interrupts = 0;
+    uint32_t checked = 0;
+    uint32_t diverged = 0;
+    uint64_t firstDivergence = 0;  ///< its own frame
+};
+
 struct L1Result
 {
     ReplaySummary replay;
+    /// A build over several sessions: each of them, in the order folded (empty in a build of one, whose replay
+    /// summary says it all). The summary then holds the sums, and its frames the whole axis
+    std::vector<SessionInfo> sessions;
     std::vector<Instruction> instructions;  ///< sorted by key
     std::vector<Block> blocks;              ///< sorted by start
     std::vector<Routine> routines;          ///< sorted by entry

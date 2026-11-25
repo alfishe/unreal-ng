@@ -1191,8 +1191,15 @@ struct GSFirmwareStateView
 - **Tests.** `GSHostDriver_Test`: `#23` on the firmware's card with its reply and no anomaly; the parameter checks
   and names; drain, timeout, replay refusal; the protocol state through a command, an upload and its end.
   `TTDInputApply_Test` covers `GSReadData`. MCP: `test_the_debugger_sends_a_command`.
-- **Not done.** A MultiSound slot's card has a log but no send (the planes address the machine's card). The Qt
-  panel (U2).
+- **The GUI (U2, gui-card-debugger.md A5.3 Send console), 2026-11-25.** A card tab "GS send" in both debuggers, next to
+  the GS monitor (a tab, not a dialog: the monitor's Send... and Ctrl+Shift+S bring it to the front). The picker lists
+  the profile's command set (`gs-firmware` object `commands`: names, pre / post counts, typed parameters, the reply and
+  its meaning) or takes any byte (#NN, $NN, 0xNN, decimal); a field per parameter, More bytes for a variable count or a
+  byte the profile does not name, Replies (empty: the profile's); Send is `gs send` with no wait, the tab follows the
+  send by id to its replies decoded (the conversation's `text`, also in the WebAPI answer). Embedded:
+  `unreal-qt/src/debugger/gssendpane.{h,cpp}`, `CardPanes_Test.TheSendTabSendsACommandAndShowsItsReply`.
+- **Not done.** A MultiSound slot's card has a log but no send (the planes address the machine's card): the tab says
+  so.
 
 ### 6.5 Device boards (N4, N8)
 

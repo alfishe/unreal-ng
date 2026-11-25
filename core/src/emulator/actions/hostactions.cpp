@@ -214,23 +214,29 @@ DebugJoystickManager* JoystickManager(Emulator& emulator)
                                                                    : nullptr;
 }
 
-/// The keys of input.key: `keys` (a list) or `key` (one name, or "caps+1"); "" with every name known, else the error
+/// The keys of input.key: `keys` (a list) or `key` (one name, or "caps+1"); "" with every name known, else the error.
+/// A text splits at '+' and ','; an item of a list may be a chord too (["w+o"] is w and o held together)
 std::string KeyNames(const ActionValue& value, std::vector<std::string>& keys)
 {
-    keys = ListParam(value, "keys");
-    if (keys.empty())
+    std::vector<std::string> items = ListParam(value, "keys");
+    if (items.empty())
     {
         const std::optional<std::string> key = TextParam(value, "key");
         if (key && DebugKeyboardManager::IsKnownKeyName(*key))
-            keys.push_back(*key);  // a name of its own, even one with a '+' in it
+            items.push_back(*key);  // a name of its own, even one with a '+' in it
         else
-            keys = ListParam(value, "key");
+            items = ListParam(value, "key");
     }
+    keys.clear();
+    for (const std::string& item : items)
+        for (std::string& name : DebugKeyboardManager::SplitKeyChord(item))
+            keys.push_back(std::move(name));
     if (keys.empty())
-        return "key: a key name, or keys: a list (the WebAPI's GET /keyboard/keys lists the names)";
+        return "key: a key name or names held together joined with '+' (w+o), or keys: a list (the WebAPI's GET "
+               "/keyboard/keys lists the names)";
     for (const std::string& key : keys)
         if (!DebugKeyboardManager::IsKnownKeyName(key))
-            return "Unknown key '" + key + "' (the WebAPI's GET /keyboard/keys lists the names)";
+            return DebugKeyboardManager::DescribeUnknownKey(key) + " (the WebAPI's GET /keyboard/keys lists the names)";
     return {};
 }
 

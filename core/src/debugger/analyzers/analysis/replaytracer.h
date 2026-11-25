@@ -55,6 +55,8 @@ struct BundleMedium
 struct TraceBundle
 {
     std::string sourceId;
+    /// What a build over several sessions calls it: "current" (the source's own recording) or the session file
+    std::string name = "current";
     std::string model;                         ///< short model name ("48K")
     std::shared_ptr<const CONFIG> config;      ///< the source's configuration (the clone is made to match it)
     /// The source's fitted slot set as it ran (a card plugged at run time, a Kempston for a game's joystick, is in
@@ -75,6 +77,14 @@ struct TraceBundle
     /// The caller holds the source's CPU. False with @p error when there is no recording
     static bool Capture(Emulator& source, TraceBundle& out, std::string& error);
 
+    /// What Capture takes of @p source besides its recording (the machine, its cards, its media), for a build from
+    /// session files alone: the source's own recording is left as it is. The caller holds the source's CPU
+    static bool Describe(Emulator& source, TraceBundle& out, std::string& error);
+
+    /// Replace the recording with the session file @p path (a `ttd dump`) and name the bundle after it: the file
+    /// is replayed on a machine made like the bundle's source. False with @p error when it cannot be read
+    bool UseSessionFile(const std::string& path, std::string& error);
+
     /// Add the image file @p path ("game.trd", "game.tap") for @p slot ("fdd.a", "tape"), replacing what the
     /// bundle holds for that slot: a bundle built from a session file gets the media the recording ran with.
     /// False with @p error when the file does not exist
@@ -94,6 +104,8 @@ struct ReplayOptions
     uint64_t toFrame = 0;
     uint32_t chunkFrames = 25;  ///< frames per run between progress reports and checkpoint comparisons
     uint64_t salt = 0;          ///< L1Builder's hash salt (0: random)
+    /// Z80 ranges (inclusive) of instructions whose data reads stay out of the byte uses (L1Builder::IgnoreReaders)
+    std::vector<std::pair<uint16_t, uint16_t>> ignoreReaders;
     /// Called after every chunk with the frames done and the frames to do; false cancels the build
     std::function<bool(uint64_t done, uint64_t total)> progress;
 };
@@ -102,5 +114,14 @@ struct ReplayOptions
 /// only the clone it makes. False with @p error when the clone cannot be made, the session does not load, or the
 /// progress callback cancelled
 bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Result& out, std::string& error);
+
+/// One L1 over several recordings of the same program on the same machine (levels, loads, scripts played in
+/// separate sessions): each is replayed on its own clone, one after another, into one builder
+/// (L1Builder::NextSession), so the code, the counts, the routines and the byte uses are those of all of them, and
+/// every instruction names the sessions it ran in (L1Result::sessions, Instruction::sessions). The window options
+/// (fromFrame, toFrame, maxFrames) are for a build of one: with more than one bundle they are refused. The start
+/// image of a page is the first session's that mapped it at its start, the end image the last one's
+bool ReplayBuild(const std::vector<TraceBundle>& bundles, const ReplayOptions& options, L1Result& out,
+                 std::string& error);
 
 }  // namespace analysis

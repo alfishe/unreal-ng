@@ -46,7 +46,8 @@ off, a body shape the fake did not have, a crash). Use both for a change of beha
 ## 4. How
 
 - **Your own instance.** `run_all.py --launch cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt`
-  starts `unreal-qt -platform offscreen` on ports of its own (`--port-base`, default 8095: MCP 8295) and stops it.
+  starts `unreal-qt -platform offscreen` on ports of its own (`--port-base`, default 8095: MCP 8295; `--port-base auto` beside other
+  agents' instances: the emulator picks a free base) and stops it.
   The scripts destroy every instance on the server they talk to: never point them at an emulator someone works in.
   Port variables: [environment-variables.md](../emulator/environment-variables.md).
 - **The fresh binary.** `tools/build/build.sh` before a live run: a stale `unreal-qt` answers with yesterday's text.

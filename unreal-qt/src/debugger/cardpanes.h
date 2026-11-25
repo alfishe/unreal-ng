@@ -18,6 +18,7 @@ class GsAnalysisPane;
 class GsCpuAnalysisPane;
 class GsLwPane;
 class GsMonitorPane;
+class GsSendPane;
 class QLabel;
 class QTimer;
 class QWidget;
@@ -70,6 +71,7 @@ struct Pane
     GsLwPane* inspector = nullptr;  ///< a lightweight player's pane
     ZxDmaTraceView* trace = nullptr;  ///< the board pane's ZX-DMA trace (the NeoGS DMA pane's)
     GsMonitorPane* monitor = nullptr;  ///< the protocol monitor (P5.6, A5.3), else one of the above
+    GsSendPane* send = nullptr;  ///< the send console (P5.6, A5.3: a tab, not a dialog)
     GsAnalysisPane* analysis = nullptr;  ///< an analysis tab (P5.6, A5.2a: Objects, Dispatch, Unknown, Writers)
     GsCpuAnalysisPane* cpuAnalysis = nullptr;  ///< a card CPU analysis tab (A5.2a: Profiler, Events, Coverage, Heat map)
     QWidget* widget() const;
@@ -81,7 +83,8 @@ inline constexpr const char* kOpenMediaPanel = "open_media_panel";
 inline constexpr const char* kSdSlot = "sd.ngs";
 
 /// The panes, children of `parent`, in tab order: GS log, GS protocol, GS monitor (the protocol monitor: the strip, the
-/// error tile, the log following its tail, Pause / Continue; P5.6), GS objects (A5.2a Objects: the profile's structs as
+/// error tile, the log following its tail, Pause / Continue; P5.6), GS send (the send console: a command of the
+/// profile with its parameters, Send, the replies decoded; P5.6), GS objects (A5.2a Objects: the profile's structs as
 /// tables, its variables, the window variables; it replaced the fixed GS firmware tab), GS hardware, NeoGS hardware,
 /// NeoGS DMA, NeoGS SD · MP3 · Flash, GS stats, GS interpreter, GS player, then the A5.2a analysis tabs GS dispatch,
 /// GS unknown, GS writers (GsAnalysisPane), GS profiler, GS events, GS coverage, GS heat map (GsCpuAnalysisPane; the

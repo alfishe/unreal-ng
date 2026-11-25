@@ -515,3 +515,41 @@ TEST_F(DebugKeyboardManager_test, GetMatrixState_ReflectsPressedKeys)
     // Just verify we get 8 bytes (actual matrix state not yet implemented)
     EXPECT_EQ(matrix.size(), 8u);
 }
+
+/// region <Key chords (E6)>
+
+TEST_F(DebugKeyboardManager_test, SplitKeyChord_PlusJoinsKeysHeldTogether)
+{
+    using Keys = std::vector<std::string>;
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("W+O"), (Keys{"W", "O"}));
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord(" caps + 1 "), (Keys{"caps", "1"}));
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("enter"), (Keys{"enter"}));
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("rshift+f12"), (Keys{"rshift", "f12"})) << "PC key names too";
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("w+"), (Keys{"w"})) << "a '+' with nothing after it adds no key";
+    EXPECT_TRUE(DebugKeyboardManager::SplitKeyChord("").empty());
+    EXPECT_TRUE(DebugKeyboardManager::SplitKeyChord("  ").empty());
+
+    // The names are not checked: the caller refuses the unknown one by name
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("W O"), (Keys{"W O"})) << "a space does not separate keys";
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("w+nosuchkey"), (Keys{"w", "nosuchkey"}));
+}
+
+TEST_F(DebugKeyboardManager_test, SplitKeyChord_TheKeyPlusStaysAKey)
+{
+    using Keys = std::vector<std::string>;
+    ASSERT_TRUE(DebugKeyboardManager::IsKnownKeyName("+"));
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("+"), (Keys{"+"}));
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("ss++"), (Keys{"ss", "+"})) << "a '+' where a name starts is the key";
+    EXPECT_EQ(DebugKeyboardManager::SplitKeyChord("++ss"), (Keys{"+", "ss"}));
+}
+
+TEST_F(DebugKeyboardManager_test, DescribeUnknownKey_SaysHowKeysAreWritten)
+{
+    EXPECT_EQ(DebugKeyboardManager::DescribeUnknownKey("nosuchkey"),
+              "Unknown key 'nosuchkey': a key is one name (a, enter, caps); keys held together are joined with '+' (w+o)");
+    EXPECT_EQ(DebugKeyboardManager::DescribeUnknownKey("W O"),
+              "Unknown key 'W O': a key is one name (a, enter, caps); keys held together are joined with '+' (w+o); "
+              "a space or a comma does not separate keys");
+}
+
+/// endregion </Key chords (E6)>

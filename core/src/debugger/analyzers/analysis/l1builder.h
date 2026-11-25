@@ -90,12 +90,27 @@ public:
     /// Complete the pending instruction (the end of the replay); @p regs: the state after it
     void Flush(const Regs& regs, uint64_t now);
 
+    /// Z80 address ranges (inclusive) of instructions whose data reads stay out of the byte uses: a depacker reads
+    /// the packed stream where the program later lies, and those reads say nothing of the program's bytes. Their
+    /// writes, their own code and their loops are folded as ever. Set before the first OnStart
+    void IgnoreReaders(std::vector<std::pair<uint16_t, uint16_t>> ranges);
+
+    /// The next session of a build over several recordings of one program, after the Flush that ended the one
+    /// before: forgets what followed the machine (the call stack, open loops, register and memory provenance)
+    /// and goes on folding into the same code, counts and byte uses. The next
+    /// instruction is a resume, not a successor. @p pageOf reads the new machine's paging; frames of the session
+    /// come as @p frameBase + (frame - @p firstFrame), so every frame of the build lies on one axis, and each
+    /// instruction keeps the sessions it ran in with their own frames (Instruction::sessions)
+    void NextSession(PageOf pageOf, uint64_t frameBase, uint64_t firstFrame);
+
     /// Everything folded so far, as L1. @p pageName names an absolute page ("RAM 5", "ROM 1")
     L1Result Build(const ReplaySummary& summary, const std::function<std::string(uint16_t)>& pageName);
 
     /// Heap held by the folded records (the bounded-memory check)
     size_t MemoryBytes() const;
     uint64_t Instructions() const;
+    uint64_t TStates() const;
+    uint64_t Interrupts() const;
 
     struct BusEvent
     {

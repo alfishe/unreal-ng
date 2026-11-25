@@ -712,6 +712,48 @@ bool DebugKeyboardManager::IsKnownKeyName(const std::string& name)
     return ResolveKeyName(name) != ZXKEY_NONE || pckey::FromName(name) != PcKey::None;
 }
 
+std::vector<std::string> DebugKeyboardManager::SplitKeyChord(const std::string& text)
+{
+    const auto trim = [](const std::string& part) {
+        const size_t first = part.find_first_not_of(" \t");
+        if (first == std::string::npos)
+            return std::string();
+        return part.substr(first, part.find_last_not_of(" \t") - first + 1);
+    };
+
+    std::vector<std::string> keys;
+    const std::string whole = trim(text);
+    if (whole.empty())
+        return keys;
+    if (IsKnownKeyName(whole))
+    {
+        keys.push_back(whole);  // a name of its own, the key "+" among them
+        return keys;
+    }
+
+    size_t pos = 0;
+    while (pos < whole.size())
+    {
+        // A '+' where a name starts is the key itself, not a separator
+        size_t stop = whole[pos] == '+' ? pos + 1 : whole.find('+', pos);
+        if (stop == std::string::npos)
+            stop = whole.size();
+        const std::string part = trim(whole.substr(pos, stop - pos));
+        if (!part.empty())
+            keys.push_back(part);
+        pos = stop + 1;  // past the separator
+    }
+    return keys;
+}
+
+std::string DebugKeyboardManager::DescribeUnknownKey(const std::string& name)
+{
+    std::string text = "Unknown key '" + name + "': a key is one name (a, enter, caps); keys held together are joined with '+' (w+o)";
+    if (name.find_first_of(" ,") != std::string::npos)
+        text += "; a space or a comma does not separate keys";
+    return text;
+}
+
 ZXKeysEnum DebugKeyboardManager::ResolveKeyName(const std::string& name)
 {
     if (!_keyNamesInitialized)

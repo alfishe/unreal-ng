@@ -394,7 +394,7 @@ what an agent reads):
   in the TTD state.
 - [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
   console, the protocol monitor, the analysis tabs (A5.2a). Owner's order 2026-11-23: analysis tabs (landed
-  4967cd423), then the Send console, then the twin timeline; the log row actions (A5.4) still to be asked. With them
+  4967cd423), then the Send console (built 2026-11-25, below), then the twin timeline; the log row actions (A5.4) still to be asked. With them
   (4967cd423): the side tab bars of both debuggers scroll instead of widening the window, an arrow at each end, the
   wheel switches tabs (`unreal-qt/src/widgets/tabscrollarrows.h`, `TabScrollArrows.*`).
   - Protocol monitor prototype, embedded debugger (2026-11-23; owner decision: a card side tab "GS monitor", not a
@@ -538,6 +538,24 @@ what an agent reads):
     rows show a label only at the exact PC; not-executed handlers come with the command only (no name / handler in
     the report); the stock firmware's idle gives empty ISR bars; a GS reset runs the memory test ~2.5 s before
     routines show.
+  - Send console, both debuggers, as built (2026-11-25; A5.3 "Send console", C11; owner decision: a card side tab
+    "GS send" next to GS monitor, not a dialog; the monitor's strip gets **Send...**, Ctrl+Shift+S brings the tab to
+    the front). Core: `gs-firmware` object `commands` (`GSFirmwareObjectsRead`, `?object=commands`: command, name,
+    pre, post (-1 variable), params {name, kind} pre first, reply, reply_meaning, documented, note, transfer); the
+    WebAPI send answer carries the conversation's `text`. The tab: a picker over the profile's commands, editable for
+    any byte (#NN, $NN, 0xNN, decimal); a field per parameter named and hinted by the profile, More bytes for a
+    variable count or an unnamed byte, Replies (empty: the profile's); the note (reply meaning, transfer warning,
+    note, not in the programming guide); Send = `GSSend` with no wait, the sends followed by id (`GSConversationRead`)
+    newest first, failed rows tinted; paused: "a send waits in the queue until it runs"; the MultiSound's card says
+    it has no send. Embedded: `unreal-qt/src/debugger/gssendpane.{h,cpp}` (`CardPanes`, `DebuggerWindow::showGsSend`,
+    the monitor's Send...), test `CardPanes_Test.TheSendTabSendsACommandAndShowsItsReply`. eCat:
+    `debuggers/qt/ecat/dialogs/debugger/gssend.{h,cpp}` (`GsSendView`, a `GsCardTab` after GS monitor; action
+    `show_gs_send`; the monitor's `gsmonitor:send`), shim `gs_commands` / `gs_send` / `gs_conversation` (in process
+    under `LeaseContext`; remote `GET state/audio/gs/firmware?object=commands`, `POST control/audio/gs` send /
+    conversation with `wait_ms` 0), self-check `gs send:` (placement, Send... and Ctrl+Shift+S, the picker, #2A's
+    volume field, a bad field refused, #23 done with its reply), in process and --connect.
+    Left: a transfer command (#14 and the like) sends only its command bytes, not the block; the send addresses the
+    GS slot's card only (no `cpu=ms` on the planes).
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

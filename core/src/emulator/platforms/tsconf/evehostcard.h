@@ -245,6 +245,9 @@ public:
     /// engine keeps the regions themselves (TtdLoadMemory refuses it, leaving
     /// the memory to the engine's restore)
     static void TtdSaveMemoryHeader(uint8_t* dst);
+    /// One region's tokens of the memory blob (zero runs of 64+ bytes dropped) written at @p out: the end of what
+    /// was written. Scans by 8-byte words (a seek's live snapshot saves the chip's 1.1 MB this way)
+    static uint8_t* TtdEncodeZeroRuns(const uint8_t* p, size_t size, uint8_t* out);
     /// Hashes of what each blob holds (divergence checks)
     uint64_t TtdStateHash() const;
     uint64_t TtdMemoryHash() const;

@@ -44,7 +44,7 @@
 //   start {level?, mode?, record?} → POST /analysis/start
 //   stop                  → POST /analysis/stop
 //   status                → GET  /analysis/status
-//   build {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?} → POST /analysis/build (wait default
+//   build {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?, sessions?, ignore_readers?} → POST /analysis/build (wait default
 //                         20000 ms: one call answers the result; the window: analysis-layers.md#stages-and-windows)
 //   cancel                → POST /analysis/cancel
 //   trace {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?} → POST /analysis/trace (the CPU
@@ -1600,6 +1600,20 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["from_frame"]["description"] =
         "build: replay a window of the recording from this frame (a stage: an arrival's frame; the draft decodes from "
         "the memory at the window's start)";
+    schema["properties"]["sessions"]["type"] = "array";
+    schema["properties"]["sessions"]["items"]["type"] = "string";
+    schema["properties"]["sessions"]["description"] =
+        "build: one L1 over several recordings of the same program on this machine (levels, loads, scripts played "
+        "in separate sessions), in order: 'current' (this instance's recording) and session files (time_travel "
+        "dump). Counts add up, routines and byte uses are those of all; replay.sessions[] lists each session with "
+        "its frame_base on the build's one frame axis, and every instruction row ends with [session, frames, "
+        "first_frame, last_frame] per session it ran in. No window (frames, from_frame, to_frame); experiment and "
+        "cover need a build of one session";
+    schema["properties"]["ignore_readers"]["type"] = "string";
+    schema["properties"]["ignore_readers"]["description"] =
+        "build: Z80 ranges (hex, comma separated: 5B00-5BFF,FE00-FE7F) of code whose data reads are left out of the "
+        "byte uses: a depacker reads the packed stream where the program later lies. Its writes and its own code "
+        "are analyzed as ever";
     schema["properties"]["from_tinframe"]["type"] = "integer";
     schema["properties"]["from_tinframe"]["description"] = "build: the point inside from_frame in TTD time units, as time_travel's tinframe (an arrival's tinframe)";
     schema["properties"]["to_frame"]["type"] = "integer";
@@ -1744,6 +1758,9 @@ void RegisterAnalysis(ToolRegistry& registry)
                     body["wait"] = 20000;
                 if (args.isMember("path"))
                     body["path"] = args["path"].asString();
+                for (const char* name : {"sessions", "ignore_readers"})
+                    if (args.isMember(name))
+                        body[name] = args[name];  // sessions: an array of names or their comma-separated text
                 ResolveAndForward(args, "POST", "/analysis/build", &body, caller, "Analysis build", withText);
                 return;
             }

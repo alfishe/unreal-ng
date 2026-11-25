@@ -97,14 +97,19 @@ ToolCallback Described(const std::string& action, ToolCallback done)
     };
 }
 
+/// The signature_info actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& SignatureInfoActions()
+{
+    static const std::vector<std::string> actions = {"file", "media", "compare"};
+    return actions;
+}
+
 void RegisterSignatureInfoImpl(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"file", "media", "compare"})
-        schema["properties"]["action"]["enum"].append(action);
+    SetSchemaEnum(schema["properties"]["action"], SignatureInfoActions());
     schema["properties"]["action"]["description"] =
         "file: the signatures of a host file; media: of the tapes and disks loaded in the machine (their source "
         "files); compare: a known title (path) against a candidate (with)";
@@ -142,7 +147,7 @@ void RegisterSignatureInfoImpl(ToolRegistry& registry)
                 ResolveAndForward(args, "GET", "/signature" + Query(args, {"details", "external"}), nullptr, caller,
                                   "Media signatures", Described(action, done));
             else
-                done(ToolResult::Error("signature_info: unknown action '" + action + "' (file, media, compare)"));
+                done(ToolResult::Error(UnknownValueText("action", action, SignatureInfoActions(), "signature_info: ")));
         });
 }
 

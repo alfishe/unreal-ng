@@ -783,6 +783,46 @@ void PutToken(uint8_t*& out, uint32_t token)
 }
 }  // namespace
 
+uint8_t* EveHostCard::TtdEncodeZeroRuns(const uint8_t* p, size_t size, uint8_t* out)
+{
+    // The tokens are the region's maximal zero runs of kZeroRunMin+ bytes and the data between them. Such a run
+    // holds a whole 8-byte word at an offset that is a multiple of 8: only those words are looked at, then the run
+    // through a zero one is measured both ways (it cannot reach back past the last run measured: a nonzero byte
+    // or the region's start ends that one)
+    size_t dataStart = 0;
+    size_t measured = 0;  // offsets below are inside a run already measured
+    auto flushData = [&](size_t end) {
+        if (end > dataStart)
+        {
+            PutToken(out, static_cast<uint32_t>(end - dataStart));
+            std::memcpy(out, p + dataStart, end - dataStart);
+            out += end - dataStart;
+        }
+    };
+    for (size_t at = 0; at + 8 <= size; at += 8)
+    {
+        if (at < measured)
+            continue;
+        uint64_t word;
+        std::memcpy(&word, p + at, 8);
+        if (word != 0)
+            continue;
+        size_t start = at;
+        while (start > measured && p[start - 1] == 0)
+            --start;
+        const size_t end = at + ZeroRun(p + at, size - at);
+        measured = end;
+        if (end - start >= kZeroRunMin)
+        {
+            flushData(start);
+            PutToken(out, 0x8000'0000u | static_cast<uint32_t>(end - start));
+            dataStart = end;
+        }
+    }
+    flushData(size);
+    return out;
+}
+
 size_t EveHostCard::TtdSaveMemory(uint8_t* dst) const
 {
     if (!_chip)
@@ -792,37 +832,7 @@ size_t EveHostCard::TtdSaveMemory(uint8_t* dst) const
     {
         EveRegion region{};
         EveGetRegion(_chip, i, &region);
-        const uint8_t* p = region.base;
-        const size_t size = region.size;
-        size_t pos = 0;
-        size_t dataStart = 0;
-        auto flushData = [&](size_t end) {
-            if (end > dataStart)
-            {
-                PutToken(out, static_cast<uint32_t>(end - dataStart));
-                std::memcpy(out, p + dataStart, end - dataStart);
-                out += end - dataStart;
-            }
-        };
-        while (pos < size)
-        {
-            if (p[pos] != 0)
-            {
-                ++pos;
-                continue;
-            }
-            const size_t run = ZeroRun(p + pos, size - pos);
-            if (run >= kZeroRunMin)
-            {
-                flushData(pos);
-                PutToken(out, 0x8000'0000u | static_cast<uint32_t>(run));
-                pos += run;
-                dataStart = pos;
-            }
-            else
-                pos += run;
-        }
-        flushData(size);
+        out = TtdEncodeZeroRuns(region.base, region.size, out);
     }
     const uint32_t encoded = static_cast<uint32_t>(out - dst - kZeroRunHeader);
     std::memcpy(dst, &kZeroRunMagic, 4);
@@ -1105,6 +1115,7 @@ bool EveHostCard::TtdLoadState(const uint8_t*) { return false; }
 size_t EveHostCard::TtdMemorySize() const { return 0; }
 size_t EveHostCard::TtdSaveMemory(uint8_t*) const { return 0; }
 void EveHostCard::TtdSaveMemoryHeader(uint8_t*) {}
+uint8_t* EveHostCard::TtdEncodeZeroRuns(const uint8_t*, size_t, uint8_t* out) { return out; }
 bool EveHostCard::TtdLoadMemory(const uint8_t*) { return false; }
 uint64_t EveHostCard::TtdStateHash() const { return 0; }
 uint64_t EveHostCard::TtdMemoryHash() const { return 0; }

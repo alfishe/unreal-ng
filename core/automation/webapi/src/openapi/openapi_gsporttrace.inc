@@ -109,7 +109,10 @@
             param["required"] = false;
             param["schema"]["type"] = "string";
             param["description"] = std::string(name) == "profile" ? "A profile id (default: the card's firmware)"
-                                                                  : "One instance or variable by name";
+                                                                  : "One instance or variable by name; 'dispatch', "
+                                                                    "'unknown_commands', or 'commands' (the profile's "
+                                                                    "command set with typed parameters and replies, "
+                                                                    "only when asked)";
         }
         objects["responses"]["200"]["description"] = "{profile, title, source, instances, variables, window_variables, text}";
         objects["responses"]["404"]["description"] = "Emulator not found, no card, no profile, or no such object";

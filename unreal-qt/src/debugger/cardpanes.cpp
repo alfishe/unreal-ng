@@ -18,6 +18,7 @@
 #include "debugger/gscpuanalysispane.h"
 #include "debugger/gslwpane.h"
 #include "debugger/gsmonitorpane.h"
+#include "debugger/gssendpane.h"
 #include "debugger/reportpane.h"
 #include "debugger/zxdmatraceview.h"
 #include "debugger/targets/debugcpuid.h"
@@ -150,6 +151,15 @@ std::vector<Pane> Create(QWidget* parent, Follow follow)
                  nullptr, nullptr, Card::Any, nullptr};
     monitor.monitor = new GsMonitorPane(follow, parent);
     panes.push_back(monitor);
+
+    // P5.6 (A5.3 Send console, C11): a tab of the card zone, not a dialog; the monitor's Send... and Ctrl+Shift+S
+    // bring it to the front
+    Pane send{QObject::tr("GS send"),
+              QObject::tr("Send a command to the card as the host would: a command of its firmware profile with its "
+                          "parameters, the replies decoded (gs send; Ctrl+Shift+S)"),
+              nullptr, nullptr, Card::Any, nullptr};
+    send.send = new GsSendPane(follow, parent);
+    panes.push_back(send);
 
     // A5.2a Objects: the profile's structs as tables (a row per instance), its variables, the fixed window's variables
     // (the `gs-firmware` read); it replaced the fixed GS firmware tab, which showed the window variables only
@@ -514,6 +524,8 @@ QWidget* Pane::widget() const
         return board;
     if (monitor)
         return monitor;
+    if (send)
+        return send;
     if (analysis)
         return analysis;
     if (cpuAnalysis)

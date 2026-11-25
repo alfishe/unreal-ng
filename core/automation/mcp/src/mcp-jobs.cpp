@@ -118,7 +118,7 @@ bool JobsRequest(const Json::Value& args, const std::string& emulatorId, std::st
         path = "/api/v1/jobs/" + job + "/cancel";
         return true;
     }
-    error = "action: '" + action + "' is not one of list, status, wait, cancel, start";
+    error = UnknownValueText("action", action, std::vector<std::string>(std::begin(kActions), std::end(kActions)));
     return false;
 }
 

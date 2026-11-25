@@ -86,6 +86,15 @@ bool GetBuilt(Emulator& emulator, Built& built, Reply& refusal)
     return true;
 }
 
+/// Why @p what cannot run on this build: it replays the build's recording, and there is none (or more than one)
+std::string NoRecording(const Built& built, const char* what)
+{
+    if (built.l1 && !built.l1->sessions.empty())
+        return std::string("the L1 was built over ") + std::to_string(built.l1->sessions.size()) + " sessions and " +
+               what + " replays one recording: run 'analysis build' on the session to work on";
+    return std::string("no recording kept for ") + what + ": run 'analysis build' again";
+}
+
 bool ValidLabel(const std::string& label)
 {
     if (label.empty() || label.size() > 32 || (!std::isalpha(static_cast<unsigned char>(label[0])) && label[0] != '_'))
@@ -599,7 +608,7 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
         if (!specText.empty())
         {
             if (!built.bundle)
-                return Refuse(Error::Conflict, "no recording kept for experiments: run 'analysis build' again");
+                return Refuse(Error::Conflict, NoRecording(built, "experiments"));
             std::vector<ExperimentSpec> specs;
             std::string error;
             if (!ParseExperiments(specText, specs, error))
@@ -798,7 +807,7 @@ Reply ExperimentAction(Emulator& emulator, const Options& options)
     if (!GetBuilt(emulator, built, refusal))
         return refusal;
     if (!built.bundle)
-        return Refuse(Error::Conflict, "no recording kept for experiments: run 'analysis build' again");
+        return Refuse(Error::Conflict, NoRecording(built, "experiments"));
     std::string text, error;
     if (!SpecText(options, text, error))
         return Refuse(Error::BadRequest, error);
@@ -882,7 +891,7 @@ Reply CoverAction(Emulator& emulator, const Options& options)
     if (!GetBuilt(emulator, built, refusal))
         return refusal;
     if (!built.bundle)
-        return Refuse(Error::Conflict, "no recording kept for coverage: run 'analysis build' again");
+        return Refuse(Error::Conflict, NoRecording(built, "coverage"));
     CoverOptions cover;
     const auto count = [&](const char* name, uint64_t low, uint64_t high, uint32_t& out, const char* message) {
         const std::string text = Option(options, name);

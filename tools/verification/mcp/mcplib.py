@@ -13,16 +13,18 @@ A script is a list of `test_*` functions taking a `Session`; `main(globals())` r
         main(globals())
 
 Options every script takes (see `--help`): `--mcp-url` of a running server, or `--launch <unreal-qt binary>` to start
-one on ports of its own (`--port-base`, default 8095: WebAPI 8095, MCP 8295, the rest +100/+300/+400/+500), stopped at
-the end; `--model` of the machine the tests create (default PENTAGON); `-k` to run the tests whose name contains it.
+one on ports of its own (`--port-base`, default 8095: WebAPI 8095, MCP 8295, the rest +100/+300/+400/+500; `auto`:
+the emulator picks a free base itself), stopped at the end; `--model` of the machine the tests create (default PENTAGON); `-k` to run the tests whose name contains it.
 """
 
 import argparse
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 import urllib.error
@@ -255,18 +257,71 @@ class WebSocket:
             pass
 
 
+# The ports of an instance by the names of its ports file (unreal-qt --ports-file), as offsets from the port base
+PORT_OFFSETS = (('webapi', 0), ('cli', 100), ('mcp', 200), ('gdb', 300), ('dezog', 400), ('zrcp', 500))
+
+
+def port_base_arg(text):
+    """--port-base: a number, or `auto` (the launched emulator picks a free base itself)"""
+    return 'auto' if text.strip().lower() == 'auto' else int(text)
+
+
+def mcp_url(process):
+    """The MCP endpoint of a process launch() returned"""
+    return f"http://127.0.0.1:{process.ports['mcp']}/mcp"
+
+
+def _read_ports_file(process, path, stderr_path, binary, seconds=30):
+    """Waits for the ports file of an instance started with --port-base auto; returns its ports by name"""
+    deadline = time.time() + seconds
+    while True:
+        # Renamed into place by the emulator: either absent or whole
+        if os.path.exists(path):
+            with open(path, encoding='utf-8') as file:
+                ports = json.load(file)
+            missing = [name for name, _ in PORT_OFFSETS if not isinstance(ports.get(name), int)]
+            if missing:
+                process.kill()
+                raise SystemExit(f"{path} has no port {', '.join(missing)}: {ports}")
+            return ports
+        if process.poll() is not None:
+            with open(stderr_path, encoding='utf-8', errors='replace') as file:
+                said = file.read().strip()[-600:]
+            raise SystemExit(f'{binary} exited with {process.returncode} before it wrote its ports file'
+                             + (f': {said}' if said else ' (a build without --port-base auto?)'))
+        if time.time() >= deadline:
+            process.kill()
+            raise SystemExit(f'{binary} wrote no ports file in {seconds} s ({path})')
+        time.sleep(0.05)
+
+
 def launch(binary, port_base, needs=()):
-    """Starts unreal-qt offscreen on ports of its own; returns the process once the MCP endpoint answers.
+    """Starts unreal-qt offscreen on ports of its own; returns the process once the MCP endpoint answers, its ports
+    by name in `process.ports` (webapi, cli, mcp, gdb, dezog, zrcp; `mcp_url(process)` is its MCP endpoint).
+    `port_base`: the WebAPI port (the rest +100 ... +500), or 'auto' / None: the emulator picks a free base itself
+    (`--port-base auto --ports-file`) and the ports are read from the file it writes.
     `needs`: MCP tools the caller will use; a binary without one is refused here, not at its first call"""
-    # Another instance on these ports would answer instead of the launched one (its binary, not this build): refuse
-    for offset in (0, 200):
-        with socket.socket() as probe:
-            if probe.connect_ex(('127.0.0.1', port_base + offset)) == 0:
-                raise SystemExit(f'port {port_base + offset} is taken by another process: pick other ports with --port-base')
+    auto = port_base is None or (isinstance(port_base, str) and port_base.strip().lower() == 'auto')
     env = dict(os.environ)
-    for name, offset in (('UNREAL_WEBAPI_PORT', 0), ('UNREAL_CLI_PORT', 100), ('UNREAL_MCP_PORT', 200),
-                         ('UNREAL_GDB_PORT', 300), ('UNREAL_DEZOG_PORT', 400), ('UNREAL_ZRCP_PORT', 500)):
-        env[name] = str(port_base + offset)
+    command = [binary, '-platform', 'offscreen']
+    stderr = subprocess.DEVNULL
+    if auto:
+        # The six port variables come from the emulator's own choice; the file tells which
+        folder = tempfile.mkdtemp(prefix='unreal-ports-')
+        ports_path = os.path.join(folder, 'ports.json')
+        stderr_path = os.path.join(folder, 'stderr.txt')
+        command += ['--port-base', 'auto', '--ports-file', ports_path]
+        stderr = open(stderr_path, 'wb')
+    else:
+        port_base = int(port_base)
+        # Another instance on these ports would answer instead of the launched one (its binary, not this build): refuse
+        for offset in (0, 200):
+            with socket.socket() as probe:
+                if probe.connect_ex(('127.0.0.1', port_base + offset)) == 0:
+                    raise SystemExit(f'port {port_base + offset} is taken by another process: pick other ports with --port-base')
+        for name, offset in (('UNREAL_WEBAPI_PORT', 0), ('UNREAL_CLI_PORT', 100), ('UNREAL_MCP_PORT', 200),
+                             ('UNREAL_GDB_PORT', 300), ('UNREAL_DEZOG_PORT', 400), ('UNREAL_ZRCP_PORT', 500)):
+            env[name] = str(port_base + offset)
     # No Stream Deck daemon of its own, whatever the user's setting says (test_streamdeck.py)
     env.setdefault('UNREAL_STREAMDECK_SUPERVISOR', 'off')
     # The picture as the defaults draw it: the user's View settings (GPU, CRT, scale, HUD) stay out
@@ -280,9 +335,19 @@ def launch(binary, port_base, needs=()):
     for name, value in (('UNREAL_WS_HIGH_WATER_BYTES', '16384'), ('UNREAL_WS_SLOW_CONSUMER_MS', '1500')):
         os.environ.setdefault(name, value)
         env.setdefault(name, os.environ[name])
-    process = subprocess.Popen([binary, '-platform', 'offscreen'], env=env, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
-    session = Session(f'http://127.0.0.1:{port_base + 200}/mcp', 'PENTAGON')
+    try:
+        process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=stderr)
+    finally:
+        if auto:
+            stderr.close()  # the child holds its own handle
+    if auto:
+        try:
+            process.ports = _read_ports_file(process, ports_path, stderr_path, binary)
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+    else:
+        process.ports = {'port_base': port_base, **{name: port_base + offset for name, offset in PORT_OFFSETS}}
+    session = Session(mcp_url(process), 'PENTAGON')
     for _ in range(60):
         try:
             session.rpc('ping', timeout=2)
@@ -304,7 +369,8 @@ def parse_args(argv=None):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--mcp-url', default=os.environ.get('UNREAL_MCP_URL', 'http://127.0.0.1:8295/mcp'))
     parser.add_argument('--launch', metavar='UNREAL_QT', help='start this unreal-qt binary on ports of its own')
-    parser.add_argument('--port-base', type=int, default=8095, help='WebAPI port of a launched instance (MCP = +200)')
+    parser.add_argument('--port-base', type=port_base_arg, default=8095,
+                        help='WebAPI port of a launched instance (MCP = +200), or auto: the emulator picks a free base')
     parser.add_argument('--model', default='PENTAGON')
     parser.add_argument('-k', dest='only', default='', help='run the tests whose name contains this')
     parser.add_argument('--keep', action='store_true', help='keep the machine the tests created')
@@ -344,7 +410,7 @@ def main(namespace, argv=None):
     url = args.mcp_url
     if args.launch:
         process = launch(args.launch, args.port_base)
-        url = f'http://127.0.0.1:{args.port_base + 200}/mcp'
+        url = mcp_url(process)
     try:
         script = os.path.basename(namespace.get('__file__', 'script'))
         print(f'{script}:')

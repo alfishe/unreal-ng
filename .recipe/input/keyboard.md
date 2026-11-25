@@ -71,6 +71,10 @@ type_input {"action":"route","route":"ps2"}
   (use `invoke_api` for that).
 - `tap` needs `key`, `combo` needs a non-empty `keys` array, `macro` needs `name`, `route`
   needs `route`; a missing field is an `isError` result (`tap requires 'key'`, ...).
+- Keys held together: a list in `keys` (`["w","o"]`), or one text with `+` between the names
+  in `key` (`"w+o"`, `"caps+1"`) for `tap` / `press` / `release`, and in an item of `keys`. A
+  space or a comma does not separate keys (`"w o"` is an unknown key). The key `+` itself is
+  still the name `+` (or `plus`); in a chord a `+` where a name starts is that key (`"ss++"`).
 - Macros (the library in
   [debugkeyboardmanager.cpp](../../core/src/debugger/keyboard/debugkeyboardmanager.cpp)):
   `e_mode` (Caps Shift + Symbol Shift), `g_mode` (Caps Shift + 9), `format`, `cat`,
@@ -113,7 +117,8 @@ Assert on those fields, never on `message`. `sequence_running` going `false` is 
 way to know a queued `tap` / `type` / `macro` has been fully consumed.
 
 Status codes: 400 for a missing field (`key`, `keys`, `name`, `text`) or an unknown key
-name (the reply points at `/keyboard/keys`), 404 for an unknown id, 500 when the keyboard
+name (the reply says how keys are written - one name per key, `+` between keys held
+together - and points at `/keyboard/keys`), 404 for an unknown id, 500 when the keyboard
 manager is not available. `release_all` and `abort` take no body.
 
 ## The route gate: host keyboard, injected keys, and what the guest sees

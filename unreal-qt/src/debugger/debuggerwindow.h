@@ -334,6 +334,10 @@ private:
     void connectZxDmaTrace(class ZxDmaTraceView* trace);
     /// The GS monitor tab: its Pause / Continue to the window's, its Turn on under the lease
     void connectGsMonitor(class GsMonitorPane* monitor);
+    /// The GS send tab: its Send under the lease, then refreshed
+    void connectGsSend(class GsSendPane* pane);
+    /// Bring the GS send tab to the front (the monitor's Send..., Ctrl+Shift+S) when a card shows it
+    void showGsSend();
     /// An analysis tab's Turn on (GS unknown, GS writers): its histories to ring under a lease, then refreshed
     void connectGsAnalysis(class GsAnalysisPane* pane);
     /// A card CPU analysis tab's buttons (Profiler, Events, Coverage, Heat map): its verb under a lease, then refreshed

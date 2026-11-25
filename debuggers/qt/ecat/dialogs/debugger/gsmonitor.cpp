@@ -57,7 +57,7 @@ GsMonitorView::GsMonitorView(Emulator * e, QWidget *parent):
     m_caption->hide();
     layout->addWidget(m_caption);
 
-    //1. The protocol strip, with the machine's Pause / Continue at its right
+    //1. The protocol strip, with Send... and the machine's Pause / Continue at its right
     QHBoxLayout * top = new QHBoxLayout();
     top->setContentsMargins(0, 0, 0, 0);
     m_strip = new QLabel(this);
@@ -66,6 +66,12 @@ GsMonitorView::GsMonitorView(Emulator * e, QWidget *parent):
     m_strip->setWordWrap(true);
     m_strip->setTextInteractionFlags(Qt::TextSelectableByMouse);
     top->addWidget(m_strip, 1);
+    m_send = new QToolButton(this);
+    m_send->setObjectName("gsmonitor:send");
+    m_send->setText(tr("Send..."));
+    m_send->setToolTip(tr("The GS send tab: send the card a command as the host would (Ctrl+Shift+S)"));
+    connect(m_send, &QToolButton::clicked, this, &GsMonitorView::send_requested);
+    top->addWidget(m_send, 0, Qt::AlignTop);
     m_machine = new QToolButton(this);
     m_machine->setObjectName("gsmonitor:machine");
     m_machine->setText(tr("Pause"));

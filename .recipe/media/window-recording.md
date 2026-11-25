@@ -60,8 +60,11 @@ temporal processing) and the machine's sound; the keyboard is not drawn (use `ke
   a raw 1080p frame is 8 MB, more than a pipe carries 50 times a second. The keyboard under the picture is drawn at
   that size too and scaled with it. Above the native picture x264 uses its `ultrafast` preset, x265 always does
   (x265 4:4:4 1080p is still several times slower than real time: use the GPU, or H.264).
-- With ffmpeg the sound goes into the same process through a FIFO (macOS / Linux): nothing to copy and mux at the
-  end. Stop returns at once; a slow encoder is waited for, never killed.
+- With ffmpeg the sound goes into the same process through a pipe: nothing to copy and mux at the end. macOS /
+  Linux: a FIFO in a private temporary directory (this user's alone); Windows: a named pipe of a unique name, open to
+  this user and only to the ffmpeg the recorder started (another process that opens it fails the recording). Several
+  emulators record at once without meeting. The writer never waits on the pipe: what ffmpeg has not taken yet waits
+  in memory. Stop returns at once; a slow encoder is waited for, never killed.
 - Same folder and `unreal_<time>` name as the raw recording. The choice is remembered (`windowSource` in the
   settings above). It is the same recorder as `video window record`: one window recording at a time.
 
@@ -110,9 +113,10 @@ before the start: a delay changed while recording inserts silence (longer) or dr
 - **Status** (`GET video/window/record`) / **stop** (`video/window/record/stop`): `{recording, path, keyboard, frames,
   width, height, fps, audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms,
   first_frame_ms, slowest_frame_ms}` (the last four: where the time went, ms since the start; a late or stalled
-  recording shows there whether the writer got the CPU, the encoder start or a frame was slow). Stop waits for ffmpeg, then muxes the sound in (the
-  picture copied, not re-encoded: seconds). Meanwhile the picture is in `.<name>.video.<ext>` and the sound in
-  `.<name>.sound.s16le` beside the file; a failed mux leaves both and names them.
+  recording shows there whether the writer got the CPU, the encoder start or a frame was slow). Stop waits for ffmpeg.
+  Only when the sound pipe cannot be made the picture goes to `.<name>.video.<ext>` and the sound to
+  `.<name>.sound.s16le` beside the file, muxed at stop (the picture copied, not re-encoded: seconds); a failed mux
+  leaves both and names them.
 - **The HUD** ("Remote control" and the like) is never in the file; the keys the program holds light up on the
   keyboard (a combination such as CS+6 lights its own key, the Down arrow, when the picture has one).
 - **Running instead of stepping**: a running machine records too, the frames the window skipped repeat the picture

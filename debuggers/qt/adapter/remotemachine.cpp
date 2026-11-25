@@ -1399,6 +1399,49 @@ public:
         return {true, json, r.value("text").toString().toStdString()};
     }
 
+    // The send tab over the WebAPI (the GS slot's card only: the routes have no cpu=ms): the command set a GET of the
+    // firmware objects, the send and its state POSTs of control/audio/gs that never wait (wait_ms 0)
+    static constexpr const char * kNoMsSend = "The ZX-MultiSound's card has no send: the send addresses the GS slot's card (gs send)";
+    GsJson gs_commands(const std::string &card) override
+    {
+        if (card == "ms") return {false, std::string(), kNoMsSend};
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        QByteArray out;
+        const int status = m_http.request("GET", m_base + "/state/audio/gs/firmware?object=commands", QByteArray(), out);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        if (status != 200)
+            return {false, std::string(),
+                    QJsonDocument::fromJson(out).object().value("message").toString(QString("HTTP %1").arg(status)).toStdString()};
+        return {true, out.toStdString(), std::string()};
+    }
+    GsJson send_post(const QJsonObject &request)
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs", request, &status);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
+        if (status != 200) return {false, json, r.value("message").toString(QString("HTTP %1").arg(status)).toStdString()};
+        return {true, json, r.value("text").toString().toStdString()};
+    }
+    GsJson gs_send(const std::string &card, int command, std::optional<int> pre, const std::vector<int> &params,
+                   std::optional<int> replies) override
+    {
+        if (card == "ms") return {false, std::string(), kNoMsSend};
+        QJsonObject request{{"action", "send"}, {"value", command}, {"wait_ms", 0}};
+        if (pre) request.insert("pre", *pre);
+        if (replies) request.insert("replies", *replies);
+        QJsonArray bytes;
+        for (int p : params) bytes.append(p);
+        request.insert("params", bytes);
+        return send_post(request);
+    }
+    GsJson gs_conversation(const std::string &card, uint32_t id) override
+    {
+        if (card == "ms") return {false, std::string(), kNoMsSend};
+        return send_post(QJsonObject{{"action", "conversation"}, {"send_id", (qint64)id}});
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }
