@@ -1077,6 +1077,54 @@ TEST_F(CardPanes_Test, TheMonitorTileCountsAnomaliesUntilClear)
     EXPECT_EQ(monitor.anomalies(), 1) << "a new one counts";
 }
 
+/// The log reads after its cursor: more than one read's worth of records between two refreshes are all shown, in order;
+/// records a small ring evicted before the refresh read them are counted as missed in the rows line
+TEST_F(CardPanes_Test, TheMonitorLosesNoRecordBetweenRefreshes)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    GsMonitorPane monitor;
+    ASSERT_TRUE(monitor.turnOn(_context));
+    monitor.refresh(_context, false);
+    ASSERT_EQ(monitor.table()->rowCount(), 0);
+    const std::string device = GsMonitorPane::HistoryDevice(_context, DebugCpuId::Main);
+    const auto written = [&]() {
+        HistoryRequest read;
+        read.verb = "read";
+        read.device = device;
+        read.last = 1;
+        return HistoryControl::Execute(_context, read).body.find("written")->i;
+    };
+
+    // Commands the card (not running) does not take: each one a row, most with an anomaly row of its own
+    for (int i = 0; i < 160; i++)
+        _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    const int64_t total = written();
+    ASSERT_GT(total, static_cast<int64_t>(GsMonitorPane::kReadRows)) << "more than one read";
+    ASSERT_LT(total, GsMonitorPane::kMaxRows);
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.table()->rowCount(), total) << "every record since the last refresh";
+    EXPECT_EQ(monitor.missed(), 0);
+    EXPECT_FALSE(monitor.rowsText().contains("missed")) << monitor.rowsText().toStdString();
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.table()->rowCount(), total) << "read again: nothing twice";
+
+    // A ring of 50: configuring restarts the log, then 50 of the next records are kept and the rest evicted unread
+    HistoryRequest ring;
+    ring.verb = "config";
+    ring.device = device;
+    ring.mode = "ring";
+    ring.limit = 50;
+    ASSERT_EQ(HistoryControl::Execute(_context, ring).httpStatus, 200);
+    for (int i = 0; i < 60; i++)
+        _context->pPortDecoder->DecodePortOut(0x00BB, 0x23, 0);
+    const int64_t after = written();
+    ASSERT_GT(after, 50);
+    monitor.refresh(_context, false);
+    EXPECT_EQ(monitor.table()->rowCount(), 50) << "restarted: the ring's records only";
+    EXPECT_EQ(monitor.missed(), after - 50);
+    EXPECT_TRUE(monitor.rowsText().contains(QString("%1 missed").arg(after - 50))) << monitor.rowsText().toStdString();
+}
+
 /// The log follows its tail while the machine runs (the debugger's sends, rows appended at each refresh); scrolling up
 /// stops following, Follow resumes it
 TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)

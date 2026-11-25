@@ -398,13 +398,14 @@ what an agent reads):
     floating window): `unreal-qt/src/debugger/gsmonitorpane.h`, after "GS protocol" in `CardPanes::Create`, every card
     (`Card::Any`, the MultiSound's GS through the follow). The strip (the `gs` report's protocol, status, mailbox, last
     send), the error tile (anomalies of the command log and `gs-firmware` `unknown_commands` since its Clear, the last
-    anomaly with its frame, tinted), the log (`history read`, newest 200, appended after the last row shown, anomalies
-    tinted, Follow / scroll up), Pause / Continue (the window's actions); log off: Turn on (history `<slot>.commands`
+    anomaly with its frame, tinted), the log (`history read`: fills with the newest 200, then reads after its cursor `since`,
+    anomalies tinted, Follow / scroll up), Pause / Continue (the window's actions); log off: Turn on (history `<slot>.commands`
     mode ring). Live through the card panes' timer (200 ms) while the tab is in front of a shown window. Tests
     `CardPanes_Test.TheMonitor*`. eCat: `debuggers/qt/ecat/dialogs/debugger/gsmonitor.h`, the same tab after "GS
     protocol" in both adapters (shim `read_gs_monitor`, `gs_command_log`; remote plain GETs), 4 Hz in process, 1 Hz
-    remote; self-check `gs monitor:` on every card, in process and --connect. Left: the log row actions (A5.4); rows lost when more than 200 records arrive
-    between two refreshes (the history read has no since cursor).
+    remote; self-check `gs monitor:` on every card, in process and --connect. Left: the log row actions (A5.4). Done (2026-11-24): the history read got a cursor
+    (`since`, records with `seq`, `next_since` / `missed` / `restarted` on every plane), both monitors page after it,
+    so no row is lost between two refreshes (`CardPanes_Test.TheMonitorLosesNoRecordBetweenRefreshes`).
   - Analysis tabs prototype, embedded debugger, as built (2026-11-23; A5.2a rows Objects, Dispatch, Unknown, Writers):
     `unreal-qt/src/debugger/gsanalysispane.h` (one widget, four views), every card (`Card::Any`, the MultiSound's GS
     through the follow). "GS firmware" became **GS objects** (same place; the design's "replaces the Firmware tab"): a

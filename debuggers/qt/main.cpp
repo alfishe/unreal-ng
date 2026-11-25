@@ -1070,7 +1070,7 @@ void gs_monitor_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * 
     if (!card) return;
     ecatshim::CPU * front = dw->card_cpu();
     const std::string which = CardTabsCard(m, front != nullptr ? front->name : std::string());
-    const ecatshim::Emulator::GsMonitor before = m->read_gs_monitor(which, 1);
+    const ecatshim::Emulator::GsMonitor before = m->read_gs_monitor(which, 1, std::nullopt);
     check(before.ok && !before.log_device.empty(), "gs monitor: the card's command log found");
     if (!before.ok || before.log_device.empty()) {
         printf("  (%s)\n", before.message.c_str());
@@ -1085,7 +1085,7 @@ void gs_monitor_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * 
     check(mon->off_panel()->isVisibleTo(mon) && mon->turn_on_button()->isVisibleTo(mon) && mon->strip()->text().contains("off"),
           "gs monitor: the log off is said, with Turn on");
     mon->turn_on_button()->click();
-    const ecatshim::Emulator::GsMonitor on = m->read_gs_monitor(which, 1);
+    const ecatshim::Emulator::GsMonitor on = m->read_gs_monitor(which, 1, std::nullopt);
     check(on.log_mode == "ring" && !mon->off_panel()->isVisibleTo(mon), "gs monitor: Turn on: the log records (ring)");
 
     // The host's program at #8000, put back afterwards
@@ -1210,7 +1210,7 @@ void gs_analysis_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
     const std::string which = CardTabsCard(m, front != nullptr ? front->name : std::string());
     QWidget * was = side->currentWidget();
     // The command log records (Unknown counts with it, Writers takes the host's PC from it)
-    const ecatshim::Emulator::GsMonitor log_before = m->read_gs_monitor(which, 1);
+    const ecatshim::Emulator::GsMonitor log_before = m->read_gs_monitor(which, 1, std::nullopt);
     m->gs_command_log(which, true);
 
     // Dispatch

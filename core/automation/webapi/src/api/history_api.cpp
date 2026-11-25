@@ -67,7 +67,7 @@ void EmulatorAPI::getHistories(const HttpRequestPtr& req, std::function<void(con
     Run(id, request, callback);
 }
 
-/// @brief GET /api/v1/emulator/{id}/history/{device}?last=N
+/// @brief GET /api/v1/emulator/{id}/history/{device}?last=N&since=S
 void EmulatorAPI::getHistory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id, const std::string& device) const
 {
@@ -76,6 +76,19 @@ void EmulatorAPI::getHistory(const HttpRequestPtr& req, std::function<void(const
     request.device = device;
     if (const std::string last = req->getParameter("last"); !last.empty())
         request.last = static_cast<size_t>(Number(Json::Value(last)).value_or(0));
+    if (const std::string since = req->getParameter("since"); !since.empty())
+    {
+        request.since = Number(Json::Value(since));
+        if (!request.since)
+        {
+            HistoryReply reply;
+            reply.httpStatus = 400;
+            reply.body = StateNode::Object();
+            reply.body["error"] = "since '" + since + "' is not a record number";
+            Respond(callback, reply);
+            return;
+        }
+    }
     Run(id, request, callback);
 }
 

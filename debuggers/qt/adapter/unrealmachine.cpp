@@ -1473,9 +1473,9 @@ private:
         return ctx->pSoundManager != nullptr ? ctx->pSoundManager->getGeneralSound() : nullptr;
     }
 
-    // The GS monitor in process: the card's report, its command log's newest records and the firmware's unknown
+    // The GS monitor in process: the card's report, its command log's newest records (or the ones after `since`) and the firmware's unknown
     // commands, all read where the machine stands still (one coherent moment)
-    GsMonitor read_gs_monitor(const std::string &card, size_t last) override
+    GsMonitor read_gs_monitor(const std::string &card, size_t last, std::optional<uint64_t> since) override
     {
         GsMonitor out;
         StateNode report, log, unknown;
@@ -1494,6 +1494,7 @@ private:
             request.verb = "read";
             request.device = out.log_device;
             request.last = last;
+            request.since = since;
             const HistoryReply reply = HistoryControl::Execute(ctx, request);
             if (reply.httpStatus == 200) log = reply.body;
             if (!commands->On()) return;
@@ -1542,9 +1543,16 @@ private:
         out.written = (uint64_t)num(log, "written");
         out.kept = (uint64_t)num(log, "kept");
         out.dropped = (uint64_t)num(log, "dropped");
+        if (log.find("next_since") != nullptr) {
+            out.cursor = true;
+            out.next_since = (uint64_t)num(log, "next_since");
+            out.missed = (uint64_t)num(log, "missed");
+            out.restarted = truth(log, "restarted");
+        }
         if (const StateNode * records = log.find("records"))
             for (const StateNode &r : records->items) {
                 GsMonitorRow row;
+                row.seq = (uint64_t)num(r, "seq");
                 row.frame = num(r, "frame");
                 row.t = num(r, "t");
                 row.card_cycle = num(r, "card_cycle");

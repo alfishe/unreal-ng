@@ -36,6 +36,15 @@ std::vector<int> Values(const TestHistory& h)
     return values;
 }
 
+/// A page's records as "seq:value"
+std::vector<std::string> SeqValues(const history::Page& page)
+{
+    std::vector<std::string> out;
+    for (const StateNode& record : page.records.items)
+        out.push_back(std::to_string(record.find("seq")->i) + ":" + std::to_string(record.find("value")->i));
+    return out;
+}
+
 std::vector<std::string> Lines(const std::string& path)
 {
     std::ifstream in(path);
@@ -252,4 +261,109 @@ TEST(DeviceHistory_Test, TruncateKeepsTheSharedPartAndTheStreamOnce)
         EXPECT_EQ(Values(h), (std::vector<int>{ 1, 2, 3 }));
     }
     EXPECT_EQ(Lines(path).size(), 6u) << "each record streamed once, when it was first pushed";
+}
+
+/// A read after a cursor: the first `last` records numbered after it, oldest first, so a poller pages forward with no
+/// gap; a ring counts what it evicted unread as missed
+TEST(DeviceHistory_Test, RecordsSincePagesForwardThroughARing)
+{
+    TestHistory h("dev", "things");
+    std::string error;
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Ring, .limit = 4 }, error));
+    for (int i = 1; i <= 3; i++)
+        h.Push({ i * 10 });
+
+    history::Page page = h.RecordsSince(0, 2);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "1:10", "2:20" })) << "the first two, not the newest";
+    EXPECT_EQ(page.nextSince, 2u);
+    EXPECT_EQ(page.missed, 0u);
+    EXPECT_FALSE(page.restarted);
+
+    page = h.RecordsSince(page.nextSince, 2);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "3:30" }));
+    EXPECT_EQ(page.nextSince, 3u);
+
+    page = h.RecordsSince(page.nextSince, 0);
+    EXPECT_TRUE(page.records.items.empty()) << "caught up";
+    EXPECT_EQ(page.nextSince, 3u) << "the cursor stays";
+    EXPECT_EQ(page.missed, 0u);
+
+    // Six more into a ring of four: seq 4 and 5 are evicted before the reader comes back
+    for (int i = 4; i <= 9; i++)
+        h.Push({ i * 10 });
+    page = h.RecordsSince(3, 0);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "6:60", "7:70", "8:80", "9:90" }));
+    EXPECT_EQ(page.missed, 2u);
+    EXPECT_EQ(page.nextSince, 9u);
+    EXPECT_FALSE(page.restarted);
+}
+
+/// A capture keeps its first `limit`; once the reader has them all, the ones over the cap are passed over as missed
+TEST(DeviceHistory_Test, RecordsSinceThroughACapture)
+{
+    TestHistory h("dev", "things");
+    std::string error;
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Capture, .limit = 3 }, error));
+    for (int i = 1; i <= 5; i++)
+        h.Push({ i });
+
+    history::Page page = h.RecordsSince(0, 2);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "1:1", "2:2" }));
+    EXPECT_EQ(page.nextSince, 2u);
+    EXPECT_EQ(page.missed, 0u);
+
+    page = h.RecordsSince(2, 2);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "3:3" }));
+    EXPECT_EQ(page.missed, 2u) << "4 and 5 went over the cap";
+    EXPECT_EQ(page.nextSince, 5u);
+
+    h.Push({ 6 });
+    page = h.RecordsSince(page.nextSince, 0);
+    EXPECT_TRUE(page.records.items.empty());
+    EXPECT_EQ(page.missed, 1u) << "only the one after the cursor";
+    EXPECT_EQ(page.nextSince, 6u);
+}
+
+/// A cursor past the newest record (the history was cleared or configured since) restarts from the oldest kept
+TEST(DeviceHistory_Test, RecordsSinceRestartsAfterAClear)
+{
+    TestHistory h("dev", "things");
+    std::string error;
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Ring, .limit = 8 }, error));
+    for (int i = 1; i <= 5; i++)
+        h.Push({ i });
+    const uint64_t cursor = h.RecordsSince(0, 0).nextSince;
+    ASSERT_EQ(cursor, 5u);
+
+    h.Clear();
+    history::Page page = h.RecordsSince(cursor, 0);
+    EXPECT_TRUE(page.restarted);
+    EXPECT_TRUE(page.records.items.empty());
+    EXPECT_EQ(page.nextSince, 0u) << "numbered afresh";
+
+    h.Push({ 7 });
+    h.Push({ 8 });
+    page = h.RecordsSince(cursor, 1);
+    EXPECT_TRUE(page.restarted);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "1:7" })) << "from the oldest kept";
+    EXPECT_EQ(page.nextSince, 1u);
+    EXPECT_EQ(page.missed, 0u);
+
+    page = h.RecordsSince(page.nextSince, 0);
+    EXPECT_FALSE(page.restarted);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "2:8" }));
+}
+
+/// The fast path's staged records are numbered too: a read after a cursor drains them first
+TEST(DeviceHistory_Test, RecordsSinceSeesStagedRecords)
+{
+    TestHistory h("dev", "things");
+    h.EnableFastPush(16);
+    std::string error;
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Ring, .limit = 4 }, error));
+    for (int i = 1; i <= 6; i++)
+        h.PushFast({ i });
+    const history::Page page = h.RecordsSince(1, 0);
+    EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "3:3", "4:4", "5:5", "6:6" }));
+    EXPECT_EQ(page.missed, 1u);
 }

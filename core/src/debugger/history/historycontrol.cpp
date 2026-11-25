@@ -71,7 +71,15 @@ HistoryReply Execute(EmulatorContext* context, const HistoryRequest& request)
             h.Pause(request.verb == "pause");
         }
         reply.body = history::StatsNode(h);
-        if (request.verb == "read")
+        if (request.verb == "read" && request.since)
+        {
+            history::Page page = h.RecordsSince(*request.since, request.last);
+            reply.body["records"] = std::move(page.records);
+            reply.body["next_since"] = static_cast<int64_t>(page.nextSince);
+            reply.body["missed"] = static_cast<int64_t>(page.missed);
+            reply.body["restarted"] = page.restarted;
+        }
+        else if (request.verb == "read")
         {
             reply.body["records"] = h.Records(request.last);
         }

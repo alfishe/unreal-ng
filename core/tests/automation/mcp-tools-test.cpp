@@ -2160,6 +2160,51 @@ TEST_F(McpTools_Test, DeviceHistory_ReadAndConfig)
     EXPECT_TRUE(RunTool(*_registry, "device_history", missing, *_caller).isError);
 }
 
+// device_history read with since: forwarded as a query parameter, and the text shows next_since, missed and each
+// record's seq (an agent may see only the text)
+TEST_F(McpTools_Test, DeviceHistory_ReadSince)
+{
+    Json::Value reply;
+    reply["device"] = "zxbus.1";
+    reply["what"] = "GS host traffic";
+    reply["mode"] = "ring";
+    reply["limit"] = 4;
+    reply["written"] = 9;
+    reply["kept"] = 4;
+    reply["dropped"] = 5;
+    reply["next_since"] = 7;
+    reply["missed"] = 2;
+    reply["restarted"] = false;
+    Json::Value record;
+    record["seq"] = 6;
+    record["value"] = 60;
+    reply["records"].append(record);
+    record["seq"] = 7;
+    record["value"] = 70;
+    reply["records"].append(record);
+    _caller->routes["GET /api/v1/emulator/emu-1/history/zxbus.1?last=2&since=3"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "read";
+    args["device"] = "zxbus.1";
+    args["last"] = 2;
+    args["since"] = 3;
+    mcp::ToolResult result = RunTool(*_registry, "device_history", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("next_since 7, missed 2"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("restarted"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("  seq=6 value=60"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("  seq=7 value=70"), std::string::npos) << result.text;
+
+    reply["restarted"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/history/zxbus.1?last=32&since=99"] = {200, reply};
+    args.removeMember("last");
+    args["since"] = 99;
+    result = RunTool(*_registry, "device_history", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("restarted"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_ContentionAspect)
 {
     Json::Value contention;
