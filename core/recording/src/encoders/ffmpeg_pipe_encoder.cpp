@@ -63,20 +63,14 @@ bool FFmpegPipeEncoder::createTempDir()
     char tempPath[MAX_PATH];
     GetTempPathA(MAX_PATH, tempPath);
 
-    // Generate unique directory name
-    _tempDir = std::string(tempPath) + "unreal-rec-";
-    char uniqueName[16];
-    snprintf(uniqueName, sizeof(uniqueName), "%p", this);
-    _tempDir += uniqueName;
-
+    // A name of its own (the process, a counter, random bits: another emulator's never), made new: an existing
+    // directory is not shared
+    _tempDir = std::string(tempPath) + NamedPipe::uniqueName("rec");
     if (!CreateDirectoryA(_tempDir.c_str(), nullptr))
     {
-        DWORD err = ::GetLastError();
-        if (err != ERROR_ALREADY_EXISTS)
-        {
-            _lastError = "Failed to create temp directory, error: " + std::to_string(err);
-            return false;
-        }
+        _lastError = "Failed to create temp directory, error: " + std::to_string(::GetLastError());
+        _tempDir.clear();
+        return false;
     }
 #endif
     return true;
@@ -171,12 +165,9 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _videoPipePath = _tempDir + "/video.fifo";
     _audioPipePath = _tempDir + "/audio.fifo";
 #else
-    // Windows named pipes use \\.\pipe\name format
-    // Use unique names based on pointer to allow multiple instances
-    char uniqueSuffix[32];
-    snprintf(uniqueSuffix, sizeof(uniqueSuffix), "_%p", this);
-    _videoPipePath = std::string("unreal_video") + uniqueSuffix;
-    _audioPipePath = std::string("unreal_audio") + uniqueSuffix;
+    // Windows named pipes (\\.\pipe\name): names no other pipe has, in this process or another emulator's
+    _videoPipePath = NamedPipe::uniqueName("video");
+    _audioPipePath = NamedPipe::uniqueName("audio");
 #endif
 
     if (_segmented)
@@ -220,12 +211,13 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
         return true;
     }
 
-    // Create named pipes (only for streams we have)
+    // Create named pipes (only for streams we have), before ffmpeg opens them
     if (_hasVideo)
     {
-        if (!NamedPipe::create(_videoPipePath))
+        _videoPipe = std::make_unique<NamedPipe>();
+        if (!_videoPipe->create(_videoPipePath))
         {
-            _lastError = "Failed to create video pipe";
+            _lastError = "Failed to create video pipe: " + _videoPipe->getLastError();
             cleanup();
             return false;
         }
@@ -233,9 +225,10 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
 
     if (_hasAudio)
     {
-        if (!NamedPipe::create(_audioPipePath))
+        _audioPipe = std::make_unique<NamedPipe>();
+        if (!_audioPipe->create(_audioPipePath))
         {
-            _lastError = "Failed to create audio pipe";
+            _lastError = "Failed to create audio pipe: " + _audioPipe->getLastError();
             cleanup();
             return false;
         }
@@ -251,6 +244,11 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
         cleanup();
         return false;
     }
+    // Only this ffmpeg may open the pipes
+    if (_videoPipe)
+        _videoPipe->setReaderProcess(_ffmpegProcess.processId());
+    if (_audioPipe)
+        _audioPipe->setReaderProcess(_ffmpegProcess.processId());
 
     // Prepare queues
     _videoQueue.clear();
@@ -586,8 +584,7 @@ void FFmpegPipeEncoder::failWorker(const std::string& error)
 void FFmpegPipeEncoder::videoWriterMain()
 {
     // Open video pipe (completes when ffmpeg connects its read end). Segments open theirs with their first picture
-    _videoPipe = _segmented ? nullptr : std::make_unique<NamedPipe>();
-    if (_videoPipe && !_videoPipe->openForWriteTimeout(_videoPipePath, 15000, &_cancelRequested))
+    if (_videoPipe && !_videoPipe->openForWriteTimeout(15000, &_cancelRequested))
     {
         failWorker("Failed to open video pipe: " + _videoPipe->getLastError());
         return;
@@ -645,8 +642,7 @@ void FFmpegPipeEncoder::videoWriterMain()
 
 void FFmpegPipeEncoder::audioWriterMain()
 {
-    _audioPipe = _pcmFile ? nullptr : std::make_unique<NamedPipe>();
-    if (_audioPipe && !_audioPipe->openForWriteTimeout(_audioPipePath, 15000, &_cancelRequested))
+    if (_audioPipe && !_audioPipe->openForWriteTimeout(15000, &_cancelRequested))
     {
         failWorker("Failed to open audio pipe: " + _audioPipe->getLastError());
         return;
@@ -991,13 +987,7 @@ std::string FFmpegPipeEncoder::resolveAudioEncoder(const EncoderConfig& config, 
 
 std::string FFmpegPipeEncoder::getFFmpegPipePath(const std::string& pipeName) const
 {
-#ifdef _WIN32
-    // Windows: ffmpeg needs full \\.\pipe\name path
-    return "\\\\.\\pipe\\" + pipeName;
-#else
-    // Unix: pipe path is already the full filesystem path
-    return pipeName;
-#endif
+    return NamedPipe::readerPath(pipeName);
 }
 
 std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& filename, const EncoderConfig& config)
@@ -1632,15 +1622,14 @@ bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
 #ifndef _WIN32
     segment->pipePath = TempFile(_tempDir, "video-" + index + ".fifo");
 #else
-    char suffix[48];
-    snprintf(suffix, sizeof(suffix), "_%p_", static_cast<void*>(this));
-    segment->pipePath = std::string("unreal_video") + suffix + index;
+    segment->pipePath = NamedPipe::uniqueName("video-" + index);
 #endif
     _videoPipePath = segment->pipePath;
     const std::string segmentFile = TempFile(_tempDir, "segment-" + index + ".mkv");
-    if (!NamedPipe::create(segment->pipePath))
+    auto pipe = std::make_unique<NamedPipe>();
+    if (!pipe->create(segment->pipePath))
     {
-        _lastError = "Failed to create video pipe";
+        _lastError = "Failed to create video pipe: " + pipe->getLastError();
         return false;
     }
 
@@ -1653,6 +1642,7 @@ bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
         std::remove(segment->ymapPath.c_str());
         return false;
     }
+    pipe->setReaderProcess(segment->process->processId());  // only this ffmpeg may open the pipe
     // Without a reader the stderr pipe fills and ffmpeg blocks (see _stderrThread)
     Subprocess* running = segment->process.get();
     segment->stderrThread = std::thread([this, running]() {
@@ -1667,8 +1657,8 @@ bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
         _segmentFiles.push_back(segmentFile);
     }
 
-    _videoPipe = std::make_unique<NamedPipe>();
-    if (!_videoPipe->openForWriteTimeout(_videoPipePath, 15000, &_cancelRequested))
+    _videoPipe = std::move(pipe);
+    if (!_videoPipe->openForWriteTimeout(15000, &_cancelRequested))
     {
         _lastError = "Failed to open video pipe: " + _videoPipe->getLastError();
         return false;

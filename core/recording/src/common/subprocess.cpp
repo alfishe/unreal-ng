@@ -713,3 +713,12 @@ void Subprocess::cleanup()
 }
 
 #endif // _WIN32
+
+uint64_t Subprocess::processId() const
+{
+#ifdef _WIN32
+    return _spawned && _hProcess ? static_cast<uint64_t>(GetProcessId(static_cast<HANDLE>(_hProcess))) : 0;
+#else
+    return _spawned && _pid > 0 ? static_cast<uint64_t>(_pid) : 0;
+#endif
+}

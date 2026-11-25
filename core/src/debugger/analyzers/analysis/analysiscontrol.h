@@ -13,10 +13,15 @@
 ///   stop                   stop the session (and the recording start began); the facts stay readable until the next
 ///                          start, the recording until the next one
 ///   status                 session state, level, mode, what the facts hold, the recording, the L1 job and result
-///   build   [frames path wait]  the long operation: capture the recording (TraceBundle) and replay it on a muted
+///   build   [frames path wait sessions ignore_readers]  the long operation: capture the recording (TraceBundle) and replay it on a muted
 ///                          analysis instance into L1 on a worker thread (analysisjobs.h). Answers at once with the
 ///                          job id; WebSocket topics analysis.progress / analysis.ready follow it. frames: replay at
 ///                          most that many; path: write the L1 JSON there; wait: block up to that many ms (<= 30000)
+///                          sessions: one L1 over several recordings of the same program on this machine, in
+///                          order: 'current' and session files ('ttd dump'), comma separated or one per line (no
+///                          window then; L1Result::sessions, Instruction::sessions say which ran what).
+///                          ignore_readers: Z80 ranges (hex, comma separated) of code whose data reads stay out of
+///                          the byte uses (a depacker)
 ///   cancel                 stop the running build
 ///   async=true             (build, trace, experiment, cover) run it as a job (emulator/jobs/jobcontrol.h): the
 ///                          answer is {job, state, status_url} at once (HTTP 202), the job holds the result

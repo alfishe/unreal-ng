@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Runs every test_*.py of the MCP verification against one server: a running one (--mcp-url) or one it launches
-(--launch <unreal-qt>, ports of its own from --port-base). Exit code 0 = every script passed.
+(--launch <unreal-qt>, ports of its own from --port-base, a number or `auto`). Exit code 0 = every script passed.
 
     tools/verification/mcp/run_all.py --launch cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt
     tools/verification/mcp/run_all.py --mcp-url http://127.0.0.1:8295/mcp test_inspect_state test_symbols
@@ -27,7 +27,7 @@ def main():
     url = args.mcp_url
     if args.launch:
         process = mcplib.launch(args.launch, args.port_base)
-        url = f'http://127.0.0.1:{args.port_base + 200}/mcp'
+        url = mcplib.mcp_url(process)
     failed = []
     started = time.time()
     try:

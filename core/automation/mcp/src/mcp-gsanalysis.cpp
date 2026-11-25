@@ -99,8 +99,7 @@ void RegisterGSAnalysis(ToolRegistry& registry)
                 known = known || a == action;
             if (!known)
             {
-                done(ToolResult::Error("unknown action '" + action +
-                                       "' (status, on, off, reset, release, coverage, heatmap)"));
+                done(ToolResult::Error(UnknownValueText("action", action, GSAnalysisToolActions())));
                 return;
             }
             std::string suffix;

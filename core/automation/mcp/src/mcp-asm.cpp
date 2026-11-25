@@ -31,15 +31,20 @@ namespace mcp
 namespace
 {
 
+/// The asm_source actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& AsmSourceActions()
+{
+    static const std::vector<std::string> actions = {"formats", "dialects", "files", "detect", "decode", "encode", "convert", "sync_status", "sync_probe", "sync_extract",
+                               "sync_watch", "sync_unwatch", "sync_hints", "sync_inject", "sync_push_watch", "sync_push_unwatch"};
+    return actions;
+}
+
 void RegisterAsmSourceImpl(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"formats", "dialects", "files", "detect", "decode", "encode", "convert", "sync_status", "sync_probe", "sync_extract",
-                               "sync_watch", "sync_unwatch", "sync_hints", "sync_inject", "sync_push_watch", "sync_push_unwatch"})
-        schema["properties"]["action"]["enum"].append(action);
+    SetSchemaEnum(schema["properties"]["action"], AsmSourceActions());
     schema["properties"]["action"]["description"] =
         "Assembler source operation: the tokenized formats of ZX Spectrum assemblers (ALASM, TASM, ZX-ASM, STORM, MASM, GENS, ZEUS, "
         "XAS, Laser Genius, ...) and text dialects; decode to text, encode text, convert between dialects (to sjasmplus, pasmo, z88dk, alasm). sync_*: the source an "
@@ -171,9 +176,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
                 ResolveAndForward(args, "POST", "/asm/sync/inject", &body, caller, "Assembler in RAM: inject", done);
                 return;
             }
-            done(ToolResult::Error("Unknown action '" + action +
-                                   "'. Valid: formats, dialects, files, detect, decode, encode, convert, sync_status, sync_probe, sync_extract, sync_watch, "
-                                   "sync_unwatch, sync_hints, sync_inject, sync_push_watch, sync_push_unwatch"));
+            done(ToolResult::Error(UnknownValueText("action", action, AsmSourceActions())));
         });
 }
 

@@ -22,16 +22,34 @@ namespace v1
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
 
-/// 400 for a key name DebugKeyboardManager cannot resolve (it would silently ignore it,
-/// while the OpenAPI contract promises 400). Returns true when a response was sent.
-static bool rejectUnknownKey(const std::string& keyName, const std::function<void(const HttpResponsePtr&)>& callback)
+/// The keys of a `key` text or of one `keys` item into `keys`: one name, or a chord of names held together joined
+/// with '+' ("w+o"; DebugKeyboardManager::SplitKeyChord). 400 for a name DebugKeyboardManager cannot resolve (it
+/// would silently ignore it, while the OpenAPI contract promises 400) and for a text with no name in it; the
+/// message says how keys are written. Returns true when a response was sent.
+static bool rejectUnknownKey(const std::string& keyName, std::vector<std::string>& keys,
+                             const std::function<void(const HttpResponsePtr&)>& callback)
 {
-    if (DebugKeyboardManager::IsKnownKeyName(keyName))
+    const std::vector<std::string> names = DebugKeyboardManager::SplitKeyChord(keyName);
+    std::string unknown;
+    bool refused = names.empty();
+    for (const std::string& name : names)
+    {
+        if (!refused && !DebugKeyboardManager::IsKnownKeyName(name))
+        {
+            refused = true;
+            unknown = name;
+        }
+    }
+    if (!refused)
+    {
+        keys.insert(keys.end(), names.begin(), names.end());
         return false;
+    }
 
     Json::Value error;
     error["error"] = "Bad Request";
-    error["message"] = "Unknown key '" + keyName + "'. Use GET /api/v1/emulator/{id}/keyboard/keys for valid names";
+    error["message"] = DebugKeyboardManager::DescribeUnknownKey(names.empty() ? keyName : unknown) +
+                       ". Use GET /api/v1/emulator/{id}/keyboard/keys for valid names";
 
     auto resp = HttpResponse::newHttpJsonResponse(error);
     resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -124,14 +142,19 @@ void EmulatorAPI::keyTap(const HttpRequestPtr& req, std::function<void(const Htt
     }
 
     std::string keyName = (*json)["key"].asString();
-    if (rejectUnknownKey(keyName, callback))
+    std::vector<std::string> chord;
+    if (rejectUnknownKey(keyName, chord, callback))
         return;
     uint16_t frames = json->isMember("frames") ? (*json)["frames"].asUInt() : 2;
     uint16_t count = 1, gapFrames = 0;
     if (!ParseTapRepeat(*json, count, gapFrames, callback))
         return;
 
-    context->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, frames, count, gapFrames);
+    // "w+o": the keys of a chord go down and up together, like /keyboard/combo
+    if (chord.size() == 1)
+        context->pDebugManager->GetKeyboardManager()->TapKeyRepeated(chord.front(), frames, count, gapFrames);
+    else
+        context->pDebugManager->GetKeyboardManager()->TapComboRepeated(chord, frames, count, gapFrames);
 
     Json::Value ret;
     ret["success"] = true;
@@ -196,9 +219,13 @@ void EmulatorAPI::keyPress(const HttpRequestPtr& req, std::function<void(const H
     }
 
     std::string keyName = (*json)["key"].asString();
-    if (rejectUnknownKey(keyName, callback))
+    std::vector<std::string> chord;
+    if (rejectUnknownKey(keyName, chord, callback))
         return;
-    context->pDebugManager->GetKeyboardManager()->PressKey(keyName);
+    if (chord.size() == 1)
+        context->pDebugManager->GetKeyboardManager()->PressKey(chord.front());
+    else
+        context->pDebugManager->GetKeyboardManager()->PressCombo(chord);  // "w+o": held together
 
     Json::Value ret;
     ret["success"] = true;
@@ -260,9 +287,13 @@ void EmulatorAPI::keyRelease(const HttpRequestPtr& req, std::function<void(const
     }
 
     std::string keyName = (*json)["key"].asString();
-    if (rejectUnknownKey(keyName, callback))
+    std::vector<std::string> chord;
+    if (rejectUnknownKey(keyName, chord, callback))
         return;
-    context->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
+    if (chord.size() == 1)
+        context->pDebugManager->GetKeyboardManager()->ReleaseKey(chord.front());
+    else
+        context->pDebugManager->GetKeyboardManager()->ReleaseCombo(chord);  // "w+o": released together
 
     Json::Value ret;
     ret["success"] = true;
@@ -326,9 +357,8 @@ void EmulatorAPI::keyCombo(const HttpRequestPtr& req, std::function<void(const H
     std::vector<std::string> keyNames;
     for (const auto& key : (*json)["keys"])
     {
-        if (rejectUnknownKey(key.asString(), callback))
+        if (rejectUnknownKey(key.asString(), keyNames, callback))  // an item may be a chord itself ("w+o")
             return;
-        keyNames.push_back(key.asString());
     }
 
     uint16_t frames = json->isMember("frames") ? (*json)["frames"].asUInt() : 2;

@@ -1827,6 +1827,7 @@ emu.analysis("stop")                                 -- the facts stay readable
 emu.analysis("start", {record = true})               -- also a TTD recording
 emu.analysis("build", {wait = 20000})                -- { job, state, bundle, progress, ready, text }; frames, path
 emu.analysis("build", {from_frame = 1200, from_tinframe = 3500, to_frame = 4000})  -- a window: one stage (analysis-layers.md#stages-and-windows)
+emu.analysis("build", {sessions = "level1.ttd,level2.ttd,current", ignore_readers = "5B00-5BFF"})  -- one L1 over several recordings (analysis-layers.md#several-sessions)
 emu.analysis("build", "500")                         -- a string: the frames to replay
 local sheet = emu.analysis("explain", "$0038")       -- L1 ready: { what = "routine", routine, text = the sheet }
 emu.analysis("explain", {address = 0x38, what = "byte"})

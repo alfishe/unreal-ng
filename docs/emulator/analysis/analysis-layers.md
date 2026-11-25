@@ -151,6 +151,51 @@ laid over code that ran before (a title player under a game's playfield buffer).
 at least once (a last patch the recording ends before is still one): `kSmc` without `overlaid`. The code map's
 `self-modifying` evidence counts only patches; overlays are L3's `code-overwritten`.
 
+### Several sessions
+
+A program played in several recordings (one per level, per load, per input script) is one L1: `build` takes
+`sessions`, the recordings to fold, in order. A name is `current` (this instance's own recording, captured as in a
+plain build) or a session file (`ttd dump`, `time_travel` `dump`); the list is comma separated or one name per line
+(an array on REST and MCP), at most 64. A session file is replayed on a machine made like this instance (its model,
+its cards), so the instance must be the machine the file was recorded on; a file that does not fit fails the job
+with the session's index and name.
+
+Each session is replayed on its own clone, one after another, into one `L1Builder`
+(`ReplayBuild(const std::vector<TraceBundle>&, ...)`, `L1Builder::NextSession`). What is folded adds up: the
+instructions, their counts and T-states, the successor edges, the routines and the call graph, the loops, the
+fields, the byte uses and counts. What followed one machine is dropped at the boundary: the call stack, the open
+loops, the register and memory provenance (a byte is no longer "the copy of" another, the drawing pass ends). The
+first instruction of every session is a `resume` entry, never a successor of the session before.
+
+```mermaid
+flowchart LR
+    A["session 0<br/>frames 100..160"] --> B["L1Builder"]
+    C["session 1<br/>frames 40..90"] --> B
+    B --> D["one L1<br/>axis 100..210"]
+```
+
+| Field | Meaning |
+|---|---|
+| `replay.sessions[]` | one per session, in order: `name`, its own `first_frame` and `last_frame` (exclusive), `frames`, `frame_base`, `instructions`, `tstates`, `interrupts`, `checked`, `diverged`, `first_divergence` (its own frame) |
+| `replay.*` | the sums; `first_frame` .. `last_frame` span the whole axis |
+| `instructions[]` rows | one more element at the end: `[[session, frames it ran in, first_frame, last_frame], ...]`, the session's own frames |
+
+Every other frame of the document (a routine's, a byte's, a copy's, a branch's, an arrival's) lies on **one axis**:
+session 0 keeps its own frames, the next session follows where the one before ended. A frame `F` of the build is
+frame `F - frame_base + first_frame` of the session whose `[frame_base, frame_base + frames)` holds it. A build of
+one session has no `sessions` and no extra element: its document is unchanged.
+
+Limits. No window (`frames`, `from_frame`, `from_tinframe`, `to_frame` are refused, 400). The start image of a
+page is the first session's that mapped it at its start, the end image the last one's. An instruction whose bytes
+differ between two sessions (another level's code at the same address) is `smc`, as one that changed within a
+recording. The experiments and the coverage of L3 replay one recording, so on such a build they answer 409 and
+name the reason; `explain`, `query`, `export`, `gallery`, `findings` and `review` work as on any build.
+
+`ignore_readers` (any build) takes Z80 ranges (hex, comma separated: `5B00-5BFF,FE00-FE7F`) of code whose data
+reads stay out of the byte uses: a depacker reads the packed stream where the program later lies, and those reads
+say nothing of the program's bytes. Such an instruction's reads set no flag, no reader and no count on the byte;
+its writes, its own code, its loops and the ranges it walked are folded as ever.
+
 ### The structures
 
 | Structure | What it holds |
@@ -673,7 +718,7 @@ its fields and a `text` (the lines the CLI prints and the MCP tool's text). Ever
 | `start` | `level` (`facts`, default, or `counters`), `mode` (`z80`, default, or `physical`), `record` (`true`: also start the TTD recording L1 is built from) | switches on debug mode and memory tracking, sets level and mode, starts a fresh memory session (and the recording); the status |
 | `stop` | - | stops the session (and the recording `start` began; the facts and the history stay); the status |
 | `status` | - | `state` (capturing, paused, stopped), `level`, `mode`, `frame`, `facts` {allocated, bytes, z80_bytes_touched, pages [{page, name}]}, `recording`, `l1` {progress, ready} (the topic values below) |
-| `build` | `frames` (replay at most that many), `from_frame`, `from_tinframe`, `to_frame` (a window: one stage, see "Stages and windows"), `path` (write the L1 JSON there), `wait` (ms to wait for the result, at most 30000) | a long operation: captures the recording and starts the replay on a worker thread; `job`, `state` (running, done, failed, cancelled), `bundle` {source, model, first_frame, end_frame, frames, checkpoints, session_bytes, facts, facts_mode, coverage, calltrace}, `progress`, `ready` |
+| `build` | `frames` (replay at most that many), `from_frame`, `from_tinframe`, `to_frame` (a window: one stage, see "Stages and windows"), `path` (write the L1 JSON there), `wait` (ms to wait for the result, at most 30000), `sessions` and `ignore_readers` ([several sessions](#several-sessions)) | a long operation: captures the recording and starts the replay on a worker thread; `job`, `state` (running, done, failed, cancelled), `bundle` {source, model, first_frame, end_frame, frames, checkpoints, session_bytes, facts, facts_mode, coverage, calltrace}, `progress`, `ready` |
 | `cancel` | - | cancels the running build; the status |
 | `explain` | `address` (`$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label), `page` (index, `ram:N`, `rom:N`), `what` (`auto`, default, `routine` or `byte`) | a routine of L1 at the address (`what` auto or routine): `what` = routine, `entry`, `page`, `page_name`, `kinds`, `instructions`, `blocks`, `profile`, `callers`, `callees`, `loops`, `fields`, `sheet_bytes`, and the fact sheet as `text`. Otherwise the byte (L0): `what` = byte, `address`, `mode`, `bank` or `page` {page, name, offset}, `label`, `accessed`, `kinds`, `kinds_mask`, `first_frame`, `last_frame`, `last_reader` {pc, label} or null, `multi_reader`, `last_writer`, `multi_writer`, `written` {distinct, min, max}, `counters` {reads, writes, executes} |
 | `query` | `kind` (`all`, default, `conflicts` or a region kind: `code`, `data`, `text`, `buffer`, `init_table`, `records`, `variable`, `pointer_table`, `handler_table`, ...), `range` (`8000-83FF`, `$8000-$83FF`; default all), `limit` (default 200, at most 100000) | `kind`, `range`, `regions` [{start, end, page, size, kind, detector, confidence, status, label, title, stride, count, ...}] or `conflicts` [{a, b}], `count`, `truncated`; the text one line per claim |

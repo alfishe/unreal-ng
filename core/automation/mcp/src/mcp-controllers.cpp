@@ -679,8 +679,14 @@ void RegisterControllers(ToolRegistry& registry)
             if (std::none_of(machineActions.begin(), machineActions.end(),
                              [&action](const auto& entry) { return entry.first == action; }))
             {
+                // The valid ones are the machine side and the host side (the schema enum is built from the same two)
+                std::vector<std::string> validActions;
+                for (const auto& entry : machineActions)
+                    validActions.push_back(entry.first);
+                for (const auto& entry : HostControllerToolActions())
+                    validActions.push_back(entry.first);
                 done(ToolResult::Error(
-                    "controllers: unknown action '" + action + "'" +
+                    UnknownValueText("action", action, validActions, "controllers: ") +
                     (action == "learn" ? std::string(" (the learn wizard needs a person pressing the controls: REST "
                                                      "POST /api/v1/controllers/learn, CLI controllers learn, Python "
                                                      "controllers_learn)")

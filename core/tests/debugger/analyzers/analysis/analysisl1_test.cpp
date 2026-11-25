@@ -574,6 +574,176 @@ TEST_F(AnalysisL1_Test, PagedRoutinesSeparate)
     EXPECT_NE(l1.RoutineAtZ80(0xC000, KeyPage(at[0]->entry)), l1.RoutineAtZ80(0xC000, KeyPage(at[1]->entry)));
 }
 
+/// sessions.asm played twice on one machine: from `start`, then from `second`, each its own recording
+struct TwoSessions
+{
+    TraceBundle a;
+    TraceBundle b;
+};
+
+static const Instruction* InstructionAtZ80(const L1Result& l1, uint16_t z80)
+{
+    for (const Instruction& i : l1.instructions)
+        if (i.z80 == z80)
+            return &i;
+    return nullptr;
+}
+
+TEST_F(AnalysisL1_Test, SeveralSessionsFoldIntoOneL1)
+{
+    Load("sessions.asm");
+    ASSERT_FALSE(HasFatalFailure());
+    TwoSessions two;
+    Record(2);
+    ASSERT_FALSE(HasFatalFailure());
+    two.a = _bundle;
+    _z80->pc = At("second");
+    _z80->halted = 0;
+    Record(3);
+    ASSERT_FALSE(HasFatalFailure());
+    two.b = _bundle;
+    two.b.name = "second.ttd";
+
+    ReplayOptions options;
+    options.salt = 0x51;
+    std::string error;
+    L1Result first, second, both;
+    ASSERT_TRUE(ReplayBuild(two.a, options, first, error)) << error;
+    ASSERT_TRUE(ReplayBuild(two.b, options, second, error)) << error;
+    ASSERT_TRUE(ReplayBuild(std::vector<TraceBundle>{two.a, two.b}, options, both, error)) << error;
+    EXPECT_EQ(both.replay.diverged, 0u);
+
+    // A build of one says nothing of sessions; the build over two lists them on one frame axis
+    EXPECT_TRUE(first.sessions.empty());
+    EXPECT_EQ(first.ToJson().find("\"sessions\""), std::string::npos);
+    ASSERT_EQ(both.sessions.size(), 2u);
+    const SessionInfo& sa = both.sessions[0];
+    const SessionInfo& sb = both.sessions[1];
+    EXPECT_EQ(sa.name, "current");
+    EXPECT_EQ(sb.name, "second.ttd");
+    EXPECT_EQ(sa.frames, 2u);
+    EXPECT_EQ(sb.frames, 3u);
+    EXPECT_EQ(sa.frameBase, sa.firstFrame) << "session 0 keeps its own frames";
+    EXPECT_EQ(sb.frameBase, sa.frameBase + sa.frames) << "the next session follows where the one before ended";
+    EXPECT_EQ(sa.firstFrame, first.replay.firstFrame);
+    EXPECT_EQ(sb.firstFrame, second.replay.firstFrame);
+    EXPECT_EQ(both.replay.frames, 5u);
+    EXPECT_EQ(both.replay.firstFrame, sa.frameBase);
+    EXPECT_EQ(both.replay.lastFrame, sb.frameBase + sb.frames);
+    EXPECT_EQ(both.replay.instructions, first.replay.instructions + second.replay.instructions);
+    EXPECT_EQ(sa.instructions, first.replay.instructions);
+    EXPECT_EQ(sb.instructions, second.replay.instructions);
+    EXPECT_EQ(both.replay.tstates, first.replay.tstates + second.replay.tstates);
+    EXPECT_NE(both.ToJson().find("\"sessions\""), std::string::npos);
+
+    // sub_a ran in both: its counts add up and it names both sessions with their own frames
+    const Instruction* subA = InstructionAtZ80(both, At("sub_a"));
+    const Instruction* subA1 = InstructionAtZ80(first, At("sub_a"));
+    const Instruction* subA2 = InstructionAtZ80(second, At("sub_a"));
+    ASSERT_NE(subA, nullptr);
+    ASSERT_NE(subA1, nullptr);
+    ASSERT_NE(subA2, nullptr);
+    EXPECT_EQ(subA->executions, subA1->executions + subA2->executions);
+    ASSERT_EQ(subA->sessions.size(), 2u);
+    EXPECT_EQ(subA->sessions[0].session, 0u);
+    EXPECT_EQ(subA->sessions[0].firstFrame, subA1->firstFrame);
+    EXPECT_EQ(subA->sessions[0].lastFrame, subA1->lastFrame);
+    EXPECT_EQ(subA->sessions[1].session, 1u);
+    EXPECT_EQ(subA->sessions[1].firstFrame, subA2->firstFrame) << "the session's own frame, not the axis'";
+    EXPECT_EQ(subA->sessions[1].lastFrame, subA2->lastFrame);
+    EXPECT_EQ(subA->sessions[1].frames, 1u);
+    EXPECT_EQ(subA->firstFrame, subA1->firstFrame);
+    EXPECT_EQ(subA->lastFrame, subA2->lastFrame - sb.firstFrame + sb.frameBase) << "on the build's axis";
+
+    // sub_b ran in the second session alone; the idle loop of the first in every frame of it
+    const Instruction* subB = InstructionAtZ80(both, At("sub_b"));
+    ASSERT_NE(subB, nullptr);
+    ASSERT_EQ(subB->sessions.size(), 1u);
+    EXPECT_EQ(subB->sessions[0].session, 1u);
+    const Instruction* idle = InstructionAtZ80(both, At("idle_a"));
+    ASSERT_NE(idle, nullptr);
+    ASSERT_EQ(idle->sessions.size(), 1u);
+    EXPECT_EQ(idle->sessions[0].session, 0u);
+    EXPECT_EQ(idle->sessions[0].frames, 2u);
+    EXPECT_EQ(idle->sessions[0].lastFrame, sa.firstFrame + 1);
+
+    // One call graph: sub_a called from both starts, each start a resume (no successor of the session before)
+    const Routine* a = RoutineAt(both, At("sub_a"));
+    const Routine* startA = RoutineAt(both, At("start"));
+    const Routine* startB = RoutineAt(both, At("second"));
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(startA, nullptr);
+    ASSERT_NE(startB, nullptr) << "the second session's first instruction starts a routine of its own";
+    EXPECT_TRUE(startA->kinds & entry::kResume) << EntryKindNames(startA->kinds);
+    EXPECT_TRUE(startB->kinds & entry::kResume) << EntryKindNames(startB->kinds);
+    EXPECT_NE(CallBetween(both, startA, a, CallKind::Call), nullptr);
+    EXPECT_NE(CallBetween(both, startB, a, CallKind::Call), nullptr);
+    EXPECT_EQ(a->profile.entries, 2u);
+    const Block* idleBlock = BlockAt(both, At("idle_a"));
+    ASSERT_NE(idleBlock, nullptr);
+    for (const Edge& e : idleBlock->successors)
+        EXPECT_NE(both.blocks[e.to].z80, At("second")) << "the session's end is no jump into the next one";
+
+    // Byte uses add up, their frames lie on the axis
+    const ByteUse* table = both.UseAt(both.StartKey(At("table")));
+    const ByteUse* table1 = first.UseAt(first.StartKey(At("table")));
+    const ByteUse* table2 = second.UseAt(second.StartKey(At("table")));
+    ASSERT_NE(table, nullptr);
+    ASSERT_NE(table1, nullptr);
+    ASSERT_NE(table2, nullptr);
+    EXPECT_EQ(table->reads, table1->reads + table2->reads);
+    EXPECT_EQ(table->reads, 2u);
+    EXPECT_EQ(table->firstFrame, 0u);
+    EXPECT_EQ(table->lastFrame, sb.frameBase - sa.frameBase);
+
+    // The same build under another hash salt is the same document
+    ReplayOptions other;
+    other.salt = 0x9876FEDC;
+    L1Result again;
+    ASSERT_TRUE(ReplayBuild(std::vector<TraceBundle>{two.a, two.b}, other, again, error)) << error;
+    EXPECT_EQ(both.ToJson(), again.ToJson());
+
+    // A window is one recording's
+    ReplayOptions window;
+    window.maxFrames = 1;
+    L1Result none;
+    EXPECT_FALSE(ReplayBuild(std::vector<TraceBundle>{two.a, two.b}, window, none, error));
+    EXPECT_NE(error.find("one session"), std::string::npos) << error;
+}
+
+TEST_F(AnalysisL1_Test, IgnoredReadersLeaveNoReads)
+{
+    Load("sessions.asm");
+    ASSERT_FALSE(HasFatalFailure());
+    Record(1);
+    ASSERT_FALSE(HasFatalFailure());
+    const L1Result plain = Build(7);
+    const ByteUse* read = plain.UseAt(plain.StartKey(At("table")));
+    ASSERT_NE(read, nullptr);
+    EXPECT_EQ(read->reads, 1u);
+    EXPECT_TRUE(read->flags & use::kRead);
+
+    // sub_a is "the depacker": what it read keeps no trace of it, the routine itself is there as ever
+    ReplayOptions options;
+    options.salt = 7;
+    options.ignoreReaders.emplace_back(At("sub_a"), static_cast<uint16_t>(At("sub_b") - 1));
+    L1Result l1;
+    std::string error;
+    ASSERT_TRUE(ReplayBuild(_bundle, options, l1, error)) << error;
+    const ByteUse* skipped = l1.UseAt(l1.StartKey(At("table")));
+    if (skipped != nullptr)
+    {
+        EXPECT_EQ(skipped->reads, 0u);
+        EXPECT_FALSE(skipped->flags & use::kRead);
+        EXPECT_EQ(skipped->firstReader, kNoKey);
+    }
+    const Instruction* subA = InstructionAtZ80(l1, At("sub_a"));
+    ASSERT_NE(subA, nullptr);
+    EXPECT_EQ(subA->executions, 1u);
+    EXPECT_NE(RoutineAt(l1, At("sub_a")), nullptr);
+    EXPECT_EQ(l1.replay.instructions, plain.replay.instructions);
+}
+
 TEST_F(AnalysisL1_Test, ReplayDeterministic)
 {
     Load("determinism.asm");

@@ -36,18 +36,21 @@ namespace mcp
 namespace
 {
 
+/// The manage_symbols actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& ManageSymbolsActions()
+{
+    static const std::vector<std::string> actions = {"load_labels", "list", "resolve", "load_listing", "source_at", "step_line", "run_to_line", "formats",
+                               "detect", "sets", "set_enable", "drop", "import", "export", "scan", "import_live",
+                               "import_source"};
+    return actions;
+}
+
 void RegisterManageSymbolsImpl(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"load_labels", "list", "resolve", "load_listing", "source_at", "step_line", "run_to_line", "formats",
-                               "detect", "sets", "set_enable", "drop", "import", "export", "scan", "import_live",
-                               "import_source"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+    SetSchemaEnum(schema["properties"]["action"], ManageSymbolsActions());
     schema["properties"]["action"]["description"] =
         "Symbol/source operation. Labels come from symbol files in any format (formats lists them), or from an assembler "
         "source assembled on the host (import_source); listings from "
@@ -473,9 +476,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action +
-                                   "'. Valid: load_labels, list, resolve, load_listing, source_at, step_line, run_to_line, formats, "
-                                   "detect, sets, set_enable, drop, import, export, scan, import_live, import_source"));
+            done(ToolResult::Error(UnknownValueText("action", action, ManageSymbolsActions())));
         });
 }
 

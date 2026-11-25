@@ -373,23 +373,26 @@ std::string ViewportSummary(const Json::Value& v)
     return line;
 }
 
-void RegisterCaptureMediaImpl(ToolRegistry& registry)
+/// The capture_media actions: the schema enum and the unknown-action answer read this one list
+const std::vector<std::string>& CaptureMediaActions()
 {
-    Json::Value schema;
-    schema["type"] = "object";
-    schema["properties"]["action"]["type"] = "string";
-    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
+    static const std::vector<std::string> actions = {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
                                "record_resume", "record_presets", "audio_capture", "audio_status", "audio_result",
                                "temporal_status", "temporal_set", "window_display", "window_display_set",
                                "window_crt_params", "window_crt_params_set", "viewport", "viewport_set",
                                "window_record_start", "window_record_frames", "window_record_stop",
                                "window_record_status",
                                "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
-                               "framebuffer"})
-    {
-        schema["properties"]["action"]["enum"].append(action);
-    }
+                               "framebuffer"};
+    return actions;
+}
+
+void RegisterCaptureMediaImpl(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    SetSchemaEnum(schema["properties"]["action"], CaptureMediaActions());
     schema["properties"]["action"]["description"] =
         "Media operation: still capture, digest, video recording session, audio capture, the ZX DLSS de-flicker "
         "(temporal_status / temporal_set), the GUI window's display settings (window_display / window_display_set: "
@@ -1492,13 +1495,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action +
-                                            "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
-                                            "record_pause, record_resume, audio_capture, audio_status, audio_result, "
-                                            "temporal_status, temporal_set, window_display, window_display_set, window_crt_params, "
-                                            "window_crt_params_set, viewport, viewport_set, window_record_start, window_record_frames, "
-                                            "window_record_stop, window_record_status, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
-                                            "vdac2_capture_status"));
+            done(ToolResult::Error(UnknownValueText("action", action, CaptureMediaActions())));
         });
 }
 

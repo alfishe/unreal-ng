@@ -662,6 +662,29 @@ StateNode L1Result::ToStateNode() const
     r["checked"] = static_cast<uint64_t>(replay.checked);
     r["diverged"] = static_cast<uint64_t>(replay.diverged);
     r["first_divergence"] = replay.firstDivergence;
+    if (!sessions.empty())
+    {
+        // A build over several sessions: the frames above and everywhere below are on the build's axis; a session
+        // holds [frame_base, frame_base + frames) of it, its own frames start at first_frame
+        StateNode list = StateNode::Array();
+        for (const SessionInfo& s : sessions)
+        {
+            StateNode node = StateNode::Object();
+            node["name"] = s.name;
+            node["first_frame"] = s.firstFrame;
+            node["last_frame"] = s.lastFrame;
+            node["frames"] = s.frames;
+            node["frame_base"] = s.frameBase;
+            node["instructions"] = s.instructions;
+            node["tstates"] = s.tstates;
+            node["interrupts"] = s.interrupts;
+            node["checked"] = static_cast<uint64_t>(s.checked);
+            node["diverged"] = static_cast<uint64_t>(s.diverged);
+            node["first_divergence"] = s.firstDivergence;
+            list.push(std::move(node));
+        }
+        r["sessions"] = std::move(list);
+    }
 
     StateNode pages = StateNode::Array();
     for (const auto& [page, name] : pageNames)
@@ -867,6 +890,21 @@ StateNode L1Result::ToStateNode() const
         node.push(ins.selfModified);
         node.push(ins.firstFrame);
         node.push(ins.lastFrame);
+        if (!sessions.empty())
+        {
+            // The sessions it ran in: [session, frames it ran in, its first and last frame there (the session's own)]
+            StateNode spans = StateNode::Array();
+            for (const SessionSpan& span : ins.sessions)
+            {
+                StateNode item = StateNode::Array();
+                item.push(static_cast<unsigned>(span.session));
+                item.push(static_cast<uint64_t>(span.frames));
+                item.push(span.firstFrame);
+                item.push(span.lastFrame);
+                spans.push(std::move(item));
+            }
+            node.push(std::move(spans));
+        }
         insList.push(std::move(node));
     }
     doc["instructions"] = std::move(insList);
