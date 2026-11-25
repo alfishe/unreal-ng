@@ -255,8 +255,9 @@ class WebSocket:
             pass
 
 
-def launch(binary, port_base):
-    """Starts unreal-qt offscreen on ports of its own; returns the process once the MCP endpoint answers"""
+def launch(binary, port_base, needs=()):
+    """Starts unreal-qt offscreen on ports of its own; returns the process once the MCP endpoint answers.
+    `needs`: MCP tools the caller will use; a binary without one is refused here, not at its first call"""
     # Another instance on these ports would answer instead of the launched one (its binary, not this build): refuse
     for offset in (0, 200):
         with socket.socket() as probe:
@@ -285,6 +286,10 @@ def launch(binary, port_base):
     for _ in range(60):
         try:
             session.rpc('ping', timeout=2)
+            missing = sorted(set(needs) - set(session.tools())) if needs else []
+            if missing:
+                process.kill()
+                raise SystemExit(f"{binary} has no MCP tool {', '.join(missing)}: build current master")
             return process
         except (OSError, urllib.error.URLError, ValueError):
             if process.poll() is not None:

@@ -105,9 +105,17 @@
 
 ### P3
 - [ ] F7: GS COMRG value 0; NeoGS / GS in SZX (verify first) (M).
-- [ ] F8: port history flush and frame counter (verify first) (S).
-- [ ] F9: L1 `root` at a snapshot's first PC (verify first) (S).
-- [ ] S4: history / trace filters, event-only trace (M).
+- [x] F8: port history flush and frame counter (verify first) (S). Verified 2026-11-24, no change needed: the
+  device histories are read while they record (memory: under the history's lock; disk: flushed every 100 ms or 256
+  records), a record carries the emulator's frame counter, the one TTD uses. A snapshot load restarts that counter
+  for the whole machine and ends the TTD session; the records before and after it share one buffer.
+- [x] F9: L1 `root` at a snapshot's first PC (verify first) (S). Verified present 2026-11-24 (the replay's first
+  instruction always got `root`), fixed: entry kind `resume` unless the first PC is the reset vector. Test
+  `AnalysisL1_Test.CallGraphTailJump`.
+- [ ] S4: history / trace filters, event-only trace (M). Verified 2026-11-24, partly there: the machine port trace
+  (`/profiler/porttrace`) is event-only (frame, PC) with record-time filters (port, device, direction, PC range,
+  value) on WebAPI, CLI, Lua, Python. Left: the filter on the MCP `porttrace` action, record-time filters of the
+  device histories (the GS side is filtered on read only), the instruction access trace.
 - [x] V4: counting breakpoints with per-hit frames (with PLAN #6) (M).
   As built (2026-11-19, uncommitted on `find-count`): a breakpoint that only counts (`stop: false`, CLI `--count`)
   records its hits in a bounded `BreakpointHitLog` (`hit_log` N, default 1000, 0 none, at most 100000;
@@ -127,17 +135,26 @@
   rows expand to the record's summary and its first / newest 200 hits (hit, frame, T, PC, address, value, kind, card
   time), polled at 4 Hz through `GetHitLog` only while open, the records read only when the counts moved. Tests:
   `BreakpointHits_Test.*` (unreal-qt-tests).
-- [ ] V5: L1 first / last frame per instruction; reader-PC filter (S).
+- [ ] V5: L1 first / last frame per instruction; reader-PC filter (S). Verified 2026-11-24, partly there: first /
+  last frame per routine, byte, block copy, branch and replay. Per instruction 2026-11-24: `instructions[]` rows
+  end with `first_frame, last_frame` (`[z80, page, code, class, count, tstates, smc, first_frame, last_frame]`,
+  the recording's frames). Left: the reader-PC filter of reads.
 - [ ] V6: GS firmware state view (M).
 - [ ] V7: `--port-base auto` and a ports file (S).
-- [ ] E3: `frame` in `/registers` and run answers (S).
+- [x] E3: `frame` in `/registers` and run answers (S). Run answers in `c3ab886b3`; 2026-11-24: `special.frame` next
+  to `special.t` in `GET /registers` (and the `regs` of `/debug/snapshot`), the MCP register text ends with
+  "frame N T t". Test `DebugSnapshot_Test.RegistersCarryEveryGroup`.
 - [x] E4: `memory_at` states the moment it read (S). As built 2026-11-19: memory-at adds `moment` (`frame_start`,
   `inside_frame`, `now`), `at_tinframe` (at a frame start: where the checkpoint's CPU stood past the boundary,
   `TimeTravelController::CheckpointMoment`) and `moment_text` ("the start of frame F, before its first instruction");
   the MCP text, the CLI dump header and the tool description say it; memory-series rows carry the same. Found on
   the way: the store files a write that the boundary-crossing instruction made after the boundary under frame F, so
   memory-at at F lacks it while a seek to F (and the live machine) has it; the text says so, the bytes are unchanged.
-- [ ] E5: `capture.json` script start frame (S).
+- [x] E5: `capture.json` script start frame (S). 2026-11-24: `re_session capture` writes `script_start_frame` (the
+  emulator / TTD frame of the play's frame 0) and, for `--inputs`, `scripts`: each script's path, text and its own
+  `start_frame`.
 - [ ] E6: key script error explains the separator (S).
 - [ ] E7: RZX seek discoverability (S).
-- [ ] E8: capability check before a session (S).
+- [x] E8: capability check before a session (S). 2026-11-24: `mcplib.launch(..., needs=)` compares the binary's
+  `tools/list` with the tools the caller uses and refuses at launch ("has no MCP tool analysis: build current
+  master"); `re_session` passes its set. A capabilities route stays with PLAN #9.

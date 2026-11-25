@@ -496,7 +496,7 @@ PUT  /api/v1/emulator/{id}/debugmode     Enable/disable (body: {"enabled": true}
 
 ### State Inspection
 ```
-GET /api/v1/emulator/{id}/registers           Get CPU registers: main, alternate, index, special (pc, sp, i, r, memptr, q, t = CPU T in the frame), interrupt (iff1, iff2, im, halted, boundary), flags
+GET /api/v1/emulator/{id}/registers           Get CPU registers: main, alternate, index, special (pc, sp, i, r, memptr, q, frame = the emulator frame, t = CPU T in the frame), interrupt (iff1, iff2, im, halted, boundary), flags
 PUT /api/v1/emulator/{id}/registers/{name}    Set a register (body {"value":N}): the register table names, memptr / wz, im (0-2), iff1 / iff2 (0-1); 400 out of range
 GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 128, max 4096; ?format=hexdump|full|sparse|binary - binary = raw bytes, application/octet-stream, len up to 65536: the whole address space in one request)
 GET /api/v1/emulator/{id}/memory/read/{addr}  Read memory (?length=N, default 128, max 65536, wraps at 0xFFFF; ?format=hexdump|full|sparse|binary)
