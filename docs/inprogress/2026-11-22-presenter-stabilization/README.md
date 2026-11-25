@@ -261,7 +261,7 @@ before a wall of tiles, and before a low-end machine is called served, the flick
 form.
 
 Done the same day. The time was `MovesBy` (the flicker's motion look-alike test: 288 shifts a block, a pixel loop
-each). Now the 24 x 24 pixels round a block are bit planes of the colours met there (up to 16; more: the pixel
+each). Now the 24 x 24 pixels round a block are bit planes of the colours met there (up to 16, 64 since 1.10; more: the pixel
 loop) and a shift is a few word operations; the same answers, so the same pictures (the sums of every picture of
 the Across the Edge and action traces, blend and interpolate-lite, before and after). One Deck thread:
 
@@ -318,6 +318,54 @@ process, one core = 100 %; `tools/verification/videowall/src/videowall_smooth.py
 
 Not in it: a game profile's cadence modes (`video.smooth` cadence / carry) still draw by `MotionField`; the software
 grid of the wall; a default (the wall starts with smooth motion off).
+
+### 1.10 The flicker search, four times faster (2026-11-24)
+
+`Push`'s flicker search (`SmoothMotion::FindFlicker`) was still most of a flickering tile's time (1.9). The same
+decisions, faster. Its answer for a block depends on the five frames' pixels round it only, so every shortcut below
+gives the same yes / no as before:
+
+- The counts (changed, alternating) in one pass, eight pixels at a time without branches; the pass also notes the
+  blocks that are as two frames before.
+- The motion look-alike test (`MovesBy`) only where its answer matters: a block whose 3 x 3 neighbourhood flickers
+  is held whatever it says, so it is asked only when the neighbourhood does not.
+- The memory of 1.8 (the answer two frames back, kept when the 3 x 3 blocks of both frames are as two frames
+  before) reads the blocks' sameness from the counting pass instead of comparing the pixels again.
+- `BlockShifts` (the bit planes of 1.8): the colours round a block numbered by a small hash, not a search; the
+  planes made from a byte a pixel by one multiply per 8 pixels; a plane's shifted bytes made only when a shift
+  reaches it (most shifts fail on the first plane); no validity planes for a block away from the edges; up to 64
+  colours round a block (16 before: the pixel loop is rarer, its answer is the same).
+
+The check: the flicker mask and the held count of every frame of 26 clips (21 recorded: games, demos, Across the
+Edge, two Deck traces; 5 synthetic: a Gigascreen picture over a scroller, flickering sprites on a scroll, dots a
+scroll step apart that alternate like flicker but move, a half flickering / half panning picture with a sprite
+across both, 64 colours), hashed: the same hash before and after on the Mac and on the Deck. The unit tests of the
+flicker decisions pass unchanged.
+
+`Push` a frame, the mean, one thread (`flickbench`, the best of 3 runs a frame; the Deck in two interleaved rounds,
+the first in brackets: its CPU clock was still settling):
+
+| Clip | Mac before | Mac after | Deck before | Deck after |
+|------|-----------|-----------|-------------|------------|
+| Across the Edge | 1.156 ms | 0.308 ms | 1.510 (2.150) ms | 0.617 ms |
+| Across the Edge, Deck trace | 1.013 ms | 0.311 ms | 1.372 (1.949) ms | 0.627 ms |
+| earshaver | 0.271 ms | 0.064 ms | 0.451 (0.620) ms | 0.150 ms |
+| synthetic Gigascreen | 1.286 ms | 0.083 ms | 1.468 ms | 0.170 ms |
+| synthetic, 64 colours | 1.239 ms | 0.074 ms | 1.781 ms | 0.159 ms |
+| synthetic, mixed | 0.806 ms | 0.138 ms | 0.956 ms | 0.255 ms |
+| synthetic sprites | 0.547 ms | 0.048 ms | 0.604 ms | 0.117 ms |
+| a game (action, Dizzy X) | 0.08-0.09 ms | 0.05 ms | 0.17-0.18 ms | 0.12 ms |
+| all clips, the sum | 8.074 ms (26) | 1.978 ms | 8.847 ms (10) | 2.481 ms |
+
+The wall of 1.9 again on the Deck, 12 tiles of Across the Edge, two runs:
+
+| Mode | Smooth tiles at the end, before (1.9) | After | Wall CPU before | After |
+|------|----------------------------------------|-------|-----------------|-------|
+| blend | 3, 9 on frames as they are (3 steps) | 9, 3 on frames as they are (1 step) | 237 % | 315 % |
+| interpolate-lite | 5, 7 on frames as they are | 9-10, 2-3 on frames as they are | 261 % | 267-270 % |
+
+The wall CPU grows because more tiles stay smooth: the guard now takes a quarter of the tiles down where it took
+three quarters. Off: 148-180 %, as in 1.9.
 
 ## 2. Platform by mode, from the code (before the steps)
 
