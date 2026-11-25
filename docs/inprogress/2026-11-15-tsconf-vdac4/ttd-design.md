@@ -56,7 +56,7 @@ The FT812 reuses the VDAC2 types: it is the same `EveHostCard` code, the region 
 ## 4. Keyframes
 
 - When: every capture the engine rescans (a session's first, the first after a restore: every piece is offered then,
-  so the ESP memory of that frame is stored whatever the device says), every K frames (K = 50), and when the journal
+  so the ESP memory of that frame is stored whatever the device says), every K frames (K = 25, §9.1), and when the journal
   holds more than J bytes (J = 256 KB; an `APP_START` carries the ELF). The engine tells its region sources at the
   start of each capture, before the device states are taken: `ITTDRegionSource::TTDCaptureBegins(rescan)`.
 - At a keyframe the device marks every ESP piece written; the engine compares each with its delta base and stores the
@@ -93,11 +93,14 @@ carries a hash of the host state (not its memory) at the frame end; the restore 
    called where the controller asks what was written since the last restore): the live memory moved on without
    marks, and a restore re-runs it.
 2. `vdac4-esp` loads the firmware's state; the runtime stops its app as state only (no LINK traffic, no journal).
-3. `vdac4-esp-cpu` loads the host state of k, drops the JIT's code, replays the journal to f, checks the hash, and
-   keeps the journal as the live one (recording continues from f).
+3. `vdac4-esp-cpu` loads the host state of k, replays the journal to f, checks the hash, and keeps the journal as
+   the live one (recording continues from f). The CPU's predecoded and translated code stays when the bytes under
+   it came back the same: the device asks the CPU to copy them before the restore (`EspAppHost::HoldCode`, in
+   `TTDBeforeRestore`), the load compares (`xtensa::Cpu::KeepHeldCode`) and drops the code only on a difference
+   (another app, another run of it). Without a hold a load drops the code, as before.
 
-The cost of a seek: the ESP's work from k to f, at most K frames (about 1 ms of host time per DOOM frame on the M3
-Ultra), plus decoding the ESP pieces.
+The cost of a seek: the ESP's work from k to f, at most K frames (about 0.5 ms of host time per DOOM frame on the
+M3 Ultra with the code kept), plus decoding the ESP pieces.
 
 A replay that does not reach the recorded host state (or does not fit its journal) makes the position not
 bit-exact: the engine asks the source after the load (`ITTDRegionSource::TTDLoadDiverged`) and the seek's check
@@ -169,6 +172,22 @@ a keyframe were right.
 Check (a WebAPI script, not kept in the repo): record, hash the ESP memory through `GET /vdac4/esp/memory` at each
 mark, seek to each mark's `/ttd/position`, compare the hashes; time the seeks for the numbers above.
 
+### 9.1 Seek time: the code kept, K (2026-11-24)
+
+A profile of the seeks (`sample`, 35 ms a seek): 63 % the replay; inside it the translated code 43 %, the block
+interpreter 25 %, decoding and translating again 10 %: every restore dropped the CPU's code, and a seek restores
+twice. Same host, DOOM, 24 marks on a grid of 37 frames, 72 seeks of each kind (random, back, forward), all exact,
+ESP memory checked at 72:
+
+| Variant | Seek, median | p90 | History in memory | Recording |
+|---|---|---|---|---|
+| K = 50, code dropped (before) | 31-33 ms | 41-45 ms | 44.9 KB/frame | 2.8 ms/frame |
+| K = 50, code kept | 26-27 ms | 36-39 ms | 44.9 KB/frame | 2.9 ms/frame |
+| K = 25, code dropped | 24-27 ms | 32-34 ms | 47.2 KB/frame | 2.9 ms/frame |
+| K = 25, code kept (now) | 19-21 ms | 25-28 ms | 47.2 KB/frame | 2.9 ms/frame |
+
+K = 25 costs 5 % of the history (the ESP keyframes twice as often) for 6-7 ms of every seek.
+
 ## 10. Open
 
 - A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame (about
@@ -176,8 +195,7 @@ mark, seek to each mark's `/ttd/position`, compare the hashes; time the seeks fo
 - The blob's limit (4 MB) holds: a journal over 256 KB keys the capture that finds it, so the blob carries the host
   state and at most 256 KB of journal whatever one frame sent (an `APP_START` with its ELF). Only a host state over
   3.7 MB would pass it.
-- The rest of a seek: the replay to f itself (on average 25 frames), the ESP pieces the engine decodes on every
+- The rest of a seek: the replay to f itself (on average 12 frames), the ESP pieces the engine decodes on every
   restore (all marked, `TTDBeforeRestore`) even when a replay point overwrites them, the FT812's full save in the
   picture's live snapshot.
 - Resources of the firmware (`_resources`) stay in the `vdac4-esp` blob, stored per frame while held.
-- K = 50 is not tuned: K = 100 halves the ESP memory's share and doubles the worst seek's re-run.

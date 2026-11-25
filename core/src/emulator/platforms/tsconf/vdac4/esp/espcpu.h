@@ -44,6 +44,15 @@ public:
     virtual void SetTrapRange(uint32_t base, uint32_t size) = 0;
     /// Guest code at [address, address + size) was written by the host: drop predecoded instructions
     virtual void InvalidateCode(uint32_t address, uint32_t size) = 0;
+    /// The host replaces guest memory and expects the same code bytes back (a state restore): HoldCode() before,
+    /// KeepHeldCode() once the memory is in place. True: the code bytes are the same, predecoded and translated
+    /// code stays. False: it was dropped (the default: an implementation without the check drops it)
+    virtual void HoldCode() {}
+    virtual bool KeepHeldCode()
+    {
+        InvalidateCode(0, 0xFFFFFFFFu);
+        return false;
+    }
 
     virtual Result Run(uint64_t maxInstructions) = 0;
     /// Translated code (the JIT) or the interpreter, from the next Run on; any thread

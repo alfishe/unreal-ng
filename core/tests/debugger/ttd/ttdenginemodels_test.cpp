@@ -380,7 +380,9 @@ TEST_F(TTDEngineModels_Fixture, Vdac4EspSeekReportsAReplayDivergence)
     ASSERT_NE(board, nullptr);
     _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
 
-    constexpr int kFrames = 30, kTamperAt = 20;
+    // One keyframe (the recording's first), the change and the seek after it inside its run: no later keyframe
+    // takes the changed state in
+    constexpr int kFrames = 22, kTamperAt = 15;
     ASSERT_TRUE(_ttd->StartRecording());
     for (int f = 0; f < kFrames; ++f)
     {

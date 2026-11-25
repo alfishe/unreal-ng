@@ -454,6 +454,8 @@ void TTDVdac4EspCpu::TTDBeforeRestore()
     // Between keyframes the ESP memory moves on unmarked, and a restore re-runs it: every piece is restored
     if (_armed)
         MarkAllMemory();
+    // A seek inside one run of an app brings the same code bytes back: the load keeps the translated code then
+    _board.Runtime().Host().HoldCode();
 }
 
 size_t TTDVdac4EspCpu::TTDStateWithoutRegionsLimit() const

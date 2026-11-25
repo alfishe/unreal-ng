@@ -41,6 +41,15 @@ public:
         _cpu.InvalidateCode();
     }
 
+    void HoldCode() override
+    {
+        _cpu.HoldCode();
+    }
+    bool KeepHeldCode() override
+    {
+        return _cpu.KeepHeldCode();
+    }
+
 #ifdef UNREAL_XTENSA_PROFILE
     void DumpProfile(const char* path) override { _cpu.DumpProfile(path); }
 #endif
