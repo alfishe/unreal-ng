@@ -1234,9 +1234,12 @@ void gs_analysis_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
     const ecatshim::Emulator::GsFirmware fw = m->read_gs_firmware(which, std::string());
     bool any_readable = false;
     for (const auto &d : fw.entries) any_readable = any_readable || d.readable;
-    if (any_readable)
+    if (any_readable) {
         check(dispatch->stack()->text().startsWith("Profile stack: ") && dt->rowCount() >= 32 && labelled >= 8,
               "gs analysis: Dispatch rows with the handlers' labels, the profile stack over them");
+        // The tables read where the firmware keeps them, against the firmware as it started (NeoGS: its RAM copy)
+        check(fw.patched == 0, "gs analysis: Dispatch: the stock firmware has nothing patched");
+    }
     else
         check(dispatch->stack()->text().startsWith("Profile stack: ") && dispatch->line()->text().contains("no memory") && dt->rowCount() == 0,
               "gs analysis: Dispatch says why there is no table (no card memory to read)");
@@ -1263,7 +1266,7 @@ void gs_analysis_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU *
             check(tinted && !by.isEmpty(), "gs analysis: Dispatch: a handler written over is patched, tinted, its upload said");
             printf("  (patched #01: %s)\n", by.toUtf8().constData());
         } else {
-            printf("  (the dispatch table is in ROM here: no entry to patch)\n");
+            printf("  (the dispatch table is read-only to the card here: ROM, or NeoGS's write-protected RAM copy)\n");
         }
         card_cpu->poke_mem(slot, old);
         dispatch->refresh();

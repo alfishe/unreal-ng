@@ -423,6 +423,7 @@ void SoundChip_NeoGS::coldBoot()
     _resetRequest = ResetKind::None;
     _ready = false;
     _mainRomStartTicks = -1;
+    _firmwareBaseline.clear();
     _upload.clear();
 
     _ticksPerCycle = _nextTicksPerCycle = ticksPerCycleFor(_gscfg0);
@@ -464,6 +465,7 @@ void SoundChip_NeoGS::fpgaReset()
     _resetRequest = ResetKind::None;
     _ready = false;
     _mainRomStartTicks = -1;
+    _firmwareBaseline.clear();
     _runner.setStallUntil(0);
 
     // The firmware reboots and forgets any uploaded module
@@ -510,7 +512,11 @@ void SoundChip_NeoGS::writeGscfg0(uint8_t value)
     _mem.setConfig(value);
     _nextTicksPerCycle = ticksPerCycleFor(value);
     if (value == GSCFG0_MAIN_ROM && _mainRomStartTicks < 0)
+    {
         _mainRomStartTicks = _runner.now();
+        // The firmware as it starts: its tables' baseline (once per boot)
+        _firmwareBaseline.assign(_mem.ram(), _mem.ram() + 2 * NeoGSMemory::PAGE_SIZE);
+    }
 }
 
 void SoundChip_NeoGS::applyClockChange()
@@ -1897,6 +1903,15 @@ const uint8_t* SoundChip_NeoGS::firmwarePage(uint32_t page) const
     return _flash.data() + FLASH_MAIN_ROM + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
 }
 
+const uint8_t* SoundChip_NeoGS::firmwareBaselinePage(uint32_t page) const
+{
+    if (!_cpu || page > 1)
+        return nullptr;
+    if (!_firmwareBaseline.empty())
+        return _firmwareBaseline.data() + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
+    return _flash.data() + FLASH_MAIN_ROM + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
+}
+
 bool SoundChip_NeoGS::cardRegisters(Z80CpuRegisters& out) const
 {
     if (!_cpu)
@@ -2141,6 +2156,8 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     _ready = (src[113] & 2) != 0;
     _resetRequest = static_cast<ResetKind>(src[114]);
     _mainRomStartTicks = get64(src + 115);
+    if (_mainRomStartTicks < 0)
+        _firmwareBaseline.clear();  // a state before the start; after it the baseline kept stands (else the flash's)
     _runner.setNow(get64(src + 123));
     _runner.setStallUntil(get64(src + 131));
     _frameStartTicks = _runner.now() - get64(src + 139);

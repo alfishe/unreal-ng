@@ -1138,7 +1138,7 @@ TEST_F(CardPanes_Test, TheMonitorFollowsTheLogWhileRunning)
 }
 
 /// A5.2a Dispatch (M4): the command table as the card holds it, a row per command with its handler and the handler's
-/// label (the card CPU's firmware symbols), the ROM baseline; the profile stack above it. The classic card and a NeoGS
+/// label (the card CPU's firmware symbols), the baseline; the profile stack above it. The classic card and a NeoGS
 TEST_F(CardPanes_Test, TheDispatchShowsTheHandlersWithTheirLabels)
 {
     for (const char* kind : {"gs", "neogs"})
@@ -1161,29 +1161,16 @@ TEST_F(CardPanes_Test, TheDispatchShowsTheHandlersWithTheirLabels)
         ASSERT_GE(row, 0);
         EXPECT_FALSE(dispatch->cell(row, "Name").isEmpty()) << "the profile names #23";
         EXPECT_TRUE(dispatch->cell(row, "Handler").startsWith('#')) << dispatch->cell(row, "Handler").toStdString();
-        const bool neogs = std::string(kind) == "neogs";
-        // The handlers carry the firmware's labels. The classic card: all 256, the COMTAB words (window 0) as read,
-        // the COMTABH entries (#20-#EF, window 3) from the ROM's table while the firmware has a RAM page there. A NeoGS
-        // runs a RAM copy of its flash: the words as read, no ROM baseline (the core reads ROM pages 0-1, erased there)
-        int words = 0, labelled = 0;
+        // The handlers carry the firmware's labels, all 256 on both cards: the core reads the tables where the
+        // firmware keeps them (the ROM; a NeoGS's RAM copy), whatever window 3 maps now, against the firmware as it
+        // started (a NeoGS's copy at its start): the stock firmware has nothing patched
+        int labelled = 0;
         for (int r = 0; r < dispatch->table()->rowCount(); r++)
-        {
-            const bool word = r < 0x20 || r >= 0xF0;
-            words += word ? 1 : 0;
-            labelled += dispatch->cell(r, "Label").isEmpty() || (neogs && !word) ? 0 : 1;
-        }
-        EXPECT_EQ(labelled, neogs ? words : 256) << kind << ": " << dispatch->headline().toStdString();
-        if (neogs)
-        {
-            EXPECT_TRUE(dispatch->headline().contains("no ROM baseline")) << dispatch->headline().toStdString();
-            EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << "nothing patched without a baseline";
-        }
-        else
-        {
-            EXPECT_FALSE(dispatch->cell(row, "ROM").isEmpty()) << "the stock split: the ROM's baseline";
-            EXPECT_FALSE(dispatch->cell(row, "Label").isEmpty()) << kind << ": #23 handler " << dispatch->cell(row, "Handler").toStdString();
-            EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << "the stock ROM: nothing patched";
-        }
+            labelled += dispatch->cell(r, "Label").isEmpty() ? 0 : 1;
+        EXPECT_EQ(labelled, 256) << kind << ": " << dispatch->headline().toStdString();
+        EXPECT_FALSE(dispatch->cell(row, "Baseline").isEmpty()) << kind << ": the stock split's baseline";
+        EXPECT_EQ(dispatch->cell(row, "Baseline"), dispatch->cell(row, "Handler")) << kind;
+        EXPECT_TRUE(dispatch->headline().contains(" · 0 patched · ")) << kind << ": " << dispatch->headline().toStdString();
         const int reset = dispatch->findRow("Cmd", "#00");
         ASSERT_GE(reset, 0);
         EXPECT_FALSE(dispatch->cell(reset, "Label").isEmpty()) << kind;

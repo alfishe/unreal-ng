@@ -523,6 +523,13 @@ public:
     {
         return cardRomPage(page);
     }
+    /// The 16K page `page` (0: low, 1: high) of the firmware as it started, the baseline its tables are compared with
+    /// (patched dispatch entries, gs-debugger design §8A.9 M4): the ROM on a GS; NeoGS: its RAM copy as the main ROM
+    /// started (soundchip_neogs.h)
+    virtual const uint8_t* firmwareBaselinePage(uint32_t page) const
+    {
+        return cardRomPage(page);
+    }
     /// The card CPU's full register file; false without a CPU
     virtual bool cardRegisters(Z80CpuRegisters& out) const
     {

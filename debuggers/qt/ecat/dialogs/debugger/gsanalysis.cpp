@@ -160,7 +160,7 @@ GsDispatchView::GsDispatchView(Emulator * e, QWidget *parent):
     row->addWidget(m_named, 0, Qt::AlignTop);
     m_layout->addLayout(row);
     m_table = make_table("gsdispatch:table", QStringList() << tr("Command") << tr("Name") << tr("Handler") << tr("Label")
-                                                              << tr("ROM") << tr("Patched by"));
+                                                              << tr("Baseline") << tr("Patched by"));
     m_layout->addWidget(m_table, 1);
 }
 
@@ -195,17 +195,12 @@ void GsDispatchView::refresh()
         m_table->setRowCount(0);
         return;
     }
-    //Every entry with a baseline differing from it: the ROM's pages are not this card's layout (NeoGS: its flash), no
-    //entry is a patch the baseline could tell
-    int64_t with_baseline = 0;
-    for (const Emulator::GsDispatchEntry &d : f.entries) with_baseline += d.has_baseline ? 1 : 0;
-    const bool baseline_fits = !(with_baseline > 0 && f.patched == with_baseline);
+    //The core reads the tables where the firmware keeps them (a GS's ROM, a NeoGS's RAM copy), whatever window 3
+    //maps now, against the firmware as it started: an entry differs from its baseline only when patched
     m_line->setText(tr("table %1%2").arg(QString::fromStdString(f.table),
                                          f.table_high.empty() ? QString() : " / " + QString::fromStdString(f.table_high)) +
                     kDot + tr("%1 entries").arg(f.entries.size()) + kDot + tr("%1 patched").arg(f.patched) + kDot +
-                    tr("%1 to the unknown stub or unnamed").arg(f.unknown) + kDot + tr("profile %1").arg(profile_title(f.profile)) +
-                    (baseline_fits ? QString() : kDot + tr("every entry differs from the ROM baseline: it does not fit this card's "
-                                                           "layout, no entry is marked as patched")));
+                    tr("%1 to the unknown stub or unnamed").arg(f.unknown) + kDot + tr("profile %1").arg(profile_title(f.profile)));
 
     //The table's slot of an entry, for the upload that wrote it: COMTAB words for #00-#1F and #F0-#FF, COMTABH low
     //bytes for #20-#EF (the high bytes 256 later); a word table a word per entry in order
@@ -244,8 +239,7 @@ void GsDispatchView::refresh()
     m_table->setUpdatesEnabled(false);
     m_table->setRowCount(0);
     for (size_t i = 0; i < f.entries.size(); i++) {
-        Emulator::GsDispatchEntry d = f.entries[i];
-        d.patched = d.patched && baseline_fits;
+        const Emulator::GsDispatchEntry &d = f.entries[i];
         if (m_named->isChecked() && d.unknown && !d.patched) continue;
         const int r = m_table->rowCount();
         m_table->insertRow(r);

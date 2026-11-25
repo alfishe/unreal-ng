@@ -163,6 +163,9 @@ public:
     /// RAM pages 0-1 once the main ROM runs (the loader's copy, or NEOGS.ROM from the SD card), else the flash copy
     /// at FLASH_MAIN_ROM the loader will start
     const uint8_t* firmwarePage(uint32_t page) const override;
+    /// RAM pages 0-1 as they were when the main ROM started (the loader's copy, or NEOGS.ROM), kept from that moment;
+    /// without it (before the start, a state loaded from elsewhere) the flash copy at FLASH_MAIN_ROM
+    const uint8_t* firmwareBaselinePage(uint32_t page) const override;
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return _runner.now(); }
     void catchUpToHost() override;
@@ -659,6 +662,7 @@ private:
     // Ready detection (§7.1)
     bool _ready = false;
     int64_t _mainRomStartTicks = -1;  // when GSCFG0 = #23 was first written
+    std::vector<uint8_t> _firmwareBaseline;  // RAM pages 0-1 at that moment (firmwareBaselinePage); empty before
 
     // Host frame bases
     uint64_t _frameStartZxTacts = 0;

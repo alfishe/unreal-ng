@@ -388,60 +388,19 @@ void GsAnalysisPane::refreshDispatch(EmulatorContext* context, int targetValue)
     QString table = Str(*dispatch, "table");
     if (const QString high = Str(*dispatch, "table_high"); !high.isEmpty())
         table += QStringLiteral(" / ") + high;
-    // The stock split's COMTABH (#20-#EF) is read through window 3 as mapped now; the firmware maps its table page
-    // there while it dispatches, so another page in window 3 reads no table: most entries then differ from the ROM's
-    // (a patch changes a few). Those entries show the ROM's table (its handler, its label), not "patched"
-    // The ROM baseline: the core reads it from the card's ROM pages 0-1. When most COMTAB words (window 0) differ from
-    // it, those pages do not hold this table (a NeoGS keeps its firmware in flash pages 4-5 and runs a RAM copy): a
-    // patch changes a few entries, not most. Then nothing is "patched"
-    int words = 0, wordsDiffer = 0;
-    for (const StateNode& e : Items(*dispatch, "entries"))
-        if (const int64_t code = Int(e, "command"); (code < 0x20 || code >= 0xF0) && Member(e, "baseline"))
-        {
-            words++;
-            wordsDiffer += Flag(e, "patched") ? 1 : 0;
-        }
-    const bool noBaseline = words && wordsDiffer * 2 > words;
-    QString highStale;
-    if (!noBaseline && dispatcher->comtabh && dispatcher->dispatch.kind != GSDispatchKind::Words)
-    {
-        int high = 0, differ = 0;
-        for (const StateNode& e : Items(*dispatch, "entries"))
-            if (const int64_t code = Int(e, "command"); code >= 0x20 && code < 0xF0 && Member(e, "baseline"))
-            {
-                high++;
-                differ += Flag(e, "patched") ? 1 : 0;
-            }
-        if (high && differ * 2 > high)
-        {
-            const GeneralSoundCard::CardPage where = card->mapCardAddress(dispatcher->comtabh);
-            highStale = tr("window 3 maps %1 page %2 now, not the table's: #20-#EF show the ROM's table")
-                            .arg(where.kind == GeneralSoundCard::CardPage::Ram   ? tr("RAM")
-                                 : where.kind == GeneralSoundCard::CardPage::Rom ? tr("ROM")
-                                                                                 : tr("no"))
-                            .arg(where.page);
-        }
-    }
-    int64_t patchedCount = 0;
-    for (const StateNode& e : Items(*dispatch, "entries"))
-    {
-        const int64_t code = Int(e, "command");
-        if (Flag(e, "patched") && !noBaseline && (highStale.isEmpty() || code < 0x20 || code >= 0xF0))
-            patchedCount++;
-    }
+    // The core reads the tables where the firmware keeps them (not through window 3 as mapped now) and compares them
+    // with the firmware as it started (a GS's ROM, a NeoGS's RAM copy at its start): an entry differs only when patched
+    const int64_t patchedCount = Int(*dispatch, "patched");
     const QString stackLine = tr("Profiles: %1").arg(StackText(stack));
     showBody(stackLine + QLatin1Char('\n') +
              tr("table %1 (%2) · %3 patched · %4 unknown")
                  .arg(table, QString::fromLatin1(dispatcher->id))
                  .arg(patchedCount)
-                 .arg(Int(*dispatch, "unknown")) +
-             (highStale.isEmpty() ? QString() : QStringLiteral(" · ") + highStale) +
-             (noBaseline ? tr(" · no ROM baseline (most entries differ from the card's ROM pages 0-1: the firmware runs from a copy)")
-                         : QString()));
+                 .arg(Int(*dispatch, "unknown")));
     _headline->setToolTip(StackTooltip(stack));
     _scope = QStringLiteral("dispatch:") + QString::fromLatin1(dispatcher->id);
 
-    setColumns({tr("Cmd"), tr("Name"), tr("Handler"), tr("Label"), tr("ROM"), tr("Patched by")});
+    setColumns({tr("Cmd"), tr("Name"), tr("Handler"), tr("Label"), tr("Baseline"), tr("Patched by")});
     const std::vector<StateNode>& entries = Items(*dispatch, "entries");
     setRowCount(static_cast<int>(entries.size()));
     GsCardLabels cardLabels(context, CardCpu(target));
@@ -457,10 +416,8 @@ void GsAnalysisPane::refreshDispatch(EmulatorContext* context, int targetValue)
             setCell(row, 2, tr("unreadable"));
             continue;
         }
-        const bool stale = !highStale.isEmpty() && code >= 0x20 && code < 0xF0;
-        const QString handlerText = stale ? Str(e, "baseline") : Str(e, "handler");
-        setCell(row, 2, handlerText, stale ? tr("the ROM's entry (%1); read through the window now: %2").arg(highStale, Str(e, "handler"))
-                                           : QString());
+        const QString handlerText = Str(e, "handler");
+        setCell(row, 2, handlerText);
         const auto handler = static_cast<uint16_t>(handlerText.mid(1).toUInt(nullptr, 16));
         // The handler's label: the profile's source label (the patching code's when patched), else the card's labels
         QString label;
@@ -473,8 +430,8 @@ void GsAnalysisPane::refreshDispatch(EmulatorContext* context, int targetValue)
         if (label.isEmpty())
             label = cardLabels.at(handler);
         setCell(row, 3, label);
-        setCell(row, 4, noBaseline ? QString() : Str(e, "baseline"));
-        if (Flag(e, "patched") && !stale && !noBaseline)
+        setCell(row, 4, Str(e, "baseline"));
+        if (Flag(e, "patched"))
         {
             QString patched = by.isEmpty() ? tr("code no profile names") : by;
             QString tooltip;
