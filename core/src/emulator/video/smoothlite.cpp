@@ -91,17 +91,25 @@ struct Planes
             {
                 const int count = width - x < 8 ? width - x : 8;
                 uint64_t eight = 0;
-                for (int i = 0; i < count; i++)
-                {
-                    if (row[x + i] != lastColour)
+                // eight pixels of the last colour (paper, border): its index in every byte
+                uint32_t others = 0;
+                if (count == 8 && x > 0)
+                    for (int i = 0; i < 8; i++)
+                        others |= row[x + i] ^ lastColour;
+                if (count == 8 && x > 0 && others == 0)
+                    eight = static_cast<uint64_t>(index) * kLowBits;
+                else
+                    for (int i = 0; i < count; i++)
                     {
-                        lastColour = row[x + i];
-                        index = palette.Index(lastColour);
-                        if (index < 0)
-                            return false;
+                        if (row[x + i] != lastColour)
+                        {
+                            lastColour = row[x + i];
+                            index = palette.Index(lastColour);
+                            if (index < 0)
+                                return false;
+                        }
+                        eight |= static_cast<uint64_t>(index) << (8 * i);
                     }
-                    eight |= static_cast<uint64_t>(index) << (8 * i);
-                }
                 if (x == 0)
                     first = static_cast<int>(eight & 0xFF);
                 for (int p = 0; p < kMaxPlanes && (eight >> p) != 0; p++)
@@ -336,7 +344,8 @@ private:
         _plain.assign(static_cast<size_t>(_bw) * _bh, 0);
         for (int j = 0; j < _bh; j++)
         {
-            uint64_t mixed[kMaxWords] = {};
+            uint64_t mixed[kMaxWords];
+            std::fill_n(mixed, _words, 0);
             for (int p = 0; p < _planes; p++)
                 for (int w = 0; w < _words; w++)
                 {
@@ -364,11 +373,14 @@ private:
         const int sx = (kOne / 2 * v.x + kOne / 2) >> 8;
         const int sy = (kOne / 2 * v.y + kOne / 2) >> 8;
         const int ax = -sx, ay = -sy, bx = v.x - sx, by = v.y - sy;
-        uint64_t sums[kMaxWords] = {};
+        // the arrays are kMaxWords long, only _words of them are used: zeroing the rest costs more than the counts
+        uint64_t sums[kMaxWords];
+        std::fill_n(sums, _words, 0);
         for (int r = 0; r < kBlock; r++)
         {
             const int y = j * kBlock + r;
-            uint64_t differ[kMaxWords] = {}, ra[kMaxWords], rb[kMaxWords];
+            uint64_t differ[kMaxWords], ra[kMaxWords], rb[kMaxWords];
+            std::fill_n(differ, _words, 0);
             for (int p = 0; p < _planes; p++)
             {
                 ShiftedRow(_a->Row(p, y + ay), ax, _words, ra);
@@ -399,7 +411,9 @@ private:
     bool Score(V v, int j)
     {
         uint8_t counts[kMaxBlocksWide];
-        uint64_t bestW[kMaxWords] = {}, askW[kMaxWords] = {};
+        uint64_t bestW[kMaxWords], askW[kMaxWords];
+        std::fill_n(bestW, _words, 0);
+        std::fill_n(askW, _words, 0);
         for (int i = 0; i < _bw; i++)
         {
             const size_t block = static_cast<size_t>(j) * _bw + i;
@@ -703,7 +717,8 @@ struct LiteFlow::Impl
                 if (!candidate[static_cast<size_t>(j)] && !(j > 0 && candidate[static_cast<size_t>(j) - 1]) &&
                     !(j + 1 < bh && candidate[static_cast<size_t>(j) + 1]))
                     continue;
-                uint64_t sums[kMaxWords] = {};
+                uint64_t sums[kMaxWords];
+                std::fill_n(sums, words, 0);
                 for (int r = 0; r < kBlock; r++)
                 {
                     const int y = j * kBlock + r;
@@ -730,7 +745,8 @@ struct LiteFlow::Impl
         }
         for (int j = 0; j < bh; j++)
         {
-            uint64_t sums[kMaxWords] = {};
+            uint64_t sums[kMaxWords];
+            std::fill_n(sums, words, 0);
             for (int r = 0; r < kBlock; r++)
             {
                 const int y = j * kBlock + r;
