@@ -532,7 +532,7 @@ struct LiteFlow::Impl
     uint64_t pairA = 0, pairB = 0;
     int planes = 0;
     std::vector<V> vectors;            ///< the moving ones, most blocks first
-    std::vector<uint64_t> own, near;   ///< per vector, block row and word: the pixels of the blocks it may take
+    std::vector<uint64_t> own, nearby;   ///< per vector, block row and word: the pixels of the blocks it may take
     std::vector<int> explains, unexplained, roundRow;
     std::vector<uint64_t> any;
     std::vector<uint8_t> candidate;
@@ -615,8 +615,8 @@ struct LiteFlow::Impl
 
         const size_t per = static_cast<size_t>(bh) * words;
         own.assign(vectors.size() * per, 0);
-        near.assign(vectors.size() * per, 0);
-        // own: one pass over the blocks; near: own spread a block each way, by words
+        nearby.assign(vectors.size() * per, 0);
+        // own: one pass over the blocks; nearby: own spread a block each way, by words
         for (int j = 0; j < bh; j++)
             for (int i = 0; i < bw; i++)
             {
@@ -636,7 +636,7 @@ struct LiteFlow::Impl
         uint64_t wide[kMaxWords];
         for (size_t c = 0; c < vectors.size(); c++)
         {
-            uint64_t* nearOf = near.data() + c * per;
+            uint64_t* nearOf = nearby.data() + c * per;
             const uint64_t* ownOf = own.data() + c * per;
             if (c < static_cast<size_t>(kEverywhere))
             {
@@ -670,7 +670,7 @@ struct LiteFlow::Impl
         Credible(a, b);
     }
 
-    /// `own` and `near` cut to the blocks where their vector is credible: in the 3 x 3 blocks round a block, the
+    /// `own` and `nearby` cut to the blocks where their vector is credible: in the 3 x 3 blocks round a block, the
     /// changed pixels the vector carries both ways (a(y) to b(y + v), b(y) from a(y - v)) are some, and no fewer
     /// than the changes no vector explains there. Colour changing in place fits a moving vector by chance and
     /// explains nothing
@@ -695,7 +695,7 @@ struct LiteFlow::Impl
                 uint64_t some = 0;
                 for (int w = 0; w < words; w++)
                     some |= own[c * per + static_cast<size_t>(j) * words + w] |
-                            near[c * per + static_cast<size_t>(j) * words + w];
+                            nearby[c * per + static_cast<size_t>(j) * words + w];
                 candidate[static_cast<size_t>(j)] = some != 0;
             }
             for (int j = 0; j < bh; j++)
@@ -777,7 +777,7 @@ struct LiteFlow::Impl
                         continue;
                     const uint64_t byte = ~(0xFFull << (8 * (i & 7)));
                     own[c * per + static_cast<size_t>(j) * words + (i >> 3)] &= byte;
-                    near[c * per + static_cast<size_t>(j) * words + (i >> 3)] &= byte;
+                    nearby[c * per + static_cast<size_t>(j) * words + (i >> 3)] &= byte;
                 }
         }
     }
@@ -809,8 +809,8 @@ struct LiteFlow::Impl
                 for (int c = 0; c < n; c++)
                 {
                     const V v = vectors[static_cast<size_t>(c)];
-                    // a fit is asked only under the vector's blocks (near holds own)
-                    if (!near[static_cast<size_t>(c) * per + blockRow + j])
+                    // a fit is asked only under the vector's blocks (nearby holds own)
+                    if (!nearby[static_cast<size_t>(c) * per + blockRow + j])
                     {
                         fit[c] = 0;
                         continue;
@@ -847,7 +847,7 @@ struct LiteFlow::Impl
                 }
                 // a vector of the blocks round it
                 for (int c = 0; c < n; c++)
-                    take(fit[c] & near[static_cast<size_t>(c) * per + blockRow + j] & ~taken, c);
+                    take(fit[c] & nearby[static_cast<size_t>(c) * per + blockRow + j] & ~taken, c);
                 // nothing fits in a block that moves: the nearer frame moved as the block is (content coming in at a
                 // layer's edge, a shape changing on the move), not the nearer frame where it stood
                 for (int c = 0; c < n; c++)
