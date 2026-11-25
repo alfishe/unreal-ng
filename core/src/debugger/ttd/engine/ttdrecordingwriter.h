@@ -56,6 +56,13 @@ public:
     bool RewindToLastSegment(const TimeTravelEngine& engine, std::string& error);
     /// At stop: the current file gets the rest and its index
     bool Finish(TimeTravelEngine& engine);
+    /// Finish in two halves (a pause, which must not wait for the disk): FinishQueue lays out and queues the rest
+    /// with the index (the engine's thread); FinishWait waits for the writer thread, then closes the file and
+    /// reports it closed (SetOnFileClosed). Nothing else may be called between them. Finish = both
+    bool FinishQueue(TimeTravelEngine& engine);
+    bool FinishWait();
+    /// FinishWait would not block: the queued parts and the index are written
+    bool FinishWritten() const { return !_writer || _writer->FinishWritten(); }
     /// The holder streams' bytes for the session's last part (the ids declared in the params at construction)
     void SetHolderStreams(std::vector<TTDHolderStream> streams)
     {
@@ -83,6 +90,10 @@ public:
 private:
     bool Open(const TimeTravelEngine& engine, size_t first, std::string& error);
     bool Close(const TimeTravelEngine& engine, size_t end);
+    /// Close's second half: the file closed after the writer finished (@p ok: it wrote everything)
+    bool Closed(bool ok);
+    bool _queued = false;           ///< FinishQueue ran: FinishWait closes
+    bool _queuedOk = true;
 
     SegmentPathFn _segmentPath;
     TTDSessionSaveParams _params;

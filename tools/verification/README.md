@@ -41,6 +41,13 @@ application).
 machine's mouse receives, and `mouse-strokes.py`, which records a running emulator's mouse strokes through the WebAPI
 (a pad's trackpad, a touchscreen, the host mouse, automation).
 
+### Window recording (`recording/`)
+
+[`recording/`](recording/README.md): the window recorder's speed through the WebAPI (`live.py`: files recorded from
+one snapshot with the writer's time per picture; `ab.py`: two builds against each other, interleaved) and the
+`PlaneScaler` A/B with a byte-for-byte check (`planescaler/ab.sh`, `ab.bat` for MSVC), the colors players show
+(`colors.py`: tags, matrix, what macOS displays).
+
 ### Analysis drafts (`analysis/`)
 
 [`analysis/score_draft.py`](analysis/README.md): scores a SkoolKit ctl / skool draft against a reference disassembly

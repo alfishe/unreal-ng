@@ -463,7 +463,8 @@ void TimeTravelController::StopRecording()
         _line->coverageIndex.FlushOpenBlocks();
         if (_recordingPaused)
         {
-            // A paused recording ends here: what it recorded stays as history
+            // A paused recording ends here: what it recorded stays as history, its files whole on return
+            WaitFinishingFiles();
             _recordingPaused = false;
             ttd::NoteSessionChange(_context);   // the mode may follow (M4)
             UpdateInputWorkFlag();
@@ -3544,7 +3545,9 @@ void TimeTravelController::PauseRecordingForBrowsing()
     if (_state != TTDSessionState::Recording)
         return;
     const TTDTimePoint here = CurrentPosition();
+    _finishFilesInBackground = true;   // the folder's open file is written behind the pause
     StopRecording();   // everything up to here is in the engine; the machine stays parked
+    _finishFilesInBackground = false;
     _recordingPaused = true;
     ttd::NoteSessionChange(_context);   // the mode may follow (M4)
     _pausedEnd = here;
@@ -3582,6 +3585,8 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
+    else
+        PollFinishingFiles();   // an earlier pause's file, once written: its segment may go to the disk tier
     // A branch that recorded nothing since its fork goes when the user seeks elsewhere (§4.6)
     DropEmptyTip(target);
 
@@ -4255,6 +4260,7 @@ bool TimeTravelController::StepForwardFrame()
 
 bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
 {
+    WaitFinishingFiles();   // the folder's files whole before they are cut, forked or released
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     // Returning to live recording ends the browse scope: free the decode cache.
     ClearFrameCache();
@@ -5095,6 +5101,7 @@ bool TimeTravelController::CheckShadowDiskSpace()
 
 bool TimeTravelController::StartLineFiles(TimeTravelEngine& engine)
 {
+    WaitFinishingFiles();   // the paused file's end decides where the next starts (_shadowJournalEnds)
     if (!_shadowFolder || _shadowWriter || engine.Segments().empty() || !CheckShadowDiskSpace())
         return false;
     const uint32_t line = engine.ActiveLine();
@@ -5158,6 +5165,7 @@ bool TimeTravelController::StartLineFiles(TimeTravelEngine& engine)
 
 void TimeTravelController::FinishLineFiles()
 {
+    WaitFinishingFiles();   // an earlier pause's file first: one file finishes at a time
     if (!_shadowWriter)
         return;
     // Finished on the line it writes (the view may be on an ancestor)
@@ -5165,7 +5173,12 @@ void TimeTravelController::FinishLineFiles()
     const uint32_t viewed = engine.ActiveLine();
     if (viewed != _shadowWriterLine && engine.HasLine(_shadowWriterLine))
         engine.ViewLine(_shadowWriterLine);
-    const bool finished = _shadowWriter->Finish(engine);
+    // A pause lays the rest out and goes on; the writer thread writes it and the index behind it (the parts
+    // hold their bytes: the thread reads no engine data). A stop waits, its folder is whole when it returns
+    const bool background = _finishFilesInBackground;
+    bool finished = background ? _shadowWriter->FinishQueue(engine) : _shadowWriter->Finish(engine);
+    if (background && !finished)
+        finished = _shadowWriter->FinishWait() && finished;   // a failed layout: closed now, as a stop does
     if (!finished)
         MLOGWARNING("TimeTravelController: the shadow session's files: %s", _shadowWriter->Error().c_str());
     // A pause: the file ends where the machine stands, the line's next file starts at a new baseline
@@ -5179,11 +5192,41 @@ void TimeTravelController::FinishLineFiles()
         engine.RequestBaseline(_shadowWriterLine);
     if (viewed != engine.ActiveLine() && engine.HasLine(viewed))
         engine.ViewLine(viewed);
+    if (background && finished)
+        _finishingWriter = std::move(_shadowWriter);
     _shadowWriter.reset();
+}
+
+void TimeTravelController::WaitFinishingFiles()
+{
+    if (!_finishingWriter)
+        return;
+    if (!_finishingWriter->FinishWait())
+    {
+        // As a stop's failed finish (FinishLineFiles): the next file starts at a baseline of its own and holds the
+        // whole coverage index
+        MLOGWARNING("TimeTravelController: the shadow session's files: %s", _finishingWriter->Error().c_str());
+        _shadowJournalEnds = {};
+        _shadowCoverageFrom = _shadowLastCoveragePartFrom = 0;
+    }
+    _finishingWriter.reset();
+}
+
+void TimeTravelController::WaitShadowFiles()
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    WaitFinishingFiles();
+}
+
+void TimeTravelController::PollFinishingFiles()
+{
+    if (_finishingWriter && _finishingWriter->FinishWritten())
+        WaitFinishingFiles();
 }
 
 void TimeTravelController::DiscardShadowFiles()
 {
+    _finishingWriter.reset();   // its thread writes what it holds and stops; the files go with the folder
     _shadowWriter.reset();   // its thread stops; the files go with the folder
     if (_shadowFolder)
         _shadowFolder->Discard();
@@ -5655,6 +5698,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
 
 void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const TTDTimePoint& cut)
 {
+    WaitFinishingFiles();   // the folder's files whole before they are cut, forked or released
     // The last checkpoint at or before `from` stays (the one the seek restored)
     const int64_t keep = TimelineIndexAtOrBefore(from);
     if (keep < 0)

@@ -341,6 +341,15 @@ std::string RecordingFolderOf(const TimeTravelController* manager)
     return manager ? manager->ShadowRecordingFolder() : std::string();
 }
 
+/// Before @p path is read as files: the live recording's folder (or a file in it) waits for a pause's file still
+/// being written behind the pause (TimeTravelController::WaitShadowFiles)
+static void WaitIfLiveFolder(TimeTravelController* manager, const std::string& path)
+{
+    const std::string folder = RecordingFolderOf(manager);
+    if (manager && !folder.empty() && path.compare(0, folder.size(), folder) == 0 && manager->ShadowFilesFinishing())
+        manager->WaitShadowFiles();
+}
+
 /// The black box is armed (the engine; D29): its recordings keep the last minutes and step aside for accelerations
 bool BlackBoxOf(const TimeTravelController* manager)
 {
@@ -4519,6 +4528,7 @@ TTDReply TTDControlBackend::Timeline(const TTDRequest& request)
     std::optional<JoinedSession> joined;
     if (file)
     {
+        WaitIfLiveFolder(_manager, *file);
         joined.emplace(*file);
         if (!joined->error.empty())
             return Fail(joined->internal ? TTDControlError::Internal : TTDControlError::BadRequest, joined->message);
@@ -5717,6 +5727,7 @@ TTDReply TTDControlBackend::Load(const TTDRequest& request)
 
     // A recording's folder (or one of its segment files): its segments joined
     // into one file first, a temporary one, deleted after the load
+    WaitIfLiveFolder(_manager, *path);
     const JoinedSession session(*path);
     if (!session.error.empty())
     {

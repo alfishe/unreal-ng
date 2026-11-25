@@ -22,6 +22,7 @@
 #endif
 
 #include <QAction>
+#include <QActionGroup>
 #include <QClipboard>
 #include <QFileDialog>
 #include <QGuiApplication>
@@ -302,7 +303,18 @@ void VideoWallWindow::initializeAfterEventLoopStart()
     VideowallRecorder::instance().setTargetWidget(_tileGrid);
 
     // Now safe to create menus - the window is fully initialized
+    // UNREAL_SMOOTH_MOTION: the wall's smooth motion at start (off | blend | interpolate | interpolate-lite)
+    if (const QByteArray asked = qgetenv("UNREAL_SMOOTH_MOTION"); !asked.isEmpty())
+    {
+        smoothmotion::Mode mode = smoothmotion::Mode::Off;
+        if (smoothmotion::ParseMode(asked.constData(), mode))
+            _smoothMode = mode == smoothmotion::Mode::Auto ? smoothmotion::Mode::InterpolateLite : mode;
+        else
+            qWarning() << "VideoWall: UNREAL_SMOOTH_MOTION=" << asked
+                       << "is not off | blend | interpolate | interpolate-lite";
+    }
     createMenus();
+    applySmoothMotion();
     publishStatus();
 }
 
@@ -347,6 +359,37 @@ void VideoWallWindow::createMenus()
     _gpuAccelerationAction->setChecked(_useGPU);
     _gpuAccelerationAction->setEnabled(TileGridWrapper::isGPUAvailable());
     connect(_gpuAccelerationAction, &QAction::triggered, this, &VideoWallWindow::handleGpuAccelerationToggled);
+
+    // Smooth motion: the picture between two frames, per tile, on a display that does not run at the machines' rate
+    _smoothMenu = viewMenu->addMenu(tr("&Smooth Motion"));
+    _smoothMenu->setStatusTip(tr("Draw the picture between two frames on a display that beats with the machines' "
+                                 "rate (GPU rendering only)"));
+    {
+        auto* group = new QActionGroup(_smoothMenu);
+        const struct
+        {
+            smoothmotion::Mode mode;
+            QString text, tip;
+        } choices[] = {
+            {smoothmotion::Mode::Off, tr("&Off"), tr("Every frame as it is: no cost")},
+            {smoothmotion::Mode::Blend, tr("&Blend"), tr("A mix of the two frames")},
+            {smoothmotion::Mode::InterpolateLite, tr("&Interpolate"),
+             tr("The moving layers drawn where they are at the refresh's time (the cheap interpolation)")},
+            {smoothmotion::Mode::Interpolate, tr("Interpolate (&full)"),
+             tr("The full interpolation: steps down to the cheap one per tile when it is too slow")},
+        };
+        for (const auto& choice : choices)
+        {
+            QAction* action = _smoothMenu->addAction(choice.text);
+            action->setObjectName(QStringLiteral("smoothMotion_") + smoothmotion::ModeName(choice.mode));
+            action->setStatusTip(choice.tip);
+            action->setCheckable(true);
+            action->setChecked(choice.mode == _smoothMode);
+            group->addAction(action);
+            connect(action, &QAction::triggered, this, [this, mode = choice.mode] { setSmoothMotion(mode); });
+        }
+    }
+    _smoothMenu->setEnabled(_useGPU);
 
     viewMenu->addSeparator();
 
@@ -2062,6 +2105,42 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
     // that (--gpu on the command line) finds no action yet, and createMenus checks it from _useGPU
     if (_gpuAccelerationAction)
         _gpuAccelerationAction->setChecked(_useGPU);
+    // A new grid starts with smooth motion off: the wall's setting again
+    applySmoothMotion();
+}
+
+void VideoWallWindow::setSmoothMotion(smoothmotion::Mode mode)
+{
+    _smoothMode = mode;
+    applySmoothMotion();
+    // What the tiles do with it, on the GUI plane's state once a second while it is on (off: no timer)
+    if (mode != smoothmotion::Mode::Off && !_smoothStateTimer)
+    {
+        _smoothStateTimer = new QTimer(this);
+        _smoothStateTimer->setInterval(1000);
+        connect(_smoothStateTimer, &QTimer::timeout, this, [this] { publishGuiState(); });
+        _smoothStateTimer->start();
+    }
+    else if (mode == smoothmotion::Mode::Off && _smoothStateTimer)
+    {
+        delete _smoothStateTimer;
+        _smoothStateTimer = nullptr;
+    }
+    publishGuiState();
+}
+
+void VideoWallWindow::applySmoothMotion()
+{
+    if (_smoothMenu)
+    {
+        _smoothMenu->setEnabled(_useGPU);
+        for (QAction* action : _smoothMenu->actions())
+            action->setChecked(action->objectName() ==
+                               QStringLiteral("smoothMotion_") + smoothmotion::ModeName(_smoothMode));
+    }
+    // The software grid draws every frame as it is
+    if (TileGridGL* grid = (_useGPU && _tileGridWrapper) ? _tileGridWrapper->gpuGrid() : nullptr)
+        grid->setSmoothMotion(_smoothMode);
 }
 
 int VideoWallWindow::tileCount() const
@@ -2185,6 +2264,23 @@ void VideoWallWindow::startGuiControl()
         publishStatus();
         return guicontrol::Result::Success(QJsonObject{{"single_sync", on}});
     });
+    view.SetCommand(QStringLiteral("tilegrid.smooth_motion"), [this](const guicontrol::Call& call) {
+        const QString word = call.params.value(QStringLiteral("mode")).toString();
+        smoothmotion::Mode mode = smoothmotion::Mode::Off;
+        if (word.isEmpty() || !smoothmotion::ParseMode(word.toUtf8().constData(), mode) ||
+            mode == smoothmotion::Mode::Auto)
+            return guicontrol::Result::Failure(
+                guicontrol::errors::kBadRequest,
+                QStringLiteral("mode takes off, blend, interpolate-lite or interpolate, not '%1'").arg(word));
+        if (mode != smoothmotion::Mode::Off && !_useGPU)
+            return guicontrol::Result::Failure(guicontrol::errors::kNotNow,
+                                               QStringLiteral("smooth motion needs GPU rendering (View > GPU "
+                                                              "Acceleration)"));
+        setSmoothMotion(mode);
+        publishStatus();
+        return guicontrol::Result::Success(
+            QJsonObject{{"smooth_motion", QLatin1String(smoothmotion::ModeName(_smoothMode))}});
+    });
     view.SetCommand(QStringLiteral("tilegrid.focus"), [this](const guicontrol::Call& call) {
         const int tile = call.params.value(QStringLiteral("tile")).toInt(-1);
         if (tile < 0 || tile >= tileCount())
@@ -2251,10 +2347,30 @@ void VideoWallWindow::publishGuiState() const
     const char* layout = _windowMode == WindowMode::Frameless    ? "frameless"
                          : _windowMode == WindowMode::Fullscreen ? "fullscreen"
                                                                  : "windowed";
+    // Smooth motion: the mode asked for, and what the tiles did with it (absent on the software grid and while off)
+    QJsonValue smooth;
+    if (const TileGridGL* grid = (_useGPU && _tileGridWrapper) ? _tileGridWrapper->gpuGrid() : nullptr;
+        grid && grid->smoothMotion() != smoothmotion::Mode::Off)
+    {
+        const TileGridGL::SmoothStats stats = grid->smoothStats();
+        smooth = QJsonObject{{"tiles", stats.tiles},
+                             {"moving", stats.moving},
+                             {"stepped_down", stats.steppedDown},
+                             {"too_slow", stats.tooSlow},
+                             {"frames_only", stats.framesOnly},
+                             {"wall_steps", stats.wallSteps},
+                             {"pictures", static_cast<qint64>(stats.pictures)},
+                             {"between", static_cast<qint64>(stats.between)},
+                             {"step_ms", stats.lastStepMs},
+                             {"max_step_ms", stats.maxStepMs},
+                             {"threads", stats.threads}};
+    }
     view->SetState(QJsonObject{{"tiles", tiles},
                                {"focused", focused >= 0 ? QJsonValue(focused) : QJsonValue()},
                                {"single_sync", _singleSyncMode},
-                               {"layout", QLatin1String(layout)}});
+                               {"layout", QLatin1String(layout)},
+                               {"smooth_motion", QLatin1String(smoothmotion::ModeName(_smoothMode))},
+                               {"smooth", smooth}});
 }
 
 void VideoWallWindow::publishStatus() const

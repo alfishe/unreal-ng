@@ -1526,6 +1526,17 @@ struct TraceRecord              // 32 bytes
   The period length comes from the target (GS: 320 cycles; NeoGS: from
   `tim_freq` and the clock at that time).
 
+**As built (P5.6, 2026-11-23).** The trace's sides are unchanged: the ISR bars come from the profiler (8A.6), not
+from new trace sides. `gs events` (every plane: `DeviceState::GsEvents`, `gsprofilereport.h`) builds the grid on the
+server for the last complete host frame: the profiler's ISR marks (accept, end, entry, NMI) of the frame, and the
+port trace's events whose card time falls in the frame (host `#B3` / `#BB` / `#33`, DAC fetches with their channel,
+card OUTs to the page ports - `#00`, NeoGS `#10`, `#20`-`#23` - and the volume ports, ZX-DMA bytes), each binned by
+its period (`anchor + k * period`) as `[cycle, kind, value, detail]`. The period grid is the target's at the frame's
+last run (classic GS `_gsCyclesAbs` and 320 / MultiSound 1,284 units; NeoGS the next timer strobe and its period).
+`IsrEnd` needs no RETI hook: the profiler's SP watermark sees the return address popped (EI; RET as much as RETI).
+`IntAccept` is the runner's acknowledge (`recordExecInterrupt`). `DmaBurst`, `Probe` and the page/volume sides are not
+added: the page and volume writes are the trace's card OUTs by port.
+
 ### 8A.4 Master-tagged accesses (X6, X10)
 
 Every debug memory callback knows who is on the bus:
@@ -1590,6 +1601,28 @@ Every debug memory callback knows who is on the bus:
     interrupts.
   - **The ISR budget:** the cycles from the INT accept to its exit (8A.3),
     per interrupt period, kept as min / avg / max against the period length.
+
+  **As built (P5.6, 2026-11-23): `GSCardProfiler` (`gscardprofiler.h`), reports in `gsprofilereport.h`.**
+  - Not in `onStep` of the debug loop: the card runs the execution history's record loop
+    (`GSCardRunner::runToRecord`) while the profiler is on (and the debug loop calls the same hooks through the
+    recorder when a debugger is attached). The runner tells the card each instruction (`recordExecStep`) and each
+    acknowledge with its length (`recordExecInterrupt`). The fast loop is unchanged; off, a card run pays one more
+    relaxed load (`recordLoopWanted`).
+  - The call stack: a frame is pushed by a *taken* CALL / CALL cc / RST (the previous instruction is one and SP went
+    down by 2) and by an acknowledge; it ends at the first boundary where SP is above its return address's slot (the
+    SP watermark: RET, RETI, RETN, a POP of the return address, a stack reload). 64 frames deep, 1,536 routines keyed
+    by (page kind, page, entry PC); the labels are looked up at read time.
+  - Inclusive = the frame's time minus the interrupt frames inside; exclusive = inclusive minus the callees'
+    inclusive. The ISR's length runs from the acknowledge's start to the boundary after its return, nested interrupts
+    included; latency from the period start; an overrun ends after its period's end; `lost` = `interruptsCoalesced`.
+  - The command cost (no RETI / handler-exit label needed): busy segments from the card's COMRG / DATRG read to its
+    next FLAGS poll (the firmware back in a wait loop), interrupt time apart, summed until the next command read (a
+    new command = a read with another code, or after an acknowledge).
+  - Activity per host frame (256 kept): ISR cycles (nested once), idle (the runner's idle sleep), halted, commands,
+    interrupts, overruns, lost.
+  - Bounded memory allocated at the first profiled run; one copy published at each frame end under a short lock;
+    readers never wait for the emulation. Not machine state (no TTD blob); a TTD replay is not profiled and a time
+    jump drops the stack (`resyncs`).
 - **Uninitialized reads (X11):** a "written since the card reset" bit in the
   code / data log flags. A read of a byte without it raises the event.
 

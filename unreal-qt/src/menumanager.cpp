@@ -327,6 +327,24 @@ void MenuManager::createViewMenu()
     _gpuAccelerationAction->setChecked(false);
     connect(_gpuAccelerationAction, &QAction::triggered, this, &MenuManager::gpuAccelerationToggled);
 
+    // Renderer submenu: what the GPU screen draws with (a build with Vulkan only)
+    _rendererMenu = _viewMenu->addMenu(tr("Re&nderer"));
+    _rendererMenu->setStatusTip(tr("The graphics API the GPU screen draws with"));
+    auto* rendererGroup = new QActionGroup(this);
+    rendererGroup->setExclusive(true);
+    _rendererGlAction = _rendererMenu->addAction(tr("&OpenGL"));
+    _rendererVulkanAction = _rendererMenu->addAction(tr("&Vulkan"));
+    for (QAction* action : {_rendererGlAction, _rendererVulkanAction})
+    {
+        action->setCheckable(true);
+        rendererGroup->addAction(action);
+    }
+    _rendererGlAction->setChecked(true);
+    _rendererMenu->menuAction()->setVisible(false);
+    connect(_rendererGlAction, &QAction::triggered, this, [this]() { emit rendererChanged(QStringLiteral("gl")); });
+    connect(_rendererVulkanAction, &QAction::triggered, this,
+            [this]() { emit rendererChanged(QStringLiteral("vulkan")); });
+
     // CRT effects (scanlines, curvature - GPU only)
     _crtEffectsAction = _viewMenu->addAction(tr("C&RT Effects"));
     _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, curvature) - requires GPU acceleration"));
@@ -483,6 +501,17 @@ void MenuManager::setGpuAccelerationAvailable(bool available)
             _gpuAccelerationAction->setStatusTip(tr("GPU acceleration not available on this system"));
         }
     }
+}
+
+void MenuManager::setRenderer(const QString& wanted, bool vulkanOffered, bool vulkanBuilt)
+{
+    if (!_rendererMenu)
+        return;
+    _rendererMenu->menuAction()->setVisible(vulkanBuilt);
+    _rendererVulkanAction->setEnabled(vulkanOffered);
+    _rendererVulkanAction->setStatusTip(vulkanOffered ? tr("Draw with Vulkan")
+                                                      : tr("No hardware Vulkan 1.3 GPU on this system"));
+    (wanted == QLatin1String("vulkan") ? _rendererVulkanAction : _rendererGlAction)->setChecked(true);
 }
 
 void MenuManager::setCrtEffectsChecked(bool checked)

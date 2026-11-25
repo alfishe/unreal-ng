@@ -227,6 +227,65 @@ if (NOT ENABLE_RECORDING)
     list(FILTER CPP_FILES EXCLUDE REGEX ".*multitrackdialog\\.cpp$")
 endif()
 
+# The Vulkan renderer (src/gpu/vulkan*, docs/inprogress/2026-11-19-vulkan-renderer): the Vulkan loader and headers
+# and glslang (macOS: Homebrew vulkan-loader, molten-vk, glslang; Linux: libvulkan-dev, glslang-dev, glslang-tools:
+# Ubuntu 24.04's glslang CMake config stops the configure when the glslang binary is missing). Without them the
+# screen renders with GL only. Ubuntu 24.04's headers (1.3.275) build it without VK_EXT_present_timing
+# Linux only by default (the GL drivers there are the weak ones); macOS / Windows: -DUNREAL_VULKAN=ON
+set(UNREAL_VULKAN_DEFAULT OFF)
+if (UNIX AND NOT APPLE)
+    set(UNREAL_VULKAN_DEFAULT ON)
+endif ()
+option(UNREAL_VULKAN "Build the Vulkan renderer when Vulkan and glslang are found" ${UNREAL_VULKAN_DEFAULT})
+set(UNREAL_VULKAN_FOUND OFF)
+if (UNREAL_VULKAN)
+    find_package(Vulkan QUIET)
+    find_package(glslang CONFIG QUIET)
+    if (Vulkan_FOUND AND TARGET glslang::glslang AND TARGET glslang::SPIRV AND
+        TARGET glslang::glslang-default-resource-limits)
+        set(UNREAL_VULKAN_FOUND ON)
+    endif ()
+endif ()
+message(STATUS "Vulkan renderer: ${UNREAL_VULKAN_FOUND}")
+if (NOT UNREAL_VULKAN_FOUND)
+    list(FILTER CPP_FILES EXCLUDE REGEX ".*/src/gpu/vulkan.*")
+endif ()
+set(UNREAL_VULKAN_LIBRARIES)
+if (UNREAL_VULKAN_FOUND AND NOT TARGET unreal_vulkan)
+    # Linked only (LINK_ONLY): their include directory is a package manager's whole one (Homebrew's
+    # /opt/homebrew/include) that also holds another Qt's headers, which then shadow the Qt the app builds against
+    # (QtCore/q20atomic.h including itself). The headers come from a directory of links to theirs alone
+    add_library(unreal_vulkan INTERFACE)
+    target_link_libraries(unreal_vulkan INTERFACE $<LINK_ONLY:Vulkan::Vulkan> $<LINK_ONLY:glslang::glslang>
+                          $<LINK_ONLY:glslang::SPIRV> $<LINK_ONLY:glslang::glslang-default-resource-limits>)
+    get_target_property(_glslangIncludes glslang::glslang INTERFACE_INCLUDE_DIRECTORIES)
+    set(_vulkanShim "${CMAKE_CURRENT_BINARY_DIR}/vulkan-include")
+    set(_vulkanIncludes)
+    foreach (_dir IN LISTS Vulkan_INCLUDE_DIRS _glslangIncludes)
+        if (EXISTS "${_dir}/QtCore" OR EXISTS "${_dir}/QtCore/qglobal.h")
+            foreach (_sub vulkan vk_video glslang)
+                if (EXISTS "${_dir}/${_sub}" AND NOT EXISTS "${_vulkanShim}/${_sub}")
+                    file(MAKE_DIRECTORY "${_vulkanShim}")
+                    file(CREATE_LINK "${_dir}/${_sub}" "${_vulkanShim}/${_sub}" SYMBOLIC)
+                endif ()
+            endforeach ()
+            list(APPEND _vulkanIncludes "${_vulkanShim}")
+        else ()
+            list(APPEND _vulkanIncludes "${_dir}")
+        endif ()
+    endforeach ()
+    list(REMOVE_DUPLICATES _vulkanIncludes)
+    target_include_directories(unreal_vulkan SYSTEM INTERFACE ${_vulkanIncludes})
+    # glslang's shared library: its users define this (its config's INTERFACE_COMPILE_DEFINITIONS)
+    get_target_property(_glslangDefinitions glslang::glslang INTERFACE_COMPILE_DEFINITIONS)
+    if (_glslangDefinitions)
+        target_compile_definitions(unreal_vulkan INTERFACE ${_glslangDefinitions})
+    endif ()
+endif ()
+if (UNREAL_VULKAN_FOUND)
+    set(UNREAL_VULKAN_LIBRARIES unreal_vulkan)
+endif ()
+
 set (SOURCES ${CPP_FILES})
 message("CPP_FILES:${CPP_FILES}")
 
@@ -425,6 +484,22 @@ if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE d3d11 dxgi d3dcompiler gdi32)
     # The session's moves between a remote desktop and the console (mainwindow_display.cpp)
     target_link_libraries(${PROJECT_NAME} PRIVATE wtsapi32)
+endif ()
+
+# The Vulkan renderer
+if (UNREAL_VULKAN_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${UNREAL_VULKAN_LIBRARIES})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE UNREAL_VULKAN)
+    if (UNIX AND NOT APPLE)
+        # The window's wl_surface / X11 display (gpu/vulkansurface.cpp): QPlatformNativeInterface
+        find_package(Qt6 COMPONENTS GuiPrivate QUIET)
+        if (TARGET Qt6::GuiPrivate)
+            target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::GuiPrivate)
+        endif ()
+    endif ()
+    if (APPLE)
+        target_link_libraries(${PROJECT_NAME} PRIVATE "-framework QuartzCore")
+    endif ()
 endif ()
 
 # The media signatures (core/swsignature): the controller manager's signature hook (hostcontrollers.cpp)
@@ -694,6 +769,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/remotecontrolrow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/remotecontrolrow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/inkcentre.h"
+        # Tab bars that scroll, an arrow at each end (the Embedded debugger's side tabs)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/tabscrollarrows_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tabscrollarrows.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tabscrollarrows.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.h"
         # Companion clients in the GUI: the pairing prompt, the Companions dialog (companion client design)
@@ -864,6 +943,15 @@ if (TESTS)
         # The lightweight player's inspector panes: interpreter, player (gs-debugger TODO P5.5, A10)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gslwpane.h"
+        # The protocol monitor tab: strip, error tile, the log following its tail (gs-debugger TODO P5.6, A5.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsmonitorpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsmonitorpane.h"
+        # The analysis tabs: objects, dispatch, unknown commands, writers (gs-debugger TODO P5.6, A5.2a)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsanalysispane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsanalysispane.h"
+        # The card CPU analysis tabs: profiler, events, coverage, heat map (gs-debugger TODO P5.6, A5.2a)
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gscpuanalysispane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gscpuanalysispane.h"
         # The NeoGS SD card pane's "Open media panel" (gs-debugger N8): the media panel focused on the card's slot
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/mediapanelwindow.h"
@@ -923,6 +1011,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presenterrecovery_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presenterrecovery.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentstats_test.cpp"
+        # The presenters' VRR verdict: from the screen's refreshes against the presents alone
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/vrrprobe_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vrrprobe.h"
         # The Linux presenter's decisions (VRR, swap mode, timed swap, vblank grid, RandR mode), on every platform
         # The files a drag carries: Finder's file references Qt leaves empty, a stale volume id, a refusal that says why
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/droppaths_test.cpp"
@@ -935,6 +1026,12 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/droptargetoverlay.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/droptargetlayout.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/droptargetlayout.h"
+        # The GPU layer: every pass on GL and Vulkan, the pictures compared (skips without a context / a Vulkan GPU)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/gpucompare_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpudevice.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpudevice.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gldevice.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gldevice.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/linuxpresent_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linuxpresent.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.cpp"
@@ -949,6 +1046,11 @@ if (TESTS)
         list(APPEND UNREAL_QT_TEST_SOURCES
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/dxgipresenter_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/dxgipresenter.cpp")
+    endif()
+    if (UNREAL_VULKAN_FOUND)
+        list(APPEND UNREAL_QT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/vulkandevice.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/vulkandevice.h")
     endif()
     add_executable(unreal-qt-tests ${UNREAL_QT_TEST_SOURCES})
     set_target_properties(unreal-qt-tests PROPERTIES
@@ -978,6 +1080,10 @@ if (TESTS)
     )
     if (APPLE)
         target_link_libraries(unreal-qt-tests PRIVATE "-framework AppKit" "-framework ApplicationServices")
+    endif()
+    if (UNREAL_VULKAN_FOUND)
+        target_link_libraries(unreal-qt-tests PRIVATE ${UNREAL_VULKAN_LIBRARIES})
+        target_compile_definitions(unreal-qt-tests PRIVATE UNREAL_VULKAN)
     endif()
     if (UNREAL_TEST_HOOKS)
         target_compile_definitions(unreal-qt-tests PRIVATE UNREAL_TEST_HOOKS)

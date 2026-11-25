@@ -542,7 +542,13 @@ ay0 = audio_ay_state(0)     -- one chip: registers, latched_register (+ name), s
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
 gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
+an  = gs_analysis("on", {cpu = "gs", decay = 8})  -- card CPU coverage / heat map: status|on|off|reset|release (off by default, free while off)
+cov = gs_coverage({space = "ram", page = 3})     -- code/data log per physical page: spaces[i].page_list, handlers.executed, never_written.rows {address, page, offset, pc}
+hm  = gs_heatmap({recent = "dac", frames = 50, format = "none"})  -- RAM heat per channel (fetch, read, write, dac, sd_dma, zx_dma); recent.channels[i].ranges
 zx  = gs_zxdma(256, 0)      -- NeoGS ZX-DMA trace (while gsporttrace captures): rows[i] = {seq, frame, host_t, card_time, direction, card_address, page, value, wait, host_pc, dropped}; last_seq for the next 'since'
+gs_profile_control("start", "gs")  -- the card CPU's profiler: "start" (cleared, then on) / "stop" / "clear"; "ms": the ZX-MultiSound's GS
+pf  = gs_profile("gs", 32, 256)      -- isr.last_frame / since_start {count, min, avg, max, headroom_pct, overruns, latency_max, lost}, commands[], routines[] (top 32), activity[] (256 frames)
+ev  = gs_events("gs", 0, 0, 16)     -- the last frame per interrupt period: rows[i] = {period, start, isr[] {accept, end, length}, events[] {cycle, kind, value, detail}}
 cv  = audio_covox_state()   -- Covox / SoundDrive: fitment, ports, shared_with_beta128, channels[4]
 zm  = multisound_state()   -- ZX-MultiSound: options, shadowed built-ins, CPLD, ym.chips[2] {ssg, fm}, saa, gs, dac, midi
 md  = midi_state()         -- its MIDI line + SAM2695: parts[16] {program, preset, volume, pan, active_voices, notes}, counters
@@ -1673,7 +1679,9 @@ emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it 
                                      --   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      --   by the difference (audio_extra_delay_frames, 5 here) to stay in sync.
 emu.window_display()                 -- GUI window display settings: { backend ("gpu" / "software"), gpu_available,
-                                     --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
+                                     --   gpu, renderer ("gl" / "vulkan"), renderers (offered), renderer_active
+                                     --   (what draws: "gl" / "vulkan", "" software),
+                                     --   crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
                                      --   blending_frames (2..5), blending_weights ("equal" / "exponential"),
                                      --   blending_decay (0.1..0.9), smooth_motion ("off" / "blend" /
                                      --   "interpolate" / "auto"), effects_device ("gpu" / "cpu"), present_policy
@@ -1688,7 +1696,8 @@ emu.window_display()                 -- GUI window display settings: { backend (
                                      --   osd_keyboard_styles, next_layers, next_layers_mode,
                                      --   next_layers_shown = {ula, layer2, tilemap, sprites} }; headless
                                      --   { ok = false, error, kind = "no-window" }
-emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, crt, blending, fullscreen,
+emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, renderer ("vulkan": one of
+                                     --   renderers; re-creates the GPU screen), crt, blending, fullscreen,
                                      --   toolbar, status_bar, hud, osd_keyboard, next_layers (boolean),
                                      --   crt_profile (one of crt_profiles: none, basic, ...,
                                      --   shader:<name> (a preset or a custom shader) with the GPU; other

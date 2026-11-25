@@ -116,7 +116,7 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   the encoders the limit before either; no socket (2026-11-23, POC 054 "Window recorder").
 - ~~ffmpeg (software and `-c:v` hardware through the pipe) with a fixed profile: the 33 MB 4K frame through the FIFO
   and ffmpeg's RGB conversion of 8.3 M pixels~~ done 2026-11-22 (POC 054). The pipe carries the source picture
-  (352x288 RGBA, 0.4 MB) and ffmpeg builds the frame at the target size given explicitly: the colour conversion at
+  (352x288 RGBA, 0.4 MB) and ffmpeg builds the frame at the target size given explicitly: the color conversion at
   the source size (4:4:4), then whole factors `neighbor` + `pad`, other factors `remap` with FrameScaler's own
   mapping as gray16le tables (byte-identical 4:4:4 to FrameScaler's frame for 352x288 / 320x240 / 256x192 into 4K,
   1440p, 1080p), then `area` 4:2:0 (+0.06..0.10 dB over swscale's conversion of the RGB frame). A raw input has one
@@ -166,11 +166,24 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
   CPU at ~60 fps; same bytes after `hwdownload`. Live on Linux (windowless unreal-qt, `video/record`, 9 s): 4K
   `auto` (VA-API, High profile) 444 frames with 10 s of ffmpeg CPU against libx264's 445 frames with 18 s, 1080p
   `auto` 450 frames; the picture and bars in place. Scaling on the GPU (`scale_vaapi`, the POC 054 plan) was dropped:
-  2.6 ms CPU per frame, but every mode blurs the pixels (no nearest) and the colour drifts (PSNR 15 dB against
+  2.6 ms CPU per frame, but every mode blurs the pixels (no nearest) and the color drifts (PSNR 15 dB against
   the CPU frame).
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
   `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
   3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
+- ~~Washed-out colors in every player~~ fixed 2026-11-24. FrameScaler converted with BT.601 while the native writers
+  tagged BT.709; ffmpeg files carried no tags at all (ffmpeg 7+ drops `-color_primaries` / `-color_trc` for raw pipe
+  frames, swscale defaults to BT.601), so players decoded HD as BT.709 from 601 data (worst error 36-40 per channel);
+  the BT.709 transfer tag of the native files made macOS show mid-tones lighter (grey 0x77 -> 0x82). Now FrameScaler
+  is BT.709 limited range (the same 16-bit headroom), every path tags BT.709 matrix / primaries, limited range and
+  the sRGB transfer (`iec61966-2-1`): ffmpeg graphs end with `setparams` (`FrameScaler::FfmpegColorTags`, the window
+  recorder's B,G,R,A input converted by `scale=out_color_matrix=bt709`), VideoToolbox gets
+  `kCVImageBufferTransferFunction_sRGB`, NVENC its VUI (h264 / hevc). `tools/verification/recording/colors.py` puts
+  the 16 ZX colors on screen, records every way and compares the stored Y'CbCr and what macOS shows: all ways within
+  1-2 of the palette, no shift (ProRes through ffmpeg included); NVENC files tagged on Windows (untagged before).
+  Before / after demo videos made with `demo.py`. Found, pre-existing, open: the core NVENC encoder (Windows) loses
+  its last 8 frames at stop and a recording under ~12 frames has no `moov`; h265 through the ffmpeg pipe into `.mp4`
+  fails in the muxer ("Not yet implemented").
 - ~~Stepped window recording (`video/window/record/frames`) through ffmpeg with sound stalls ("recorded nothing
   within 10 s", then "the recording stopped")~~ fixed 2026-11-21, found under Xvfb on Linux. ffmpeg analysed the raw
   sound input for its default 5 s before reading more picture; a paused machine makes sound only as its pictures are
@@ -204,5 +217,5 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
 
   The buffer on Qt's Windows llvmpipe was 4.3 -> 5.0 ms (one more copy in memory), hence the software exclusion.
   Live wall recording through the wall's menu and dialog (2026-11-23, macOS, `--gpu`, 5 tiles): 403 frames in
-  8 s at 800x600, the picture upright, colours right, AAC sound.
+  8 s at 800x600, the picture upright, colors right, AAC sound.
 - Qt toolbar widget offers h264 only (the dialog also h265).

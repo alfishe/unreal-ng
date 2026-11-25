@@ -64,6 +64,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_isa.inc"
 #include "openapi/openapi_network.inc"
 #include "openapi/openapi_gsporttrace.inc"
+#include "openapi/openapi_gsanalysis.inc"
 #include "openapi/openapi_ports.inc"
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_analysis.inc"

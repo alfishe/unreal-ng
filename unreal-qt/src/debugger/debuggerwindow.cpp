@@ -42,6 +42,9 @@
 #include "debugger/boardpane.h"
 #include "debugger/cardpanes.h"
 #include "debugger/gslwpane.h"
+#include "debugger/gsanalysispane.h"
+#include "debugger/gscpuanalysispane.h"
+#include "debugger/gsmonitorpane.h"
 #include "debugger/nextpanes.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/reportpane.h"
@@ -60,6 +63,7 @@
 #include "emulator/readoutschanged.h"
 #include "debugger/targets/cpuview.h"
 #include "widgets/speedcontrolwidget.h"
+#include "widgets/tabscrollarrows.h"
 #include "ui_debuggerwindow.h"
 
 /// region <Constructor / destructors>
@@ -91,6 +95,11 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _sideTabs = new QTabWidget(_sideGroup);
     _sideTabs->setObjectName("debuggerSideTabs");
     _sideTabs->setDocumentMode(true);
+    // The macOS style turns scroll buttons off: the bar's minimum width is then every tab together, and each card
+    // tab widened the window. Names stay whole; the bar scrolls when they do not fit, an arrow at each end; the wheel
+    // over the bar switches tabs
+    UseEndScrollArrows(_sideTabs->tabBar());
+    UseWheelToSwitchTabs(_sideTabs->tabBar());
     _pcHistoryPane = new PcHistoryPane(_emulator, _sideTabs);
     _sideTabs->addTab(_pcHistoryPane, "PC history");
     for (const NextPanes::Pane& pane : NextPanes::Create(_sideTabs))
@@ -115,6 +124,12 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
             });
         if (ZxDmaTraceView* trace = pane.trace)
             connectZxDmaTrace(trace);
+        if (GsMonitorPane* monitor = pane.monitor)
+            connectGsMonitor(monitor);
+        if (GsAnalysisPane* analysisPane = pane.analysis)
+            connectGsAnalysis(analysisPane);
+        if (GsCpuAnalysisPane* cpuPane = pane.cpuAnalysis)
+            connectGsCpuAnalysis(cpuPane);
         _cardPanes.push_back(pane);
     }
     historyLayout->addWidget(_sideTabs);
@@ -2015,6 +2030,10 @@ void DebuggerWindow::updateSidePane()
                 pane.board->clearMarks();
             if (pane.trace)
                 pane.trace->reset();  // another card: its own trace
+            if (pane.analysis)
+                pane.analysis->reset();  // another card: its own counts and marks
+            if (pane.cpuAnalysis)
+                pane.cpuAnalysis->reset();
             _sideTabs->setTabVisible(_sideTabs->indexOf(pane.widget()), cardShown[i]);
         }
     }
@@ -2031,7 +2050,9 @@ void DebuggerWindow::updateSidePane()
     if (_pcHistoryPane->isRecording() != history)
         _pcHistoryPane->setRecording(history);
     if (shown && (qobject_cast<ReportPane*>(_sideTabs->currentWidget()) || qobject_cast<BoardPane*>(_sideTabs->currentWidget()) ||
-                  qobject_cast<GsLwPane*>(_sideTabs->currentWidget())))
+                  qobject_cast<GsLwPane*>(_sideTabs->currentWidget()) || qobject_cast<GsMonitorPane*>(_sideTabs->currentWidget()) ||
+                  qobject_cast<GsAnalysisPane*>(_sideTabs->currentWidget()) ||
+                  qobject_cast<GsCpuAnalysisPane*>(_sideTabs->currentWidget())))
         _nextPanesTimer->start();
     else
         _nextPanesTimer->stop();
@@ -2044,7 +2065,11 @@ void DebuggerWindow::refreshNextPanes(bool live)
     ReportPane* pane = qobject_cast<ReportPane*>(_sideTabs->currentWidget());
     BoardPane* board = qobject_cast<BoardPane*>(_sideTabs->currentWidget());
     GsLwPane* inspector = qobject_cast<GsLwPane*>(_sideTabs->currentWidget());
-    if ((!pane && !board && !inspector) || !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
+    GsMonitorPane* monitor = qobject_cast<GsMonitorPane*>(_sideTabs->currentWidget());
+    GsAnalysisPane* analysisPane = qobject_cast<GsAnalysisPane*>(_sideTabs->currentWidget());
+    GsCpuAnalysisPane* cpuPane = qobject_cast<GsCpuAnalysisPane*>(_sideTabs->currentWidget());
+    if ((!pane && !board && !inspector && !monitor && !analysisPane && !cpuPane) ||
+        !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
         return;
     if (!live && _emulator->IsDirectStepping())
         return;  // the stepping's end refreshes (updateState)
@@ -2055,6 +2080,12 @@ void DebuggerWindow::refreshNextPanes(bool live)
         pane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
     else if (board)
         board->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else if (monitor)
+        monitor->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else if (analysisPane)
+        analysisPane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else if (cpuPane)
+        cpuPane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
     else
         inspector->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
 }
@@ -2070,6 +2101,65 @@ void DebuggerWindow::runBoardAction(BoardPane* pane, const QString& board, const
         pane->runAction(_emulator->GetContext(), board, action, arg);  // lifetime-ok: the lease holds it for this request
     }
     refreshNextPanes(!_emulator->IsPaused());
+}
+
+void DebuggerWindow::connectGsMonitor(GsMonitorPane* monitor)
+{
+    // Pause / Continue: the window's own actions (the toolbar's)
+    connect(monitor, &GsMonitorPane::pauseRequested, this, &DebuggerWindow::pauseExecution);
+    connect(monitor, &GsMonitorPane::continueRequested, this, &DebuggerWindow::continueExecution);
+    // Turn on: the card's command log to ring through the history verb every plane drives, then shown at once
+    connect(monitor, &GsMonitorPane::turnOnRequested, this, [this, monitor]() {
+        if (!_emulator)
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            QString error;
+            if (!monitor->turnOn(lease.get(), &error))
+                qWarning() << "GS monitor: the command log did not turn on:" << error;
+        }
+        refreshNextPanes(!_emulator->IsPaused());
+    });
+}
+
+void DebuggerWindow::connectGsAnalysis(GsAnalysisPane* pane)
+{
+    // Turn on: the histories the tab reads (the command log; Writers also the port trace) to ring through the history
+    // verb every plane drives, then shown at once
+    connect(pane, &GsAnalysisPane::turnOnRequested, this, [this, pane]() {
+        if (!_emulator)
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            QString error;
+            if (!pane->turnOn(lease.get(), &error))
+                qWarning() << "GS analysis: a history did not turn on:" << error;
+        }
+        refreshNextPanes(!_emulator->IsPaused());
+    });
+}
+
+void DebuggerWindow::connectGsCpuAnalysis(GsCpuAnalysisPane* pane)
+{
+    // Start / Stop / Clear, On / Off / Reset / Release, Start port trace, the decay: the verbs every plane drives,
+    // then shown at once
+    connect(pane, &GsCpuAnalysisPane::actionRequested, this, [this, pane](const QString& action) {
+        if (!_emulator)
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            QString error;
+            if (!pane->runAction(lease.get(), action, &error))
+                qWarning() << "GS analysis:" << action << "refused:" << error;
+        }
+        refreshNextPanes(!_emulator->IsPaused());
+    });
 }
 
 void DebuggerWindow::connectZxDmaTrace(ZxDmaTraceView* trace)

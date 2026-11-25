@@ -177,7 +177,7 @@ void CLIProcessor::HandleVdac4(const ClientSession& session, const std::vector<s
     {
         out << "VDAC4 board" << NEWLINE
             << "  Tang:    personality " << s.personality << (s.armed ? ", armed" : "") << (s.espHost ? ", ESP host" : "")
-            << ", RAM_G " << (s.ramG3M ? "3 MB" : "1 MB") << ", FT_CFG 0x" << std::hex << s.ftCfg << std::dec << NEWLINE
+            << ", RAM_G " << (s.ramG3M ? "3 MB" : "2 MB") << ", FT_CFG 0x" << std::hex << s.ftCfg << std::dec << NEWLINE
             << "  ESP:     " << s.espPhase << ", " << s.espMs << " ms, boots " << s.boots << " (nonce "
             << static_cast<unsigned>(s.bootNonce) << "), last step " << static_cast<unsigned>(s.lastStep) << ", resources "
             << s.resources << ", clock restarts " << s.clockRestarts << ", ahead " << s.clockOffsetUs << " us" << NEWLINE;

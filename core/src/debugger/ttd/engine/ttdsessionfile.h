@@ -240,6 +240,13 @@ public:
     /// ends at the next segment's baseline), the write journal with the
     /// session's last part, write the index, wait for the writer
     bool Finish(const TimeTravelEngine& engine, size_t end = SIZE_MAX);
+    /// Finish in two halves: the parts laid out and queued with the index (the engine's thread, reads the engine),
+    /// then the wait for the writer thread (only the queued bytes and the file: no engine). A pause queues and goes
+    /// on; the wait comes when the file is needed. Finish = FinishQueue + FinishWait
+    bool FinishQueue(const TimeTravelEngine& engine, size_t end = SIZE_MAX);
+    bool FinishWait();
+    /// The writer thread wrote every queued part and the index (FinishWait would not block)
+    bool FinishWritten() const { return _written.load(std::memory_order_acquire); }
     /// The holder streams' bytes for the last part (ids declared at Begin)
     void SetHolderStreams(std::vector<TTDHolderStream> streams) { _params.holderStreams = std::move(streams); }
     /// Holder streams for the file's last part when the file ends before the session does (a recording folder's
@@ -254,6 +261,8 @@ public:
 
     /// A measurement's switch: a recording folder's files store their piece records uncompressed
     static void SetRawPieceRecords(bool on);
+    /// Tests: while @p gate holds false, the writer threads write nothing (a disk that has not kept up). nullptr: off
+    static void SetWriteGateForTesting(const std::atomic<bool>* gate);
 
     bool Failed() const { return _failed.load(); }
     std::string Error() const;
@@ -304,6 +313,7 @@ private:
     uint32_t _part = 0;
     size_t _nextConfig = 0;
     bool _finished = false;
+    std::atomic<bool> _written{false};   ///< after FinishQueue: the thread drained the queue (inline writes: at once)
     size_t _end = SIZE_MAX;   ///< the file's last checkpoint + 1 (known at Finish)
     uint64_t _base[4] = {};   ///< the journals' positions at the file's start: IN, OUT, sectors, vectors
     std::string _buildError;   ///< the engine's thread only

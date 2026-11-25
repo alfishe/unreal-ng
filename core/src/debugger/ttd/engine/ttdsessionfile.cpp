@@ -421,6 +421,12 @@ bool TTDSessionWriter::CollectParts(const TimeTravelEngine& e)
 
 bool TTDSessionWriter::Finish(const TimeTravelEngine& e, size_t end)
 {
+    FinishQueue(e, end);
+    return FinishWait();
+}
+
+bool TTDSessionWriter::FinishQueue(const TimeTravelEngine& e, size_t end)
+{
     if (_finished)
         return !Failed();
     _finished = true;
@@ -449,9 +455,16 @@ bool TTDSessionWriter::Finish(const TimeTravelEngine& e, size_t end)
             _stop = true;
         }
         _wake.notify_all();
-        if (_thread.joinable())
-            _thread.join();
     }
+    if (!_background || !_thread.joinable())
+        _written.store(true, std::memory_order_release);
+    return !Failed();
+}
+
+bool TTDSessionWriter::FinishWait()
+{
+    if (_thread.joinable())
+        _thread.join();
     return !Failed();
 }
 
@@ -481,7 +494,11 @@ void TTDSessionWriter::Run()
             std::unique_lock<std::mutex> lock(_mutex);
             _wake.wait(lock, [this]() { return _stop || !_queue.empty(); });
             if (_queue.empty())
+            {
+                if (_finished)
+                    _written.store(true, std::memory_order_release);
                 return;   // stopped and drained
+            }
             job = std::move(_queue.front());
             _queue.pop_front();
         }
@@ -490,8 +507,21 @@ void TTDSessionWriter::Run()
     }
 }
 
+namespace
+{
+std::atomic<const std::atomic<bool>*> g_writeGate{nullptr};
+}
+
+void TTDSessionWriter::SetWriteGateForTesting(const std::atomic<bool>* gate)
+{
+    g_writeGate.store(gate, std::memory_order_release);
+}
+
 void TTDSessionWriter::Write(PartJob& job)
 {
+    if (const std::atomic<bool>* gate = g_writeGate.load(std::memory_order_acquire); gate && _background)
+        while (!gate->load(std::memory_order_acquire))
+            std::this_thread::yield();
     // Parts already queued are written even after the writer stopped taking
     // new ones (it fell behind): their data is whole. Only a write error stops it
     if (_ioFailed.load())

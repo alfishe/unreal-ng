@@ -11,7 +11,9 @@
 #include "emulator/sound/chips/gs/firmware/gsfirmwareobjects.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsslotstats.h"
+#include "emulator/sound/chips/gs/gsanalysisreport.h"
 #include "emulator/sound/chips/gs/gszxdmatrace.h"
+#include "emulator/sound/chips/gs/gsprofilereport.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
 
@@ -187,6 +189,87 @@ std::string GsZxDmaSummary(const StateNode& report)
            std::to_string(kept ? kept->i : 0) + " bytes kept";
 }
 
+/// The card CPU's profiler and frame map (gsprofilereport.h); unavailable without a card CPU
+StateNode GsProfileReport(EmulatorContext* context)
+{
+    GSProfileQuery query;
+    query.routines = 8;
+    query.activity = 4;
+    return GsProfile(context, query);
+}
+
+StateNode MsGsProfileReport(EmulatorContext* context)
+{
+    if (MsGsSlot(context).empty())
+        return NotAvailable(kMsGsNotFitted);
+    GSProfileQuery query;
+    query.cpu = "ms";
+    query.routines = 8;
+    query.activity = 4;
+    return GsProfile(context, query);
+}
+
+StateNode GsEventsReport(EmulatorContext* context)
+{
+    GSEventsQuery query;
+    query.count = 4;
+    query.rows = 4;
+    return GsEvents(context, query);
+}
+
+StateNode MsGsEventsReport(EmulatorContext* context)
+{
+    if (MsGsSlot(context).empty())
+        return NotAvailable(kMsGsNotFitted);
+    GSEventsQuery query;
+    query.cpu = "ms";
+    query.count = 4;
+    query.rows = 4;
+    return GsEvents(context, query);
+}
+
+std::string GsProfileSummary(const StateNode& report)
+{
+    const StateNode* on = report.find("on");
+    const StateNode* frames = report.find("frames");
+    return std::string(on && on->b ? "on" : "off") + ", " + std::to_string(frames ? frames->i : 0) + " frame(s) profiled";
+}
+
+std::string GsEventsSummary(const StateNode& report)
+{
+    const StateNode* periods = report.find("periods");
+    const StateNode* capturing = report.find("capturing");
+    return std::to_string(periods ? periods->i : 0) + " period(s) in the last frame, port trace " +
+           (capturing && capturing->b ? "capturing" : "off");
+}
+
+/// The card CPU analysis (gsanalysisreport.h): coverage with the default ranges, the heat map without its grid
+StateNode GsCoverageOf(EmulatorContext* context, const std::string& cpu)
+{
+    GSAnalysisQuery query;
+    query.cpu = cpu;
+    return GsCoverage(context, query);
+}
+StateNode GsHeatmapOf(EmulatorContext* context, const std::string& cpu)
+{
+    GSAnalysisQuery query;
+    query.cpu = cpu;
+    query.format = "none";
+    return GsHeatmap(context, query);
+}
+StateNode GsCoverageReport(EmulatorContext* context) { return GsCoverageOf(context, ""); }
+StateNode GsHeatmapReport(EmulatorContext* context) { return GsHeatmapOf(context, ""); }
+StateNode MsGsCoverageReport(EmulatorContext* context) { return GsCoverageOf(context, "ms"); }
+StateNode MsGsHeatmapReport(EmulatorContext* context) { return GsHeatmapOf(context, "ms"); }
+
+std::string GsAnalysisSummary(const StateNode& report)
+{
+    const StateNode* enabled = report.find("enabled");
+    const StateNode* memory = report.find("memory_bytes");
+    return std::string(enabled && enabled->b ? "on" : "off") +
+           (memory && memory->i > 0 ? ", " + std::to_string(memory->i / 1024) + " KB" : std::string());
+}
+
 StateNode BuildCdAudio(EmulatorContext* context)
 {
     return CdAudioControl::State(context);
@@ -319,6 +402,10 @@ const std::vector<ReportEntry>& CatalogEntries()
         {"gs-firmware", "GS firmware objects", "state/audio/gs/firmware", "gs firmware", "gs_firmware", "audio_gs_firmware", &GsFirmware, nullptr, nullptr},
         {"gs-stats", "GS statistics", "state/audio/gs/stats", "gs stats", "gs_stats", "audio_gs_stats", &GsStats, nullptr, nullptr},
         {"gs-zxdma", "NeoGS ZX-DMA trace", "state/audio/gs/zxdma", "gs zxdma", "gs_zxdma", "audio_gs_zxdma", &GsZxDma, nullptr, &GsZxDmaSummary},
+        {"gs-profile", "GS card CPU profiler", "state/audio/gs/profile", "gs profile", "gs_profile", "audio_gs_profile", &GsProfileReport, nullptr, &GsProfileSummary},
+        {"gs-events", "GS frame event map", "state/audio/gs/events", "gs events", "gs_events", "audio_gs_events", &GsEventsReport, nullptr, &GsEventsSummary},
+        {"gs-coverage", "GS card CPU coverage", "state/audio/gs/coverage", "gs coverage", "gs_coverage", "gs_analysis", &GsCoverageReport, nullptr, &GsAnalysisSummary},
+        {"gs-heatmap", "GS card RAM heat map", "state/audio/gs/heatmap", "gs heatmap", "gs_heatmap", "gs_analysis", &GsHeatmapReport, nullptr, &GsAnalysisSummary},
         {"covox", "Covox / SounDrive", "state/audio/covox", "state audio covox", "audio_covox_state", "audio_covox", &Covox, nullptr, nullptr},
         {"moonsound", "MoonSound", "state/audio/moonsound", "state audio moonsound", "audio_moonsound_state", "audio_moonsound", &MoonSound, nullptr, nullptr},
         {"multisound", "ZX-MultiSound", "state/audio/multisound", "multisound", "multisound_state", "audio_multisound", &MultiSound, nullptr, nullptr},
@@ -327,6 +414,10 @@ const std::vector<ReportEntry>& CatalogEntries()
         {"ms-gs-commands", "MultiSound GS command log", "history/zxbus.1.gs.commands", "history zxbus.1.gs.commands", "history", "device_history", &MsGsCommands, nullptr, &GsCommandsSummary, &GsCommandsCommands},
         {"ms-gs-firmware", "MultiSound GS firmware objects", "state/audio/gs/firmware?cpu=ms", "gs firmware --cpu ms", "gs_firmware", "audio_gs_firmware", &MsGsFirmware, nullptr, nullptr},
         {"ms-gs-stats", "MultiSound GS statistics", "state/audio/gs/stats?cpu=ms", "gs stats --cpu ms", "gs_stats", "audio_gs_stats", &MsGsStats, nullptr, nullptr},
+        {"ms-gs-profile", "MultiSound GS card CPU profiler", "state/audio/gs/profile?cpu=ms", "gs profile --cpu ms", "gs_profile", "audio_gs_profile", &MsGsProfileReport, nullptr, &GsProfileSummary},
+        {"ms-gs-events", "MultiSound GS frame event map", "state/audio/gs/events?cpu=ms", "gs events --cpu ms", "gs_events", "audio_gs_events", &MsGsEventsReport, nullptr, &GsEventsSummary},
+        {"ms-gs-coverage", "MultiSound GS card CPU coverage", "state/audio/gs/coverage?cpu=ms", "gs coverage --cpu ms", "gs_coverage", "gs_analysis", &MsGsCoverageReport, nullptr, &GsAnalysisSummary},
+        {"ms-gs-heatmap", "MultiSound GS RAM heat map", "state/audio/gs/heatmap?cpu=ms", "gs heatmap --cpu ms", "gs_heatmap", "gs_analysis", &MsGsHeatmapReport, nullptr, &GsAnalysisSummary},
         {"midi", "MIDI synthesizer", "state/audio/midi", "midi", "midi_state", "audio_midi", &Midi, nullptr, nullptr},
         {"wildsound", "Wild Sound", "state/audio/wildsound", "wildsound", "wildsound_state", "audio_wildsound", &WildSound, nullptr, nullptr},
         {"fdc", "Disk controller", "state/fdc", "state fdc", "fdc_state", "fdc", &Fdc, nullptr, nullptr},

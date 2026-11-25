@@ -31,6 +31,16 @@ class HistoryView;
 class DevicesView;
 class AddressRouter;
 class TtdControls;
+class GsMonitorView;
+class GsCardTab;
+class GsDispatchView;
+class GsUnknownView;
+class GsObjectsView;
+class GsWritersView;
+class GsProfilerView;
+class GsEventsView;
+class GsCoverageView;
+class GsHeatmapView;
 
 //One window for the whole machine. Each processor has a tab with its listing,
 //registers and flags; below are the memory dumps (each processor's address
@@ -100,6 +110,17 @@ public:
     QString zxdma_banner_text() const;
     //The time travel group of the toolbar (not in ecat): the self-check drives it
     TtdControls * ttd() { return m_ttd; }
+    //The GS monitor tab (gs-debugger P5.6), among the card tabs
+    GsMonitorView * gs_monitor() const { return m_gs_monitor; }
+    //The GS analysis tabs (gui-card-debugger A5.2a), after the card tabs
+    GsDispatchView * gs_dispatch() const { return m_gs_dispatch; }
+    GsUnknownView * gs_unknown() const { return m_gs_unknown; }
+    GsObjectsView * gs_objects() const { return m_gs_objects; }
+    GsWritersView * gs_writers() const { return m_gs_writers; }
+    GsProfilerView * gs_profiler() const { return m_gs_profiler; }
+    GsEventsView * gs_events() const { return m_gs_events; }
+    GsCoverageView * gs_coverage() const { return m_gs_coverage; }
+    GsHeatmapView * gs_heatmap() const { return m_gs_heatmap; }
 
 signals:
     //The views were read again: after a stop, and while the machine runs
@@ -142,6 +163,19 @@ private:
     std::vector<NextTab> m_next_tabs;
     //a General Sound card's (or the MultiSound's GS), a NeoGS's and the LW player's own too (gs-debugger P5.1, P5.5)
     std::vector<NextTab> m_card_tabs;
+    //The GS monitor (gui-card-debugger A5.3): after GS protocol, shown with the card tabs, following their card
+    GsMonitorView * m_gs_monitor = nullptr;
+    //The analysis tabs (A5.2a Dispatch, Unknown, Objects, Writers): after the card tabs (eCat has no View menu to
+    //open them from), shown with the card tabs, following their card
+    GsDispatchView * m_gs_dispatch = nullptr;
+    GsUnknownView * m_gs_unknown = nullptr;
+    GsObjectsView * m_gs_objects = nullptr;
+    GsWritersView * m_gs_writers = nullptr;
+    GsProfilerView * m_gs_profiler = nullptr;
+    GsEventsView * m_gs_events = nullptr;
+    GsCoverageView * m_gs_coverage = nullptr;
+    GsHeatmapView * m_gs_heatmap = nullptr;
+    std::vector<GsCardTab *> m_gs_analysis;
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
     QLabel * m_state;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <emulator/video/smoothmotion.h>
 #include <QPointer>
 #include <QTimer>
 #include <cstdint>
@@ -12,6 +13,7 @@
 #include <common/shmhelper.h>
 #include <emulator/actions/targetstate.h>
 
+class QMenu;
 class Emulator;
 class TileGrid;
 class TileGridWrapper;
@@ -82,6 +84,8 @@ public:
 
     /// Handle GPU acceleration toggle
     void handleGpuAccelerationToggled(bool enabled);
+    /// View > Smooth Motion: the picture between two frames on every tile (the GPU grid; off by default)
+    void setSmoothMotion(smoothmotion::Mode mode);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -192,6 +196,12 @@ private:
     // GPU acceleration state
     bool _useGPU = false;
     QAction* _gpuAccelerationAction = nullptr;
+
+    // Smooth motion (the GPU grid's tiles): off unless asked for; UNREAL_SMOOTH_MOTION sets it at start
+    smoothmotion::Mode _smoothMode = smoothmotion::Mode::Off;
+    QMenu* _smoothMenu = nullptr;
+    QTimer* _smoothStateTimer = nullptr;  ///< publishes the tiles' smooth motion state; only while it is on
+    void applySmoothMotion();
 
     // Shared Memory status handle (zero disk I/O publisher)
     mutable ipc::ShmHandle _statusShm;

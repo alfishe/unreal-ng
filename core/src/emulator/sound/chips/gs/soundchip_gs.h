@@ -382,6 +382,10 @@ private:
         if (_portTrace.isCapturing()) [[unlikely]]
             traceIdle(head, start, iterations);
         recordExecIdle(head, iterations);
+        if (_runProfile) [[unlikely]]
+            _profiler.Idle(start, _runner.now());
+        if (_analysis) [[unlikely]]
+            analysisIdle(head);
     }
     bool sleepQuietEventsBefore(int64_t end);
 
@@ -402,6 +406,13 @@ private:
     static uint8_t gsPortReadMultiSound(Z80CPU* cpu, uint16_t port, void* userData);
     static void gsPortWriteMultiSound(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
     static uint8_t gsIntRead(Z80CPU* cpu, void* userData);
+    // The same with the card analysis told (gscardanalysis.h; bound only while it is on): the access done, then marked
+    static uint8_t gsMemReadAnalysis(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
+    static void gsMemWriteAnalysis(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
+    void analysisRead(Z80CPU* cpu, uint16_t addr, uint8_t value, int m1State);
+    void analysisWrite(uint16_t addr);
+    void analysisIdle(uint16_t head);
+    void bindAnalysisBus() override { bindBus(); }
     // The same with the debug hooks told (setDebugHooks): the access done, then reported
     static uint8_t gsMemReadDebug(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
     static void gsMemWriteDebug(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
@@ -446,10 +457,16 @@ private:
     void flush();                      // run GS to the current ZX tact
     bool hostTarget(int64_t& target) const;  // the card time of the current ZX tact; false without a base
     void runToDebug(int64_t targetGsCycles);  // out of line: the debug loop's code stays away from the fast loop's
-    void runToRecord(int64_t targetGsCycles);  // out of line too: the execution history's loop
+    void runToRecord(int64_t targetGsCycles);  // out of line too: the execution history's and the profiler's loop
+    /// The profiler's part (generalsoundcard.h): SP, the code bytes and the HALT latch before the step at `pc`; an
+    /// acknowledge with its return address
+    void profileStep(uint16_t pc) override;
+    void profileInterrupt(bool nmi, int64_t ackUnits) override;
+    void beginRun();  // the run's start with the period grid
     void runTo(int64_t targetGsCycles)
     {
         syncExecHistory();
+        syncAnalysis();
         // A debugger's hooks: the debug loop; the execution history: the record loop (tests a run, never per
         // instruction)
         if (_debugHooks) [[unlikely]]
@@ -457,7 +474,7 @@ private:
             runToDebug(targetGsCycles);
             return;
         }
-        if (execRecording()) [[unlikely]]
+        if (recordLoopWanted()) [[unlikely]]
         {
             runToRecord(targetGsCycles);
             return;

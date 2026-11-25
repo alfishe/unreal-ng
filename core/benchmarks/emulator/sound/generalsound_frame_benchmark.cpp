@@ -123,7 +123,10 @@ struct Card
     }
 };
 
-void RunGeneralSoundFrames(benchmark::State& state, bool playing, bool neoGS = false)
+/// `profiled`: the card CPU profiler on (gscardprofiler.h); `analysis`: the card CPU analysis on (gscardanalysis.h,
+/// gs-debugger P5.6), bound before the measured frames
+void RunGeneralSoundFrames(benchmark::State& state, bool playing, bool neoGS = false, bool profiled = false,
+                           bool analysis = false)
 {
     Card card(neoGS);
     if (!card.chip->isROMLoaded() || !card.boot() || (playing && !card.play()))
@@ -131,11 +134,28 @@ void RunGeneralSoundFrames(benchmark::State& state, bool playing, bool neoGS = f
         state.SkipWithError("firmware did not boot / play");
         return;
     }
+    if (profiled)
+        card.chip->profiler().Start();
+    if (analysis)
+    {
+        if (!card.chip->setAnalysisOn(true, &card.ctx.emulatorState.frame_counter, nullptr))
+        {
+            state.SkipWithError("no card analysis");
+            return;
+        }
+        card.frame();
+        if (!card.chip->analysisBound())
+        {
+            state.SkipWithError("the analysis did not bind");
+            return;
+        }
+    }
 
     const uint64_t stepsBefore = card.chip->getActivityCounters().cpuSteps;
     for (auto _ : state)
     {
         card.frame();
+        card.ctx.emulatorState.frame_counter++;  // the heat map's frame (the host's counter, idle in the plain runs)
         benchmark::DoNotOptimize(card.chip->getBuffer()[0]);
     }
     state.counters["steps/frame"] = benchmark::Counter(
@@ -156,6 +176,20 @@ static void BM_GeneralSoundFrame_Playing(benchmark::State& state)
 }
 BENCHMARK(BM_GeneralSoundFrame_Playing)->Iterations(2000)->Unit(benchmark::kMicrosecond);
 
+/// The card CPU's profiler on (gscardprofiler.h): the record loop with a step per instruction, against the rows
+/// above (off: the fast loop, the cost a per-run flag test)
+static void BM_GeneralSoundFrame_Idle_Profiled(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, false, false, true);
+}
+BENCHMARK(BM_GeneralSoundFrame_Idle_Profiled)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
+static void BM_GeneralSoundFrame_Playing_Profiled(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, true, false, true);
+}
+BENCHMARK(BM_GeneralSoundFrame_Playing_Profiled)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
 /// NeoGS with its v1.11 flash (main ROM at 20 MHz). Budgets (neogs-tdd.md
 /// §5.9): idle within 2x and playback within 2.5x of the classic card.
 static void BM_NeoGSFrame_Idle(benchmark::State& state)
@@ -169,3 +203,23 @@ static void BM_NeoGSFrame_Playing(benchmark::State& state)
     RunGeneralSoundFrames(state, true, true);
 }
 BENCHMARK(BM_NeoGSFrame_Playing)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
+static void BM_NeoGSFrame_Playing_Profiled(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, true, true, true);
+}
+BENCHMARK(BM_NeoGSFrame_Playing_Profiled)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
+/// The card CPU analysis on (coverage / CDL + heat map, gs-debugger P5.6): the analysis bus callbacks mark every
+/// access; off (the runs above) the plain callbacks run untouched
+static void BM_GeneralSoundFrame_Playing_Analysis(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, true, false, false, true);
+}
+BENCHMARK(BM_GeneralSoundFrame_Playing_Analysis)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
+static void BM_NeoGSFrame_Playing_Analysis(benchmark::State& state)
+{
+    RunGeneralSoundFrames(state, true, true, false, true);
+}
+BENCHMARK(BM_NeoGSFrame_Playing_Analysis)->Iterations(2000)->Unit(benchmark::kMicrosecond);
