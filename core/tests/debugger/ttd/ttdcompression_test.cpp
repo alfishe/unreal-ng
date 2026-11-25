@@ -76,3 +76,34 @@ TEST(TTDCompression_Test, EmptyInput_ReturnsEmpty)
 {
     EXPECT_TRUE(codec::Compress(nullptr, 0).empty());
 }
+
+TEST(TTDCompression_Test, Crc32C_KnownVectorAndContinuation)
+{
+    // The CRC32C check value of "123456789" (RFC 3720 B.4)
+    const uint8_t check[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    EXPECT_EQ(codec::Crc32C(check, sizeof(check)), 0xE3069283u);
+
+    // Lengths across the 8-byte step and its tail; a split run continues through the seed
+    const std::vector<uint8_t> data = Incompressible(1031);
+    for (size_t size : {1u, 7u, 8u, 9u, 64u, 1031u})
+        for (size_t split : {size_t(0), size / 3, size})
+        {
+            const uint32_t whole = codec::Crc32C(data.data(), size);
+            const uint32_t head = codec::Crc32C(data.data(), split);
+            EXPECT_EQ(codec::Crc32C(data.data() + split, size - split, head), whole) << size << " split " << split;
+        }
+}
+
+#if defined(UNREAL_CRC32C_X86_DISPATCH)
+TEST(TTDCompression_Test, Crc32C_HardwareMatchesTable)
+{
+    // x86-64 without SSE4.2 in the baseline: the run-time path and the table give the same CRC32C
+    if (!codec::detail::Crc32CHardware())
+        GTEST_SKIP() << "the CPU has no SSE4.2";
+    const std::vector<uint8_t> data = Incompressible(4099);
+    for (size_t size : {1u, 7u, 8u, 15u, 4096u, 4099u})
+        EXPECT_EQ(codec::detail::Crc32CHardwareRun(data.data(), size, 0x12345678u),
+                  codec::detail::Crc32CTableRun(data.data(), size, 0x12345678u))
+            << size;
+}
+#endif
