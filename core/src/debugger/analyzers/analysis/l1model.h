@@ -75,6 +75,8 @@ struct Instruction
     uint64_t executions = 0;
     uint64_t tstates = 0;
     bool selfModified = false;  ///< its bytes were seen to change
+    uint64_t firstFrame = 0;    ///< the recording's frame of its first execution
+    uint64_t lastFrame = 0;     ///< the recording's frame of its last execution
 };
 
 struct Edge
@@ -127,8 +129,9 @@ constexpr uint16_t kDispatch = 1u << 3;   ///< PUSH + RET target
 constexpr uint16_t kIndirect = 1u << 4;   ///< JP (rr) target
 constexpr uint16_t kJump = 1u << 5;       ///< a JP target entered from outside the routine it jumped from
 constexpr uint16_t kShared = 1u << 6;     ///< code two routines run into
-constexpr uint16_t kRoot = 1u << 7;       ///< where the replay started, or code reached by no other entry
+constexpr uint16_t kRoot = 1u << 7;       ///< a replay from the reset vector, or code reached by no other entry
 constexpr uint16_t kNmi = 1u << 8;
+constexpr uint16_t kResume = 1u << 9;  ///< where the replay started inside a run (a snapshot, a window): no entry point
 }  // namespace entry
 std::string EntryKindNames(uint16_t kinds);
 

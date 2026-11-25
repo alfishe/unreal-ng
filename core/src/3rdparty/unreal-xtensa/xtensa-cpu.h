@@ -196,6 +196,13 @@ public:
     /// Host pointer for [addr, addr + size) if it is mapped contiguously with `flags`, else nullptr.
     uint8_t* HostPointer(uint32_t addr, uint32_t size, uint32_t flags = RegionRead);
     void InvalidateCode();
+    /// For a host that is about to replace guest memory through its own pointers and expects the code bytes to
+    /// come back the same (a state restore): HoldCode() copies the bytes under every decoded instruction,
+    /// KeepHeldCode() after the memory is in place compares them. Equal: the predecoded and translated code
+    /// stays, true. Different, no HoldCode() before, or code decoded or invalidated in between: InvalidateCode(),
+    /// false. One KeepHeldCode() per HoldCode().
+    void HoldCode();
+    bool KeepHeldCode();
 
     // ---- traps and host calls ----
     void SetTrapRange(uint32_t base, uint32_t size);
@@ -305,6 +312,9 @@ private:
     std::unique_ptr<PageEntry[]> l1_[1024];
     std::unordered_map<uintptr_t, std::unique_ptr<CodePage>> codePages_;
     std::vector<PageEntry*> codeEntries_;
+    bool codeHeld_ = false;             ///< HoldCode()'s copy is of the current decoded code
+    std::vector<uintptr_t> heldPages_;  ///< host pages of codePages_ at HoldCode()
+    std::vector<uint8_t> heldBytes_;    ///< 4 KB per held page
 
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blockMap_;
     std::vector<std::unique_ptr<Block>> retired_;

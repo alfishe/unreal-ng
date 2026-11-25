@@ -104,29 +104,32 @@ Key detail: `array_completeness` bit must be set (0xA0, 0xA1, 0xA2 for VPS/SPS/P
 
 **Solution approach:**
 
-1. **Buffer Queue:** Allocate multiple input/output buffer pairs (8 pairs for safety):
+1. **Buffer ring:** the encoder holds up to `lookaheadDepth + frameIntervalP` frames before their output exists
+   (the lookahead, the B-frames waiting for their P frame). The ring is sized from the configuration, as NVIDIA's
+   `NvEncoder` sample does:
 ```cpp
-static constexpr int NUM_BUFFERS = 8;  // >= 1 + numBFrames
-NV_ENC_INPUT_PTR inputBuffers[NUM_BUFFERS];
-NV_ENC_OUTPUT_PTR outputBuffers[NUM_BUFFERS];
-int encodeIdx = 0;   // Next buffer to encode into
-int outputIdx = 0;   // Next buffer to read output from  
-int pendingFrames = 0;
+outputDelay = frameIntervalP + lookaheadDepth + 1;  // outputs left waiting after a SUCCESS
+bufferCount = outputDelay + frameIntervalP + 1;     // + the B-frames that come back NEED_MORE_INPUT in a row
 ```
+   A fixed 8 pairs was too few with lookahead 8: the oldest output was locked before it existed, the lock failed,
+   the frame was lost and its input buffer refilled while the lookahead still used it. Every recording at quality 5+
+   lost its first 8 frames with the IDR (192 of 200 frames, decode errors; under ~12 frames no `moov`).
 
-2. **Handle NV_ENC_ERR_NEED_MORE_INPUT:** When returned, encoder is buffering for B-frame reordering:
+2. **Read outputs only after NV_ENC_SUCCESS**, in submission order, and only those older than `outputDelay`; on
+   `NV_ENC_ERR_NEED_MORE_INPUT` nothing is read:
 ```cpp
 NVENCSTATUS status = nvenc.nvEncEncodePicture(encoder, &picParams);
-if (status == NV_ENC_SUCCESS) {
-    // Output ready - read it
-    pendingFrames++;
-    writeOutput();
-} else if (status == NV_ENC_ERR_NEED_MORE_INPUT) {
-    // Frame buffered, will be output later
-    pendingFrames++;
-}
-encodeIdx = (encodeIdx + 1) % NUM_BUFFERS;
+if (status != NV_ENC_SUCCESS && status != NV_ENC_ERR_NEED_MORE_INPUT)
+    return false;
+encodeIdx = (encodeIdx + 1) % bufferCount;
+pendingFrames++;
+if (status == NV_ENC_SUCCESS)
+    while (pendingFrames > outputDelay)
+        writeOutput();  // a failed lock counts as a lost output: Stop() reports it in GetLastError()
 ```
+   A frame that finds the ring full (never expected) is dropped rather than overwriting a buffer the encoder holds.
+   `NvencEncoder_Test` (core/tests/emulator/recording/nvencencoder_test.cpp, skipped without an NVIDIA GPU) checks
+   that 12 / 60 / 200 frames of h264 and h265 with and without B-frames all reach the MP4, with `moov`.
 
 3. **Flush at end:** Send EOS and drain remaining frames:
 ```cpp
@@ -322,6 +325,9 @@ The NVENC encoder applies this during RGBA→NV12 conversion, matching the behav
 - **Suspiciously small output files**: Fixed by proper rate control (VBR when bitrate configured, better QP range) and by no longer ignoring the `videoBitrate` config field
 - **Color smearing**: Fixed by respecting `scaleFactor` for nearest-neighbor upscaling before encoding
 - **B-frame playback (slideshow)**: Fixed via proper buffer pipeline and ctts handling
+- **Lost frames with lookahead (quality 5+)**: Fixed 2026-11-24: the buffer ring is sized from lookahead and
+  B-frames and outputs are read only after `NV_ENC_SUCCESS` (see "Buffer ring" above); the muxer takes the parameter
+  sets from any packet
 
 ### Not Implemented
 - AV1 encoding (requires Ada Lovelace+ GPU, separate codec config)

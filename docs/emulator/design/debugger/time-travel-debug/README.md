@@ -208,14 +208,14 @@ Open, by priority:
 | S3 | Server-side input script player with TTD recording | P2 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | V1 | L1 analysis over several TTD sessions | P2 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | R4 | RZX recording (writer: `IN` values, fetch counts, frame ends) | T2 (PLAN #27) | open, nobody on it | [rzx TODO](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) |
-| F9 | L1 marks a false root at a snapshot's first PC | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| S4 | History / trace filters, event-only trace | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| V5 | L1 first / last frame per instruction; reader-PC filter | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| E5 | `capture.json` records the script start frame | P3 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| F9 | L1 marks a false root at a snapshot's first PC | P3 | done 2026-11-24 (`resume` kind) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| S4 | History / trace filters, event-only trace | P3 | open, partly there (verified 2026-11-24) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| V5 | L1 first / last frame per instruction; reader-PC filter | P3 | open, partly there (verified 2026-11-24) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| E5 | `capture.json` records the script start frame | P3 | done 2026-11-24 | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | E7 | RZX seek discoverability | P3 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| E8 | Capability check before a session | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| F8 | Port history flush and frame counter reset on snapshot load (next to TTD) | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| E3 | Frame counter in `/registers` (next to TTD; run answers done in `c3ab886b3`) | P3 | partly done | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| E8 | Capability check before a session | P3 | done 2026-11-24 (tool list checked at launch) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| F8 | Port history flush and frame counter reset on snapshot load (next to TTD) | P3 | verified 2026-11-24, no change needed | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| E3 | Frame counter in `/registers` (next to TTD; run answers done in `c3ab886b3`, `special.frame` 2026-11-24) | P3 | done | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | P1.S10 | Real-use sessions over days; quiet-machine A/B of C1d | - | done 2026-11-21 (A/B within noise; 100-min soak, three bugs fixed; days of real use stay the owner's) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | P1.S10 seek | Long-session seek and timeline (the soak's 10-23 s seeks at 239k frames) | - | done 2026-11-21 (pause + seek 11 s -> 19 ms, timeline 16 s -> 0.37 s at 240k frames; a lost frame after a resume fixed; both closed by P1.S10 seek tails) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | P1.S10 recheck | TSL seek-check divergences, ATM3 determinism | `ttdsoak_test.cpp`, `ttddeterminism_test.cpp` | done 2026-11-22 (12-min TSL and PENTAGON soaks: 16,169 seek checks, 0 divergences, 2,856 loaded compares, 0 mismatches; the old divergences were the read-back bug; ATM3 counts vary by the host-clock RTC anchor and power-on RAM, by design; a frame replay that slowed the clock ran three frames on, fixed) | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |

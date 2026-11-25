@@ -2341,7 +2341,9 @@ struct L1Builder::Impl
         NoteArrival(current, prev, page, pc, now, frame);
         if (first)
         {
-            nodes[current].entryKinds |= entry::kRoot;
+            // The reset vector is where the program begins; any other first PC is where the recording picked the
+            // run up (a loaded snapshot, a window of the history), not an entry of the code
+            nodes[current].entryKinds |= pc == 0 ? entry::kRoot : entry::kResume;
             first = false;
             firstFrameSeen = frame;
             startSp = regs.sp;
@@ -2973,6 +2975,8 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         ins.executions = n.exec;
         ins.tstates = n.tstates;
         ins.selfModified = n.smc;
+        ins.firstFrame = n.frames != 0 ? n.firstFrame : 0;
+        ins.lastFrame = n.frames != 0 ? n.lastFrame : 0;
         out.instructions.push_back(ins);
         out.instructionRoutine.push_back(routineOf[u]);
     }

@@ -61,6 +61,11 @@ FORMATS = {'skool': 'draft.skool', 'ctl': 'draft.ctl', 'map': 'draft.map.txt', '
            'geometry': 'draft.geometry.json', 'symbols': 'draft.symbols', 'layout': 'draft.layout.mk'}
 
 
+# What a session calls: a binary of an older build lacks some (found at launch, not at the first call)
+NEEDED_TOOLS = ('analysis', 'time_travel', 'control_execution', 'emulator_manage', 'invoke_api', 'type_input',
+                'joystick_input', 'jobs')
+
+
 def session_of(work):
     with open(os.path.join(work, 'session.json')) as f:
         state = json.load(f)
@@ -82,7 +87,7 @@ def ranges_of(text):
 def capture(args):
     work = os.path.abspath(args.work)
     os.makedirs(work, exist_ok=True)
-    process = mcplib.launch(args.binary, args.port_base)
+    process = mcplib.launch(args.binary, args.port_base, needs=NEEDED_TOOLS)
     with open(os.path.join(work, 'session.json'), 'w') as f:
         json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': args.port_base, 'model': args.model,
                    'ranges': args.ranges}, f)
@@ -129,8 +134,14 @@ def capture(args):
     screens = os.path.join(work, 'screens')
     os.makedirs(screens, exist_ok=True)
     frames = 0
+    # The emulator frame (a TTD frame) of the play's frame 0: a script's frame N is recorded at this + N
+    report['script_start_frame'] = int(m.get('/debug/snapshot?disasm=0')['time']['frame'])
     if args.inputs:
+        report['scripts'] = []
         for path in args.inputs:
+            with open(path) as f:
+                report['scripts'].append({'path': os.path.abspath(path), 'text': f.read(),
+                                          'start_frame': report['script_start_frame'] + frames})
             frames += play_script(s, m, path, screens, frames)
     else:
         if explorer:
@@ -362,7 +373,7 @@ def open_session(args):
     work on it as on the capture's own"""
     work = os.path.abspath(args.work)
     os.makedirs(work, exist_ok=True)
-    process = mcplib.launch(args.binary, args.port_base)
+    process = mcplib.launch(args.binary, args.port_base, needs=NEEDED_TOOLS)
     with open(os.path.join(work, 'session.json'), 'w') as f:
         json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': args.port_base, 'model': args.model,
                    'ranges': args.ranges}, f)

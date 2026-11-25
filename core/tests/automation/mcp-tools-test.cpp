@@ -6642,6 +6642,10 @@ TEST(McpToolUtils_Test, FormatRegistersFull)
     const std::string full = mcp::FormatRegisters(r, true);
     EXPECT_NE(full.find("AF'=0x0044"), std::string::npos) << full;
     EXPECT_NE(full.find("I=0x3F R=0x12 MEMPTR=0x0038 IM 1 IFF1=1 IFF2=1"), std::string::npos) << full;
+    EXPECT_EQ(full.find("frame"), std::string::npos) << "a card CPU's registers carry no frame: " << full;
+    r["special"]["frame"] = 4021;
+    r["special"]["t"] = 35012;
+    EXPECT_NE(mcp::FormatRegisters(r, true).find("IFF2=1 frame 4021 T 35012"), std::string::npos);
 }
 
 /// RunSeries frees its chain when the series ends: the closure used to hold itself, so the steps and the `done`

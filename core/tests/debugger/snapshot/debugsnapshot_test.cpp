@@ -62,7 +62,11 @@ TEST_F(DebugSnapshot_Test, RegistersCarryEveryGroup)
     _z80->sp = 0xFF00;
     _z80->im = 2;
     _z80->iff1 = 1;
+    _z80->t = 1234;
+    _context->emulatorState.frame_counter = 77;
     const StateNode r = DebugSnapshot::Registers(_context);
+    EXPECT_EQ(Int(r, "special", "t"), 1234);
+    EXPECT_EQ(Int(r, "special", "frame"), 77) << "the moment: frame and T-state inside it";
     EXPECT_EQ(Int(r, "main", "af"), 0x12C5);
     EXPECT_EQ(Int(r, "main", "bc"), 0x3456);
     EXPECT_EQ(Int(r, "alternate", "hl_"), 0xBEEF);
