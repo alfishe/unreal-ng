@@ -746,6 +746,26 @@ std::vector<std::string> DebugKeyboardManager::SplitKeyChord(const std::string& 
     return keys;
 }
 
+bool DebugKeyboardManager::ParseKeyChord(const std::string& text, std::vector<std::string>& keys, std::string& error)
+{
+    const std::vector<std::string> names = SplitKeyChord(text);
+    if (names.empty())
+    {
+        error = DescribeUnknownKey(text);
+        return false;
+    }
+    for (const std::string& name : names)
+    {
+        if (!IsKnownKeyName(name))
+        {
+            error = DescribeUnknownKey(name);
+            return false;
+        }
+    }
+    keys.insert(keys.end(), names.begin(), names.end());
+    return true;
+}
+
 std::string DebugKeyboardManager::DescribeUnknownKey(const std::string& name)
 {
     std::string text = "Unknown key '" + name + "': a key is one name (a, enter, caps); keys held together are joined with '+' (w+o)";

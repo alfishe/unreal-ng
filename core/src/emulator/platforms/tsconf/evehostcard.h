@@ -291,7 +291,10 @@ private:
     void OnChipFrame();
     /// Size the buffers for the chip's current mode and give it the output
     /// (drawing only while showing); true when the picture size changed
-    bool ConfigureOutput();
+    /// @p catchUp false (right after a state load): the output's settings only; the lines the chip owes are
+    /// drawn with them at its next catch-up (the first write that changes a drawing input, a frame event), with
+    /// the same inputs as now (EveSetOutputAfterLoad)
+    bool ConfigureOutput(bool catchUp = true);
     /// Tell the Screen what the monitor shows now (the FT812 picture or the Evo)
     void PublishPicture();
     /// The chip should draw its next frame
@@ -335,6 +338,8 @@ private:
     // copy the Screen presents
     bool _showing = false;
     bool _drawing = false;         // the chip was told to draw (EveSetOutput)
+    bool _outputSet = false;       // EveSetOutput was called once
+    bool _owedFromLoad = false;    // TtdLoadState left the frame's lines owed (until the next advance)
     uint64_t _chipFrames = 0;      // EveCompletedFrames seen last
     std::atomic<uint64_t> _latchedFrames{0};
     std::vector<uint32_t> _chipFrame;

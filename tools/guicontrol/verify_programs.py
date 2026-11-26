@@ -210,22 +210,23 @@ def main():
     parser.add_argument('--unreal-videowall', default=os.path.join(
         BIN, 'unreal-videowall.app', 'Contents', 'MacOS', 'unreal-videowall'))
     parser.add_argument('--unreal-gui', default=os.path.join(BIN, 'unreal-gui'))
-    parser.add_argument('--port-base', type=int, default=28800)
+    parser.add_argument('--port-base', type=mcplib.port_base_arg, default=28800)
     parser.add_argument('--wall-port-base', type=int, default=28810)
     parser.add_argument('--out', default=os.path.join(ROOT, 'scratch', 'guicontrol-verify-programs'))
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
     os.environ['UNREAL_GUI_CONTROL_DIR'] = os.path.join(args.out, 'discovery')
-    endpoint = f'http://127.0.0.1:{args.port_base}'
 
     processes = [mcplib.launch(args.unreal_qt, args.port_base)]
+    webapi = processes[0].ports['webapi']
+    endpoint = f'http://127.0.0.1:{webapi}'
     try:
-        mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', 'PENTAGON').fresh_machine()
+        mcplib.Session(mcplib.mcp_url(processes[0]), 'PENTAGON').fresh_machine()
         qt = connect(processes[0].pid)
         machine = until(lambda: (qt.state('memory').get('instance') or {}).get('id'))
-        processes.append(launch(args.unreal_debugger, '--connect', f'127.0.0.1:{args.port_base}',
+        processes.append(launch(args.unreal_debugger, '--connect', f'127.0.0.1:{webapi}',
                                 '--emulator', machine))
-        processes.append(launch(args.unreal_screen_viewer, '--connect', f'127.0.0.1:{args.port_base}'))
+        processes.append(launch(args.unreal_screen_viewer, '--connect', f'127.0.0.1:{webapi}'))
         viewer = connect(processes[2].pid)
         processes.append(mcplib.launch(args.unreal_videowall, args.wall_port_base))
         mute_all(args.wall_port_base)

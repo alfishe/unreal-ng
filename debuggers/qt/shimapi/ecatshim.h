@@ -147,6 +147,8 @@ struct EventBreakpoint {
     unsigned int value = 0;     // the event's byte, compared where mask has bits
     unsigned int mask = 0;      // 0: any value
     bool enabled = true;
+    std::string hits;           // the hit policy as the surfaces write it: "" every hit, "5" the 5th only, ">=5", "%5"
+    bool stops = true;          // false: it only counts its hits (never stops)
 };
 
 // Not in ecat: one window of a processor's address space and the page mapped there now
@@ -206,15 +208,20 @@ public:
     // core's names (none: it has no event breakpoints)
     virtual std::vector<std::string> event_kinds() { return {}; }
     virtual std::vector<EventBreakpoint> get_event_breakpoints() { return {}; }
-    // False with the reason in @p error (a kind of another CPU, a value out of range)
-    virtual bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+    // False with the reason in @p error (a kind of another CPU, a value out of range, a hit policy it does not take).
+    // @p hits: the hit policy ("" every hit, "5" only the 5th, ">=5", "%5"), counted from now
+    virtual bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                                      std::string &error)
     {
         (void)kind;
         (void)value;
         (void)mask;
+        (void)hits;
         error = "this processor has no event breakpoints";
         return false;
     }
+    // The hit count of the event breakpoint back to 0: its hit policy counts from now
+    virtual bool reset_event_hits(unsigned int id) { (void)id; return false; }
     virtual bool remove_event_breakpoint(unsigned int id) { (void)id; return false; }
     virtual bool enable_event_breakpoint(unsigned int id, bool on) { (void)id; (void)on; return false; }
 
@@ -467,6 +474,9 @@ public:
         int command = -1;
         std::string kind, name, text;
         std::string anomaly;      // kind "anomaly": its name ("data_overwritten")
+        int64_t bytes = -1;       // kind "block": its byte count
+        std::string direction;    // kind "block" of a sector transfer: "read" (to the host) or "write"
+        bool host_data = false;   // kind "block": the profile's host data stream (no command opened it)
     };
     struct GsMonitor {
         bool ok = false;          // read (false: message why)
@@ -489,6 +499,9 @@ public:
         bool cursor = false;                 // read after a cursor: the next three apply
         uint64_t next_since = 0;             // the cursor of the next read
         uint64_t missed = 0;                 // records after the cursor gone from the history before they were read
+        // The time-travel history's units per main CPU T (a row's t x this is its tinframe); 1 when not known (the
+        // WebAPI does not say: a turbo-clocked model's seek over --connect lands at t, earlier in the frame)
+        unsigned int ttd_units = 1;
         bool restarted = false;              // the cursor was past the newest record: read from the oldest kept
         // The firmware's unknown commands (only with a firmware profile and the log on)
         bool unknown_present = false;

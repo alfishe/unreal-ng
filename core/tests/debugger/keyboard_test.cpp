@@ -552,4 +552,24 @@ TEST_F(DebugKeyboardManager_test, DescribeUnknownKey_SaysHowKeysAreWritten)
               "a space or a comma does not separate keys");
 }
 
+TEST_F(DebugKeyboardManager_test, ParseKeyChord_ChecksEveryName)
+{
+    using Keys = std::vector<std::string>;
+    Keys keys;
+    std::string error;
+    EXPECT_TRUE(DebugKeyboardManager::ParseKeyChord("enter", keys, error));
+    EXPECT_EQ(keys, (Keys{"enter"}));
+    EXPECT_TRUE(DebugKeyboardManager::ParseKeyChord("W+O", keys, error)) << "added after the keys already there";
+    EXPECT_EQ(keys, (Keys{"enter", "W", "O"}));
+    EXPECT_TRUE(error.empty());
+
+    EXPECT_FALSE(DebugKeyboardManager::ParseKeyChord("w+nosuchkey", keys, error));
+    EXPECT_EQ(error, DebugKeyboardManager::DescribeUnknownKey("nosuchkey")) << "the unknown name, not the whole text";
+    EXPECT_EQ(keys.size(), 3u) << "a refused chord adds no key";
+    EXPECT_FALSE(DebugKeyboardManager::ParseKeyChord("W O", keys, error));
+    EXPECT_EQ(error, DebugKeyboardManager::DescribeUnknownKey("W O"));
+    EXPECT_FALSE(DebugKeyboardManager::ParseKeyChord("  ", keys, error)) << "no name at all";
+    EXPECT_EQ(keys.size(), 3u);
+}
+
 /// endregion </Key chords (E6)>

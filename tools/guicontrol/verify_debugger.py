@@ -140,20 +140,21 @@ def main():
     parser.add_argument('--unreal-qt', default=os.path.join(BIN, 'unreal-qt.app', 'Contents', 'MacOS', 'unreal-qt'))
     parser.add_argument('--unreal-debugger', default=os.path.join(BIN, 'unreal-debugger'))
     parser.add_argument('--unreal-gui', default=os.path.join(BIN, 'unreal-gui'))
-    parser.add_argument('--port-base', type=int, default=28800)
+    parser.add_argument('--port-base', type=mcplib.port_base_arg, default=28800)
     parser.add_argument('--out', default=os.path.join(ROOT, 'scratch', 'guicontrol-verify-debugger'))
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
     os.environ['UNREAL_GUI_CONTROL_DIR'] = os.path.join(args.out, 'discovery')
 
     processes = [mcplib.launch(args.unreal_qt, args.port_base)]
+    webapi = processes[0].ports['webapi']
     try:
-        mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', 'PENTAGON').fresh_machine()
+        mcplib.Session(mcplib.mcp_url(processes[0]), 'PENTAGON').fresh_machine()
         qt = connect(processes[0].pid)
         machine = qt.state('memory')['instance']['id']
         processes.append(launch_debugger(args.unreal_debugger))
         own = connect(processes[1].pid)
-        processes.append(launch_debugger(args.unreal_debugger, '--connect', f'127.0.0.1:{args.port_base}',
+        processes.append(launch_debugger(args.unreal_debugger, '--connect', f'127.0.0.1:{webapi}',
                                          '--emulator', machine))
         remote = connect(processes[2].pid)
         hosts = {'unreal-qt': (qt, processes[0].pid), 'unreal-debugger': (own, processes[1].pid),
@@ -163,7 +164,7 @@ def main():
                'unreal-debugger serves the plane as program unreal-debugger', own.list().get('program'))
         instances = {name: conform(gui, name) for name, (gui, _) in hosts.items()}
         expect(instances['unreal-debugger --connect']['id'] == machine and
-               instances['unreal-debugger --connect']['endpoint'] == f'http://127.0.0.1:{args.port_base}',
+               instances['unreal-debugger --connect']['endpoint'] == f'http://127.0.0.1:{webapi}',
                '--connect: the views name unreal-qt\'s machine and its WebAPI', instances['unreal-debugger --connect'])
         expect(instances['unreal-debugger']['id'] not in ('', machine) and not instances['unreal-debugger']['endpoint'],
                'in process: the views name its own machine, no WebAPI', instances['unreal-debugger'])

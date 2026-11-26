@@ -801,6 +801,9 @@ void AsyncTakeDrawingState(EveChip& chip, bool metrics);
 void AsyncWait(const EveChip& chip);
 // The chip whose drawing state (handles, line costs, metrics, kept lines) is current: the shadow after a wait
 const EveChip& DrawingChip(const EveChip& chip);
+// The renderer has not yet taken this thread's handles and context (metrics: its metrics block), handed on by
+// AsyncTakeDrawingState with the next operation: until then this thread's copy is the drawing's state
+bool AsyncDrawingStatePending(const EveChip& chip, bool metrics);
 // REG_TAG as the drawing left it, into the chip's register (a host read)
 void AsyncSyncTag(EveChip& chip);
 // EveFramesBarrier

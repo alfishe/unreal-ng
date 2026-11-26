@@ -652,11 +652,14 @@ public:
             x.value = d.nrValue & d.nrMask;
             x.mask = d.nrMask;
             x.enabled = d.active;
+            x.hits = BreakpointManager::HitSpecName(d);
+            x.stops = d.tapSink != BRK_COUNT_TAP;
             r.push_back(x);
         }
         return r;
     }
-    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                              std::string &error) override
     {
         BreakpointManager * bm = breakpoints();
         GSCardEvent k = GSCardEvent::Count;
@@ -679,7 +682,13 @@ public:
         spec.address = static_cast<uint16_t>(k);
         spec.nrValue = (uint8_t)value;
         spec.nrMask = (uint8_t)mask;
+        if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error)) return false;
         return bm->AddBreakpoint(spec, error) != BRK_INVALID;
+    }
+    bool reset_event_hits(unsigned int id) override
+    {
+        BreakpointManager * bm = breakpoints();
+        return bm != nullptr && is_event(bm, id) && bm->ResetHitCount((uint16_t)id);
     }
     bool remove_event_breakpoint(unsigned int id) override
     {
@@ -1487,6 +1496,7 @@ private:
             GeneralSoundCard * gs = monitor_card(ctx, card);
             if (gs == nullptr) return;
             found = true;
+            out.ttd_units = std::max<unsigned int>(1, ctx->emulatorState.TtdTInFrame(1));
             report = card == "ms" ? DeviceState::GeneralSoundReport(*gs, nullptr) : DeviceState::Gs(ctx);
             const GSCommandLog * commands = gs->commandLog();
             if (commands == nullptr) return;
@@ -1562,6 +1572,9 @@ private:
                 row.name = str(r, "name");
                 row.text = str(r, "text");
                 row.anomaly = str(r, "anomaly");
+                row.bytes = num(r, "bytes", -1);
+                row.direction = str(r, "direction");
+                row.host_data = truth(r, "host_data");
                 out.rows.push_back(std::move(row));
             }
         if (const StateNode * list = unknown.find("unknown_commands")) {

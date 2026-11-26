@@ -45,6 +45,7 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QTableWidget>
+#include <QClipboard>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTreeWidget>
@@ -1176,6 +1177,197 @@ void gs_monitor_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * 
     side->setCurrentWidget(was);
 }
 
+// The GS monitor's row actions (gui-card-debugger A5.4): a host program uploads three bytes (#30 .. #D2) and sends
+// #23; the #23 row's menu offers the command's breaks (the card side only with a card CPU), data byte N only on the
+// upload's row, Go to only when the recording holds the row; the breaks are the CPUs' event breakpoints (listed, an
+// equal one taken instead of a second); Copy puts the row on the clipboard; run again, the machine stops after the
+// second data byte and after #23 sent
+void gs_log_menu_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * cpu, const std::function<void(bool, const char *)> &check)
+{
+    auto * dw = dynamic_cast<DebuggerWindow *>(window);
+    GsMonitorView * mon = dw != nullptr ? dw->gs_monitor() : nullptr;
+    QTabWidget * side = tabs_with(window, "Devices");
+    if (mon == nullptr || side == nullptr || !side->isTabVisible(side->indexOf(mon))) {
+        printf("  (gs log menu: no card, skipped)\n");
+        return;
+    }
+    ecatshim::CPU * front = dw->card_cpu();
+    const std::string which = CardTabsCard(m, front != nullptr ? front->name : std::string());
+    const ecatshim::Emulator::GsMonitor before = m->read_gs_monitor(which, 1, std::nullopt);
+    if (!before.ok || before.log_device.empty()) return;
+    QWidget * was = side->currentWidget();
+    side->setCurrentWidget(mon);
+    m->gs_command_log(which, true);
+
+    std::vector<std::pair<unsigned int, unsigned int>> host_bytes;
+    for (unsigned int i = 0; i < 0x50; i++) host_bytes.emplace_back(0x8000 + i, cpu->peek_mem(0x8000 + i));
+    const std::vector<std::string> names = {"PC", "AF", "BC", "DE", "HL", "IFF1", "IFF2"};
+    std::map<std::string, unsigned int> host_regs;
+    for (const std::string &n : names) host_regs[n] = reg(cpu, n);
+    // An upload, then #23, each byte waited for as a game does (the firmware stays in its main loop): DI :
+    // LD BC,#00BB : LD A,#30 : OUT (C),A : wait command : IN A,(#B3) (a reply left over) : LD C,#B3 : 3 x (wait data :
+    // LD A,b : OUT (C),A) : wait data : LD C,#BB : LD A,#D2 : OUT (C),A : wait command : LD A,#23 : OUT (C),A :
+    // wait command : JR $. Wait command: IN A,(#BB) : RRA : JR C,$-3; wait data: IN A,(#BB) : RLA : JR C,$-3
+    const std::vector<uint8_t> wait_command = {0xDB, 0xBB, 0x1F, 0x38, 0xFB}, wait_data = {0xDB, 0xBB, 0x17, 0x38, 0xFB};
+    std::vector<uint8_t> program = {0xF3, 0x01, 0xBB, 0x00, 0x3E, 0x30, 0xED, 0x79};
+    auto add = [&program](std::initializer_list<uint8_t> bytes) { program.insert(program.end(), bytes); };
+    auto add_wait = [&program](const std::vector<uint8_t> &w) { program.insert(program.end(), w.begin(), w.end()); };
+    add_wait(wait_command);
+    add({0xDB, 0xB3, 0x0E, 0xB3});
+    unsigned int after_second = 0;
+    for (uint8_t v : {0x11, 0x22, 0x33}) {
+        add_wait(wait_data);
+        add({0x3E, v, 0xED, 0x79});
+        if (v == 0x22) after_second = 0x8000 + (unsigned int)program.size();
+    }
+    add_wait(wait_data);
+    add({0x0E, 0xBB, 0x3E, 0xD2, 0xED, 0x79});
+    add_wait(wait_command);
+    add({0x3E, 0x23, 0xED, 0x79});
+    const unsigned int after_send = 0x8000 + (unsigned int)program.size();
+    add_wait(wait_command);
+    add({0x18, 0xFE});
+    for (size_t i = 0; i < program.size(); i++) cpu->poke_mem(0x8000 + (unsigned int)i, program[i]);
+    const unsigned int end = 0x8000 + (unsigned int)program.size() - 2;
+    cpu->set_context_value("PC", 0x8000);
+    m->debug_run_to(cpu, end);
+    const bool ran = wait_for([&]() { return m->debug_paused() && !m->debug_stepping() && reg(cpu, "PC") == end; }, 3000);
+    mon->refresh();
+    QTableWidget * t = mon->table();
+    int row = -1, block = -1;
+    for (int r = t->rowCount() - 1; r >= 0 && row < 0; r--)
+        if (t->item(r, GsMonitorView::ColKind)->text() == "command" && t->item(r, GsMonitorView::ColCommand)->text() == "#23") row = r;
+    for (int r = t->rowCount() - 1; r >= 0 && block < 0; r--)
+        if (t->item(r, GsMonitorView::ColKind)->text() == "block") block = r;
+    check(ran && row >= 0, "gs log menu: the program's #23 in the log");
+    if (row < 0) {
+        side->setCurrentWidget(was);
+        return;
+    }
+    // The card's CPU: the front card's ("gs" or "ms"); none on the lightweight player
+    ecatshim::CPU * card = nullptr;
+    for (ecatshim::CPU * c : m->dm->get_cpus())
+        if (c->name == which) card = c;
+    auto has_kind = [](ecatshim::CPU * c, const char * kind) {
+        if (c == nullptr) return false;
+        for (const std::string &k : c->event_kinds())
+            if (k == kind) return true;
+        return false;
+    };
+    const bool card_side = has_kind(card, "card_command");
+
+    std::unique_ptr<QMenu> menu(mon->row_menu(row));
+    auto action = [](QMenu * mm, const char * name) { return mm->findChild<QAction *>(name); };
+    QAction * host = action(menu.get(), "gsLogBreakHost");
+    QAction * card_action = action(menu.get(), "gsLogBreakCard");
+    QAction * byte_action = action(menu.get(), "gsLogBreakByte");
+    QAction * go = action(menu.get(), "gsLogGoTo");
+    QAction * copy = action(menu.get(), "gsLogCopy");
+    check(host && card_action && byte_action && go && copy, "gs log menu: the five actions");
+    if (!(host && card_action && byte_action && go && copy)) return;
+    check(host->isEnabled() && host->text().contains("#23") && card_action->isEnabled() == card_side &&
+              (card_side || card_action->toolTip().contains("no firmware CPU")) && !byte_action->isEnabled(),
+          card_side ? "gs log menu: #23's row: both command breaks, no data byte" : "gs log menu: #23's row: no card side on the lightweight player, said");
+    check(go->isEnabled() || !go->toolTip().isEmpty(), "gs log menu: Go to enabled or says why");
+    printf("  (go to: %s; %s)\n", go->isEnabled() ? "enabled" : "disabled", go->toolTip().toUtf8().constData());
+
+    auto events = [m](ecatshim::CPU * c, const char * kind) {
+        std::vector<ecatshim::EventBreakpoint> found;
+        m->invoke([&]() {
+            for (const ecatshim::EventBreakpoint &b : c->get_event_breakpoints())
+                if (b.kind == kind) found.push_back(b);
+        });
+        return found;
+    };
+    const size_t host_before = events(cpu, "host_command").size();
+    host->trigger();
+    const std::vector<ecatshim::EventBreakpoint> hosts = events(cpu, "host_command");
+    check(hosts.size() == host_before + 1 && hosts.back().value == 0x23 && hosts.back().mask == 0xFF && hosts.back().enabled,
+          "gs log menu: host_command #23 on main, listed");
+    printf("  (%s)\n", mon->action_line()->text().toUtf8().constData());
+    host->trigger();
+    check(events(cpu, "host_command").size() == host_before + 1 && mon->action_line()->text().startsWith("Already there"),
+          "gs log menu: the same break again takes the one there");
+    std::vector<ecatshim::EventBreakpoint> cards;
+    if (card_side) {
+        const size_t card_before = events(card, "card_command").size();
+        card_action->trigger();
+        cards = events(card, "card_command");
+        check(cards.size() == card_before + 1 && cards.back().value == 0x23 && cards.back().mask == 0xFF,
+              "gs log menu: card_command #23 on the card's CPU");
+        // Removed before the run: the firmware takes the first run's #23 whenever it gets to it
+        if (!cards.empty()) m->invoke([&]() { card->remove_event_breakpoint(cards.back().id); });
+    }
+
+    // Data byte N: an upload's row (the data bytes no command opened are the host data stream: no block, then skip)
+    std::vector<ecatshim::EventBreakpoint> datas;
+    if (block >= 0) {
+        std::unique_ptr<QMenu> bm(mon->row_menu(block));
+        QAction * b = action(bm.get(), "gsLogBreakByte");
+        int asked = 0;
+        mon->ask_byte = [&asked](int max, int &out) {
+            asked = max;
+            out = 2;
+            return true;
+        };
+        const bool enabled = b != nullptr && b->isEnabled();
+        if (enabled) b->trigger();
+        datas = events(cpu, "host_data");
+        check(enabled && (!datas.empty() && datas.back().hits == "2" && datas.back().mask == 0 && asked >= 2),
+              "gs log menu: data byte 2 of an upload: host_data, hit 2");
+        printf("  (block row: data byte %s, N up to %d)\n", enabled ? "enabled" : "disabled", asked);
+    } else {
+        printf("  (no block row: the data went to the host data stream)\n");
+    }
+
+    // Copy: the row's cells on the clipboard
+    t->clearSelection();
+    copy->trigger();
+    const QString copied = QApplication::clipboard()->text();
+    check(copied.contains("\tcommand\t#23\t") && !copied.contains('\n'), "gs log menu: Copy puts the row on the clipboard");
+
+    // The breaks stop the program: the data break first (when set), then #23 sent
+    for (size_t i = 0; i < program.size(); i++) cpu->poke_mem(0x8000 + (unsigned int)i, program[i]);
+    cpu->set_context_value("PC", 0x8000);
+    if (!datas.empty() && datas.back().hits == "2") {
+        unsigned int id = datas.back().id;
+        m->invoke([&]() { cpu->reset_event_hits(id); });
+    }
+    m->debug_run(true);
+    const bool stopped = wait_for([&]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
+    const unsigned int first_pc = reg(cpu, "PC");
+    unsigned int second_pc = first_pc;
+    if (!datas.empty()) {
+        m->debug_run(true);
+        wait_for([&]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
+        second_pc = reg(cpu, "PC");
+        check(stopped && first_pc == after_second, "gs log menu: the run stops after data byte 2");
+    }
+    check(stopped && second_pc == after_send, "gs log menu: the run stops after #23 sent");
+    printf("  (stops at #%04X, #%04X)\n", first_pc, second_pc);
+
+    // Put back: the breaks this check made, the host's bytes and registers, the log
+    m->invoke([&]() {
+        cpu->remove_event_breakpoint(hosts.back().id);
+        if (!datas.empty()) cpu->remove_event_breakpoint(datas.back().id);
+    });
+    if (!m->debug_paused()) {
+        m->debug_pause();
+        wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    }
+    // The program to its end: the firmware takes the #23 the stop left pending (the next checks send to it)
+    if (reg(cpu, "PC") != end) {
+        m->debug_run_to(cpu, end);
+        wait_for([&]() { return m->debug_paused() && !m->debug_stepping() && reg(cpu, "PC") == end; }, 3000);
+    }
+    for (const auto &b : host_bytes) cpu->poke_mem(b.first, b.second);
+    for (const std::string &n : names)
+        if (host_regs[n] != ~0u) cpu->set_context_value(n, host_regs[n]);
+    if (before.log_mode != "ring") m->gs_command_log(which, false);
+    mon->ask_byte = nullptr;
+    side->setCurrentWidget(was);
+}
+
 // The GS send tab (gui-card-debugger A5.3 "Send console", gs-debugger P5.6): right after GS monitor, shown with the
 // card; the monitor's Send... and Ctrl+Shift+S bring it to the front; the picker lists the profile's commands, #2A's
 // form names its volume, a field that is not a byte is refused, #23 sent to the booted firmware gets to done with its
@@ -2046,6 +2238,7 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
     }
 
     gs_monitor_check(m, window, cpu, check);
+    gs_log_menu_check(m, window, cpu, check);
     gs_send_check(m, window, check);
     gs_analysis_check(m, window, cpu, check);
     gs_profiling_check(m, window, cpu, check);
@@ -2083,12 +2276,12 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
                       !has_kind(cpu, "card_command"),
                   "event kinds: card side on gs, host side on main");
             std::string card_error, host_error, wrong_error;
-            const bool card_added = gs->add_event_breakpoint("card_command", 0x0F, 0xFF, card_error);
-            const bool host_added = cpu->add_event_breakpoint("host_command", 0, 0, host_error);
+            const bool card_added = gs->add_event_breakpoint("card_command", 0x0F, 0xFF, "", card_error);
+            const bool host_added = cpu->add_event_breakpoint("host_command", 0, 0, "", host_error);
             check(card_added && host_added, "event bp: card_command on gs, host_command on main");
             if (!card_added || !host_added)
                 printf("  (card: %s; host: %s)\n", card_error.c_str(), host_error.c_str());
-            check(!cpu->add_event_breakpoint("card_command", 0, 0, wrong_error) && !wrong_error.empty(),
+            check(!cpu->add_event_breakpoint("card_command", 0, 0, "", wrong_error) && !wrong_error.empty(),
                   "event bp: a card kind on main refused, said");
             ecatshim::EventBreakpoint cb, hb;
             const bool card_found = find_event(gs, "card_command", cb), host_found = find_event(cpu, "host_command", hb);

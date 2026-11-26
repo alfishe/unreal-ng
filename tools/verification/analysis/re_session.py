@@ -69,7 +69,8 @@ NEEDED_TOOLS = ('analysis', 'time_travel', 'control_execution', 'emulator_manage
 def session_of(work):
     with open(os.path.join(work, 'session.json')) as f:
         state = json.load(f)
-    s = mcplib.Session(f"http://127.0.0.1:{state['port_base'] + 200}/mcp", state['model'])
+    # `mcp`: written since the ports may be the emulator's own choice (--port-base auto); older files have the base
+    s = mcplib.Session(state.get('mcp') or f"http://127.0.0.1:{state['port_base'] + 200}/mcp", state['model'])
     # Every POST action changes the emulator: without the control session each one answers "opened implicitly"
     s.call('control_execution', {'action': 'take_control'}, ok=False)
     return s, state
@@ -89,9 +90,10 @@ def capture(args):
     os.makedirs(work, exist_ok=True)
     process = mcplib.launch(args.binary, args.port_base, needs=NEEDED_TOOLS)
     with open(os.path.join(work, 'session.json'), 'w') as f:
-        json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': args.port_base, 'model': args.model,
+        json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': process.ports['webapi'],
+                   'mcp': mcplib.mcp_url(process), 'model': args.model,
                    'ranges': args.ranges}, f)
-    s = mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', args.model)
+    s = mcplib.Session(mcplib.mcp_url(process), args.model)
     s.fresh_machine(args.model, ram_power_on='zero')
     s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'}, ok=False)
     for _ in range(100):  # the plug restarts the machine: wait for the wired stick
@@ -101,7 +103,7 @@ def capture(args):
     s.call('control_execution', {'action': 'pause'}, ok=False)
     s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',
                           'body': {'muted': True}}, ok=False)
-    m = corpus.Machine(s, args.port_base)
+    m = corpus.Machine(s, process.ports['webapi'])
     report = {'model': args.model, 'ranges': args.ranges}
     player = corpus.Input(s)
     steps, reached = [], True
@@ -183,7 +185,7 @@ def capture(args):
     with open(os.path.join(work, 'capture.json'), 'w') as f:
         json.dump(report, f, indent=1)
     print(f"captured {frames} frames; {report['status'][-1] if report['status'] else ''}")
-    print(f"MCP http://127.0.0.1:{args.port_base + 200}/mcp  WebAPI http://127.0.0.1:{args.port_base}")
+    print(f"MCP {mcplib.mcp_url(process)}  WebAPI http://127.0.0.1:{process.ports['webapi']}")
 
 
 def play_script(s, m, path, screens, at):
@@ -375,9 +377,10 @@ def open_session(args):
     os.makedirs(work, exist_ok=True)
     process = mcplib.launch(args.binary, args.port_base, needs=NEEDED_TOOLS)
     with open(os.path.join(work, 'session.json'), 'w') as f:
-        json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': args.port_base, 'model': args.model,
+        json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': process.ports['webapi'],
+                   'mcp': mcplib.mcp_url(process), 'model': args.model,
                    'ranges': args.ranges}, f)
-    s = mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', args.model)
+    s = mcplib.Session(mcplib.mcp_url(process), args.model)
     s.fresh_machine(args.model, ram_power_on='zero')
     s.call('control_execution', {'action': 'take_control'}, ok=False)
     s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'}, ok=False)
@@ -392,7 +395,7 @@ def open_session(args):
     print((r.text or '').splitlines()[0])
     if r.is_error:
         raise SystemExit(1)
-    print(f"MCP http://127.0.0.1:{args.port_base + 200}/mcp  WebAPI http://127.0.0.1:{args.port_base}")
+    print(f"MCP {mcplib.mcp_url(process)}  WebAPI http://127.0.0.1:{process.ports['webapi']}")
 
 
 def build(args):
@@ -549,7 +552,7 @@ def main():
     p.add_argument('--inputs', nargs='*', help='input scripts played one after another (no exploration then)')
     p.add_argument('--frames', type=int, default=15000)
     p.add_argument('--ranges', default='5B00-FFFF', help='the program range of the exports and the checks (hex)')
-    p.add_argument('--port-base', type=int, default=9720)
+    p.add_argument('--port-base', type=mcplib.port_base_arg, default=9720)
     p.add_argument('--binary', default=corpus.DEFAULT_BINARY)
     p.add_argument('--load-frames', type=int, default=30000)
     p.add_argument('--record-load', action='store_true',
@@ -560,7 +563,7 @@ def main():
     p.add_argument('--ttd', required=True, help="a saved recording (a capture's session.ttd)")
     p.add_argument('--model', default='48K')
     p.add_argument('--ranges', default='5B00-FFFF')
-    p.add_argument('--port-base', type=int, default=9720)
+    p.add_argument('--port-base', type=mcplib.port_base_arg, default=9720)
     p.add_argument('--binary', default=corpus.DEFAULT_BINARY)
     p = sub.add_parser('build')
     p.add_argument('--work', required=True)

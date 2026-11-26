@@ -4,9 +4,14 @@
 // board replacing the Hardware pane, DMA, SD · MP3 · Flash. On the lightweight player (A10) its interpreter and player
 // panes; with a ZX-MultiSound the panes over its General Sound (CPU `ms`).
 
+#include <QAction>
+#include <QApplication>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QItemSelectionModel>
 #include <QLabel>
+#include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollBar>
@@ -28,7 +33,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/featuremanager.h"
 #include "debugger/boardpane.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/boards/debugboards.h"
 #include "debugger/cardpanes.h"
 #include "debugger/debugmanager.h"
@@ -41,6 +48,8 @@
 #include "debugger/history/historycontrol.h"
 #include "debugger/reportpane.h"
 #include "debugger/targets/gscardtarget.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "debugger/zxdmatraceview.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -1132,6 +1141,175 @@ TEST_F(CardPanes_Test, TheMonitorLosesNoRecordBetweenRefreshes)
     EXPECT_EQ(monitor.table()->rowCount(), 50) << "restarted: the ring's records only";
     EXPECT_EQ(monitor.missed(), after - 50);
     EXPECT_TRUE(monitor.rowsText().contains(QString("%1 missed").arg(after - 50))) << monitor.rowsText().toStdString();
+}
+
+/// A5.4: a log row's actions. Rows before any recording (an upload of 3 bytes, #23): the menu offers by row (the
+/// command's breaks on #23, data byte N only on the upload, no Go to without a recording); its actions make the
+/// managers' own breakpoints (host_command #23 on main, card_command #23 on the GS CPU, host_data hit 2 on main), an
+/// equal one taken instead of a second; Copy puts the selected rows on the clipboard. Then a host program writes three
+/// data bytes and #23 while a recording runs: the run stops at the second data byte, at #23 sent, at #23 taken by the
+/// firmware; the program's #23 row is recorded: Go to this moment seeks there. Runtime: the card's boot, a few frames
+/// recorded
+TEST_F(CardPanes_Test, TheMonitorRowActionsBreakGoAndCopy)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("PENTAGON", {{"zxbus.1", "gs"}}));
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    GsMonitorPane monitor;
+    ASSERT_TRUE(monitor.turnOn(_context));
+    PortDecoder* ports = _context->pPortDecoder;
+    ports->DecodePortOut(0x00BB, 0x30, 0);  // load module: an upload
+    for (uint8_t b : {0x01, 0x02, 0x03})
+        ports->DecodePortOut(0x00B3, b, 0);
+    ports->DecodePortOut(0x00BB, 0xD2, 0);  // its end
+    ports->DecodePortOut(0x00BB, 0x23, 0);
+    _emulator->RunNFrames(1);  // the recording below starts in a later frame than these rows
+    monitor.refresh(_context, false);
+    const auto findRow = [&](const char* kind, int command, int from = 0) {
+        for (int row = from; row < monitor.table()->rowCount(); row++)
+        {
+            const GsMonitorPane::LogRow r = monitor.logRow(row);
+            if (r.kind == kind && (command < 0 || r.command == command))
+                return row;
+        }
+        return -1;
+    };
+    const int commandRow = findRow("command", 0x23);
+    const int blockRow = findRow("block", -1);
+    ASSERT_GE(commandRow, 0) << monitor.copyText(-1).toStdString();
+    ASSERT_GE(blockRow, 0) << "the upload's block";
+    ASSERT_TRUE(monitor.logRow(blockRow).upload);
+    EXPECT_EQ(monitor.logRow(blockRow).bytes, 3);
+
+    // The menus, by row
+    const auto action = [](QMenu* menu, const char* name) { return menu->findChild<QAction*>(QString::fromLatin1(name)); };
+    std::unique_ptr<QMenu> commandMenu(monitor.rowMenu(commandRow));
+    std::unique_ptr<QMenu> blockMenu(monitor.rowMenu(blockRow));
+    for (const char* name : {"gsLogBreakHost", "gsLogBreakCard", "gsLogBreakByte", "gsLogGoTo", "gsLogCopy"})
+        ASSERT_NE(action(commandMenu.get(), name), nullptr) << name;
+    EXPECT_EQ(action(commandMenu.get(), "gsLogBreakHost")->text(), "Break when the game sends #23");
+    EXPECT_TRUE(action(commandMenu.get(), "gsLogBreakHost")->isEnabled());
+    EXPECT_TRUE(action(commandMenu.get(), "gsLogBreakCard")->isEnabled());
+    EXPECT_FALSE(action(commandMenu.get(), "gsLogBreakByte")->isEnabled()) << "not an upload";
+    EXPECT_FALSE(action(commandMenu.get(), "gsLogGoTo")->isEnabled()) << "no recording";
+    EXPECT_TRUE(action(commandMenu.get(), "gsLogGoTo")->toolTip().contains("No time-travel recording"))
+        << action(commandMenu.get(), "gsLogGoTo")->toolTip().toStdString();
+    EXPECT_TRUE(action(commandMenu.get(), "gsLogCopy")->isEnabled());
+    EXPECT_TRUE(action(blockMenu.get(), "gsLogBreakByte")->isEnabled());
+
+    // Triggered as the menu does: the owner runs them on its context
+    QString said;
+    QObject::connect(&monitor, &GsMonitorPane::rowActionRequested, &monitor, [&](int a, int row, quint32 byte) {
+        monitor.runRowAction(_context, static_cast<GsMonitorPane::RowAction>(a), row, byte, &said);
+    });
+    int askedMax = 0;
+    monitor.askByte = [&](int max, int& out) {
+        askedMax = max;
+        out = 2;
+        return true;
+    };
+    const auto events = [&](DebugCpuId cpu, GSCardEvent kind) {
+        std::vector<BreakpointSnapshot> found;
+        for (const auto& [id, d] : _context->pDebugManager->GetBreakpointsManager(cpu)->GetAllBreakpoints())
+            if (d->type == BRK_EVENT && d->z80address == static_cast<uint16_t>(kind))
+                found.push_back(d);
+        return found;
+    };
+    action(commandMenu.get(), "gsLogBreakHost")->trigger();
+    std::vector<BreakpointSnapshot> host = events(DebugCpuId::Main, GSCardEvent::HostCommandWrite);
+    ASSERT_EQ(host.size(), 1u) << said.toStdString();
+    EXPECT_EQ(host[0]->nrValue, 0x23);
+    EXPECT_EQ(host[0]->nrMask, 0xFF);
+    EXPECT_TRUE(BreakpointManager::IsUserBreakpoint(*host[0])) << "the list and the editor show it";
+    EXPECT_TRUE(said.contains("the host sends command #23")) << said.toStdString();
+    action(commandMenu.get(), "gsLogBreakHost")->trigger();
+    EXPECT_EQ(events(DebugCpuId::Main, GSCardEvent::HostCommandWrite).size(), 1u) << "the same one, not a second";
+    EXPECT_TRUE(said.startsWith("Already there")) << said.toStdString();
+    EXPECT_EQ(monitor.actionText(), said);
+
+    action(commandMenu.get(), "gsLogBreakCard")->trigger();
+    const std::vector<BreakpointSnapshot> card = events(DebugCpuId::GS, GSCardEvent::CardCommandRead);
+    ASSERT_EQ(card.size(), 1u) << said.toStdString();
+    EXPECT_EQ(card[0]->nrValue, 0x23);
+    EXPECT_EQ(card[0]->nrMask, 0xFF);
+    EXPECT_TRUE(events(DebugCpuId::Main, GSCardEvent::CardCommandRead).empty());
+
+    action(blockMenu.get(), "gsLogBreakByte")->trigger();
+    EXPECT_EQ(askedMax, 3) << "N up to the upload's bytes";
+    const std::vector<BreakpointSnapshot> data = events(DebugCpuId::Main, GSCardEvent::HostDataWrite);
+    ASSERT_EQ(data.size(), 1u) << said.toStdString();
+    EXPECT_EQ(data[0]->nrMask, 0) << "any byte";
+    EXPECT_EQ(data[0]->hitMode, BRK_HIT_EQUAL);
+    EXPECT_EQ(data[0]->hitTarget, 2u);
+
+    // Copy: the selected rows, a line each
+    QItemSelectionModel* selection = monitor.table()->selectionModel();
+    selection->select(monitor.table()->model()->index(blockRow, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(monitor.table()->model()->index(commandRow, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    action(commandMenu.get(), "gsLogCopy")->trigger();
+    const QStringList copied = QApplication::clipboard()->text().split('\n');
+    ASSERT_EQ(copied.size(), 2) << QApplication::clipboard()->text().toStdString();
+    EXPECT_TRUE(copied[0].contains("\tblock\t")) << copied[0].toStdString();
+    EXPECT_TRUE(copied[1].contains("\tcommand\t#23\t")) << copied[1].toStdString();
+
+    // The run, recorded: DI : LD BC,#00B3 : LD A,#11 : OUT (C),A : LD A,#22 : OUT (C),A : LD A,#33 : OUT (C),A :
+    // LD C,#BB : LD A,#23 : OUT (C),A : JR $ (no reply polling: each read is a record, the ring would lose the rows)
+    const uint8_t program[] = {0xF3, 0x01, 0xB3, 0x00, 0x3E, 0x11, 0xED, 0x79, 0x3E, 0x22, 0xED, 0x79, 0x3E, 0x33,
+                               0xED, 0x79, 0x0E, 0xBB, 0x3E, 0x23, 0xED, 0x79, 0x18, 0xFE};
+    for (size_t i = 0; i < sizeof(program); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
+    ttd::TimeTravelController* controller = _context->pTimeTravelController;
+    ASSERT_NE(controller, nullptr);
+    ASSERT_TRUE(controller->StartRecording());
+    _emulator->EnableTurboMode();
+    const auto stopAt = [&](uint16_t id, DebugCpuId cpu) {
+        const uint64_t serial = _emulator->LastStop().serial;
+        if (_emulator->IsRunning())
+            _emulator->Resume();
+        else
+            _emulator->StartAsync();
+        const bool stopped = TestWait::For(
+            [&] { return _emulator->IsPaused() && _emulator->LastStop().serial != serial; }, std::chrono::milliseconds(3000));
+        const Emulator::DebugStop stop = _emulator->LastStop();
+        return stopped && stop.reason == Emulator::DebugStop::Reason::Breakpoint && stop.breakpoint.breakpointId == id &&
+               stop.breakpoint.cpu == cpu;
+    };
+    EXPECT_TRUE(stopAt(data[0]->breakpointID, DebugCpuId::Main)) << "the second data byte";
+    EXPECT_EQ(_context->pCore->GetZ80()->pc, 0x800C) << "after OUT #22";
+    EXPECT_TRUE(stopAt(host[0]->breakpointID, DebugCpuId::Main)) << "#23 sent";
+    EXPECT_EQ(_context->pCore->GetZ80()->pc, 0x8016) << "after OUT #23";
+    EXPECT_TRUE(stopAt(card[0]->breakpointID, DebugCpuId::GS)) << "#23 taken by the firmware";
+    controller->StopRecording();
+
+    // The program's #23: recorded, Go to seeks to its moment
+    const int64_t beforeFrame = monitor.logRow(commandRow).frame;
+    monitor.refresh(_context, false);
+    int sentRow = -1, oldRow = -1;
+    for (int row = 0; row < monitor.table()->rowCount(); row++)
+    {
+        const GsMonitorPane::LogRow r = monitor.logRow(row);
+        if (r.kind == "command" && r.command == 0x23)
+            (r.frame == beforeFrame && oldRow < 0 ? oldRow : sentRow) = row;
+    }
+    ASSERT_GE(sentRow, 0) << monitor.rowsText().toStdString();
+    const GsMonitorPane::LogRow sent = monitor.logRow(sentRow);
+    std::unique_ptr<QMenu> sentMenu(monitor.rowMenu(sentRow));
+    ASSERT_TRUE(action(sentMenu.get(), "gsLogGoTo")->isEnabled()) << action(sentMenu.get(), "gsLogGoTo")->toolTip().toStdString();
+    if (oldRow >= 0)  // still in the log (the recording may start the history afresh)
+    {
+        std::unique_ptr<QMenu> oldMenu(monitor.rowMenu(oldRow));
+        EXPECT_FALSE(action(oldMenu.get(), "gsLogGoTo")->isEnabled()) << "before the recording";
+        EXPECT_TRUE(action(oldMenu.get(), "gsLogGoTo")->toolTip().contains("not in it"))
+            << action(oldMenu.get(), "gsLogGoTo")->toolTip().toStdString();
+    }
+    action(sentMenu.get(), "gsLogGoTo")->trigger();
+    EXPECT_TRUE(said.startsWith("At frame")) << said.toStdString();
+    const ttd::TTDTimePoint at = controller->CurrentPosition();
+    EXPECT_EQ(at.frame, static_cast<uint64_t>(sent.frame));
+    EXPECT_GE(static_cast<int64_t>(at.tInFrame), sent.t);
+    EXPECT_LT(static_cast<int64_t>(at.tInFrame), sent.t + 24) << "the instruction boundary at or after the write";
+    _emulator->Stop();
 }
 
 /// The log follows its tail while the machine runs (the debugger's sends, rows appended at each refresh); scrolling up
