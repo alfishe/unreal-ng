@@ -23,6 +23,7 @@
 #include <emulator/notifications.h>
 #include <emulator/video/screen.h>
 #include <emulatormanager.h>
+#include "gpu/glwindowbuffer.h"
 #include "keyboard/keyboardmanager.h"
 
 static const char* TILE_VERTEX_SHADER = R"(
@@ -563,6 +564,7 @@ void TileGridGL::updateTextures()
 
 void TileGridGL::paintGL()
 {
+    gpu::RestoreWindowDrawBuffer(context());  // NVIDIA EGL: GL_NONE, every draw dropped
     drawGrid();
     if (_captureEnabled)
         readBackFrame();

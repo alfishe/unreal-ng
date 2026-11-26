@@ -27,6 +27,7 @@
 
 #include "common/timehelper.h"
 #include "emulator/video/screenbeat.h"
+#include "gpu/glwindowbuffer.h"
 #include "platform/linux/x11display.h"
 #include "platform/linuxpresent.h"
 #include "platform/presentlead.h"
@@ -449,6 +450,8 @@ private:
             _error = "the present context is not current on the window";
             return false;
         }
+        // The thread's only surface is the window: once is enough (NVIDIA EGL starts it with GL_NONE)
+        gpu::RestoreWindowDrawBuffer(&context);
         auto glxContext = LoadedGlx<GlxGetCurrentContextFn>("glXGetCurrentContext");
         if (glxContext && glxContext())
         {

@@ -33,6 +33,7 @@
 #include <QOpenGLShaderProgram>
 
 #include "gpu/gldevice.h"
+#include "gpu/glwindowbuffer.h"
 #ifdef UNREAL_VULKAN
 #include "gpu/vulkandevice.h"
 #include "gpu/vulkanpresenter.h"
@@ -360,6 +361,7 @@ void DeviceScreenGLWindow::renderGL()
         return;
     const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
     glBindFramebuffer(GL_FRAMEBUFFER, _context->defaultFramebufferObject());
+    gpu::RestoreWindowDrawBuffer(_context.get());  // NVIDIA EGL: GL_NONE, every draw dropped
     if (pixels != _glSize)
     {
         _glSize = pixels;
