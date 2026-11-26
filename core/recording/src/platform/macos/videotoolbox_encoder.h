@@ -3,7 +3,9 @@
 #ifdef __APPLE__
 
 #include <cstdint>
+#include <deque>
 #include <string>
+#include <vector>
 
 #include "common/encoder_base.h"
 #include "common/encoderconfig.h"
@@ -75,6 +77,10 @@ public:
 private:
     /// Waits (bounded) for the writer input to take a frame; false when it is stuck or the writer failed
     bool WaitWriterReady();
+    /// One chunk of sound into the writer (its input ready)
+    void AppendAudio(const int16_t* samples, size_t sampleCount, double timestampSec);
+    /// The sound queued while the writer held its input back, as much as it takes now
+    void FlushAudio();
     // Internal initialization methods (implemented in .mm)
     bool initAudioConverter(const EncoderConfig& config);
     bool initAssetWriter(const std::string& filename, const EncoderConfig& config);
@@ -104,7 +110,16 @@ private:
     // Statistics
     uint64_t _framesEncoded = 0;
     uint64_t _audioSamplesEncoded = 0;
-    uint64_t _audioChunksDropped = 0;  ///< audio chunks the writer did not accept within the bounded wait
+    uint64_t _audioChunksDropped = 0;  ///< audio chunks dropped: more than kMaxQueuedAudioSec queued (a stuck writer)
+    /// Sound the writer did not take yet (it holds the sound back until the picture of the same time came): handed
+    /// over as soon as it takes it, never waited for on the emulation thread and never dropped
+    struct QueuedAudio
+    {
+        std::vector<int16_t> samples;
+        double timestamp = 0;
+    };
+    std::deque<QueuedAudio> _queuedAudio;
+    size_t _queuedAudioSamples = 0;
 
     // State
     std::string _filename;

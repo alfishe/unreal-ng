@@ -141,16 +141,23 @@ struct HardwareEncoder
     bool lowPower = false;   ///< VA-API: the fixed-function encoder (Intel VDENC): the fast one, and HEVC 4:4:4 only there
 };
 
-/// `only420`: the frames come as NV12 (transfer nv12): the 4:4:4 ways are not tried
+std::mutex hardwareCacheMutex;
+std::map<QString, HardwareEncoder> hardwareCache;
+
+QString HardwareCacheKey(const QString& ffmpeg, bool h265, bool only420)
+{
+    return ffmpeg + (h265 ? "|h265" : "|h264") + (only420 ? "|420" : "");
+}
+
+/// `only420`: the frames come as NV12 (transfer nv12): the 4:4:4 ways are not tried. The trials start ffmpeg several
+/// times (about a second each on Windows): WindowRecorder::PrepareHardwareEncoder runs them off the GUI thread
 HardwareEncoder FfmpegHardwareEncoder(const QString& ffmpeg, bool h265, bool only420)
 {
-    static std::mutex cacheMutex;
-    static std::map<QString, HardwareEncoder> cache;
-    const QString key = ffmpeg + (h265 ? "|h265" : "|h264") + (only420 ? "|420" : "");
+    const QString key = HardwareCacheKey(ffmpeg, h265, only420);
     {
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        const auto found = cache.find(key);
-        if (found != cache.end())
+        std::lock_guard<std::mutex> lock(hardwareCacheMutex);
+        const auto found = hardwareCache.find(key);
+        if (found != hardwareCache.end())
             return found->second;
     }
     const std::string path = ffmpeg.toStdString();
@@ -218,11 +225,44 @@ HardwareEncoder FfmpegHardwareEncoder(const QString& ffmpeg, bool h265, bool onl
         if (trial.state() != QProcess::NotRunning)
             trial.kill();
     }
-    std::lock_guard<std::mutex> lock(cacheMutex);
-    cache[key] = chosen;
+    std::lock_guard<std::mutex> lock(hardwareCacheMutex);
+    hardwareCache[key] = chosen;
     return chosen;
 }
-constexpr int kMaxQueuedFrames = 10;  // ffmpeg behind by this many pictures: the next ones repeat (running) or wait (paused)
+/// ffmpeg on the PATH; a GUI started from the Finder has no Homebrew PATH
+QString FindFfmpeg()
+{
+    QString ffmpeg = QStandardPaths::findExecutable("ffmpeg");
+    if (ffmpeg.isEmpty())
+        ffmpeg = QStandardPaths::findExecutable("ffmpeg", {"/opt/homebrew/bin", "/usr/local/bin"});
+    return ffmpeg;
+}
+
+/// The Mac's own encoder (VideoToolbox: H.264 / H.265 on the GPU, ProRes 4444) needs no ffmpeg; ffmpeg only (an MKV,
+/// or asked): ffmpeg's ProRes / GPU encoder, the Mac's writer makes no MKV
+bool NativeWriter(const WindowRecordingRequest& request)
+{
+#ifdef __APPLE__
+    return !request.ffmpegOnly && (request.codec == "prores" || request.hardware);
+#else
+    (void)request;
+    return false;
+#endif
+}
+
+/// The arguments of FfmpegHardwareEncoder for @p request; false when it asks for no probe (software, ProRes, the
+/// Mac's own writer, no ffmpeg)
+bool HardwareProbeOf(const WindowRecordingRequest& request, QString& ffmpeg, bool& h265, bool& nv12)
+{
+    if (!request.hardware || request.codec == "prores" || NativeWriter(request))
+        return false;
+    ffmpeg = FindFfmpeg();
+    h265 = request.codec == "h265";
+    nv12 = request.transfer == "nv12";
+    return !ffmpeg.isEmpty();
+}
+
+constexpr int kMaxQueuedFrames = 10;  // the encoder behind by this many pictures: the next one waits for room (video sync)
 
 QImage ToImage(const WindowViewGrab& grab)
 {
@@ -369,17 +409,6 @@ struct WindowRecorder::Writer
         jobs.push_back(std::move(job));
         wake.notify_one();
         return true;
-    }
-    /// The writer is behind: the last queued picture stays on screen for `frames` more
-    void repeatLast(uint32_t frames)
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        for (auto it = jobs.rbegin(); it != jobs.rend(); ++it)
-            if (!it->picture.isNull())
-            {
-                it->repeat += frames;
-                return;
-            }
     }
     void pushSound(QByteArray&& sound, double time)
     {
@@ -1126,6 +1155,26 @@ bool WindowRecorder::start(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     return ok;
 }
 
+bool WindowRecorder::HardwareEncoderKnown(const WindowRecordingRequest& request)
+{
+    QString ffmpeg;
+    bool h265 = false;
+    bool nv12 = false;
+    if (!HardwareProbeOf(request, ffmpeg, h265, nv12))
+        return true;
+    std::lock_guard<std::mutex> lock(hardwareCacheMutex);
+    return hardwareCache.count(HardwareCacheKey(ffmpeg, h265, nv12)) != 0;
+}
+
+void WindowRecorder::PrepareHardwareEncoder(const WindowRecordingRequest& request)
+{
+    QString ffmpeg;
+    bool h265 = false;
+    bool nv12 = false;
+    if (HardwareProbeOf(request, ffmpeg, h265, nv12))
+        FfmpegHardwareEncoder(ffmpeg, h265, nv12);
+}
+
 bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Emulator>& emulator,
                            const WindowRecordingRequest& request, WindowRecordingStatus& out, std::string& error)
 {
@@ -1159,19 +1208,11 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         error = "Unknown codec '" + request.codec + "': use prores, h264 or h265";
         return false;
     }
-    // The Mac's own encoder (VideoToolbox: H.264 / H.265 on the GPU, ProRes 4444) needs no ffmpeg
-    bool native = false;
-#ifdef __APPLE__
-    // ffmpeg only (an MKV, or asked): ffmpeg's ProRes / GPU encoder, the Mac's writer makes no MKV
-    native = !request.ffmpegOnly && (request.codec == "prores" || request.hardware);
-#endif
+    const bool native = NativeWriter(request);
     QString ffmpeg;
     if (!native)
     {
-        // A GUI started from the Finder has no Homebrew PATH
-        ffmpeg = QStandardPaths::findExecutable("ffmpeg");
-        if (ffmpeg.isEmpty())
-            ffmpeg = QStandardPaths::findExecutable("ffmpeg", {"/opt/homebrew/bin", "/usr/local/bin"});
+        ffmpeg = FindFfmpeg();
         if (ffmpeg.isEmpty())
         {
             error = "The window recording needs ffmpeg on the PATH";
@@ -1532,7 +1573,9 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     _writer = writer;
     writer->thread = std::thread([writer] { writer->run(); });
     _frames = 0;
-    _soundDelay.clear();
+    _captureMisses = 0;
+    _unpictured.clear();
+    _covered = 0;
     _keyboardDelay.clear();
 
     // Every emulated frame from now on: its number (the picture follows it) and its sound
@@ -1541,7 +1584,13 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     _sink->keepSamples = request.audio;
     _tapId = context->pSoundManager->addFrameAudioTap(
         [sink = _sink](const int16_t* samples, size_t sampleFrames, uint64_t frame) {
-            std::lock_guard<std::mutex> lock(sink->mutex);
+            std::unique_lock<std::mutex> lock(sink->mutex);
+            // Video sync: the recording is behind (the window drew no picture, the encoder is busy): the machine
+            // waits for it. Bounded: a GUI thread busy elsewhere (a modal dialog, waiting for the machine to pause) must
+            // not hold the machine for good
+            sink->advanced.wait_for(lock, std::chrono::milliseconds(250), [&] {
+                return sink->closing || !sink->synced || sink->frames < sink->pictured + sink->maxAhead;
+            });
             sink->started = true;
             sink->frames++;
             FrameSound sound;
@@ -1551,6 +1600,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
             sink->pending.push_back(std::move(sound));
         });
     connect(_screen, &DeviceScreenWrapper::refreshed, this, &WindowRecorder::onRefreshed);
+    _capture = _screen->setRecordingCapture(true, _request.pictureHeight);
     fill(out);
     return true;
 }
@@ -1571,7 +1621,19 @@ bool WindowRecorder::stop(WindowRecordingStatus& out, std::string& error)
 void WindowRecorder::closeWriter()
 {
     if (_screen)
+    {
         disconnect(_screen, &DeviceScreenWrapper::refreshed, this, &WindowRecorder::onRefreshed);
+        if (_capture)
+            _screen->setRecordingCapture(false, 0);
+    }
+    _capture = false;
+    if (_sink)
+    {
+        // A tap waiting for the recording goes on: removeTap waits for the call in progress
+        std::lock_guard<std::mutex> lock(_sink->mutex);
+        _sink->closing = true;
+        _sink->advanced.notify_all();
+    }
     // The frames after the last picture are dropped with their sound: both end on the same frame
     removeTap();
     restoreKeyboard();
@@ -1609,83 +1671,144 @@ void WindowRecorder::onRefreshed()
     if (!_writer->ready)
     {
         // The encoder is still starting: the file's first frame is the first one after it is up, so what ran
-        // meanwhile is dropped, not queued behind the start (a lost picture, a sound far ahead of the video)
+        // meanwhile is dropped, not queued behind the start (a lost picture, a sound far ahead of the video). The
+        // count goes too: kept, the first picture stood for the frames of the start with no sound under them, and
+        // the whole file's sound came that much (300 ms) before its picture
         std::lock_guard<std::mutex> lock(_sink->mutex);
         _sink->pending.clear();
+        _sink->frames = 0;
         _sink->started = false;
         return;
     }
     // The emulated frames since the start: the file holds one picture for each, and each one's sound
     std::vector<FrameSound> sounds;
-    uint64_t target = 0;
     {
         std::lock_guard<std::mutex> lock(_sink->mutex);
         if (!_sink->started)
             return;  // a redraw before the first frame ran
-        target = _sink->frames;
         sounds.swap(_sink->pending);
     }
-    // The window shows the frame whose sound is heard now, some frames behind the newest latch (more while ZX DLSS
-    // looks ahead): the sound and the keyboard wait as long, so all three in the file are of the same emulated frame
-    const size_t delay = presentDelay();
+    // The frames in the order they ran, each with its sound, until a picture of it is in the file: the picture and
+    // the sound of one emulated frame go in together, matched by the machine's frame number the window's picture
+    // carries (the window shows a frame some latches after it ran: more while ZX DLSS looks ahead, under load, on
+    // a slow presenter)
     for (FrameSound& sound : sounds)
-    {
-        if (sound.samples.empty())
-            continue;
-        const size_t length = sound.samples.size();
-        _soundDelay.push_back(std::move(sound.samples));
-        while (_soundDelay.size() > delay + 1)
-            _soundDelay.pop_front();  // the delay shrank: drop the oldest
-        std::vector<int16_t> out;
-        if (_soundDelay.size() > delay)
-        {
-            out = std::move(_soundDelay.front());
-            _soundDelay.pop_front();
-        }
-        else
-            out.assign(length, 0);  // silence while the line fills
-        _writer->pushSound(QByteArray(reinterpret_cast<const char*>(out.data()),
-                                      static_cast<qsizetype>(out.size() * sizeof(int16_t))),
-                           _sampleRate > 0 ? static_cast<double>(_audioSamples) / _sampleRate : 0.0);
-        _audioSamples += out.size() / AUDIO_CHANNELS;
-    }
-    if (target <= _frames)
+        _unpictured.push_back(std::move(sound));
+    if (_unpictured.empty())
         return;  // a redraw of a frame already in the file
-    // The writer is behind (ffmpeg, the disk): the GUI never waits for it. A running machine's picture stays on
-    // screen for the frames it owes; a paused one (every frame wanted) takes the picture when there is room again
+    // The writer is behind (the encoder, the disk): the GUI never waits for it. The picture is taken when there is
+    // room again; meanwhile the machine waits in the tap (video sync), no picture stands for frames it did not show
     if (!_writer->hasRoom())
     {
-        const std::shared_ptr<Emulator> emulator = _emulator.lock();
-        if (emulator && emulator->IsPaused())
-        {
-            _writer->requestRetry();
-            return;
-        }
-        _writer->repeatLast(static_cast<uint32_t>(target - _frames));
-        _frames = target;
+        _writer->requestRetry();
         return;
     }
-    // The keyboard as it was when the frame on screen ran: the newest picture of it at most the delay old
+    // The keyboard as it is now, by the newest frame run: a picture takes the newest one not after its frame
     if (!_keyboardId.empty() && _keyboard)
     {
         _keyboard->refresh();
-        _keyboardDelay.emplace_back(target, _keyboard->renderImage(_writer->keyboardRect.width()));
-        while (_keyboardDelay.size() > 1 && _keyboardDelay[1].first + delay <= target)
+        _keyboardDelay.emplace_back(_unpictured.back().frame, _keyboard->renderImage(_writer->keyboardRect.width()));
+        if (_keyboardDelay.size() > 64)
             _keyboardDelay.pop_front();
     }
-    QImage picture;
-    std::string error;
-    if (!_screen || !_screen->grabWindowPicture(picture, error, _request.pictureHeight))
-        return;
-    // The frames the window did not draw (a busy GUI, turbo) repeat this picture: the time stays the machine's
-    Writer::Job job;
-    job.picture = std::move(picture);
-    if (!_keyboardDelay.empty())
-        job.keyboard = _keyboardDelay.front().second;
-    job.repeat = static_cast<uint32_t>(target - _frames);
-    job.frameStart = _frames;
-    if (_writer->pushPicture(std::move(job)))
-        _frames = target;
+    // The pictures the GPU window captured after its presents (read back without waiting), one per frame it showed,
+    // oldest first, each with its frame's number (0: not known)
+    std::vector<QImage> pictures;
+    std::vector<uint64_t> numbers;
+    if (_capture && _screen)
+        _screen->takeRecordingPictures(pictures, numbers);
+    // None twice in a row: the window presents nothing (hidden, minimized; or no GPU window: the software screen),
+    // so the picture is drawn here, the frame the window would show now
+    _captureMisses = pictures.empty() ? _captureMisses + 1 : 0;
+    if (pictures.empty() && (!_capture || _captureMisses > 1))
+    {
+        QImage picture;
+        uint64_t number = 0;
+        std::string error;
+        if (!_screen || !_screen->grabRecordingPicture(picture, number, error, _request.pictureHeight))
+            return;
+        pictures.push_back(std::move(picture));
+        numbers.push_back(number);
+    }
+    for (size_t k = 0; k < pictures.size() && !_unpictured.empty(); ++k)
+    {
+        // The picture's frame among those waiting. Not known (the software screen): the frame the window shows,
+        // the present delay behind the newest. Not among them: a frame already in the file (a picture late), or the
+        // counter jumped (a reset, a snapshot, a TTD seek): then it stands for the oldest waiting
+        size_t at = 0;
+        bool matched = false;
+        if (numbers[k] == 0)
+        {
+            const size_t behind = std::min(presentDelay(), _unpictured.size() - 1);
+            at = _unpictured.size() - 1 - behind;
+            matched = true;
+        }
+        else
+            for (size_t i = 0; i < _unpictured.size(); ++i)
+                if (_unpictured[i].frame == numbers[k])
+                {
+                    at = i;
+                    matched = true;
+                    break;
+                }
+        if (!matched)
+        {
+            const uint64_t oldest = _unpictured.front().frame;
+            if (numbers[k] < oldest && oldest - numbers[k] <= kStalePictureFrames)
+                continue;  // its frame is in the file already
+        }
+        if (_frames == 0)
+        {
+            // The file starts with this picture: the frames run before it go with their sound
+            _covered += at;
+            _unpictured.erase(_unpictured.begin(), _unpictured.begin() + static_cast<std::ptrdiff_t>(at));
+            at = 0;
+        }
+        // Frames before it with no picture of their own (the window skipped them): it stands for them too
+        const uint64_t number = _unpictured[at].frame;
+        while (_keyboardDelay.size() > 1 && _keyboardDelay[1].first <= number)
+            _keyboardDelay.pop_front();
+        Writer::Job job;
+        job.picture = std::move(pictures[k]);
+        if (!_keyboardDelay.empty())
+            job.keyboard = _keyboardDelay.front().second;
+        job.repeat = static_cast<uint32_t>(at + 1);
+        job.frameStart = _frames;
+        if (!_writer->pushPicture(std::move(job)))
+        {
+            _writer->requestRetry();  // full: the rest when there is room (the machine waits in the tap meanwhile)
+            break;
+        }
+        for (size_t i = 0; i <= at; ++i)
+        {
+            std::vector<int16_t>& samples = _unpictured.front().samples;
+            if (!samples.empty())
+            {
+                _writer->pushSound(QByteArray(reinterpret_cast<const char*>(samples.data()),
+                                              static_cast<qsizetype>(samples.size() * sizeof(int16_t))),
+                                   _sampleRate > 0 ? static_cast<double>(_audioSamples) / _sampleRate : 0.0);
+                _audioSamples += samples.size() / AUDIO_CHANNELS;
+            }
+            _unpictured.pop_front();
+        }
+        _frames += at + 1;
+        _covered += at + 1;
+    }
+    // Before the first picture: only the newest frames wait (the file starts with a picture)
+    if (_frames == 0 && _unpictured.size() > kMaxUnpictured)
+    {
+        const size_t extra = _unpictured.size() - kMaxUnpictured;
+        _unpictured.erase(_unpictured.begin(), _unpictured.begin() + static_cast<std::ptrdiff_t>(extra));
+        _covered += extra;
+    }
+    // The window's pictures come the present delay after their frame ran, and a refresh later than their present:
+    // the machine waits only past that (with less, it waited on every frame: 47.5 instead of 49.5 fps)
+    const uint64_t maxAhead = presentDelay() + kSyncSlackFrames;
+    std::lock_guard<std::mutex> lock(_sink->mutex);
+    _sink->maxAhead = maxAhead;
+    _sink->pictured = _covered;
+    _sink->synced = _sink->synced || _frames > 0;
+    _sink->advanced.notify_all();
 }
 
 size_t WindowRecorder::presentDelay() const

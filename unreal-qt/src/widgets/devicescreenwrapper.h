@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"
@@ -152,6 +153,16 @@ public:
     /// window recorder's per-frame call on the GUI thread, where every millisecond counts. The format is the
     /// renderer's own (the alpha is not set: the picture is opaque)
     bool grabWindowPicture(QImage& image, std::string& error, int pictureHeight);
+    /// The GPU window's recording capture (DeviceScreenGLWindow::setRecordingCapture): each new frame it presents is
+    /// drawn for the recording and read back without waiting. False: no GPU window (the software screen draws its
+    /// pictures on request, grabWindowPicture)
+    bool setRecordingCapture(bool enabled, int pictureHeight);
+    /// The captured pictures not taken yet, oldest first, appended to `out`, their frame numbers to `frames`
+    void takeRecordingPictures(std::vector<QImage>& out, std::vector<uint64_t>& frames);
+    /// The recording's picture drawn now: the GPU window's capture way read at once (the capture on), else
+    /// grabWindowPicture
+    /// grabWindowPicture. `frame`: the emulated frame number of the picture (0: not known)
+    bool grabRecordingPicture(QImage& image, uint64_t& frame, std::string& error, int pictureHeight);
 
     /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
     MouseCaptureController* mouseCapture() const { return _mouseCapture; }

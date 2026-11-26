@@ -174,6 +174,18 @@ struct VulkanDevice::Impl
 
     HostBuffer quad;
     HostBuffer readback;
+    /// BeginRead's copies: each into a host buffer of its own, submitted without waiting; FinishRead waits for
+    /// that submission only
+    struct AsyncRead
+    {
+        HostBuffer buffer;
+        uint64_t serial = 0;  ///< the submission that copies
+        Rect rect;
+        int texel = 0;
+        bool bgra = false;
+        bool started = false;
+    };
+    std::array<AsyncRead, Device::kReadSlots> reads;
     std::map<std::tuple<int, int, int, int>, VkSampler> samplers;
     std::unique_ptr<VkTexture> dummyFloat, dummyUint, dummyInt;
     std::unordered_map<std::string, CompiledProgram> compiled;  ///< by the sources (vertex, a 0 byte, fragment)
@@ -1159,6 +1171,8 @@ VulkanDevice::~VulkanDevice()
         }
         impl.DestroyHostBuffer(impl.quad);
         impl.DestroyHostBuffer(impl.readback);
+        for (Impl::AsyncRead& read : impl.reads)
+            impl.DestroyHostBuffer(read.buffer);
         if (impl.pipelineCache)
             vkDestroyPipelineCache(_device, impl.pipelineCache, nullptr);
         vkDestroyDevice(_device, nullptr);
@@ -1297,6 +1311,68 @@ bool VulkanDevice::Read(Texture& texture, Rect rect, void* out)
     if (_lost)
         return false;
     std::memcpy(out, impl.readback.mapped, bytes);
+    return true;
+}
+
+bool VulkanDevice::BeginRead(int slot, Texture& texture, Rect rect, bool bgra)
+{
+    if (_lost || slot < 0 || slot >= kReadSlots || rect.Empty())
+        return false;
+    Impl& impl = *_impl;
+    Impl::AsyncRead& read = impl.reads[slot];
+    auto& t = static_cast<VkTexture&>(texture);
+    read.started = false;
+    read.texel = BytesPerTexel(t.GetFormat());
+    read.rect = rect;
+    read.bgra = bgra && read.texel == 4;  // swapped while copied out (FinishRead)
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(rect.width) * rect.height * read.texel;
+    if (read.buffer.size < bytes)
+    {
+        Finish();  // a copy still on its way into the old buffer
+        impl.DestroyHostBuffer(read.buffer);
+        if (!impl.CreateHostBuffer(read.buffer, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true))
+            return false;
+    }
+    impl.Barrier(t, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageOffset = {rect.x, rect.y, 0};
+    region.imageExtent = {static_cast<uint32_t>(rect.width), static_cast<uint32_t>(rect.height), 1};
+    vkCmdCopyImageToBuffer(impl.Commands(), t.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, read.buffer.buffer, 1,
+                           &region);
+    VkMemoryBarrier2 host{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    host.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    host.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    host.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+    host.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &host;
+    vkCmdPipelineBarrier2(impl.Commands(), &dep);
+    read.serial = impl.frames[impl.current].serial;
+    Flush();  // on its way now, not waited for
+    read.started = !_lost;
+    return read.started;
+}
+
+bool VulkanDevice::FinishRead(int slot, uint8_t* out, size_t outStride, bool flip)
+{
+    if (_lost || slot < 0 || slot >= kReadSlots || !out || !_impl->reads[slot].started)
+        return false;
+    Impl& impl = *_impl;
+    Impl::AsyncRead& read = impl.reads[slot];
+    read.started = false;
+    if (impl.completedSerial < read.serial)
+        for (Frame& f : impl.frames)
+            if (f.submitted && f.serial == read.serial)
+            {
+                impl.Check(vkWaitForFences(_device, 1, &f.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
+                impl.completedSerial = std::max(impl.completedSerial, f.serial);
+            }
+    if (_lost)
+        return false;
+    CopyRows(read.buffer.mapped, static_cast<size_t>(read.rect.width) * read.texel, read.rect.height, out, outStride,
+             flip, read.bgra);
     return true;
 }
 

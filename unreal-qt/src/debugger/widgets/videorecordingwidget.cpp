@@ -1808,6 +1808,26 @@ void VideoRecordingWidget::startWindowRecording(const QString& filename, const Q
         MakeWindowRecordingRequest(container, codec, audio, UiGpuAcceleration(),
                                    _profileCombo->currentData().toString(), filename,
                                    _nativeBackendRadio->isChecked() ? 1 : _ffmpegBackendRadio->isChecked() ? 2 : 0);
+    if (_windowStartPending)
+        return;
+    if (!WindowRecorder::HardwareEncoderKnown(request))
+    {
+        // The GPU encoder is found by trial encodes (seconds on Windows): in the background, then the start, so the
+        // window keeps drawing meanwhile
+        _windowStartPending = true;
+        QPointer<VideoRecordingWidget> self(this);
+        std::thread([self, request, filename, container, codec, audio]() {
+            ThreadHelper::setThreadName("window-rec-probe");
+            WindowRecorder::PrepareHardwareEncoder(request);
+            QMetaObject::invokeMethod(qApp, [self, filename, container, codec, audio]() {
+                if (!self)
+                    return;
+                self->_windowStartPending = false;
+                self->startWindowRecording(filename, container, codec, audio);
+            }, Qt::QueuedConnection);
+        }).detach();
+        return;
+    }
     WindowRecordingStatus status;
     std::string error;
     if (!_windowRecorder->start(screen, recordingEmulator(), request, status, error))

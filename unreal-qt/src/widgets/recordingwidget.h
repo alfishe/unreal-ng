@@ -110,4 +110,5 @@ private:
     uint64_t _finishingStartPending = 0;  ///< frames the encoder owed when the recording stopped
     bool _selfSave = false;  ///< this UI is saving the shared settings: it does not reload its own change
     bool _windowRecording = false;  ///< the running recording is the window's, not the recording manager's
+    bool _windowStartPending = false;  ///< the GPU encoder's trials run in the background before the window recording starts
 };
