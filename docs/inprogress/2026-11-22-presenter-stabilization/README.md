@@ -23,8 +23,8 @@ column says what was done. Steps and their state: [TODO.md](TODO.md).
 | V3 | `display_rate=match` without smooth motion `auto` never saw the presenter's VRR change (its check sat behind the `auto` return, the timer did not run) | `win` `updateVideoSync` | fixed: watched whenever the display rate is `match` |
 | V4 | A display mode switched while the presenter still measured VRR was switched back a second later on a VRR display | `win` `updateDisplayRate` | fixed: the switch waits for `vrrPending` |
 | V5 | macOS takes a refresh range of the screen as VRR; ProMotion reports one and keeps its 120 Hz grid (frame presenter README, section 9: 16.7 / 25 ms, 7-12 % of frames lost) | `metal` `Vrr` | fixed in code: the steps between screen times are judged (`JudgeSteps`), a grid ends VRR; not measured (no ProMotion machine at hand) |
-| V6 | Vulkan: policy `auto` never takes VRR (FIFO), `vrr_support` unknown; `x11::DecideWindowVrr` is not asked | `vk` `WantedMode`, stats | open (step 4) |
-| V7 | Wayland, gamescope: no VRR query at all | — | open (step 5) |
+| V6 | Vulkan: policy `auto` never takes VRR (FIFO), `vrr_support` unknown; `x11::DecideWindowVrr` is not asked | `vk` `WantedMode`, stats | fixed in code: on X11 the window opts in and `DecideWindowVrr` is asked every second; a capable window is judged by the probe (`JudgeSteps` on the screen times), a grid ends VRR; not measured (no VRR display on a Linux host) |
+| V7 | Wayland, gamescope: no VRR query at all | — | gamescope fixed: its root atoms on Steam's `:0` (`GAMESCOPE_VRR_CAPABLE`, `GAMESCOPE_VRR_ENABLED`) give the answer, the probe judges it as on X11 (Steam Deck LCD read 2026-11-25: capable 0, so `no`); a Wayland client: open, no protocol to ask |
 
 Policy `vrr` forces each frame at its own time on every presenter (the user says the display follows): tearing on a
 fixed display under it is the setting's meaning, not a defect.
@@ -110,9 +110,22 @@ Vulkan 12.3 / 20.4 ms on a timed swapchain (its submit is taken before the GPU w
 the frame's time GL 10.0 / 18.1 ms, Vulkan 1.9 / 10.3 ms. The whole cycle was seen in one run: present timing, no
 times without the bypass, `VK_KHR_present_wait`, present timing again when the bypass came back.
 
-Open: K4 (a full timing queue: not seen since the poll runs before every present and K10 ends a timed swapchain
-without times), K8 (the 100 ms waits under the swapchain mutex and per present for a window that is exposed and not
-shown), V6 (VRR under policy `auto` on X11: `x11::DecideWindowVrr` with the probe; no VRR display on a Linux host here).
+Done (2026-11-25):
+
+- K4: presents with timing stages are counted until their results come back complete (`timingHeld`), and the poll
+  and the idle wait (20 ms, not 1 s) run while any is held, not only while the deque has entries. A refused present
+  polls at once; eight refusals in a row end present timing for the swapchain (`VK_KHR_present_wait`, as K10). Not
+  reproduced: .238's Mesa 26.0 has no present timing.
+- K8: the acquire tries for 2 ms at a time with the swapchain mutex released between tries (100 ms in all); after a
+  timeout it only looks (timeout 0) until an image comes. `vkWaitForPresentKHR` after a timeout looks with timeout 0
+  until a present is seen; such presents are recorded without a screen time. Counted in the close report ("waits
+  timed out"). .238, GNOME Wayland, Intel, MAILBOX with `VK_KHR_present_wait`, 25 s with the session locked: before,
+  38 presents and none shown, the presents stopped for 21.7 s; after, 1022 presents, 874 shown, the longest gap
+  2.8 s (the window not exposed), presenting again 0.4 / 0.7 s after two acquire timeouts.
+- V6: see table 1.1 (code only, no VRR display on a Linux host). The close report says "VRR (the display follows)"
+  or "VRR capable, on a grid".
+
+Open: V6 on a Linux VRR display (X11, FreeSync or G-Sync).
 
 ### 1.5 Display events nobody handles (step 5)
 
@@ -138,8 +151,33 @@ place of `glXWaitForSbcOML` (which has none). On the Deck it moved the screen ti
 and after turbo smooth motion drew half its pictures (`starved` +29 to +51 in 5 s). The wait without a deadline stays;
 the hang it can cause (a window hidden with a swap in flight, then closed) was not reproduced.
 
-Open: the hang above; sleep and wake (the frame clock's sequence break and the presenters' own recovery, not
-exercised); V7 (a VRR query on Wayland and under gamescope: no such display here).
+Done (2026-11-25), sleep and wake, from a pass over the code (no machine here may be put to sleep): steady clocks go
+on in sleep on macOS (libc++ CLOCK_MONOTONIC_RAW) and Windows (QPC) and stop on Linux, so a sleep is a gap in time on
+two platforms and a display off without sleep a gap on all. Handled already: the frame clock cuts at a gap of 4
+periods, the audio clock fits anew after 250 ms without callbacks, MainLoop's deadline anchors again, the GLX vblank
+clock drops steps over 100 ms and takes an MSC that went back, the probes' percentile windows are not moved by one
+step, Metal maps Core Animation's time (stopped in sleep) through an offset read now. Fixed:
+
+- A present shown seconds after its time (held through the gap) widened the adaptive lead a step, two or three queued
+  ones two or three, each step 600 presents on time to give back (DXGI, the timed GL swap, Vulkan's timing paths).
+  Over `PresentLead::kGapNs` (100 ms) it is counted late and changes nothing else (`presentlead_test.cpp`).
+- A run of failures that began before the window was hidden (a display going to sleep) restarted the presenter at the
+  first failure after the wake. A hidden window ends the run (`PresenterRecovery::Hidden`).
+
+Found 2026-11-25 on a remote desktop (headless mutter, NVIDIA EGL, the RDP server's log): the GL window repaints on
+every refresh while frames come, paced by the swap that waits for the display; there the swap waits for nothing and
+the window drew and swapped ~250 times a second for 49 Hz frames (102 % CPU), each a new buffer for the compositor
+and the encoder. Now a window whose swaps come more than half again as often as its display refreshes (at least 90 a
+second, then for its life) draws and swaps only for something new (another frame, smooth motion's next picture, a
+repaint asked) and times its next look by the next frame's target. Xvfb on .238 (llvmpipe, the same kind of swap):
+99-128 swaps a second before the switch, 486 in 10 s after it (a gdb count on `QOpenGLContext::swapBuffers`): the
+machine's 48.8 Hz. A display whose swap waits is not touched.
+
+Open: the hang above (the swap wait is skipped for a window not exposed; a display off with the window still exposed
+not reproduced); a stuck present on a visible window restarts the presenter every 2 s and the fourth restart in a
+minute falls back to GL: not seen (K8 on .238 with the session locked kept presenting about once a second, which ends
+each run); MoltenVK's `actualPresentTime` may be Core Animation's time (stopped in sleep) on the Vulkan build for
+macOS; V7 for a Wayland client.
 
 ### 1.6 Content and displays not covered (step 6)
 
@@ -171,7 +209,26 @@ set to judge them by):
   them in time (it blends); on 144 and 240 Hz `auto` stays off within the 5 % bound, the same beat the display rate
   switch accepts for 48.83 Hz on 50 Hz.
 - Hi-res and hi-colour modes: the guard covers their cost; their picture quality under interpolation is not judged.
-- Scrolls over 8 pixels a frame, fades, border effects, static multicolour, interlace: scenes to write.
+- Scrolls over 8 pixels a frame, fades, border effects, static multicolour, interlace: scenes written 2026-11-25
+  (below).
+
+Scenes (2026-11-25, `core/tests/emulator/video/smoothscenes_test.cpp`, generators in `smoothscenes.h` for the GPU
+tests too; 128x96 ZX pictures, Blend, Interpolate (LayerFlow) and InterpolateLite (LiteFlow)). "Invented" is an
+output pixel that is neither frame's nor their mix at the weight drawn.
+
+| Scene | What a correct picture keeps | Result |
+|-------|------------------------------|--------|
+| Scroll of 12 / 16 / 24 px a frame under a still status bar | nothing invented, the bar as it is | kept |
+| ZX fade (7 -> 6 with bright going, 3 -> 2) | the frames or their blend | kept |
+| Border stripes moving 3 lines a frame around still paper | the paper as it is | Blend, Lite kept; **LayerFlow moves 3-9 of 6144 paper pixels** at the paper's edge column (x = 16) |
+| Loader border (random red / cyan lines each frame) | the paper as it is; the border the frames or their blend | paper kept; **border invented: LayerFlow 1272-1384 of 6144, LiteFlow 160** (noise matched to vectors by chance) |
+| Static multicolour (8x1 attributes) | passed through | kept |
+| Multicolour with a changing counter | pixels outside it as they are | kept |
+| Multicolour colour cycling | the frames or their blend | kept |
+| Interlace (two pictures' lines swapped; one picture a line lower) | the frame due | kept |
+| A held 25 Hz flicker, 50 Hz frames on 60 Hz | the flicker the frame due at every refresh | kept: 5 repeats in 30 refreshes (a 10 Hz beat, as without smooth motion), no blend of the two fields |
+
+The two defects are `DISABLED_` tests naming them; the layers' rules stay frozen until the owner decides on them.
 
 ### 1.7 What an interpolated picture costs (2026-11-22)
 
@@ -404,8 +461,8 @@ What is left is the work itself, spread with no hot spot: `MovesBy` on flickerin
 | Windows DXGI | yes | V1, V2 | V2-V4 | yes | yes |
 | Linux X11, timed GL | yes | full screen + `vrr_capable` only | yes (RandR) | yes | no replacement (1.2) |
 | Linux Wayland, GL | yes, no screen times | policy `vrr` only, blind | no | by the paint's time, no grid | yes |
-| Linux Vulkan | yes | policy `vrr` only (V6) | X11 (K5); Wayland no | K5 | no replacement (1.2) |
-| Steam Deck, gamescope | yes | no query (V7) | yes (`gamescope_control`) | yes, on gamescope's composition times | no replacement (1.2) |
+| Linux Vulkan | yes | X11: `vrr_capable` + probe (V6, unmeasured); Wayland: policy `vrr` only | X11 (K5); Wayland no | K5 | no replacement (1.2) |
+| Steam Deck, gamescope | yes | gamescope's root atoms (V7) | yes (`gamescope_control`) | yes, on gamescope's composition times | no replacement (1.2) |
 
 ## 3. The VRR verdict (step 1)
 

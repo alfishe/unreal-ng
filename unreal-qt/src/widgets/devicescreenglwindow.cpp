@@ -6,6 +6,7 @@
 
 #include <QDebug>
 #include <algorithm>
+#include <utility>
 #include <atomic>
 #include <chrono>
 #include <QPainter>
@@ -33,6 +34,7 @@
 #include <QOpenGLShaderProgram>
 
 #include "gpu/gldevice.h"
+#include "gpu/glwindowbuffer.h"
 #ifdef UNREAL_VULKAN
 #include "gpu/vulkandevice.h"
 #include "gpu/vulkanpresenter.h"
@@ -181,6 +183,13 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
         _presentTimer->setSingleShot(true);
         _presentTimer->setTimerType(Qt::PreciseTimer);
         connect(_presentTimer, &QTimer::timeout, this, [this]() { renderNative(false); });
+    }
+    else
+    {
+        _glTimer = new QTimer(this);
+        _glTimer->setSingleShot(true);
+        _glTimer->setTimerType(Qt::PreciseTimer);
+        connect(_glTimer, &QTimer::timeout, this, [this]() { renderGL(); });
     }
     _smoothTraced = smoothmotion::TraceWriter::FromEnvironment(_smoothTrace);
 #ifdef UNREAL_TEST_HOOKS
@@ -348,6 +357,7 @@ void DeviceScreenGLWindow::update()
             _presentTimer->start(0);
         return;
     }
+    _glPaintAsked = true;  // the HUD, an overlay, a setting: drawn even with no new frame
     requestUpdate();
 }
 
@@ -355,18 +365,69 @@ void DeviceScreenGLWindow::renderGL()
 {
     if (_isShuttingDown || !isExposed() || !prepareContext())
         return;
+    if (_glTimer)
+        _glTimer->stop();
     const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
     glBindFramebuffer(GL_FRAMEBUFFER, _context->defaultFramebufferObject());
+    gpu::RestoreWindowDrawBuffer(_context.get());  // NVIDIA EGL: GL_NONE, every draw dropped
+    bool asked = std::exchange(_glPaintAsked, false) || !_glDrawn;
     if (pixels != _glSize)
     {
         _glSize = pixels;
         resizeGL(pixels.width(), pixels.height());
+        asked = true;
     }
+    const uint64_t uploads = _frameSerial;
+    const uint64_t shownSerial = _uploadedSerial;
     updateTexture(refreshTargetNs());
+    _glNextTargetNs = _shownInfo.nextTargetNs;
+    // The window repaints on every refresh, paced by the swap that waits for the display. Where the swaps do not wait
+    // (headless mutter under NVIDIA EGL, a remote desktop: 2026-11-25, ~250 repaints a second for 49 Hz frames, each a
+    // buffer for the compositor and the encoder) it draws and swaps only for something new: another frame (the same
+    // one uploaded again after a latch is not), smooth motion's next picture, a repaint asked; the next look is timed
+    const bool newFrame = _smoothUsed ? _smoothChanged
+                                      : _frameSerial != uploads && (_uploadedSerial == 0 || _uploadedSerial != shownSerial);
+    if (_glSwapUnpaced && !newFrame && !asked)
+    {
+        scheduleGl();
+        return;
+    }
     paintGL();
     _context->swapBuffers(this);
+    // Swaps that wait for the display come at most at its rate: half again as many in a second is a swap that waits
+    // for nothing (what the window then does stays for its life)
+    const int64_t now = SteadyNowNs();
+    if (now - _glSwapSecondNs >= 1'000'000'000)
+    {
+        const QScreen* display = screen();
+        const double hz = display ? display->refreshRate() : 60.0;
+        if (!_glSwapUnpaced && _glSwapSecondNs != 0 && now - _glSwapSecondNs < 2'000'000'000 &&
+            _glSwapsInSecond > std::max(90.0, hz * 1.5))
+        {
+            _glSwapUnpaced = true;
+            qInfo().noquote() << "DeviceScreenGLWindow: GL swaps do not wait for the display (" << _glSwapsInSecond
+                              << "a second at" << hz << "Hz): the window repaints only what is new";
+        }
+        _glSwapSecondNs = now;
+        _glSwapsInSecond = 0;
+    }
+    _glSwapsInSecond++;
+    _glDrawn = true;
     captureForRecording();  // after the swap: the frame shown, the GUI free until the next one
     onFrameSwapped();
+}
+
+void DeviceScreenGLWindow::scheduleGl()
+{
+    // While frames come: at the next frame's time less the refresh the look asks ahead for, else a refresh on; a latch
+    // asks at once anyway (refresh)
+    if (!_glTimer || _isShuttingDown || !isExposed() || _idleRefreshes > idleLimit())
+        return;
+    const int64_t period = refreshPeriodNs();
+    int64_t waitNs = period;
+    if (_glNextTargetNs > 0)
+        waitNs = std::clamp<int64_t>(_glNextTargetNs - period - SteadyNowNs(), 1'000'000, period);
+    _glTimer->start(static_cast<int>((waitNs + 999'999) / 1'000'000));
 }
 
 
@@ -467,6 +528,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
     {
         _presentPending = _presentPending || force;
         _presentHidden = true;
+        _recovery.Hidden();
         _smoothRefreshNs = 0;
         _idleRefreshes++;
         scheduleNative();
@@ -2923,7 +2985,10 @@ bool DeviceScreenGLWindow::event(QEvent* event)
                 if (_native)
                     renderNative(true);
                 else
+                {
+                    _glPaintAsked = true;  // the system may have dropped what the window showed
                     renderGL();
+                }
             }
             break;
         case QEvent::Resize:
