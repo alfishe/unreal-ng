@@ -62,8 +62,24 @@ FORMATS = {'skool': 'draft.skool', 'ctl': 'draft.ctl', 'map': 'draft.map.txt', '
 
 
 # What a session calls: a binary of an older build lacks some (found at launch, not at the first call)
-NEEDED_TOOLS = ('analysis', 'time_travel', 'control_execution', 'emulator_manage', 'invoke_api', 'type_input',
-                'joystick_input', 'jobs')
+NEEDED_TOOLS = ('analysis', 'time_travel', 'control_execution', 'emulator_manage', 'emulator_manage:preset',
+                'invoke_api', 'type_input', 'joystick_input', 'jobs')
+
+
+def machine_preset(s, model):
+    """The session's machine in one call (emulator_manage preset): the only instance, RAM zeroed, a Kempston card on
+    edge.1 where the model has that slot, the master muted, run control taken; then 100 frames of power-on and a
+    pause, where every capture has started from. The tape accelerators stay on, as on a plain create"""
+    ask = {'action': 'preset', 'model': model, 'ram': 'zero', 'cards': ['edge.1=kempston'], 'muted': True,
+           'paused': True, 'take_control': True, 'fast_tape': True, 'replace': True}
+    r = s.call('emulator_manage', ask, ok=False)
+    if r.is_error and 'cards:' in r.text:  # a model without the edge connector: its own stick, no card
+        del ask['cards']
+        r = s.call('emulator_manage', ask, ok=False)
+    if r.is_error:
+        raise SystemExit(r.text)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 100})
+    return r
 
 
 def session_of(work):
@@ -94,15 +110,7 @@ def capture(args):
                    'mcp': mcplib.mcp_url(process), 'model': args.model,
                    'ranges': args.ranges}, f)
     s = mcplib.Session(mcplib.mcp_url(process), args.model)
-    s.fresh_machine(args.model, ram_power_on='zero')
-    s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'}, ok=False)
-    for _ in range(100):  # the plug restarts the machine: wait for the wired stick
-        if 'slots_plug slot=edge.1' not in s.call('joystick_input', {'action': 'status'}, ok=False).text:
-            break
-        time.sleep(0.1)
-    s.call('control_execution', {'action': 'pause'}, ok=False)
-    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',
-                          'body': {'muted': True}}, ok=False)
+    machine_preset(s, args.model)
     m = corpus.Machine(s, process.ports['webapi'])
     report = {'model': args.model, 'ranges': args.ranges}
     player = corpus.Input(s)
@@ -381,16 +389,7 @@ def open_session(args):
                    'mcp': mcplib.mcp_url(process), 'model': args.model,
                    'ranges': args.ranges}, f)
     s = mcplib.Session(mcplib.mcp_url(process), args.model)
-    s.fresh_machine(args.model, ram_power_on='zero')
-    s.call('control_execution', {'action': 'take_control'}, ok=False)
-    s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'}, ok=False)
-    for _ in range(100):  # the plug restarts the machine: wait for the wired stick
-        if 'slots_plug slot=edge.1' not in s.call('joystick_input', {'action': 'status'}, ok=False).text:
-            break
-        time.sleep(0.1)
-    s.call('control_execution', {'action': 'pause'}, ok=False)
-    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',
-                          'body': {'muted': True}}, ok=False)
+    machine_preset(s, args.model)
     r = s.call('time_travel', {'action': 'load', 'path': os.path.abspath(args.ttd)}, ok=False)
     print((r.text or '').splitlines()[0])
     if r.is_error:

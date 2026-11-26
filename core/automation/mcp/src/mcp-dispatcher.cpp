@@ -271,7 +271,9 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                 return;
             }
         }
-        if (name == "control_execution" && argumentsCopy->isObject() && !argumentsCopy->isMember("_mcp_client"))
+        // The session's client name: take_control, and emulator_manage preset (it takes control of its new machine)
+        if ((name == "control_execution" || name == "emulator_manage") && argumentsCopy->isObject() &&
+            !argumentsCopy->isMember("_mcp_client"))
         {
             std::lock_guard<std::mutex> lock(_clientMutex);
             if (!_clientName.empty())

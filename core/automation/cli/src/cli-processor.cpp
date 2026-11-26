@@ -237,6 +237,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Instance management commands
                         {"start", &CLIProcessor::HandleStart},
                         {"create", &CLIProcessor::HandleCreate},
+                        {"preset", &CLIProcessor::HandleLab},  // a preset machine in one call (MachinePreset)
                         {"stop", &CLIProcessor::HandleStop},
                         {"remove", &CLIProcessor::HandleStop},  // Alias for stop (stop also removes the instance)
                         {"models", &CLIProcessor::HandleModels},
@@ -689,6 +690,9 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  select <id>   - Select an emulator" << NEWLINE;
     oss << "  start [model] [--ram-power-on random|zero] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
     oss << "  create [model] [--ram-power-on random|zero] - Create an emulator instance without starting it" << NEWLINE;
+    oss << "  preset <model> [ram=zero|random] [card=edge.1=kempston] [feature=kempstonmouse=off] [muted=on] [paused=on]" << NEWLINE;
+    oss << "      [fast_tape=off] [take_control=on] [replace=off] [select=off] - A preset machine in one call: created with its cards," << NEWLINE;
+    oss << "      features set, muted, started and paused at power-on, run control taken" << NEWLINE;
     oss << "                (--ram-power-on zero: every RAM page reads 0; random: noise in the screen pages like real DRAM;" << NEWLINE;
     oss << "                default: [MISC] RAMPowerOn of the model's unreal.ini)" << NEWLINE;
     oss << "                Profi: --profi-keyboard matrix|xt|xttable|default, --profi-zq3 16..24 (v5 hi-res crystal, MHz)," << NEWLINE;

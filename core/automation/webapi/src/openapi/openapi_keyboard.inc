@@ -152,6 +152,30 @@
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["400"]["description"] = "Invalid key name";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["404"]["description"] = "Emulator not found";
 
+    // POST /api/v1/emulator/{id}/keyboard/set - The complete held-key state in one call
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/set", "post");
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["summary"] = "Set the complete held-key state";
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["description"] =
+        "Holds exactly the keys given and releases every other injected key (the keys of press, of a chord and of a "
+        "tap in progress; a pending tap / type sequence is dropped), in one call: a game's control state per step "
+        "without a press and a release per key. A key that is already held stays down with no release in between. "
+        "An empty list releases every injected key. Every name is checked first: an unknown name is a 400 and "
+        "nothing changes.";
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["keys"]["description"] =
+        "The keys to hold: a list of key names ([\"w\", \"o\"]; an item may be a chord \"caps+1\"; [] releases "
+        "all), or one text with the names joined by '+' (\"w+o\"; \"\" or \"none\" releases all). ZX key names "
+        "and PC key names (GET /keyboard/keys)";
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("keys");
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["responses"]["200"]["description"] =
+        "{success, keys: the names now held, count, message}";
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["responses"]["400"]["description"] =
+        "'keys' missing or not names, or an unknown key name (nothing changed)";
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["responses"]["404"]["description"] = "Emulator not found";
+    paths["/api/v1/emulator/{id}/keyboard/set"]["post"]["responses"]["409"]["description"] =
+        "A TTD replay or an RZX playback drives the input";
+
     // POST /api/v1/emulator/{id}/keyboard/abort - Abort pending keyboard operations
     paths["/api/v1/emulator/{id}/keyboard/abort"]["post"]["summary"] = "Abort pending keyboard operations";
     paths["/api/v1/emulator/{id}/keyboard/abort"]["post"]["tags"].append("Keyboard Injection");

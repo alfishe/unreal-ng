@@ -1757,6 +1757,16 @@ void Emulator::Start()
 
 void Emulator::StartAsync()
 {
+    StartAsyncWithPause(nullptr, {});
+}
+
+void Emulator::StartAsyncPaused(const execution::Requester& requester, const std::string& reason)
+{
+    StartAsyncWithPause(&requester, reason);
+}
+
+void Emulator::StartAsyncWithPause(const execution::Requester* pauseAs, const std::string& pauseReason)
+{
     // A removed instance never runs again (a late GUI start, a request in flight)
     if (_retiring.load())
     {
@@ -1779,6 +1789,9 @@ void Emulator::StartAsync()
     _arbiter.SubmitIntent(execution::Intent::Run, execution::Requester{execution::Origin::Lifecycle, {}},
                           execution::IntentOptions{"start", false});
     _startIntentSubmitted = true;
+    // StartAsyncPaused: the pause is in the queue behind the run before the loop can make its first park check
+    if (pauseAs != nullptr)
+        _arbiter.SubmitIntent(execution::Intent::Pause, *pauseAs, execution::IntentOptions{pauseReason, false});
 
     // Start new thread with name 'emulator-xxxxxxxxxxxx' (last 12 chars of UUID) and execute Start() method from it
     // The short ID matches the shared memory naming convention for consistency

@@ -2610,8 +2610,161 @@ TEST_F(McpTools_Test, InspectState_EmitsOneProgressNotificationPerAspect)
 }
 
 // ===========================================================================
+// emulator_manage: features (E2)
+// ===========================================================================
+
+TEST_F(McpTools_Test, EmulatorManage_Features_ListsEveryFeatureAsText)
+{
+    Json::Value mouse;
+    mouse["id"] = "kempstonmouse";
+    mouse["alias"] = "kmouse";
+    mouse["enabled"] = true;
+    mouse["description"] = "Kempston Mouse on the bus";
+    Json::Value sound;
+    sound["id"] = "sound";
+    sound["enabled"] = false;
+    sound["mode"] = "hq";
+    Json::Value list;
+    list["features"].append(mouse);
+    list["features"].append(sound);
+    _caller->routes["GET /api/v1/emulator/emu-1/features"] = {200, list};
+
+    Json::Value args;
+    args["action"] = "features";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("2 feature(s) of emu-1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("- kempstonmouse (kmouse): on - Kempston Mouse on the bus"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("- sound: off, mode hq"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["features"].size(), 2u);
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Feature_PutsEnabledAndSaysTheNewState)
+{
+    Json::Value ok;
+    ok["feature_id"] = "kempstonmouse";
+    ok["enabled"] = false;
+    _caller->routes["PUT /api/v1/emulator/emu-1/feature/kempstonmouse"] = {200, ok};
+
+    Json::Value args;
+    args["action"] = "feature";
+    args["name"] = "kempstonmouse";
+    args["enabled"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, "Feature kempstonmouse: off [target emu-1]");
+    const FakeApiCaller::RecordedCall* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/feature/kempstonmouse");
+    ASSERT_NE(call, nullptr);
+    ASSERT_TRUE(call->body["enabled"].isBool());
+    EXPECT_FALSE(call->body["enabled"].asBool());
+
+    // Missing arguments are refused before any feature call
+    Json::Value noState;
+    noState["action"] = "feature";
+    noState["name"] = "kempstonmouse";
+    const size_t before = _caller->calls.size();
+    mcp::ToolResult refused = RunTool(*_registry, "emulator_manage", noState, *_caller);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("'enabled'"), std::string::npos) << refused.text;
+    for (size_t i = before; i < _caller->calls.size(); ++i)
+        EXPECT_EQ(_caller->calls[i].path.find("/feature"), std::string::npos) << _caller->calls[i].path;
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Feature_UnknownNameListsTheValidOnes)
+{
+    Json::Value unknown;
+    unknown["error"] = "Not Found";
+    unknown["message"] = "Unknown feature: kempstonmous";
+    for (const char* id : {"sound", "kempstonmouse", "kempstonjoystick"})
+        unknown["available_features"].append(id);
+    _caller->routes["PUT /api/v1/emulator/emu-1/feature/kempstonmous"] = {404, unknown};
+
+    Json::Value args;
+    args["action"] = "feature";
+    args["name"] = "kempstonmous";
+    args["enabled"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_EQ(result.text, "Unknown feature 'kempstonmous'. Did you mean 'kempstonmouse'? Valid features: sound, "
+                           "kempstonmouse, kempstonjoystick");
+
+    // A feature TTD holds: the route's reason comes through
+    Json::Value held;
+    held["error"] = "Conflict";
+    held["message"] = "turbomode is off while a TTD recording runs";
+    _caller->routes["PUT /api/v1/emulator/emu-1/feature/turbomode"] = {409, held};
+    args["name"] = "turbomode";
+    args["enabled"] = true;
+    result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("turbomode is off while a TTD recording runs"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InputTools_DescriptionsSayHowToFreeTheKempstonMousePorts)
+{
+    for (const char* name : {"mouse_input", "joystick_input", "emulator_manage"})
+    {
+        const mcp::ToolDefinition* tool = _registry->Find(name);
+        ASSERT_NE(tool, nullptr) << name;
+        EXPECT_NE(tool->description.find("name=kempstonmouse enabled=false"), std::string::npos) << name;
+        EXPECT_NE(tool->description.find("#FADF / #FBDF / #FFDF"), std::string::npos) << name;
+    }
+}
+
+// ===========================================================================
 // type_input
 // ===========================================================================
+
+// keys set: the whole held-key state in one call
+TEST_F(McpTools_Test, TypeInput_Set_PostsTheKeysAndSaysWhatIsHeld)
+{
+    Json::Value ok;
+    ok["success"] = true;
+    ok["keys"].append("w");
+    ok["keys"].append("o");
+    ok["message"] = "Keys held: w, o (every other injected key released)";
+    _caller->routes["POST /api/v1/emulator/emu-1/keyboard/set"] = {200, ok};
+
+    Json::Value args;
+    args["action"] = "set";
+    args["keys"].append("w");
+    args["keys"].append("o");
+    mcp::ToolResult result = RunTool(*_registry, "type_input", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, "Keys held: w, o (every other injected key released) [target emu-1]");
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/keyboard/set");
+    ASSERT_NE(call, nullptr);
+    ASSERT_EQ(call->body["keys"].size(), 2u);
+    EXPECT_EQ(call->body["keys"][0].asString(), "w");
+
+    // An empty list is a state of its own (release all), not a missing argument
+    Json::Value none;
+    none["action"] = "set";
+    none["keys"] = Json::Value(Json::arrayValue);
+    ASSERT_FALSE(RunTool(*_registry, "type_input", none, *_caller).isError);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/keyboard/set");
+    ASSERT_TRUE(call->body["keys"].isArray());
+    EXPECT_EQ(call->body["keys"].size(), 0u);
+
+    // No 'keys' at all is refused
+    Json::Value missing;
+    missing["action"] = "set";
+    EXPECT_TRUE(RunTool(*_registry, "type_input", missing, *_caller).isError);
+
+    // The route's refusal of an unknown name comes through as the text
+    Json::Value bad;
+    bad["error"] = "Bad Request";
+    bad["message"] = "Unknown key 'nosuchkey': a key is one name (a, enter, caps). Nothing changed";
+    _caller->routes["POST /api/v1/emulator/emu-1/keyboard/set"] = {400, bad};
+    result = RunTool(*_registry, "type_input", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Unknown key 'nosuchkey'"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Nothing changed"), std::string::npos) << result.text;
+}
 
 TEST_F(McpTools_Test, TypeInput_Type_PostsKeyboardTypeWithText)
 {

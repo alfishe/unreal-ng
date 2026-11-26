@@ -101,6 +101,8 @@ private:
     void HandlePause(const ClientSession& session, const std::vector<std::string>& args);
     void HandleResume(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCreate(const ClientSession& session, const std::vector<std::string>& args);
+    /// preset <model> [name=value ...]: a preset machine in one call (MachinePreset, core/src/emulator/preset/machinepreset.h)
+    void HandleLab(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepIn(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSteps(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
@@ -326,6 +328,7 @@ private:
     void ShowKeyHelp(const ClientSession& session);
     void HandleKeyPress(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleKeyRelease(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeySet(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleKeyTap(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleKeyCombo(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleKeyMacro(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
