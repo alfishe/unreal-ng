@@ -8,7 +8,8 @@ fixed, and checked on macOS, Linux (.238), Windows and the Steam Deck where it a
 - [ ] 2. A waiting present is replaced: the timed GL swap done (a pile of two); Vulkan and Metal need back-pressure
   in the window, not built (no pile reproduced: README 1.2). Found on the way and fixed: K10, K7
 - [x] 3. Smooth motion: S1-S5 (counters `present.smooth.behind` / `starved`)
-- [ ] 4. Vulkan: K1-K3, K5-K7, K9, K10 done; open: K4, K8, V6 (README 1.4)
+- [ ] 4. Vulkan: K1-K10 done (K8 measured on .238 with the session locked); V6 in code, open: a Linux VRR display
+  (README 1.4)
 - [ ] 5. Display events: the screen's rate followed, smooth motion starts over when it comes on again; open: the
   timed GL swap's wait without a deadline, sleep / wake, V7 (README 1.5)
 - [ ] 6. Content and displays. Done: interpolation too slow for the refresh blends (`too_slow`), gamescope's screen

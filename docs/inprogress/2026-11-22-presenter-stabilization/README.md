@@ -23,7 +23,7 @@ column says what was done. Steps and their state: [TODO.md](TODO.md).
 | V3 | `display_rate=match` without smooth motion `auto` never saw the presenter's VRR change (its check sat behind the `auto` return, the timer did not run) | `win` `updateVideoSync` | fixed: watched whenever the display rate is `match` |
 | V4 | A display mode switched while the presenter still measured VRR was switched back a second later on a VRR display | `win` `updateDisplayRate` | fixed: the switch waits for `vrrPending` |
 | V5 | macOS takes a refresh range of the screen as VRR; ProMotion reports one and keeps its 120 Hz grid (frame presenter README, section 9: 16.7 / 25 ms, 7-12 % of frames lost) | `metal` `Vrr` | fixed in code: the steps between screen times are judged (`JudgeSteps`), a grid ends VRR; not measured (no ProMotion machine at hand) |
-| V6 | Vulkan: policy `auto` never takes VRR (FIFO), `vrr_support` unknown; `x11::DecideWindowVrr` is not asked | `vk` `WantedMode`, stats | open (step 4) |
+| V6 | Vulkan: policy `auto` never takes VRR (FIFO), `vrr_support` unknown; `x11::DecideWindowVrr` is not asked | `vk` `WantedMode`, stats | fixed in code: on X11 the window opts in and `DecideWindowVrr` is asked every second; a capable window is judged by the probe (`JudgeSteps` on the screen times), a grid ends VRR; not measured (no VRR display on a Linux host) |
 | V7 | Wayland, gamescope: no VRR query at all | — | open (step 5) |
 
 Policy `vrr` forces each frame at its own time on every presenter (the user says the display follows): tearing on a
@@ -110,9 +110,22 @@ Vulkan 12.3 / 20.4 ms on a timed swapchain (its submit is taken before the GPU w
 the frame's time GL 10.0 / 18.1 ms, Vulkan 1.9 / 10.3 ms. The whole cycle was seen in one run: present timing, no
 times without the bypass, `VK_KHR_present_wait`, present timing again when the bypass came back.
 
-Open: K4 (a full timing queue: not seen since the poll runs before every present and K10 ends a timed swapchain
-without times), K8 (the 100 ms waits under the swapchain mutex and per present for a window that is exposed and not
-shown), V6 (VRR under policy `auto` on X11: `x11::DecideWindowVrr` with the probe; no VRR display on a Linux host here).
+Done (2026-11-25):
+
+- K4: presents with timing stages are counted until their results come back complete (`timingHeld`), and the poll
+  and the idle wait (20 ms, not 1 s) run while any is held, not only while the deque has entries. A refused present
+  polls at once; eight refusals in a row end present timing for the swapchain (`VK_KHR_present_wait`, as K10). Not
+  reproduced: .238's Mesa 26.0 has no present timing.
+- K8: the acquire tries for 2 ms at a time with the swapchain mutex released between tries (100 ms in all); after a
+  timeout it only looks (timeout 0) until an image comes. `vkWaitForPresentKHR` after a timeout looks with timeout 0
+  until a present is seen; such presents are recorded without a screen time. Counted in the close report ("waits
+  timed out"). .238, GNOME Wayland, Intel, MAILBOX with `VK_KHR_present_wait`, 25 s with the session locked: before,
+  38 presents and none shown, the presents stopped for 21.7 s; after, 1022 presents, 874 shown, the longest gap
+  2.8 s (the window not exposed), presenting again 0.4 / 0.7 s after two acquire timeouts.
+- V6: see table 1.1 (code only, no VRR display on a Linux host). The close report says "VRR (the display follows)"
+  or "VRR capable, on a grid".
+
+Open: V6 on a Linux VRR display (X11, FreeSync or G-Sync).
 
 ### 1.5 Display events nobody handles (step 5)
 
@@ -404,7 +417,7 @@ What is left is the work itself, spread with no hot spot: `MovesBy` on flickerin
 | Windows DXGI | yes | V1, V2 | V2-V4 | yes | yes |
 | Linux X11, timed GL | yes | full screen + `vrr_capable` only | yes (RandR) | yes | no replacement (1.2) |
 | Linux Wayland, GL | yes, no screen times | policy `vrr` only, blind | no | by the paint's time, no grid | yes |
-| Linux Vulkan | yes | policy `vrr` only (V6) | X11 (K5); Wayland no | K5 | no replacement (1.2) |
+| Linux Vulkan | yes | X11: `vrr_capable` + probe (V6, unmeasured); Wayland: policy `vrr` only | X11 (K5); Wayland no | K5 | no replacement (1.2) |
 | Steam Deck, gamescope | yes | no query (V7) | yes (`gamescope_control`) | yes, on gamescope's composition times | no replacement (1.2) |
 
 ## 3. The VRR verdict (step 1)

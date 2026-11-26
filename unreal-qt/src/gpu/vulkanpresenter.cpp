@@ -20,6 +20,10 @@
 #include "common/timehelper.h"
 #include "emulator/video/screenbeat.h"
 #include "platform/presentlead.h"
+#include "platform/vrrprobe.h"
+#ifdef __linux__
+#include "platform/linux/x11display.h"
+#endif
 #include "vulkandevice.h"
 
 namespace gpu
@@ -42,6 +46,10 @@ constexpr int64_t kWaylandAheadNs = 10'000'000;
 constexpr uint32_t kExtraImages = 2;
 /// Waits on the GUI thread: for an image, for the present thread to drain before a new swapchain
 constexpr uint64_t kAcquireTimeoutNs = 100'000'000;
+/// One acquire try under the swapchain mutex: the present thread presents between the tries of a long wait
+constexpr uint64_t kAcquireTryNs = 2'000'000;
+/// The window system asked again (X11: VRR capable, full screen) at most this often
+constexpr int64_t kDecideEveryNs = 1'000'000'000;
 
 int64_t SteadyNs()
 {
@@ -129,6 +137,13 @@ struct VulkanPresenter::Impl
     std::atomic<uint64_t> domainChanges{0};      ///< ... changed under the swapchain
     std::atomic<uint64_t> timingNoTime{0};       ///< timing results without a time (a present never shown)
     std::atomic<uint64_t> timingOtherDomain{0};  ///< ... with a time in a domain not asked for
+    /// Present thread: timed presents whose results the swapchain holds (each a slot of its timing queue, freed only
+    /// when a complete result is taken). Polled while any is held, whether or not `timing` still waits for it: a
+    /// queue left full fails every present after it (VK_ERROR_PRESENT_TIMING_QUEUE_FULL_EXT)
+    uint32_t timingHeld = 0;
+    int queueFullRun = 0;  ///< present thread: presents in a row refused for a full timing queue
+    static constexpr int kQueueFullLimit = 8;
+    std::atomic<uint64_t> queueFull{0};  ///< presents refused for a full timing queue
 #ifdef VK_EXT_present_timing
     PFN_vkGetPastPresentationTimingEXT pastTimingExt = nullptr;
     PFN_vkSetSwapchainPresentTimingQueueSizeEXT timingQueueSize = nullptr;
@@ -162,6 +177,35 @@ struct VulkanPresenter::Impl
     int64_t lastStepNs = 0;  ///< present thread: the step before (a period without the screen's: two alike)
     mutable std::atomic<bool> exposed{true};
     mutable PresentLead lead{kLeadStartNs};
+    /// An exposed window whose presents are not shown (a locked screen): its waits time out. The next ones only look
+    /// (no timeout) until an image comes or a present is seen on screen again, so neither the GUI thread nor the present
+    /// thread spends 100 ms a frame on it
+    std::atomic<bool> acquireStalled{false};
+    std::atomic<bool> waitStalled{false};
+    std::atomic<uint64_t> stalledWaits{0};  ///< waits that timed out (acquire, present_wait)
+
+    // Does the display follow the frames (vrrprobe.h; policy auto)? X11: what RandR says (x11::DecideWindowVrr), then
+    // the steps between the screen times of the frames shown against the frames' own steps. A FIFO swapchain on a
+    // display that follows shows each present when it comes (no tearing): the frames go at their own times, not on a
+    // refresh grid. Wayland and gamescope have no query (V7): never
+    static constexpr size_t kStepWindow = 120;
+    static constexpr uint32_t kJudgeEvery = 60;
+    int64_t decidedNs = 0;  ///< GUI thread
+    bool optedIn = false;   ///< GUI thread: _VARIABLE_REFRESH as last set
+    bool optInSet = false;
+    bool nvidia = false;
+    std::atomic<bool> vrrCapable{false};  ///< the decision says yes and the policy is auto
+    std::atomic<bool> follows{false};     ///< ... and the probe has not seen a grid
+    std::atomic<bool> probeReset{true};   ///< the next screen time starts the probe anew
+    std::string decisionSupport = "unknown";  // statsMutex
+    std::string decisionReason;               // statsMutex
+    std::string vrrNote;                      // statsMutex
+    vrrprobe::Probe probe;                    // statsMutex
+    std::vector<double> screenSteps;          // statsMutex, ms
+    std::vector<double> askedSteps;           // statsMutex, ms
+    int64_t lastAtNs = 0;                     // statsMutex
+    int64_t lastShownNs = 0;                  // statsMutex
+    uint32_t sinceJudged = 0;                 // statsMutex
 
     mutable std::mutex statsMutex;
     std::string failure;
@@ -211,7 +255,87 @@ struct VulkanPresenter::Impl
     /// Wayland's MAILBOX presented a refresh apart
     bool Synced() const
     {
-        return mode == VK_PRESENT_MODE_FIFO_KHR || (wayland && mode == VK_PRESENT_MODE_MAILBOX_KHR);
+        if (mode == VK_PRESENT_MODE_FIFO_KHR)
+            return !follows.load(std::memory_order_relaxed);
+        return wayland && mode == VK_PRESENT_MODE_MAILBOX_KHR;
+    }
+
+    /// GUI thread, X11: what the window system says now; _VARIABLE_REFRESH on the window and its top level as the
+    /// policy wants (Mesa's X11 WSI sets it on its own window too, driconf adaptive_sync)
+    void Decide(int64_t now)
+    {
+        decidedNs = now;
+#ifdef __linux__
+        if (wayland)
+            return;
+        const bool optIn = Policy() != PresentPolicy::Vsync;
+        if (optIn != optedIn || !optInSet)
+        {
+            optedIn = optIn;
+            optInSet = true;
+            x11::OptInVariableRefresh(window, optIn);
+        }
+        const linuxpresent::VrrDecision decision = x11::DecideWindowVrr(window, nvidia);
+        const bool capable = Policy() == PresentPolicy::Auto && decision.support == linuxpresent::VrrSupport::Yes;
+        std::lock_guard<std::mutex> lock(statsMutex);
+        decisionSupport = linuxpresent::VrrSupportName(decision.support);
+        decisionReason = decision.reason;
+        if (capable != vrrCapable.load(std::memory_order_relaxed))
+        {
+            // Capable: VRR until the screen times are seen on a grid (a composited window, the driver's VRR off)
+            vrrCapable = capable;
+            follows = capable;
+            probeReset = true;
+        }
+#else
+        (void)now;
+#endif
+    }
+
+    /// A frame shown (statsMutex held): its screen step against its asked step, judged every kJudgeEvery frames
+    void JudgeVrr(int64_t atNs, int64_t screenNs)
+    {
+        if (!vrrCapable.load(std::memory_order_relaxed))
+            return;
+        if (probeReset.exchange(false))
+        {
+            probe.Reset(true);
+            follows = true;
+            screenSteps.clear();
+            askedSteps.clear();
+            lastAtNs = lastShownNs = 0;
+            sinceJudged = 0;
+            vrrNote.clear();
+        }
+        if (lastAtNs > 0 && atNs > lastAtNs && screenNs > lastShownNs)
+        {
+            screenSteps.push_back(static_cast<double>(screenNs - lastShownNs) / 1e6);
+            askedSteps.push_back(static_cast<double>(atNs - lastAtNs) / 1e6);
+            if (screenSteps.size() > kStepWindow)
+            {
+                screenSteps.erase(screenSteps.begin());
+                askedSteps.erase(askedSteps.begin());
+            }
+        }
+        lastAtNs = atNs;
+        lastShownNs = screenNs;
+        const int64_t refreshNs = screenPeriodNs.load(std::memory_order_relaxed);
+        if (++sinceJudged < kJudgeEvery || screenSteps.size() < kJudgeEvery || refreshNs <= 0)
+            return;
+        sinceJudged = 0;
+        const double lo = presentstats::Percentile(screenSteps, 0.10);
+        const double step = presentstats::Percentile(screenSteps, 0.50);
+        const double hi = presentstats::Percentile(screenSteps, 0.90);
+        const double asked = presentstats::Percentile(askedSteps, 0.50);
+        if (!probe.Feed(vrrprobe::JudgeSteps(lo, step, hi, asked, static_cast<double>(refreshNs) / 1e6)))
+            return;
+        follows = probe.Engaged();
+        char note[160] = "";
+        if (!probe.Engaged())
+            std::snprintf(note, sizeof note, "VRR did not engage: frames every %.2f ms stay on screen %.2f to %.2f ms",
+                          asked, lo, hi);
+        vrrNote = note;
+        qInfo().noquote() << "VulkanPresenter:" << (probe.Engaged() ? "the display follows the frames (VRR)" : note);
     }
 
     void DestroySemaphores()
@@ -334,6 +458,10 @@ struct VulkanPresenter::Impl
             vkCreateSemaphore(dev, &semaphore, nullptr, &s);
         nextAcquire = 0;
         timing.clear();
+        timingHeld = 0;
+        queueFullRun = 0;
+        acquireStalled = false;
+        waitStalled = false;
         recreate = false;
 #ifdef VK_EXT_present_timing
         timed = wantTimed && SetUpTiming(count);
@@ -373,7 +501,7 @@ struct VulkanPresenter::Impl
                 busy = false;
                 idleCv.notify_all();
                 // Display timing comes after the present: asked again while nothing waits to be presented
-                queueCv.wait_for(lock, std::chrono::milliseconds(timing.empty() ? 1000 : 20),
+                queueCv.wait_for(lock, std::chrono::milliseconds(timing.empty() && timingHeld == 0 ? 1000 : 20),
                                  [&] { return stop || !queue.empty(); });
                 if (stop)
                     break;
@@ -406,6 +534,7 @@ struct VulkanPresenter::Impl
     {
         VkSwapchainKHR chain;
         VkResult r;
+        bool timedPresent = false;  ///< this present asked for its timing (a slot of the timing queue)
         // The timing queue: results taken off it before each present, so it never fills
         // (VK_ERROR_PRESENT_TIMING_QUEUE_FULL_EXT: counted dropped below)
         if (timed.load(std::memory_order_relaxed))
@@ -436,7 +565,7 @@ struct VulkanPresenter::Impl
             VkPresentId2KHR id2{VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR};
             VkPresentTimingInfoEXT at{VK_STRUCTURE_TYPE_PRESENT_TIMING_INFO_EXT};
             VkPresentTimingsInfoEXT ats{VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT};
-            const bool timedPresent = timed.load(std::memory_order_relaxed);
+            timedPresent = timed.load(std::memory_order_relaxed);
             if (timedPresent)
             {
                 id2.swapchainCount = 1;
@@ -474,6 +603,26 @@ struct VulkanPresenter::Impl
             r = vkQueuePresentKHR(device->Queue(), &info);
         }
         item.submittedNs = SteadyNs();
+#ifdef VK_EXT_present_timing
+        if (timedPresent && (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR))
+        {
+            timingHeld++;
+            queueFullRun = 0;
+        }
+        else if (r == VK_ERROR_PRESENT_TIMING_QUEUE_FULL_EXT)
+        {
+            // Refused, the image released: the held results taken now. Refused again and again (results that never
+            // complete): a swapchain without present timing, VK_KHR_present_wait's times
+            queueFull++;
+            PollTiming();
+            if (++queueFullRun == kQueueFullLimit && !timingOff.exchange(true))
+            {
+                recreate = true;
+                qInfo().noquote() << "VulkanPresenter: the present timing queue stays full (" << kQueueFullLimit
+                                  << "presents refused in a row) - a swapchain without it, VK_KHR_present_wait's times";
+            }
+        }
+#endif
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
         {
             recreate = true;
@@ -495,9 +644,18 @@ struct VulkanPresenter::Impl
             timing.push_back(item);  // its screen time from the past timings (PollTiming)
         else if (waitForPresent && exposed.load(std::memory_order_relaxed))
         {
-            // Returns when the image is on screen: that moment, to the wake's slack
-            const VkResult w = waitForPresent(dev, chain, item.presentId, kAcquireTimeoutNs);
-            Record(item, w == VK_SUCCESS ? SteadyNs() : 0);
+            // Returns when the image is on screen: that moment, to the wake's slack. Stalled (the one before timed
+            // out: exposed, not shown): only a look, its time 0 unless it is on screen already
+            const bool stalled = waitStalled.load(std::memory_order_relaxed);
+            const VkResult w = waitForPresent(dev, chain, item.presentId, stalled ? 0 : kAcquireTimeoutNs);
+            if (w == VK_SUCCESS)
+                waitStalled = false;
+            else if (w == VK_TIMEOUT && !stalled)
+            {
+                waitStalled = true;
+                stalledWaits++;
+            }
+            Record(item, w == VK_SUCCESS && !stalled ? SteadyNs() : 0);
         }
         else if (pastTiming)
             timing.push_back(item);
@@ -682,7 +840,7 @@ struct VulkanPresenter::Impl
     /// Present thread: the screen times the swapchain has for the presents waiting for them
     void PollPresentTiming()
     {
-        if (timing.empty())
+        if (timing.empty() && timingHeld == 0)
             return;
         constexpr uint32_t kMax = 16;
         VkPresentStageTimeEXT stages[kMax]{};
@@ -720,6 +878,8 @@ struct VulkanPresenter::Impl
             const VkPastPresentationTimingEXT& p = past[i];
             if (!p.reportComplete)
                 continue;
+            if (timingHeld > 0)
+                timingHeld--;  // its slot free again
             int64_t screenNs = 0;
             bool otherDomain = false;
             for (uint32_t k = 0; k < p.presentStageCount; ++k)
@@ -798,6 +958,8 @@ struct VulkanPresenter::Impl
                                : std::max(item.atNs, item.handedNs) - item.handedNs);
             const int64_t period = refreshPeriodNs.load(std::memory_order_relaxed);
             beat.Shown(item.trace.picture, item.trace.targetNs, screenNs, period > 0 ? period : 16'666'667);
+            if (item.atNs > 0)
+                JudgeVrr(item.atNs, screenNs);
         }
         trace.Write(item.trace, item.atNs, item.submittedNs, screenNs, 0);
     }
@@ -836,6 +998,11 @@ std::unique_ptr<VulkanPresenter> VulkanPresenter::Create(QWindow* window, Vulkan
     impl.screenChanged = QObject::connect(window, &QWindow::screenChanged, window, screenPeriod);
     impl.dev = device.Handle();
     impl.surface = surface;
+    {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(device.Physical(), &props);
+        impl.nvidia = props.vendorID == 0x10DE;
+    }
     uint32_t modes = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(device.Physical(), surface, &modes, nullptr);
     impl.modes.resize(modes);
@@ -939,6 +1106,8 @@ Texture* VulkanPresenter::BeginTexture(int width, int height)
         impl.Fail("the device or the surface is lost");
         return nullptr;
     }
+    if (const int64_t now = SteadyNs(); now - impl.decidedNs > kDecideEveryNs)
+        impl.Decide(now);
     // The size the surface has (macOS: the layer's drawable size), else the window's
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(impl.device->Physical(), impl.surface, &caps);
@@ -999,16 +1168,36 @@ void VulkanPresenter::PresentFrame(int64_t atNs, const TraceInfo& trace)
     uint32_t index = 0;
     VkResult r;
     VkSemaphore acquired = VK_NULL_HANDLE;
+    // Tries of kAcquireTryNs, the swapchain mutex let go between them (the present thread presents meanwhile); one
+    // look only while stalled (the last wait timed out: exposed, not shown)
+    const bool stalled = impl.acquireStalled.load(std::memory_order_relaxed);
+    const int64_t deadline = acquireStart + (stalled ? 0 : static_cast<int64_t>(kAcquireTimeoutNs));
+    while (true)
     {
-        std::lock_guard<std::mutex> lock(impl.swapchainMutex);
-        if (!impl.swapchain)
         {
-            impl.device->Flush();
-            return;
+            std::lock_guard<std::mutex> lock(impl.swapchainMutex);
+            if (!impl.swapchain)
+            {
+                impl.device->Flush();
+                return;
+            }
+            acquired = impl.acquired[impl.nextAcquire];
+            const int64_t left = deadline - SteadyNs();
+            r = vkAcquireNextImageKHR(impl.dev, impl.swapchain,
+                                      left > 0 ? std::min<uint64_t>(kAcquireTryNs, static_cast<uint64_t>(left)) : 0,
+                                      acquired, VK_NULL_HANDLE, &index);
         }
-        acquired = impl.acquired[impl.nextAcquire];
-        r = vkAcquireNextImageKHR(impl.dev, impl.swapchain, kAcquireTimeoutNs, acquired, VK_NULL_HANDLE, &index);
+        if ((r != VK_TIMEOUT && r != VK_NOT_READY) || SteadyNs() >= deadline)
+            break;
     }
+    if (r == VK_TIMEOUT || r == VK_NOT_READY)
+    {
+        if (!stalled)
+            impl.stalledWaits++;
+        impl.acquireStalled = true;
+    }
+    else
+        impl.acquireStalled = false;
     const int64_t acquireNs = SteadyNs() - acquireStart;
     if (r == VK_SUBOPTIMAL_KHR)
     {
@@ -1059,6 +1248,7 @@ void VulkanPresenter::PresentFrame(int64_t atNs, const TraceInfo& trace)
 void VulkanPresenter::SetPolicy(PresentPolicy policy)
 {
     _impl->policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
+    _impl->decidedNs = 0;  // _VARIABLE_REFRESH and the VRR decision follow at the next frame
 }
 
 bool VulkanPresenter::IsVisible() const
@@ -1170,8 +1360,17 @@ NativePresenter::Stats VulkanPresenter::GetStats() const
     s.minRefreshHz = vrr ? 0.0 : hz;
     s.visible = impl.exposed.load(std::memory_order_relaxed);
     s.vrr = vrr;
-    s.vrrSupport = vrr ? "yes" : "unknown";
-    s.vrrReason = vrr ? std::string("present mode ") + ModeName(impl.mode) : "";
+    if (impl.mode != VK_PRESENT_MODE_FIFO_KHR || impl.wayland)
+    {
+        s.vrrSupport = vrr ? "yes" : "unknown";
+        s.vrrReason = vrr ? std::string("present mode ") + ModeName(impl.mode) : "";
+        return s;
+    }
+    // FIFO on X11: the window system's decision, then what the screen times showed
+    std::lock_guard<std::mutex> lock(impl.statsMutex);
+    s.vrrSupport = impl.decisionSupport;
+    s.vrrReason = !impl.vrrNote.empty() ? impl.vrrNote : impl.decisionReason;
+    s.vrrPending = impl.vrrCapable.load(std::memory_order_relaxed) && impl.probe.Pending();
     return s;
 }
 
@@ -1198,6 +1397,12 @@ std::string VulkanPresenter::Describe() const
     std::string text = line;
     if (impl.timingOff.load(std::memory_order_relaxed))
         text += "; off now: it gave no screen times";
+    if (const uint64_t full = impl.queueFull.load(); full)
+        text += "; " + std::to_string(full) + " refused for a full timing queue";
+    if (const uint64_t waits = impl.stalledWaits.load(); waits)
+        text += "; " + std::to_string(waits) + " waits timed out (not shown)";
+    if (impl.vrrCapable.load(std::memory_order_relaxed))
+        text += impl.follows.load(std::memory_order_relaxed) ? "; VRR (the display follows)" : "; VRR capable, on a grid";
     if (impl.presentTiming)
     {
         // What the timing results did not give a screen time for, and how often the swapchain's domains changed
