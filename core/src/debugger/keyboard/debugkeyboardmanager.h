@@ -319,6 +319,10 @@ public:
     /// a name starts is that key ("ss++": symbol shift and "+"). The names are not checked here
     static std::vector<std::string> SplitKeyChord(const std::string& text);
 
+    /// The keys of a `key` argument, checked: one name or a chord (SplitKeyChord) into `keys`. False with `error`
+    /// (DescribeUnknownKey of the first unknown name, or of the text when it holds no name) and `keys` untouched
+    static bool ParseKeyChord(const std::string& text, std::vector<std::string>& keys, std::string& error);
+
     /// The refusal of a key name: what was refused and how keys are written - one name per key, '+' between keys
     /// held together; a name with a space or a comma in it gets the note that those do not separate keys. The
     /// caller adds where its plane lists the names

@@ -10,6 +10,26 @@
 
 /// region <Keyboard Injection Commands>
 
+/// The keys of a `key` word: one name, or names held together joined with '+' ("w+o"), into `chord`; `display` gets
+/// their display names joined the same way. Answers the refusal and returns false for an unknown name
+static bool KeyChordOf(const ClientSession& session, const std::string& text, std::vector<std::string>& chord,
+                       std::string& display)
+{
+    std::string error;
+    if (!DebugKeyboardManager::ParseKeyChord(text, chord, error))
+    {
+        session.SendResponse("Error: " + error + ". Use 'key list' to see available keys." + CLIProcessor::NEWLINE);
+        return false;
+    }
+    for (const std::string& name : chord)
+    {
+        const ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(name);
+        // A PC key name (f1, home, pc.up) reaches a PS/2 machine only; its display name is the name itself
+        display += (display.empty() ? "" : "+") + (key != ZXKEY_NONE ? DebugKeyboardManager::GetKeyDisplayName(key) : name);
+    }
+    return true;
+}
+
 void CLIProcessor::HandleKey(const ClientSession& session, const std::vector<std::string>& args)
 {
     // Get the selected emulator
@@ -113,9 +133,9 @@ void CLIProcessor::ShowKeyHelp(const ClientSession& session)
     ss << "Usage: key <subcommand> [args]" << NEWLINE;
     ss << NEWLINE;
     ss << "Subcommands:" << NEWLINE;
-    ss << "  press <key>           - Press and hold a key" << NEWLINE;
-    ss << "  release <key>         - Release a held key" << NEWLINE;
-    ss << "  tap <key> [frames]    - Tap a key (press, hold, release)" << NEWLINE;
+    ss << "  press <key>           - Press and hold a key, or keys together (w+o)" << NEWLINE;
+    ss << "  release <key>         - Release a held key or chord" << NEWLINE;
+    ss << "  tap <key> [frames]    - Tap a key or a chord (press, hold, release)" << NEWLINE;
     ss << "  combo <key1> <key2>.. - Tap multiple keys simultaneously" << NEWLINE;
     ss << "  macro <name>          - Execute predefined macro sequence" << NEWLINE;
     ss << "  type <text>           - Type text with auto modifier handling" << NEWLINE;
@@ -132,7 +152,8 @@ void CLIProcessor::ShowKeyHelp(const ClientSession& session)
     ss << "  key tap a              - Tap the 'A' key" << NEWLINE;
     ss << "  key tap enter 5        - Tap ENTER, hold for 5 frames" << NEWLINE;
     ss << "  key tap down 2 4 10    - Tap DOWN 4 times, 10 frames apart after each release" << NEWLINE;
-    ss << "  key combo caps 5       - Tap CAPS+5 (cursor left)" << NEWLINE;
+    ss << "  key tap caps+5         - Tap CAPS+5 (cursor left): keys joined with '+' go down together" << NEWLINE;
+    ss << "  key combo caps 5       - The same, the keys as separate words" << NEWLINE;
     ss << "  key combo symbol p     - Tap SYMBOL+P (quote character)" << NEWLINE;
     ss << "  key macro e_mode       - Enter Extended mode (E cursor)" << NEWLINE;
     ss << "  key macro format       - Type FORMAT keyword (E-mode + 0)" << NEWLINE;
@@ -150,16 +171,10 @@ void CLIProcessor::HandleKeyPress(const ClientSession& session, EmulatorContext*
         return;
     }
 
-    std::string keyName = args[1];
-    ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(keyName);
-    // A PC key name (f1, home, pc.up) reaches a PS/2 machine only; its display name is the name itself
-    const std::string displayName = key != ZXKEY_NONE ? DebugKeyboardManager::GetKeyDisplayName(key) : keyName;
-    
-    if (!DebugKeyboardManager::IsKnownKeyName(keyName))
-    {
-        session.SendResponse(std::string("Error: Unknown key '") + keyName + "'. Use 'key list' to see available keys." + NEWLINE);
+    std::vector<std::string> chord;
+    std::string displayName;
+    if (!KeyChordOf(session, args[1], chord, displayName))
         return;
-    }
 
     // Get or create keyboard manager
     DebugKeyboardManager* kbdMgr = context->pDebugManager->GetKeyboardManager();
@@ -169,7 +184,10 @@ void CLIProcessor::HandleKeyPress(const ClientSession& session, EmulatorContext*
         return;
     }
 
-    kbdMgr->PressKey(keyName);
+    if (chord.size() == 1)
+        kbdMgr->PressKey(chord.front());
+    else
+        kbdMgr->PressCombo(chord);  // "w+o": held together
     session.SendResponse(std::string("Pressed: ") + displayName + NEWLINE);
 }
 
@@ -182,16 +200,10 @@ void CLIProcessor::HandleKeyRelease(const ClientSession& session, EmulatorContex
         return;
     }
 
-    std::string keyName = args[1];
-    ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(keyName);
-    // A PC key name (f1, home, pc.up) reaches a PS/2 machine only; its display name is the name itself
-    const std::string displayName = key != ZXKEY_NONE ? DebugKeyboardManager::GetKeyDisplayName(key) : keyName;
-    
-    if (!DebugKeyboardManager::IsKnownKeyName(keyName))
-    {
-        session.SendResponse(std::string("Error: Unknown key '") + keyName + "'. Use 'key list' to see available keys." + NEWLINE);
+    std::vector<std::string> chord;
+    std::string displayName;
+    if (!KeyChordOf(session, args[1], chord, displayName))
         return;
-    }
 
     DebugKeyboardManager* kbdMgr = context->pDebugManager->GetKeyboardManager();
     if (!kbdMgr)
@@ -200,7 +212,10 @@ void CLIProcessor::HandleKeyRelease(const ClientSession& session, EmulatorContex
         return;
     }
 
-    kbdMgr->ReleaseKey(keyName);
+    if (chord.size() == 1)
+        kbdMgr->ReleaseKey(chord.front());
+    else
+        kbdMgr->ReleaseCombo(chord);
     session.SendResponse(std::string("Released: ") + displayName + NEWLINE);
 }
 
@@ -213,16 +228,10 @@ void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* c
         return;
     }
 
-    std::string keyName = args[1];
-    ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(keyName);
-    // A PC key name (f1, home, pc.up) reaches a PS/2 machine only; its display name is the name itself
-    const std::string displayName = key != ZXKEY_NONE ? DebugKeyboardManager::GetKeyDisplayName(key) : keyName;
-    
-    if (!DebugKeyboardManager::IsKnownKeyName(keyName))
-    {
-        session.SendResponse(std::string("Error: Unknown key '") + keyName + "'. Use 'key list' to see available keys." + NEWLINE);
+    std::vector<std::string> chord;
+    std::string displayName;
+    if (!KeyChordOf(session, args[1], chord, displayName))
         return;
-    }
 
     uint16_t holdFrames = 2; // Default
     if (args.size() >= 3)
@@ -267,7 +276,10 @@ void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* c
         (i == 3 ? count : gapFrames) = static_cast<uint16_t>(value);
     }
 
-    kbdMgr->TapKeyRepeated(keyName, holdFrames, count, gapFrames);
+    if (chord.size() == 1)
+        kbdMgr->TapKeyRepeated(chord.front(), holdFrames, count, gapFrames);
+    else
+        kbdMgr->TapComboRepeated(chord, holdFrames, count, gapFrames);  // down and up together, like `key combo`
     session.SendResponse(std::string("Tapping: ") + displayName + " for " + std::to_string(holdFrames) + " frames" +
                          (count > 1 ? ", " + std::to_string(count) + " times" : std::string()) +
                          (gapFrames ? ", " + std::to_string(gapFrames) + " frames apart" : std::string()) + NEWLINE);
@@ -290,7 +302,7 @@ void CLIProcessor::HandleKeyCombo(const ClientSession& session, EmulatorContext*
         ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(args[i]);
         if (key == ZXKEY_NONE)
         {
-            session.SendResponse(std::string("Error: Unknown key '") + args[i] + "'. Use 'key list' to see available keys." + NEWLINE);
+            session.SendResponse(std::string("Error: Unknown key '") + args[i] + "'. Use 'key list' to see available keys." + CLIProcessor::NEWLINE);
             return;
         }
         keys.push_back(key);

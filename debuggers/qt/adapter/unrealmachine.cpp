@@ -60,6 +60,7 @@
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gsanalysisreport.h"
 #include "emulator/sound/chips/gs/gscommandlog.h"
+#include "emulator/sound/chips/gs/gshostdriver.h"
 #include "emulator/sound/chips/gs/gsprofilereport.h"
 #include "emulator/sound/chips/gs/gszxdmatrace.h"
 #include "emulator/sound/soundmanager.h"
@@ -651,11 +652,14 @@ public:
             x.value = d.nrValue & d.nrMask;
             x.mask = d.nrMask;
             x.enabled = d.active;
+            x.hits = BreakpointManager::HitSpecName(d);
+            x.stops = d.tapSink != BRK_COUNT_TAP;
             r.push_back(x);
         }
         return r;
     }
-    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error) override
+    bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                              std::string &error) override
     {
         BreakpointManager * bm = breakpoints();
         GSCardEvent k = GSCardEvent::Count;
@@ -678,7 +682,13 @@ public:
         spec.address = static_cast<uint16_t>(k);
         spec.nrValue = (uint8_t)value;
         spec.nrMask = (uint8_t)mask;
+        if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error)) return false;
         return bm->AddBreakpoint(spec, error) != BRK_INVALID;
+    }
+    bool reset_event_hits(unsigned int id) override
+    {
+        BreakpointManager * bm = breakpoints();
+        return bm != nullptr && is_event(bm, id) && bm->ResetHitCount((uint16_t)id);
     }
     bool remove_event_breakpoint(unsigned int id) override
     {
@@ -1486,6 +1496,7 @@ private:
             GeneralSoundCard * gs = monitor_card(ctx, card);
             if (gs == nullptr) return;
             found = true;
+            out.ttd_units = std::max<unsigned int>(1, ctx->emulatorState.TtdTInFrame(1));
             report = card == "ms" ? DeviceState::GeneralSoundReport(*gs, nullptr) : DeviceState::Gs(ctx);
             const GSCommandLog * commands = gs->commandLog();
             if (commands == nullptr) return;
@@ -1561,6 +1572,9 @@ private:
                 row.name = str(r, "name");
                 row.text = str(r, "text");
                 row.anomaly = str(r, "anomaly");
+                row.bytes = num(r, "bytes", -1);
+                row.direction = str(r, "direction");
+                row.host_data = truth(r, "host_data");
                 out.rows.push_back(std::move(row));
             }
         if (const StateNode * list = unknown.find("unknown_commands")) {
@@ -1977,6 +1991,56 @@ private:
         if (const StateNode * error = r.body.find("error")) message = error->s;
         else if (const StateNode * text = r.body.find("text")) message = text->s;
         return {r.status == 200, StateNodeToJsonText(r.body), message};
+    }
+
+    // The send tab in process: the host driver's verbs under a lease of the context, never waiting (the emulation
+    // runs the steps; the tab reads how far a send got by its id)
+    static constexpr const char * kNoMsSend = "The ZX-MultiSound's card has no send: the send addresses the GS slot's card (gs send)";
+    GsJson gs_commands(const std::string &card) override
+    {
+        if (card == "ms") return {false, std::string(), kNoMsSend};
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        GSFirmwareObjectsQuery query;
+        query.object = "commands";
+        const GSFirmwareObjectsReply r = GSFirmwareObjectsRead(ctx, query);
+        if (r.status != 200) return {false, std::string(), r.text.empty() ? node_str(r.body, "error") : r.text};
+        return {true, StateNodeToJsonText(r.body), std::string()};
+    }
+    // A send's answer as the WebAPI gives it: the conversation plus its line
+    static GsJson send_answer(const GSSendReply &r)
+    {
+        if (r.status != 200) return {false, std::string(), r.text};
+        StateNode body = r.body;
+        body["text"] = r.text;
+        return {true, StateNodeToJsonText(body), r.text};
+    }
+    GsJson gs_send(const std::string &card, int command, std::optional<int> pre, const std::vector<int> &params,
+                   std::optional<int> replies) override
+    {
+        if (card == "ms") return {false, std::string(), kNoMsSend};
+        auto is_byte = [](int v) { return v >= 0 && v <= 0xFF; };
+        GSSendRequest request;
+        bool ok = is_byte(command) && (!pre || is_byte(*pre)) && (!replies || is_byte(*replies));
+        for (int p : params) ok = ok && is_byte(p);
+        if (!ok) return {false, std::string(), "send: the command, pre, params and replies are bytes 0..255"};
+        request.command = (uint8_t)command;
+        if (pre) request.pre = (uint8_t)*pre;
+        for (int p : params) request.params.push_back((uint8_t)p);
+        if (replies) request.replies = (uint8_t)*replies;
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        return send_answer(GSSend(ctx, request, 0));
+    }
+    GsJson gs_conversation(const std::string &card, uint32_t id) override
+    {
+        if (card == "ms") return {false, std::string(), kNoMsSend};
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        EmulatorContext * ctx = lease.get();
+        if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
+        return send_answer(GSConversationRead(ctx, id));
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads

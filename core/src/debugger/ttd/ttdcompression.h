@@ -28,6 +28,11 @@
 
 #include <zstd.h>
 
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64)
+#include <intrin.h>
+#include <nmmintrin.h>
+#endif
+
 namespace ttd::codec {
 
 // ---------------------------------------------------------------------------
@@ -179,8 +184,9 @@ inline std::vector<uint8_t> CompressDecompressRoundTrip(const uint8_t* src, size
 /// CRC32C polynomial. Standard for storage integrity (ext4, BTRFS, iSCSI,
 /// LevelDB, SQLite WAL). Distinct from zlib's CRC32 (IEEE polynomial).
 /// Hardware-accelerated:
-///   - x86 SSE4.2: CRC32 instruction (~5 GB/s)
-///   - ARM64v8: CRC32C instructions via __builtin_arm_crc32cb
+///   - x86-64: the SSE4.2 CRC32 instruction (~5 GB/s). Chosen at run time when the build's baseline lacks SSE4.2
+///     (gcc / clang / MinGW without -msse4.2, every MSVC build): the table path cost a recording frame 8x more
+///   - ARM64v8: CRC32C instructions
 /// Fallback: table-based software implementation (~500 MB/s).
 
 namespace detail {
@@ -205,6 +211,70 @@ inline const Crc32CTable& Crc32CTableInstance()
     return instance;
 }
 
+/// The table path: crc is the running (inverted) value
+inline uint32_t Crc32CTableRun(const uint8_t* src, size_t size, uint32_t crc)
+{
+    const auto& tbl = Crc32CTableInstance().t;
+    for (size_t i = 0; i < size; ++i) {
+        crc = tbl[(crc ^ src[i]) & 0xFF] ^ (crc >> 8);
+    }
+    return crc;
+}
+
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__)) && !defined(__SSE4_2__)
+#define UNREAL_CRC32C_X86_DISPATCH 1
+/// The SSE4.2 path in a build whose baseline lacks it: compiled for SSE4.2, called only where the CPU has it
+__attribute__((target("sse4.2"))) inline uint32_t Crc32CHardwareRun(const uint8_t* src, size_t size, uint32_t crc)
+{
+    size_t i = 0;
+    while (i + 8 <= size) {
+        uint64_t v;
+        std::memcpy(&v, src + i, 8);
+        crc = static_cast<uint32_t>(__builtin_ia32_crc32di(crc, v));
+        i += 8;
+    }
+    while (i < size) {
+        crc = __builtin_ia32_crc32qi(crc, src[i]);
+        ++i;
+    }
+    return crc;
+}
+inline bool Crc32CHardware()
+{
+    static const bool has = __builtin_cpu_supports("sse4.2");
+    return has;
+}
+#elif defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64)
+#define UNREAL_CRC32C_X86_DISPATCH 1
+/// MSVC never defines __SSE4_2__; its CRC32 intrinsics need no flag, the CPU is asked once
+inline uint32_t Crc32CHardwareRun(const uint8_t* src, size_t size, uint32_t crc)
+{
+    size_t i = 0;
+    uint64_t wide = crc;
+    while (i + 8 <= size) {
+        uint64_t v;
+        std::memcpy(&v, src + i, 8);
+        wide = _mm_crc32_u64(wide, v);
+        i += 8;
+    }
+    crc = static_cast<uint32_t>(wide);
+    while (i < size) {
+        crc = _mm_crc32_u8(crc, src[i]);
+        ++i;
+    }
+    return crc;
+}
+inline bool Crc32CHardware()
+{
+    static const bool has = [] {
+        int info[4] = {};
+        __cpuid(info, 1);
+        return (info[2] & (1 << 20)) != 0;  // ECX bit 20: SSE4.2
+    }();
+    return has;
+}
+#endif
+
 }  // namespace detail
 
 /// Compute CRC32C of a buffer.
@@ -219,9 +289,10 @@ inline uint32_t Crc32C(const uint8_t* src, size_t size, uint32_t seed = 0)
         return seed;
     }
 
-    // One path is compiled: x86 SSE4.2 builtins, AArch64 CRC instructions, or the table. All three give
-    // the same CRC32C. (A build with -msse4.2 / -march=x86-64-v2+ used to compile the x86 path AND the
-    // table fallback into one scope: "redeclaration of crc".)
+    // One path is compiled: x86 SSE4.2 builtins, AArch64 CRC instructions, or the table (on x86-64 without SSE4.2
+    // in the baseline: the SSE4.2 path chosen at run time, the table where the CPU lacks it). All give the same
+    // CRC32C. (A build with -msse4.2 / -march=x86-64-v2+ used to compile the x86 path AND the table fallback into
+    // one scope: "redeclaration of crc".)
 #if (defined(__SSE4_2__) || (defined(__x86_64__) && defined(__CRC32__))) && (defined(__GNUC__) || defined(__clang__))
     // Hardware-accelerated path (x86 SSE4.2 / x86_64)
     uint32_t crc = ~seed;
@@ -252,14 +323,13 @@ inline uint32_t Crc32C(const uint8_t* src, size_t size, uint32_t seed = 0)
         ++i;
     }
     return ~crc;
+#elif defined(UNREAL_CRC32C_X86_DISPATCH)
+    if (detail::Crc32CHardware())
+        return ~detail::Crc32CHardwareRun(src, size, ~seed);
+    return ~detail::Crc32CTableRun(src, size, ~seed);
 #else
     // Software fallback (portable, ~500 MB/s).
-    const auto& tbl = detail::Crc32CTableInstance().t;
-    uint32_t crc = ~seed;
-    for (size_t i = 0; i < size; ++i) {
-        crc = tbl[(crc ^ src[i]) & 0xFF] ^ (crc >> 8);
-    }
-    return ~crc;
+    return ~detail::Crc32CTableRun(src, size, ~seed);
 #endif
 }
 

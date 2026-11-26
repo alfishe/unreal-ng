@@ -29,27 +29,13 @@ extern void addCorsHeaders(HttpResponsePtr& resp);
 static bool rejectUnknownKey(const std::string& keyName, std::vector<std::string>& keys,
                              const std::function<void(const HttpResponsePtr&)>& callback)
 {
-    const std::vector<std::string> names = DebugKeyboardManager::SplitKeyChord(keyName);
-    std::string unknown;
-    bool refused = names.empty();
-    for (const std::string& name : names)
-    {
-        if (!refused && !DebugKeyboardManager::IsKnownKeyName(name))
-        {
-            refused = true;
-            unknown = name;
-        }
-    }
-    if (!refused)
-    {
-        keys.insert(keys.end(), names.begin(), names.end());
+    std::string refusal;
+    if (DebugKeyboardManager::ParseKeyChord(keyName, keys, refusal))
         return false;
-    }
 
     Json::Value error;
     error["error"] = "Bad Request";
-    error["message"] = DebugKeyboardManager::DescribeUnknownKey(names.empty() ? keyName : unknown) +
-                       ". Use GET /api/v1/emulator/{id}/keyboard/keys for valid names";
+    error["message"] = refusal + ". Use GET /api/v1/emulator/{id}/keyboard/keys for valid names";
 
     auto resp = HttpResponse::newHttpJsonResponse(error);
     resp->setStatusCode(HttpStatusCode::k400BadRequest);

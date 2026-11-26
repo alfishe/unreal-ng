@@ -32,6 +32,7 @@ class DevicesView;
 class AddressRouter;
 class TtdControls;
 class GsMonitorView;
+class GsSendView;
 class GsCardTab;
 class GsDispatchView;
 class GsUnknownView;
@@ -112,6 +113,10 @@ public:
     TtdControls * ttd() { return m_ttd; }
     //The GS monitor tab (gs-debugger P5.6), among the card tabs
     GsMonitorView * gs_monitor() const { return m_gs_monitor; }
+    //The GS send tab (gs-debugger P5.6), right after GS monitor
+    GsSendView * gs_send() const { return m_gs_send; }
+    //The GS send tab to the front with the picker focused (the monitor's Send..., Ctrl+Shift+S); false while hidden
+    bool show_gs_send();
     //The GS analysis tabs (gui-card-debugger A5.2a), after the card tabs
     GsDispatchView * gs_dispatch() const { return m_gs_dispatch; }
     GsUnknownView * gs_unknown() const { return m_gs_unknown; }
@@ -165,6 +170,8 @@ private:
     std::vector<NextTab> m_card_tabs;
     //The GS monitor (gui-card-debugger A5.3): after GS protocol, shown with the card tabs, following their card
     GsMonitorView * m_gs_monitor = nullptr;
+    //The send console (A5.3): right after GS monitor, shown with it
+    GsSendView * m_gs_send = nullptr;
     //The analysis tabs (A5.2a Dispatch, Unknown, Objects, Writers): after the card tabs (eCat has no View menu to
     //open them from), shown with the card tabs, following their card
     GsDispatchView * m_gs_dispatch = nullptr;

@@ -701,9 +701,12 @@ ms`: the ZX-MultiSound's General Sound; on the lightweight player the window var
 `source: mirror`): instances (a struct at
 a symbol or address, bound to a physical page, mapped or not) as rows of fields, variables (in memory, in a register
 while the card PC is in a range, in an instruction's operand) and the fixed-window variables of the built-in tables.
-It also gives the command `dispatch` (each command's handler as the card holds it, the ROM baseline, the patched and
-unknown entries; object `dispatch`) and, while the command log records, `unknown_commands` (the commands the host sent
-that no profile names, with counts). Without `--profile` it decodes by the profile of the code running on the card (an
+It also gives the command `dispatch` (each command's handler as the card holds it, the baseline as the firmware
+started, the patched and unknown entries; object `dispatch`) and, while the command log records, `unknown_commands`
+(the commands the host sent that no profile names, with counts). Object `commands`, given only when asked, is the
+profile's command set: each command's name, pre / post byte counts (post -1: variable), its parameters with name and
+kind (pre first), the reply bytes and their meaning, documented, note and transfer; the debuggers' GS send tab picks
+from it and sends with `gs send`. Without `--profile` it decodes by the profile of the code running on the card (an
 upload started by `#13`), else the ROM's. Command log entries carry `card_pc` (the handler from the table) and
 `card_label`.
 `gs firmware profiles` lists the profiles known: the built-in v1.04 / v1.05a / v1.05b and the JSON files of
@@ -5033,11 +5036,11 @@ Programmatic control of emulator input devices for automation and testing.
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `key press <key>` | `<key-name>` | Press a key on the ZX Spectrum keyboard. Key names: `a-z`, `0-9`, `space`, `enter`, `shift`, `symbol`, etc. | 🔮 Planned |
-| `key release <key>` | `<key-name>` | Release a previously pressed key. | 🔮 Planned |
-| `key tap <key> [duration]` | `<key-name> [ms]` | Press and release key. Default duration: 20ms (1 frame). | 🔮 Planned |
+| `key press <key>` | `<key-name>` | Press and hold a key. Key names: `a-z`, `0-9`, `space`, `enter`, `caps`, `symbol`, etc. (`key list`). Keys held together are joined with `+` (`w+o`) on every plane: CLI `key`, Lua / Python `key_press`, WebAPI and MCP `key`. | ✅ Implemented |
+| `key release <key>` | `<key-name>` | Release a held key or chord (`w+o`). | ✅ Implemented |
+| `key tap <key> [frames] [count] [gap_frames]` | `<key-name> [n] [n] [n]` | Press, hold for `frames` (default 2) and release a key or a chord (`caps+5`); `count` taps in a row, `gap_frames` after each release. | ✅ Implemented |
 | `type <text>` | `<string>` | Automatically type a string of text. Handles shift/symbol modifiers automatically. Rate-limited to realistic typing speed. | 🔮 Planned |
-| `key combo <keys>` | `<key1+key2+...>` | Press multiple keys simultaneously (e.g., `CAPS+SHIFT+A` for graphics). | 🔮 Planned |
+| `key combo <key1> <key2> ...` | `<key-name> ...` | Tap several keys together, the keys as separate words (the same as `key tap key1+key2`). | ✅ Implemented |
 | `joystick <action>` | `up\|down\|left\|right\|fire` | Simulate joystick input (Kempston, Sinclair, Cursor). | 🔮 Planned |
 
 **Mouse:** implemented — see [§11 Mouse Input Injection](#11-mouse-input-injection). (The old

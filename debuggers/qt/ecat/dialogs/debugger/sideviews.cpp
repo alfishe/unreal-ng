@@ -280,9 +280,14 @@ const EventKindInfo * event_kind_info(const std::string &kind)
 //The event's byte as the list writes it: nothing for any value
 QString event_value_text(const EventBreakpoint &b)
 {
-    if (b.mask == 0) return QString();
-    if (b.mask == 0xFF) return " = #" + fmt_num(b.value, 16, 2);
-    return " = #" + fmt_num(b.value, 16, 2) + " / #" + fmt_num(b.mask, 16, 2);
+    QString text;
+    if (b.mask == 0xFF) text = " = #" + fmt_num(b.value, 16, 2);
+    else if (b.mask != 0) text = " = #" + fmt_num(b.value, 16, 2) + " / #" + fmt_num(b.mask, 16, 2);
+    //A hit policy: "hit 5" (the 5th only), "hits >=5", "hits %5"
+    if (!b.hits.empty())
+        text += (b.hits.find_first_not_of("0123456789") == std::string::npos ? ", hit " : ", hits ") + QString::fromStdString(b.hits);
+    if (!b.stops) text += ", counts only";
+    return text;
 }
 
 //The rows' roles: an execution row keeps its address, an event row its id
@@ -353,7 +358,7 @@ void add_event_breakpoint_actions(QMenu * menu, Emulator * e, QWidget * from, co
                     }
                     std::string error;
                     bool done = false;
-                    e->invoke([&]() { done = c->add_event_breakpoint(kind, value & (mask ? mask : 0xFF), mask, error); });
+                    e->invoke([&]() { done = c->add_event_breakpoint(kind, value & (mask ? mask : 0xFF), mask, "", error); });
                     if (!done) {
                         QMessageBox::critical(from, QCoreApplication::translate("BreakpointsView", "Event breakpoint"),
                                               QString::fromStdString(error));

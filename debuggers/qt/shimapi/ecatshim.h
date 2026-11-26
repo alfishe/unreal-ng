@@ -147,6 +147,8 @@ struct EventBreakpoint {
     unsigned int value = 0;     // the event's byte, compared where mask has bits
     unsigned int mask = 0;      // 0: any value
     bool enabled = true;
+    std::string hits;           // the hit policy as the surfaces write it: "" every hit, "5" the 5th only, ">=5", "%5"
+    bool stops = true;          // false: it only counts its hits (never stops)
 };
 
 // Not in ecat: one window of a processor's address space and the page mapped there now
@@ -206,15 +208,20 @@ public:
     // core's names (none: it has no event breakpoints)
     virtual std::vector<std::string> event_kinds() { return {}; }
     virtual std::vector<EventBreakpoint> get_event_breakpoints() { return {}; }
-    // False with the reason in @p error (a kind of another CPU, a value out of range)
-    virtual bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, std::string &error)
+    // False with the reason in @p error (a kind of another CPU, a value out of range, a hit policy it does not take).
+    // @p hits: the hit policy ("" every hit, "5" only the 5th, ">=5", "%5"), counted from now
+    virtual bool add_event_breakpoint(const std::string &kind, unsigned int value, unsigned int mask, const std::string &hits,
+                                      std::string &error)
     {
         (void)kind;
         (void)value;
         (void)mask;
+        (void)hits;
         error = "this processor has no event breakpoints";
         return false;
     }
+    // The hit count of the event breakpoint back to 0: its hit policy counts from now
+    virtual bool reset_event_hits(unsigned int id) { (void)id; return false; }
     virtual bool remove_event_breakpoint(unsigned int id) { (void)id; return false; }
     virtual bool enable_event_breakpoint(unsigned int id, bool on) { (void)id; (void)on; return false; }
 
@@ -467,6 +474,9 @@ public:
         int command = -1;
         std::string kind, name, text;
         std::string anomaly;      // kind "anomaly": its name ("data_overwritten")
+        int64_t bytes = -1;       // kind "block": its byte count
+        std::string direction;    // kind "block" of a sector transfer: "read" (to the host) or "write"
+        bool host_data = false;   // kind "block": the profile's host data stream (no command opened it)
     };
     struct GsMonitor {
         bool ok = false;          // read (false: message why)
@@ -489,6 +499,9 @@ public:
         bool cursor = false;                 // read after a cursor: the next three apply
         uint64_t next_since = 0;             // the cursor of the next read
         uint64_t missed = 0;                 // records after the cursor gone from the history before they were read
+        // The time-travel history's units per main CPU T (a row's t x this is its tinframe); 1 when not known (the
+        // WebAPI does not say: a turbo-clocked model's seek over --connect lands at t, earlier in the frame)
+        unsigned int ttd_units = 1;
         bool restarted = false;              // the cursor was past the newest record: read from the oldest kept
         // The firmware's unknown commands (only with a firmware profile and the log on)
         bool unknown_present = false;
@@ -662,6 +675,40 @@ public:
         (void)action;
         (void)decay;
         return {false, std::string(), "This machine has no GS card analysis"};
+    }
+
+    // The GS send tab (not in ecat; gui-card-debugger A5.3 "Send console", gs-debugger P5.6). The GS slot's card only
+    // (the host driver addresses it: `gs send`); `card` "ms" is refused with the reason.
+    // The command set of the profile decoding the card now: the `gs-firmware` object `commands` ({profile, commands:
+    // [{command, name, pre, post (-1 variable), params [{name, kind}] (pre first), reply, reply_meaning, documented,
+    // note, transfer}]}). In process GSFirmwareObjectsRead under a lease of the context; over the WebAPI
+    // GET state/audio/gs/firmware?object=commands
+    virtual GsJson gs_commands(const std::string &card)
+    {
+        (void)card;
+        return {false, std::string(), "This machine has no GS send"};
+    }
+    // A send queued, never waited for: the conversation (GSConversation::ToState: id, state queued / running / done /
+    // failed, command, name, pre, params, replies, reply_meaning, error) plus `text`, its line ("#23 Get number of RAM
+    // pages -> #03 (pages)"); not ok: `message` why (a bad request, no card, the queue full). In process GSSend with
+    // waitMs 0; over the WebAPI POST control/audio/gs {action: send, value, pre, params, replies, wait_ms: 0}
+    virtual GsJson gs_send(const std::string &card, int command, std::optional<int> pre, const std::vector<int> &params,
+                           std::optional<int> replies)
+    {
+        (void)card;
+        (void)command;
+        (void)pre;
+        (void)params;
+        (void)replies;
+        return {false, std::string(), "This machine has no GS send"};
+    }
+    // A send by its id, as `gs_send` answers it (how far it got). GSConversationRead; over the WebAPI POST
+    // control/audio/gs {action: conversation, send_id}
+    virtual GsJson gs_conversation(const std::string &card, uint32_t id)
+    {
+        (void)card;
+        (void)id;
+        return {false, std::string(), "This machine has no GS send"};
     }
 
     virtual bool ttd_supported() const { return false; }

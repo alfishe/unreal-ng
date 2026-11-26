@@ -24,7 +24,7 @@ the core's classes of the same names would clash.
 
 ## Card tabs
 
-With a sound card fitted the side tabs add GS log, GS protocol, GS monitor, GS firmware, GS hardware and GS stats (the catalog
+With a sound card fitted the side tabs add GS log, GS protocol, GS monitor, GS send, GS firmware, GS hardware and GS stats (the catalog
 reports `gs-commands`, `gs`, `gs-firmware`, `gs-stats`; a line over each names the card read), and after the card's
 own tabs the analysis tabs GS dispatch, GS unknown, GS objects, GS writers, GS profiler, GS events, GS coverage and
 GS heat map (below). On a NeoGS ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
@@ -59,6 +59,37 @@ cleared or reconfigured history (`restarted`) starts the table afresh. With the 
 (plain GETs of `state/audio/gs` or `state/audio/multisound`, `history/<device>?last=1600&since=S`,
 `state/audio/gs/firmware?object=unknown_commands`); nothing pauses. Turn on is `Emulator::gs_command_log` (over the
 WebAPI `POST history/<device>/config {mode}`).
+
+A log row's context menu (gui-card-debugger A5.4): **Break when the game sends #NN** (an event breakpoint
+`host_command` = #NN on the main CPU), **Break when the firmware takes #NN** (`card_command` on the card's CPU, `gs`
+or `ms`; disabled on the lightweight player, which runs no firmware CPU), **Break on data byte N of this upload...**
+(only on an upload's block row: `host_data` on the main CPU with the hit policy `N`, the Nth data byte the host writes
+from the moment it is set, so set it before the upload starts), **Go to this moment** (a TTD seek to the row's frame
+and T; enabled only when the recording holds that moment, otherwise the tooltip says why) and **Copy** (the selected
+rows, tab-separated; Ctrl+C on the log too). The command breaks are on the rows of a command (the command, its
+parameters, replies, the card taking it, its block). The breakpoints are the CPUs' event breakpoints the Breakpoints
+tab lists and edits (in process through the core's manager, over the WebAPI `POST breakpoints` with `hits`); an equal
+one already there is taken, enabled again and its hit count reset, instead of a second. The line over the log says
+what was done. Over the WebAPI the history's time units are not known: on a turbo-clocked model (Scorpion, ATM,
+TS-Conf) the seek lands earlier in the frame than the row.
+
+**The GS send tab** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A5.3 "Send console", C11; gs-debugger P5.6): a card tab right after GS monitor, not a dialog; the monitor's
+**Send...** and **Ctrl+Shift+S** bring it to the front. The command is picked from the command set of the profile
+decoding the card (`#2A Set module master volume`), or typed as any byte (#NN, $NN, 0xNN, decimal); a field per
+parameter named by the profile (`volume (before)` for a byte written before the command), its hint from the kind;
+**More bytes** for a variable count or a byte the profile does not name; **Replies** (empty: the profile's count);
+a note with what the replies mean, a transfer the command starts, `(not in the programming guide)`. **Send** queues
+the bytes through the card's mailbox as the host would (`gs send`: the command log marks them automation, TTD records
+them) and never waits: the table below (#, State, Command → replies; newest first, the last 16, failed rows tinted)
+follows each send by its id to `done` with its replies decoded (`#23 Get number of RAM pages -> #03 (pages)`). A
+field that is not a byte is refused with its name; on a paused machine a send waits in the queue until it runs (the
+tab says so). The MultiSound's card has no send (the planes address the GS slot's card): the tab says so. Shim
+`Emulator::gs_commands`, `gs_send`, `gs_conversation`: in process `GSFirmwareObjectsRead` (object `commands`),
+`GSSend` with no wait and `GSConversationRead` under a lease of the context; over the WebAPI `GET
+state/audio/gs/firmware?object=commands` and `POST control/audio/gs {action: send, value, pre, params, replies,
+wait_ms: 0}` / `{action: conversation, send_id}`. Read at every stop and, while in sight and the machine runs, with
+the other card tabs (the command set is reloaded only when its profile changes).
 
 **The analysis tabs** ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
 A5.2a; gs-debugger requirements M3, M4, M5, AU6, X7): GS dispatch, GS unknown, GS objects and GS writers, after the

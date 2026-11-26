@@ -8,6 +8,7 @@
 
 #include "3rdparty/blip_buf/blip_buf.h"
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/targets/gscardtarget.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
@@ -883,6 +884,8 @@ uint8_t SoundChip_GSLightweight::portDeviceInMethod(uint16_t port)
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, value, false);
             pumpReply();
+            // The host-side protocol events, as the full card reports them (no card CPU here: the main CPU's only)
+            GSReportHostEvent(_context, GSCardEvent::HostReplyRead, value);
             return value;
         }
         case 0xBB: // GSCOM read: status, bits 1-6 read as 1 (pull-ups)
@@ -923,12 +926,14 @@ void SoundChip_GSLightweight::portDeviceOutMethod(uint16_t port, uint8_t value)
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
             logHostData(value);
             acceptHostData(value);
+            GSReportHostEvent(_context, GSCardEvent::HostDataWrite, value);
             return;
         case 0xBB: // GSCOM write: the interpreter reacts at once (no poll delay)
             flush();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
             logHostCommand(value);
             acceptHostCommand(value);
+            GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value, -1, this);
             return;
         default:
             return;

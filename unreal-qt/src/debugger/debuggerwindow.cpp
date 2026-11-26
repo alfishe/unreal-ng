@@ -4,6 +4,7 @@
 #include "debugger/debuggertimetravel.h"
 #include "emulator/remotecontrolguard.h"
 
+#include <QShortcut>
 #include <QBoxLayout>
 #include <QColor>
 #include <QCoreApplication>
@@ -45,6 +46,7 @@
 #include "debugger/gsanalysispane.h"
 #include "debugger/gscpuanalysispane.h"
 #include "debugger/gsmonitorpane.h"
+#include "debugger/gssendpane.h"
 #include "debugger/nextpanes.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/reportpane.h"
@@ -126,6 +128,8 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
             connectZxDmaTrace(trace);
         if (GsMonitorPane* monitor = pane.monitor)
             connectGsMonitor(monitor);
+        if (GsSendPane* sendPane = pane.send)
+            connectGsSend(sendPane);
         if (GsAnalysisPane* analysisPane = pane.analysis)
             connectGsAnalysis(analysisPane);
         if (GsCpuAnalysisPane* cpuPane = pane.cpuAnalysis)
@@ -133,6 +137,9 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         _cardPanes.push_back(pane);
     }
     historyLayout->addWidget(_sideTabs);
+    // Ctrl+Shift+S (gui-card-debugger.md A5.3): the GS send tab in front when a card shows it
+    auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+S")), this);
+    connect(sendShortcut, &QShortcut::activated, this, &DebuggerWindow::showGsSend);
     ui->mainSplitter->addWidget(_sideGroup);
     connect(_sideTabs, &QTabWidget::currentChanged, this, [this]() {
         updateSidePane();
@@ -2051,6 +2058,7 @@ void DebuggerWindow::updateSidePane()
         _pcHistoryPane->setRecording(history);
     if (shown && (qobject_cast<ReportPane*>(_sideTabs->currentWidget()) || qobject_cast<BoardPane*>(_sideTabs->currentWidget()) ||
                   qobject_cast<GsLwPane*>(_sideTabs->currentWidget()) || qobject_cast<GsMonitorPane*>(_sideTabs->currentWidget()) ||
+                  qobject_cast<GsSendPane*>(_sideTabs->currentWidget()) ||
                   qobject_cast<GsAnalysisPane*>(_sideTabs->currentWidget()) ||
                   qobject_cast<GsCpuAnalysisPane*>(_sideTabs->currentWidget())))
         _nextPanesTimer->start();
@@ -2066,9 +2074,10 @@ void DebuggerWindow::refreshNextPanes(bool live)
     BoardPane* board = qobject_cast<BoardPane*>(_sideTabs->currentWidget());
     GsLwPane* inspector = qobject_cast<GsLwPane*>(_sideTabs->currentWidget());
     GsMonitorPane* monitor = qobject_cast<GsMonitorPane*>(_sideTabs->currentWidget());
+    GsSendPane* sendPane = qobject_cast<GsSendPane*>(_sideTabs->currentWidget());
     GsAnalysisPane* analysisPane = qobject_cast<GsAnalysisPane*>(_sideTabs->currentWidget());
     GsCpuAnalysisPane* cpuPane = qobject_cast<GsCpuAnalysisPane*>(_sideTabs->currentWidget());
-    if ((!pane && !board && !inspector && !monitor && !analysisPane && !cpuPane) ||
+    if ((!pane && !board && !inspector && !monitor && !sendPane && !analysisPane && !cpuPane) ||
         !_sideTabs->isTabVisible(_sideTabs->currentIndex()))
         return;
     if (!live && _emulator->IsDirectStepping())
@@ -2082,6 +2091,8 @@ void DebuggerWindow::refreshNextPanes(bool live)
         board->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
     else if (monitor)
         monitor->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
+    else if (sendPane)
+        sendPane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
     else if (analysisPane)
         analysisPane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
     else if (cpuPane)
@@ -2108,6 +2119,7 @@ void DebuggerWindow::connectGsMonitor(GsMonitorPane* monitor)
     // Pause / Continue: the window's own actions (the toolbar's)
     connect(monitor, &GsMonitorPane::pauseRequested, this, &DebuggerWindow::pauseExecution);
     connect(monitor, &GsMonitorPane::continueRequested, this, &DebuggerWindow::continueExecution);
+    connect(monitor, &GsMonitorPane::sendConsoleRequested, this, &DebuggerWindow::showGsSend);
     // Turn on: the card's command log to ring through the history verb every plane drives, then shown at once
     connect(monitor, &GsMonitorPane::turnOnRequested, this, [this, monitor]() {
         if (!_emulator)
@@ -2122,6 +2134,51 @@ void DebuggerWindow::connectGsMonitor(GsMonitorPane* monitor)
         }
         refreshNextPanes(!_emulator->IsPaused());
     });
+    // A log row's action (A5.4): the breakpoint or the seek under the lease, then every view read again (the
+    // breakpoint marks and lists, the machine at the sought moment)
+    connect(monitor, &GsMonitorPane::rowActionRequested, this, [this, monitor](int action, int row, quint32 byte) {
+        if (!_emulator || RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            monitor->runRowAction(lease.get(), static_cast<GsMonitorPane::RowAction>(action), row, byte);
+        }
+        updateState();
+        refreshNextPanes(!_emulator->IsPaused());
+    });
+}
+
+void DebuggerWindow::connectGsSend(GsSendPane* pane)
+{
+    // Send: the host driver's verb (gs send) under the lease; it never waits, the live refresh follows the send
+    connect(pane, &GsSendPane::sendRequested, this, [this, pane]() {
+        if (!_emulator)
+            return;
+        {
+            Emulator::ContextLease lease = _emulator->LeaseContext();
+            if (!lease)
+                return;
+            pane->send(lease.get());
+        }
+        refreshNextPanes(!_emulator->IsPaused());
+    });
+}
+
+void DebuggerWindow::showGsSend()
+{
+    for (const CardPanes::Pane& pane : _cardPanes)
+        if (pane.send)
+        {
+            const int index = _sideTabs->indexOf(pane.send);
+            if (index >= 0 && _sideTabs->isTabVisible(index))
+            {
+                _sideTabs->setCurrentIndex(index);
+                pane.send->picker()->setFocus();
+            }
+            return;
+        }
 }
 
 void DebuggerWindow::connectGsAnalysis(GsAnalysisPane* pane)

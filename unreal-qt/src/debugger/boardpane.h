@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "debugger/boards/debugboards.h"
+#include "emulator/emulatorcontext.h"  // complete for the refreshed() signal: moc checks it (gcc 16 -Wsfinae-incomplete)
 #include "emulator/state/statenode.h"
 
-class EmulatorContext;
 class QBoxLayout;
 class QGroupBox;
 class QLabel;

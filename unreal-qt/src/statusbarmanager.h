@@ -91,6 +91,11 @@ private slots:
     void applyFddState(FDDStateInfo state);  // GUI thread: update cache, LED and tooltip
     void applyDiskMediaChange(uint8_t driveId, bool inserted);
     void updateDiskToolTip();
+
+private:
+    // Called directly, never through the meta-object: moc would check EmulatorContext for completeness while it is
+    // only forward-declared, and gcc 16 warns (-Wsfinae-incomplete) once a later header in the same TU defines it
+
     /// The IDE LED and tooltip (board, units, media) on every tick
     void updateIde(EmulatorContext* context);
     void updateFpsToolTip(std::shared_ptr<Emulator> emulator);

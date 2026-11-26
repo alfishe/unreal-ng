@@ -231,6 +231,82 @@ std::string PatchedBy(uint8_t code)
 
 /// The command dispatch as the card holds it now (M4): every entry's handler, the baseline it has in the ROM, the
 /// entries that differ ("patched") and the ones that go to the "unknown command" stub
+const char* ParamKindName(GSParamKind kind)
+{
+    switch (kind)
+    {
+        case GSParamKind::Byte: return "byte";
+        case GSParamKind::Channel: return "channel";
+        case GSParamKind::ChannelMask: return "channel_mask";
+        case GSParamKind::Volume: return "volume";
+        case GSParamKind::Note: return "note";
+        case GSParamKind::Handle: return "handle";
+        case GSParamKind::Port: return "port";
+        case GSParamKind::Low: return "low";
+        case GSParamKind::Middle: return "middle";
+        case GSParamKind::High: return "high";
+        case GSParamKind::Mode: return "mode";
+    }
+    return "byte";
+}
+
+const char* TransferKindName(GSTransferKind kind)
+{
+    switch (kind)
+    {
+        case GSTransferKind::None: return "";
+        case GSTransferKind::ModuleUpload: return "module_upload";
+        case GSTransferKind::SampleUpload: return "sample_upload";
+        case GSTransferKind::BlockUpload: return "block_upload";
+        case GSTransferKind::BlockDownload: return "block_download";
+        case GSTransferKind::Stream: return "stream";
+        case GSTransferKind::FixedBlock: return "fixed_block";
+        case GSTransferKind::PagedBlock: return "paged_block";
+        case GSTransferKind::Sectors: return "sectors";
+    }
+    return "";
+}
+
+/// The profile's named commands: {command, name, pre, post (-1: variable), params[{name, kind}] (pre first), reply,
+/// reply_meaning, documented, note, transfer}
+StateNode ReadCommands(const GSFirmwareProfile& profile)
+{
+    StateNode list = StateNode::Array();
+    if (!profile.commands)
+        return list;
+    for (size_t code = 0; code < profile.commands->size(); code++)
+    {
+        const GSCommandInfo& info = (*profile.commands)[code];
+        if (!info.name)
+            continue;
+        StateNode node = StateNode::Object();
+        node["command"] = static_cast<int64_t>(code);
+        node["name"] = std::string(info.name);
+        node["pre"] = int(info.pre);
+        node["post"] = info.post == GSCommandInfo::kVariablePost ? -1 : int(info.post);
+        StateNode params = StateNode::Array();
+        const size_t count = info.pre + (info.post == GSCommandInfo::kVariablePost ? 0 : info.post);
+        for (size_t i = 0; i < count && i < GSCommandInfo::kMaxParams; i++)
+        {
+            StateNode param = StateNode::Object();
+            param["name"] = std::string(info.params[i].name ? info.params[i].name : "");
+            param["kind"] = std::string(ParamKindName(info.params[i].kind));
+            params.push(param);
+        }
+        node["params"] = params;
+        node["reply"] = int(info.reply);
+        if (info.replyMeaning)
+            node["reply_meaning"] = std::string(info.replyMeaning);
+        node["documented"] = info.documented;
+        if (info.note)
+            node["note"] = std::string(info.note);
+        if (info.transfer != GSTransferKind::None)
+            node["transfer"] = std::string(TransferKindName(info.transfer));
+        list.push(node);
+    }
+    return list;
+}
+
 StateNode ReadDispatch(const GSFirmwareProfile& profile, const CardBytes& bytes)
 {
     StateNode node = StateNode::Object();
@@ -410,6 +486,10 @@ StateNode GSReadFirmwareObjects(const GeneralSoundCard& card, const GSFirmwarePr
 
     if ((object.empty() || object == "dispatch") && (profile.dispatch.kind != GSDispatchKind::None || profile.comtab))
         body["dispatch"] = ReadDispatch(profile, bytes);
+    // The profile's command set, asked for by name only (`object=commands`): what a host may send and how (the
+    // debuggers' Send tab picks from it; GSHostDriver sends it)
+    if (object == "commands")
+        body["commands"] = ReadCommands(profile);
     // The commands the host sent that the decoding profile does not name (AU6), from the command log while it records
     if (const GSCommandLog* log = card.commandLog(); log && (object.empty() || object == "unknown_commands"))
     {
@@ -462,7 +542,7 @@ GSFirmwareObjectsReply GSFirmwareObjectsRead(EmulatorContext* context, const GSF
     reply.body["cpu"] = std::string(query.cpu.empty() ? "gs" : query.cpu);
     if (!query.object.empty() && reply.body.find("instances")->items.empty() &&
         reply.body.find("variables")->items.empty() && reply.body.find("window_variables")->items.empty() &&
-        !reply.body.find("dispatch") && !reply.body.find("unknown_commands"))
+        !reply.body.find("dispatch") && !reply.body.find("unknown_commands") && !reply.body.find("commands"))
     {
         reply.status = 404;
         reply.body = Error("Profile " + std::string(profile->id) + " has no object '" + query.object + "'");
@@ -586,8 +666,30 @@ std::string GSFirmwareObjectsText(const StateNode& body)
         for (const StateNode& e : dispatch->find("entries")->items)
             if (e.find("patched"))
                 text += "  " + Hex(static_cast<uint32_t>(e.find("command")->i), 2) + " -> " + e.find("handler")->s +
-                        " (ROM " + e.find("baseline")->s + ")" +
+                        " (baseline " + e.find("baseline")->s + ")" +
                         (e.find("patched_by") ? ", by " + e.find("patched_by")->s : std::string()) + "\n";
+    }
+    if (const StateNode* commands = body.find("commands"))
+    {
+        text += "commands: " + std::to_string(commands->items.size()) + "\n";
+        for (const StateNode& c : commands->items)
+        {
+            text += "  " + Hex(static_cast<uint32_t>(c.find("command")->i), 2) + " " + c.find("name")->s;
+            const StateNode* params = c.find("params");
+            if (params && !params->items.empty())
+            {
+                text += " (";
+                for (size_t i = 0; i < params->items.size(); i++)
+                    text += (i ? ", " : "") + params->items[i].find("name")->s;
+                text += ")";
+            }
+            if (c.find("post")->i < 0)
+                text += " +variable";
+            if (c.find("reply")->i > 0)
+                text += " -> " + std::to_string(c.find("reply")->i) + " byte(s)" +
+                        (c.find("reply_meaning") ? ": " + c.find("reply_meaning")->s : std::string());
+            text += "\n";
+        }
     }
     if (const StateNode* unknown = body.find("unknown_commands"); unknown && !unknown->items.empty())
     {
