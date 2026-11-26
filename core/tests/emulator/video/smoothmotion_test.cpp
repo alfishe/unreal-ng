@@ -381,7 +381,7 @@ TEST(SmoothMotion_Test, SameBitsOnEveryCompiler)
     const uint64_t hashes[6] = {Hash(half.pixels),   Hash(third.pixels),      Hash(carry.pixels),
                                 Hash(blend.pixels),  Hash(layersHalf.pixels), Hash(layersThird.pixels)};
     const uint64_t expected[6] = {4633665985508127287ull, 14177168654969719964ull, 6201765027649431927ull,
-                                  1468177541638179538ull, 1473332912888063342ull,  18128183336690002154ull};
+                                  1468177541638179538ull, 11417960969174806894ull, 5351727775212997014ull};
     for (int i = 0; i < 6; i++)
         EXPECT_EQ(hashes[i], expected[i]) << "output " << i << ": 0x" << std::hex << hashes[i];
 }
@@ -751,7 +751,7 @@ Image DotsImage(int width, int height, int k, bool layered)
 TEST(SmoothMotion_Test, LayersKeepTheMostMatchedVectorsPastTheCap)
 {
     // A block a vector of its own: more vectors than kMaxVectors. The common ones stay, then those the most blocks
-    // matched; every block's allowed ones among them, kMaxAllowed at most
+    // matched; every block's allowed ones among them, kMaxAllowed at most. Only confirmed vectors count
     const Image p = DotsImage(128, 96, 0, false), a = DotsImage(128, 96, 1, false), b = DotsImage(128, 96, 2, false);
     MotionField prev, next;
     prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
@@ -772,10 +772,10 @@ TEST(SmoothMotion_Test, LayersKeepTheMostMatchedVectorsPastTheCap)
     ASSERT_GT(counts.size(), LayerFlow::kMaxVectors) << "the scene has more vectors than the cap";
 
     LayerFlow::Layers layers;
-    LayerFlow::Prepare(prev, next, a.width, a.height, layers);
+    LayerFlow::Prepare(prev, next, p.View(), a.View(), b.View(), layers);
     ASSERT_EQ(layers.all.size(), LayerFlow::kMaxVectors);
     EXPECT_EQ(std::vector<MotionField::Vector>(layers.all.begin(), layers.all.begin() + layers.common),
-              LayerFlow::CommonVectors(prev, next));
+              LayerFlow::CommonVectors(prev, next, p.View(), a.View(), b.View()));
     const auto countOf = [&](MotionField::Vector v) {
         auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == v; });
         return it == counts.end() ? 0 : it->second;
@@ -783,9 +783,19 @@ TEST(SmoothMotion_Test, LayersKeepTheMostMatchedVectorsPastTheCap)
     int leastKept = 1 << 30;
     for (size_t c = layers.common; c < layers.all.size(); c++)
         leastKept = std::min(leastKept, countOf(layers.all[c]));
+    // the confirmed ones compete: every vector `next` matches (a detailed block of dots), none `prev` alone does
+    const auto inNext = [&](MotionField::Vector v) {
+        for (int j = 0; j < next.BlocksHigh(); j++)
+            for (int i = 0; i < next.BlocksWide(); i++)
+                if (next.At(i, j).matched && next.At(i, j).v == v)
+                    return true;
+        return false;
+    };
     for (const auto& [v, count] : counts)
-        if (std::find(layers.all.begin(), layers.all.end(), v) == layers.all.end())
+        if (std::find(layers.all.begin(), layers.all.end(), v) == layers.all.end() && inNext(v))
             EXPECT_LE(count, leastKept) << "a dropped vector matched more blocks than a kept one";
+    for (const MotionField::Vector& v : layers.all)
+        EXPECT_TRUE(v == MotionField::Vector{} || inNext(v)) << "a vector only the pair before matched";
     for (const auto& allowed : layers.allowed)
     {
         EXPECT_LE(allowed.size(), LayerFlow::kMaxAllowed);

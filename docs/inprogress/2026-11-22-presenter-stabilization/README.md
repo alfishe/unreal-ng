@@ -220,15 +220,56 @@ output pixel that is neither frame's nor their mix at the weight drawn.
 |-------|------------------------------|--------|
 | Scroll of 12 / 16 / 24 px a frame under a still status bar | nothing invented, the bar as it is | kept |
 | ZX fade (7 -> 6 with bright going, 3 -> 2) | the frames or their blend | kept |
-| Border stripes moving 3 lines a frame around still paper | the paper as it is | Blend, Lite kept; **LayerFlow moves 3-9 of 6144 paper pixels** at the paper's edge column (x = 16) |
-| Loader border (random red / cyan lines each frame) | the paper as it is; the border the frames or their blend | paper kept; **border invented: LayerFlow 1272-1384 of 6144, LiteFlow 160** (noise matched to vectors by chance) |
+| Border stripes moving 3 lines a frame around still paper | the paper as it is; nothing invented in the border | kept, one pair and a 12-frame stream (was: LayerFlow moved 3-9 paper pixels at x = 16, and in a stream up to 11 at the paper's top rows and 94 border pixels at rows 15 / 80; LiteFlow up to 80 border pixels; fixed 2026-11-26) |
+| Loader border (random red / cyan lines each frame) | the paper as it is; the border the frames or their blend | kept, one pair and a 12-frame stream (was: LayerFlow invented 1272-1384 of 6144 border pixels, up to 590 a pair in a stream; LiteFlow 160, up to 128 in a stream; fixed 2026-11-26, confirmed vectors) |
 | Static multicolour (8x1 attributes) | passed through | kept |
 | Multicolour with a changing counter | pixels outside it as they are | kept |
 | Multicolour colour cycling | the frames or their blend | kept |
 | Interlace (two pictures' lines swapped; one picture a line lower) | the frame due | kept |
 | A held 25 Hz flicker, 50 Hz frames on 60 Hz | the flicker the frame due at every refresh | kept: 5 repeats in 30 refreshes (a 10 Hz beat, as without smooth motion), no blend of the two fields |
 
-The two defects are `DISABLED_` tests naming them; the layers' rules stay frozen until the owner decides on them.
+The two defects were `DISABLED_` tests; fixed on the owner's go (2026-11-26), the tests run, with a stream variant
+(every pair of 12 frames in order, as the window draws them) and the border asserted too:
+- stripes fit every sideways shift, and the cover rule took one, (4, 3), whose path crosses the paper's edge column.
+  The cover rule now leaves a sample to the slowest vector fitting it (`slowest`), asks the sample to arrive where a
+  had another color (`landing`: a still pixel of the same color by chance is not the layer's), and leaves the pixel
+  when the layer's pixel a would show there is seen in k - 1 and b at its places (`behind`: the layer is opaque
+  there, the still pixel in front of it);
+- `first` (carryFirst) carried the nearer frame's sample from the paper into the border row next to it (82 pixels
+  at w = 171): it takes the other frame's sample where the nearer one's stood still over the three frames in a
+  block decided still and the other's did not (a still layer the moving one goes under). LiteFlow's carried step
+  the same;
+- a line of one color across a block holds 8 values, not 64, and the field matches within `kAccept`: random lines
+  match some vector by chance in every pair. A moving vector is now confirmed by a block matched to it that has
+  detail in both directions (`kDetail`), or whose pixels it carries exactly to b and that came exactly from k - 1
+  (by the vector, or in place: a motion from rest). Never exact over three frames by chance. LayerFlow
+  `KeepConfirmed` in `Prepare` (CPU for both paths), LiteFlow `Confirm` (the frame before a by its planes still
+  kept; none: detail alone). An unconfirmed vector moves only detailed blocks in LiteFlow, none in LayerFlow.
+
+All four rules on the CPU and in the GPU's picture pass, the same bits (`BorderEffectsOnTheGpuAreTheCpus`).
+`SameBitsOnEveryCompiler`'s two LayerFlow hashes changed: w = 128 by `behind` (116 -> 117 pixels unlike the sprite
+moved), w = 85 by `behind`, `landing` and `first` (131 -> 128).
+
+POC 055 `score.sh` (12 scenes, the final code):
+
+| Scene | LayerFlow before | after | LiteFlow before | after |
+|-------|-----------------:|------:|----------------:|------:|
+| strips | 1.07 | 1.03 | 2.23 | 2.17 |
+| vertical | 2.04 | 1.94 | 3.06 | 2.89 |
+| diagonal | 0.48 | 0.27 | 0.58 | 0.57 |
+| overlay | 1.04 | 1.04 | 1.04 | 1.00 |
+| textlines | 0.58 | 0.48 | 0.92 | 0.86 |
+| parallax | 4.08 | 4.01 | 5.42 | 5.38 |
+| sprites | 7.36 | 7.64 | 8.03 | 8.02 |
+| cadence | 3.33 | 3.16 | 6.58 | 6.54 |
+| dotmatrix | 4.77 | 4.57 | 7.32 | 7.20 |
+| thin | 1.43 | 1.27 | 1.75 | 1.38 |
+| flux | 3.02 | 2.73 | 4.13 | 4.07 |
+| animated | 14.58 | 14.79 | 17.60 | 17.57 |
+| sum | 43.78 | 42.93 | 58.66 | 57.65 |
+
+The cost, one thread, the best of 3 interleaved rounds on sprites / parallax / cadence: LayerFlow 3.99 / 7.19 / 5.18
+-> 3.79 / 5.61 / 4.10 ms (fewer vectors to try), LiteFlow 0.416 / 0.575 / 0.425 -> 0.439 / 0.609 / 0.450 ms (+6 %).
 
 ### 1.7 What an interpolated picture costs (2026-11-22)
 

@@ -15,7 +15,11 @@ namespace smoothmotion
 /// best explains its neighbourhood over the frames k and k + 1 (k - 1 for the still and steady checks).
 ///
 /// A layer is a vector: zero (a static layer) or one of the block fields' vectors k -> k + 1 and k - 1 -> k (the
-/// common vectors of both fields everywhere, the 3 x 3 blocks' own nearby). At a pixel x at the weight w, a vector v
+/// common vectors of both fields everywhere, the 3 x 3 blocks' own nearby). A moving vector is a layer only when
+/// confirmed: a block of the field k -> k + 1 matching it holds too much detail to match by chance, or the vector
+/// carries its pixels exactly to k + 1 and they came exactly from k - 1, by the same vector or in place (the field
+/// matches within a tolerance, and lines new every frame match some vector by chance in every pair, never exactly
+/// over three frames). At a pixel x at the weight w, a vector v
 /// samples a(x - wv) and b(x - wv + v):
 /// - it fits when the samples agree and v carries the pixel's own colour in one frame (a(x) to b(x + v) or b(x) from
 ///   a(x - v)): a static layer over motion keeps its pixels, a recoloured or blinking one fits nothing;
@@ -44,15 +48,20 @@ public:
     static constexpr int kDominant = 3, kDominantOf = 4;  ///< nearStill: the main motion's share of the moving blocks
     static constexpr int kInkTile = 24;        ///< keepInk's tile: a few dots' worth of a dot cloud
     static constexpr int kInkOff = 4;          ///< keepInk: a tile off by more than 1/kInkOff of its ink falls back
+    /// A block's pixels unlike their right and lower neighbours in the block (each) that no vector matches by chance:
+    /// a vector it matches needs no confirmation
+    static constexpr int kDetail = 8;
     /// The vectors of a refresh at most: the common ones and the blocks' most matched (a full-screen effect matches
     /// up to 289 vectors at range 8, and every per-vector pass scales with their count)
     static constexpr size_t kMaxVectors = 32;
     /// A block's allowed vectors at most: the common ones and the 3 x 3 blocks' of both fields
     static constexpr size_t kMaxAllowed = kCommon + 2 * 9;
 
-    /// The common vectors of the two fields: zero, then the moving vectors at least two matched blocks share, most
-    /// shared first (equals in the order the blocks are met: `next` row by row, then `prev`)
-    static std::vector<V> CommonVectors(const MotionField& prev, const MotionField& next);
+    /// The common vectors of the two fields: zero, then the confirmed moving vectors at least two matched blocks
+    /// share, most shared first (equals in the order the blocks are met: `next` row by row, then `prev`). `p`, `a`,
+    /// `b`: the frames of the fields (the confirmation's pixel checks)
+    static std::vector<V> CommonVectors(const MotionField& prev, const MotionField& next, const Picture& p,
+                                        const Picture& a, const Picture& b);
 
     /// The picture between `a` and `b` at the weight `w` (0..kOne) into `out` (a's size). `p` is the frame before
     /// `a`; `prev` the field p -> a, `next` the field a -> b, both estimated over MotionField::kRangeFrames
@@ -69,7 +78,8 @@ public:
     struct Layers
     {
         /// every vector some pixel may take: the common ones, then the blocks' (next, prev) in the order met; past
-        /// kMaxVectors the blocks' matched by the most blocks of both fields (equals: the first met)
+        /// kMaxVectors the blocks' matched by the most blocks of both fields (equals: the first met). The moving
+        /// ones confirmed (CommonVectors)
         std::vector<V> all;
         size_t common = 0;   ///< the common ones at the front of `all`
         int reach = 0;       ///< the longest component of a vector
@@ -79,7 +89,9 @@ public:
         std::vector<std::pair<V, int>> counts;  ///< Prepare's own: the matched vectors and their blocks
         std::vector<uint8_t> kept;              ///< ... and which of them stay
     };
-    static void Prepare(const MotionField& prev, const MotionField& next, int width, int height, Layers& layers);
+    /// `p`, `a`, `b`: the frames of the fields, a's size the picture's
+    static void Prepare(const MotionField& prev, const MotionField& next, const Picture& p, const Picture& a,
+                        const Picture& b, Layers& layers);
 
     /// The colours the cover rule tells apart: a's first kPalette colours row by row. `colourAt` (may be null): per
     /// pixel its index, 255 past the palette

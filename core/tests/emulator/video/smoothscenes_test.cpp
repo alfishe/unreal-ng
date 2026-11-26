@@ -191,17 +191,31 @@ TEST(SmoothScenes_Test, FadeIsABlendOrTheFrame)
 
 namespace
 {
-/// The paper of a border scene, its pixels unlike frame a's (they are the same in both frames)
+/// A picture of a border scene between frames a and b at the weight w: the paper as a has it (the same in both
+/// frames), the border nothing but the frames' pixels or their blend. The stripes move 3 lines a frame and are 4
+/// lines high, so a stripe moved by any part of its step shows a's or b's color at every line: correct motion
+/// passes, content carried across the paper's edge does not
+void ExpectBorderPicture(const std::vector<uint32_t>& out, const std::vector<uint32_t>& a,
+                         const std::vector<uint32_t>& b, int w, bool loader, const std::string& what)
+{
+    const auto inPaper = [](int x, int y) { return InPaper(W, H, BORDER, x, y); };
+    const auto inBorder = [](int x, int y) { return !InPaper(W, H, BORDER, x, y); };
+    const Tally paper = Differ(out, a, W, inPaper);
+    EXPECT_EQ(paper.count, 0) << (loader ? "loader, " : "stripes, ") << what << ": paper pixels changed "
+                              << paper.Text() << " of " << (W - 2 * BORDER) * (H - 2 * BORDER);
+    const Tally border = Invented(out, a, b, w, W, inBorder);
+    EXPECT_EQ(border.count, 0) << (loader ? "loader, " : "stripes, ") << what << ": border invented "
+                               << border.Text() << " of " << W * H - (W - 2 * BORDER) * (H - 2 * BORDER);
+}
+
+/// A border scene rendered once, between its frames 4 and 5
 void ExpectPaperStays(Mode mode, bool loader)
 {
     Scene scene(mode, [loader](int k) { return Border(W, H, BORDER, k, loader); }, 6);
     for (int w : Weights())
     {
         const auto r = scene.Render(w);
-        const auto inPaper = [](int x, int y) { return InPaper(W, H, BORDER, x, y); };
-        const Tally t = Differ(scene.out, scene.a, W, inPaper);
-        EXPECT_EQ(t.count, 0) << (loader ? "loader, " : "stripes, ") << scene.Drew(r) << ": paper pixels changed "
-                              << t.Text() << " of " << (W - 2 * BORDER) * (H - 2 * BORDER);
+        ExpectBorderPicture(scene.out, scene.a, scene.b, w, loader, scene.Drew(r));
     }
 }
 }  // namespace
@@ -209,24 +223,28 @@ void ExpectPaperStays(Mode mode, bool loader)
 TEST(SmoothScenes_Test, BorderEffectsLeaveThePaperAlone)
 {
     // Stripes moving down the border 3 lines a frame, or a tape loader's random lines, round a still picture:
-    // whatever the border shows, the paper's pixels are the same in both frames and stay. LayerFlow on the moving
-    // stripes: DISABLED_LayersMoveThePaperWithBorderStripes
+    // whatever the border shows, the paper's pixels are the same in both frames and stay, and the border shows
+    // nothing from the paper. LayerFlow on the moving stripes: LayersMoveThePaperWithBorderStripes
     for (Mode mode : {Mode::Blend, Mode::InterpolateLite})
         ExpectPaperStays(mode, false);
     for (Mode mode : kAllModes)
         ExpectPaperStays(mode, true);
 }
 
-// Defect: LayerFlow carries the border stripes' vertical motion into the paper's edge column (x = 16): 3 paper pixels
-// changed at w = 85, 9 at w = 171 (of 6144), Kind::Interpolate
-TEST(SmoothScenes_Test, DISABLED_LayersMoveThePaperWithBorderStripes)
+// Was a defect: the stripes fit every sideways shift, and the cover rule took a shift such as (4, 3) whose path from
+// the border to the border crosses the paper's edge column (x = 16): 3 paper pixels changed at w = 85, 9 at w = 171.
+// The cover rule now leaves a sample to the slowest vector fitting it, (0, 3), which stays in the border. And past
+// the half weight carryFirst took b's sample of row 15 from the paper's first row, where the stripes go under the
+// still paper (82 border pixels at w = 171): a still sample is not the moving layer's
+TEST(SmoothScenes_Test, LayersMoveThePaperWithBorderStripes)
 {
     ExpectPaperStays(Mode::Interpolate, false);
 }
 
-// Defect: random loader lines match moving vectors by chance and are drawn moved. LayerFlow: 1384 (w = 85) and 1272
-// (w = 171) of 6144 border pixels none of a, b, blend; LiteFlow: 160 at both weights
-TEST(SmoothScenes_Test, DISABLED_LoaderStripesAreNotMotion)
+// Was a defect: random loader lines matched moving vectors by chance and were drawn moved (LayerFlow 1384 at w = 85
+// and 1272 at w = 171 of 6144 border pixels none of a, b, blend; LiteFlow 160). A line of one colour across a block
+// holds 8 values, not 64: a moving vector matched only there is now taken only when the pair before confirms it
+TEST(SmoothScenes_Test, LoaderStripesAreNotMotion)
 {
     // A tape loader's border: each line red or cyan at random, new every frame. Nothing moves: the border is the
     // frames or their blend at every pixel
@@ -242,6 +260,35 @@ TEST(SmoothScenes_Test, DISABLED_LoaderStripesAreNotMotion)
                                        << W * H - (W - 2 * BORDER) * (H - 2 * BORDER);
         }
     }
+}
+
+// Both border scenes as the window draws them: every pair in order, a picture between each two frames (LiteFlow's
+// kept field and vectors carried from pair to pair), 12 frames: nothing invented in any of them
+TEST(SmoothScenes_Test, BorderEffectsInAStreamInventNothing)
+{
+    constexpr int kFrames = 12;
+    for (bool loader : {false, true})
+        for (Mode mode : kInterpolating)
+        {
+            SmoothMotion engine;
+            engine.SetMode(mode);
+            std::vector<uint32_t> before, out(static_cast<size_t>(W) * H);
+            for (int k = 0; k < kFrames; k++)
+            {
+                const std::vector<uint32_t> frame = Border(W, H, BORDER, k, loader);
+                engine.Push(static_cast<uint64_t>(k + 1), Scene::TargetOf(k), frame.data(), W, H);
+                if (k > 0)
+                    for (int w : Weights())
+                    {
+                        const auto r = engine.Render(Scene::TargetOf(k - 1) + PERIOD * w / kOne, out.data());
+                        ExpectBorderPicture(out, before, frame, w, loader,
+                                            std::string(ModeName(mode)) + " pair " + std::to_string(k - 1) + "-" +
+                                                std::to_string(k) + " drew " + KindName(r.kind) + " w " +
+                                                std::to_string(r.weight));
+                    }
+                before = frame;
+            }
+        }
 }
 
 /// endregion

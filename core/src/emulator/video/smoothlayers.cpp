@@ -360,22 +360,75 @@ void CommonOf(const std::vector<std::pair<V, int>>& counts, std::vector<V>& comm
 }
 }  // namespace
 
-std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionField& next)
+namespace
+{
+/// The matched moving vectors `counts` holds cut to the confirmed ones: matched by a block of `next` that is
+/// detailed in a (its pixels unlike their right and lower neighbours in the block at least kDetail times each: too
+/// much to match by chance), or whose pixels in a the vector carries to b exactly and that came there exactly as
+/// well: from p by the same vector (the motion going on) or from p in place (a held frame, a motion starting from
+/// rest). The field matches a block within MotionField::kAccept of its 64 pixels: a block of lines of one color each
+/// holds 8 values, not 64, and content new every frame (a tape loader's lines) matches some vector there by chance
+/// in every pair, never exactly over three frames
+void KeepConfirmed(const MotionField& next, const Picture& p, const Picture& a, const Picture& b,
+                   std::vector<std::pair<V, int>>& counts)
+{
+    const int kb = MotionField::kBlock;
+    const int bw = next.BlocksWide(), bh = next.BlocksHigh();
+    std::vector<V> confirmed;
+    const auto at = [&](const Picture& f, int x, int y) { return f.pixels[static_cast<size_t>(y) * f.width + x]; };
+    for (int j = 0; j < bh; j++)
+        for (int i = 0; i < bw; i++)
+        {
+            const MotionField::Block& block = next.At(i, j);
+            const V v = block.v;
+            if (!block.matched || v == V{} || std::find(confirmed.begin(), confirmed.end(), v) != confirmed.end())
+                continue;
+            const int x0 = i * kb, x1 = std::min(x0 + kb, a.width), y0 = j * kb, y1 = std::min(y0 + kb, a.height);
+            int across = 0, down = 0;
+            bool carried = true, going = true, still = true;
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++)
+                {
+                    const uint32_t here = at(a, x, y);
+                    across += x + 1 < x1 && here != at(a, x + 1, y);
+                    down += y + 1 < y1 && here != at(a, x, y + 1);
+                    carried &= here == b.At(x + v.x, y + v.y);
+                    going &= here == p.At(x - v.x, y - v.y);
+                    still &= here == at(p, x, y);
+                }
+            if ((across >= LayerFlow::kDetail && down >= LayerFlow::kDetail) || (carried && (going || still)))
+                confirmed.push_back(v);
+        }
+    counts.erase(std::remove_if(counts.begin(), counts.end(),
+                                [&](const auto& c) {
+                                    return !(c.first == V{}) &&
+                                           std::find(confirmed.begin(), confirmed.end(), c.first) == confirmed.end();
+                                }),
+                 counts.end());
+}
+}  // namespace
+
+std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionField& next, const Picture& p,
+                                        const Picture& a, const Picture& b)
 {
     std::vector<std::pair<V, int>> counts;
     std::vector<uint8_t> state;
     std::vector<V> common;
     CountMatched(prev, next, counts);
+    KeepConfirmed(next, p, a, b, counts);
     CommonOf(counts, common, state);
     return common;
 }
 
-void LayerFlow::Prepare(const MotionField& prev, const MotionField& next, int width, int height, Layers& layers)
+void LayerFlow::Prepare(const MotionField& prev, const MotionField& next, const Picture& p, const Picture& a,
+                        const Picture& b, Layers& layers)
 {
+    const int width = a.width, height = a.height;
     auto& all = layers.all;
     auto& counts = layers.counts;
     auto& state = layers.kept;  // 0: out, 1: common, 2: kept
     CountMatched(prev, next, counts);
+    KeepConfirmed(next, p, a, b, counts);
     CommonOf(counts, all, state);
     layers.common = all.size();
     // the blocks' other vectors in the order met; past kMaxVectors the most matched
@@ -667,7 +720,7 @@ void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fi
 void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const Picture& pictureB, const MotionField& prev,
                         const MotionField& next, int w, uint32_t* out)
 {
-    Prepare(prev, next, pictureA.width, pictureA.height, _layers);
+    Prepare(prev, next, pictureP, pictureA, pictureB, _layers);
     const std::vector<V>& all = _layers.all;
     const int width = pictureA.width, height = pictureA.height;
     const int n = static_cast<int>(all.size());
@@ -871,6 +924,12 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
                                            static_cast<int>(block / blocksWide), all[blockVector[block]]);
         return explainsAt[block] == 1;
     };
+    // the block of a sample read clamped, as the frames are, decided still
+    const auto stillBlock = [&](int sx, int sy) {
+        const int bv = blockVector[static_cast<size_t>(std::clamp(sy, 0, height - 1) / MotionField::kBlock) * blocksWide +
+                                   std::clamp(sx, 0, width - 1) / MotionField::kBlock];
+        return bv >= 0 && all[bv] == V{};
+    };
     // The pixels, split over the pool by block rows: a block's lazy answers (explainsAt) are its band's alone; each
     // band its own cover windows (summed at the pixel or built, the same count either way), over its rows and the
     // window's reach round them
@@ -935,10 +994,29 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
                             continue;
                         const int ax = x - shift(v.x), ay = y - shift(v.y);
                         const uint32_t va = a.At(ax, ay);
-                        if (va != b.At(ax + v.x, ay + v.y) || va == b.At(ax, ay) || va == a.At(x, y))
+                        // the sample moves: it leaves its place (b has another color there) and arrives at its
+                        // landing (a had another color there; a still layer's pixel of the same color by chance
+                        // is not the moving layer's)
+                        if (va != b.At(ax + v.x, ay + v.y) || va == b.At(ax, ay) || va == a.At(ax + v.x, ay + v.y) ||
+                            va == a.At(x, y))
                             continue;
                         // steady: the sample is the layer's: it moved so from k - 1 too (rigid content, not a growing glyph)
-                        if (p.At(ax - v.x, ay - v.y) != va || !coverable(c, x, y))
+                        if (p.At(ax - v.x, ay - v.y) != va)
+                            continue;
+                        // behind: the layer's pixel a would show here is seen in k - 1 and b at its places (x - v,
+                        // x + v), another color than the pixel's: the layer is opaque here, the still pixel in front
+                        // of it, not seen through a hole (stripes going down under the paper fit sideways shifts too)
+                        const uint32_t hidden = p.At(x - v.x, y - v.y);
+                        if (hidden == b.At(x + v.x, y + v.y) && hidden != a.At(x, y))
+                            continue;
+                        // slowest: a slower vector fitting the sample is the layer's motion there (stripes fit every
+                        // sideways shift, the eye sees the slowest), and that one does not carry the sample over the
+                        // pixel. The sample read clamped, as the frames are
+                        const size_t sq = static_cast<size_t>(std::clamp(ay, 0, height - 1)) * width + std::clamp(ax, 0, width - 1);
+                        bool slower = false;
+                        for (int u : allowed)
+                            slower |= Slower(all[u], v) && fits[static_cast<size_t>(u) * pixels + sq];
+                        if (slower || !coverable(c, x, y))
                             continue;
                         if (over < 0 || support[cq] > support[static_cast<size_t>(over) * pixels + q])
                             over = c;
@@ -965,7 +1043,10 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
                     // carryFirst: a decided moving block keeps a pixel its vector does not fit unless another vector
                     // fitting it explains more changes round it, or a slower one fits it (a layer behind showing
                     // through, zero included); a pixel that stood still into a and changes only towards b (a blink in
-                    // place) is not carried. Carried: the block's vector from the nearer frame
+                    // place) is not carried. Carried: the block's vector from the nearer frame, from the other where
+                    // the nearer one's sample stood still over the three frames in a block decided still, and the
+                    // other's did not (another layer, still, the moving one goes under: stripes going down under the
+                    // paper's edge)
                     const int cb = blockVector[block];
                     const int mine = support[static_cast<size_t>(cb) * pixels + q];
                     bool other = false;
@@ -976,7 +1057,13 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
                     {
                         const V v = all[cb];
                         const int ax = x - shift(v.x), ay = y - shift(v.y);
-                        out[q] = w < kOne / 2 ? a.At(ax, ay) : b.At(ax + v.x, ay + v.y);
+                        const uint32_t fromA = a.At(ax, ay), fromB = b.At(ax + v.x, ay + v.y);
+                        const bool stillA = p.At(ax, ay) == fromA && fromA == b.At(ax, ay);
+                        const bool stillB = p.At(ax + v.x, ay + v.y) == fromB && fromB == a.At(ax + v.x, ay + v.y);
+                        const bool nearA = w < kOne / 2;
+                        const bool swap = nearA ? stillA && !stillB && stillBlock(ax, ay)
+                                                : stillB && !stillA && stillBlock(ax + v.x, ay + v.y);
+                        out[q] = nearA != swap ? fromA : fromB;
                         continue;
                     }
                 }
