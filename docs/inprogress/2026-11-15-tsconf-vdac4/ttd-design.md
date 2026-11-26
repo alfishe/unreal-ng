@@ -230,6 +230,34 @@ samples) to 3.8 % (27 of 702). Wall-clock A/B on a host at load 50-250 does not 
 all exact). What the live snapshot still copies: the ESP memory (`PutSparse`, already by words, 8.4 MB, about 8 %
 of a seek).
 
+### 9.4 Seek time: the FT812 frame drawn when it is due (2026-11-25)
+
+On VDAC2 (`test6.spg`, a seek every 24-37 frames) the FT812's drawing was 60 % of a seek. A quarter of it drew the
+caller's frame again after the picture's replay: `TtdLoadState` called `EveSetOutput`, which catches the drawing up,
+and a load leaves the frame's lines owed (the drawing is not state, `DrawingInvalidate`). The live state put back is
+mostly loaded again by the next seek before it runs, so those lines were never shown. The checkpoint's load did the
+same before the replay draws them anyway.
+
+- `EveSetOutputAfterLoad`: the output without the catch-up; the lines owed are drawn (or passed) with it at the next
+  catch-up, which comes before any input of theirs changes (a RAM_G write, a drawing register, the frame event).
+  `TtdLoadState` uses it (`ConfigureOutput(false)`), and the switch into a replay right after a load
+  (`AdvanceTo`, `Drawing()` changed) draws the lines owed with the replay's output, as the live run drew them.
+- With the drawing deferred, a load can stand unseen by the renderer thread: the switch off of the asynchronous
+  drawing and `EveSaveState` took the renderer's handles, context and metrics even when the loaded ones were not
+  handed to it yet (the stale metrics block of a later frame; `TTDVdac2_Test.SeekInsideFrameShowsTheFrameDrawnSoFar`).
+  A part the chip took itself that no operation carried on yet is now the chip's.
+
+A/B (144 seeks per round, all exact): VDAC2 median 20.6 -> 17.6 ms on a quiet host (4 rounds, every one), 21.7 ->
+18.9 ms at load 40; VDAC4 DOOM unchanged in the median (the FT812 is 5 % of its seek), minimum 15 -> 13.4 ms; TS-Conf
+and Pentagon unchanged. The stream is unchanged.
+
+Tried before and dropped (patches kept outside the tree):
+
+- Decoding a restore's pieces on a pool of threads: VDAC4 20-25 % faster, but threads for one rarely used machine.
+  Without a pool the restore's decode is 7 % of a VDAC2 seek.
+- Keeping the engine's knowledge of the machine RAM across the picture's live state (`RestoreLiveState` writes back
+  only the pieces that differ next time): no measurable change, since the restore is not where the time goes.
+
 ## 10. Open
 
 - A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame (about
@@ -239,5 +267,6 @@ of a seek).
   3.7 MB would pass it.
 - The rest of a seek: the replay to f itself (on average 12 frames), the ESP pieces the engine decodes on a restore
   no replay point covers (all marked, `TTDBeforeRestore`: the ESP moves on without marks), the ESP memory copied by
-  the picture's live snapshot (`PutSparse`, about 8 %), the FT812's load and `ConfigureOutput` in it.
+  the picture's live snapshot (`PutSparse`, about 8 %). On VDAC2: the FT812 drawing of the replay and of the
+  picture itself (§9.4), about 45 % of a seek.
 - Resources of the firmware (`_resources`) stay in the `vdac4-esp` blob, stored per frame while held.

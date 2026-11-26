@@ -92,6 +92,11 @@ void EveGetTiming(const EveChip* chip, EveTiming* out);
    nothing. A mode larger than the capacity is clipped. */
 void EveSetOutput(EveChip* chip, uint32_t* framebuffer, uint32_t stridePixels,
                   uint32_t widthCapacity, uint32_t heightCapacity, int drawing);
+/* As EveSetOutput, but the lines the chip owes are not caught up first: the next catch-up draws (or passes)
+   them with this output. For a host that has just loaded a state (EveLoadState, EveMemoryRestored): the lines
+   owed are the loaded frame's, which belong to the output of that state, not to the one it replaces. */
+void EveSetOutputAfterLoad(EveChip* chip, uint32_t* framebuffer, uint32_t stridePixels,
+                           uint32_t widthCapacity, uint32_t heightCapacity, int drawing);
 uint64_t EveCompletedFrames(const EveChip* chip); /* frames fully scanned out */
 
 /* Drawing on a thread of its own. On: the chip keeps all its timing, coprocessor and registers on the

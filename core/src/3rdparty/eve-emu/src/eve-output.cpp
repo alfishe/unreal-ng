@@ -148,6 +148,12 @@ void EveSetOutput(EveChip* chip, uint32_t* framebuffer, uint32_t stridePixels, u
                   uint32_t heightCapacity, int drawing)
 {
     CatchUp(*chip);
+    EveSetOutputAfterLoad(chip, framebuffer, stridePixels, widthCapacity, heightCapacity, drawing);
+}
+
+void EveSetOutputAfterLoad(EveChip* chip, uint32_t* framebuffer, uint32_t stridePixels, uint32_t widthCapacity,
+                           uint32_t heightCapacity, int drawing)
+{
     const int on = (drawing != 0 && framebuffer != nullptr) ? 1 : 0;
     if (framebuffer != chip->framebuffer || stridePixels != chip->stridePixels || widthCapacity != chip->widthCapacity ||
         heightCapacity != chip->heightCapacity || on != chip->drawing)

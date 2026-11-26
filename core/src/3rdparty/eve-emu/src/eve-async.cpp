@@ -449,6 +449,11 @@ void AsyncWait(const EveChip& chip)
     a->done.wait(guard, [&] { return a->queue.empty() && !a->busy; });
 }
 
+bool AsyncDrawingStatePending(const EveChip& chip, bool metrics)
+{
+    return chip.async && (chip.async->syncPending & (metrics ? SyncMetrics : SyncHandles)) != 0;
+}
+
 const EveChip& DrawingChip(const EveChip& chip)
 {
     if (!chip.asyncDrawing)
@@ -522,17 +527,27 @@ int EveSetAsyncDrawing(EveChip* chip, int on, EveFrameCallback onFrame, void* us
     {
         if (!chip->asyncDrawing)
             return 0;
-        // The drawing's state comes back: the shadow's handles, context, metrics and line costs
+        // The drawing's state comes back: the shadow's handles, context, metrics and line costs. A part the
+        // chip took itself (a reset, a state load, an invalidation) that no operation handed on yet stays the chip's
         AsyncWait(*chip);
         const EveChip& s = *chip->async->shadow;
-        std::memcpy(chip->state.handles, s.state.handles, sizeof(chip->state.handles));
-        chip->state.context = s.state.context;
-        chip->state.metrics = s.state.metrics;
-        std::memcpy(chip->lineCosts.get(), s.lineCosts.get(), kMaxLines * sizeof(EveLineCost));
-        chip->overflowLines = s.overflowLines;
+        const uint8_t pending = chip->async->syncPending;
+        if (!(pending & SyncHandles))
+        {
+            std::memcpy(chip->state.handles, s.state.handles, sizeof(chip->state.handles));
+            chip->state.context = s.state.context;
+        }
+        if (!(pending & SyncMetrics))
+            chip->state.metrics = s.state.metrics;
+        if (!(pending & (SyncMemory | SyncLineState)))
+        {
+            std::memcpy(chip->lineCosts.get(), s.lineCosts.get(), kMaxLines * sizeof(EveLineCost));
+            chip->overflowLines = s.overflowLines;
+        }
         AsyncDropPendingTag(*chip);
         chip->drawnAhead = false;
-        RegSet(*chip, Reg::Tag, RegGet(s, Reg::Tag));
+        if (!(pending & SyncHandles))
+            RegSet(*chip, Reg::Tag, RegGet(s, Reg::Tag));
         // The frame buffer holds the shadow's lines: none of the chip's kept lines describes it
         for (uint32_t i = 0; i < kMaxLines; ++i)
             chip->lineKept[i].valid = false;

@@ -197,9 +197,12 @@ void EveHostCard::AdvanceTo(uint64_t absoluteRaster)
         _time.position = absoluteRaster;
         return;
     }
-    // Drawing() changed: a TTD replay started or ended, a capture, measure-always
+    // Drawing() changed: a TTD replay started or ended, a capture, measure-always. The lines
+    // a state load left owed and nothing has caught up since are drawn with the new output
+    // (a replay starts right after its checkpoint is loaded)
     if (_drawing != Drawing())
-        ConfigureOutput();
+        ConfigureOutput(!(_owedFromLoad && EveFrameLinesPassed(_chip) == 0));
+    _owedFromLoad = false;
     if (_async != AsyncWanted())
         ConfigureAsync();
     if (_async)
@@ -327,7 +330,7 @@ void EveHostCard::PublishPicture()
     screen->SetExternalPicture(_picture.data(), _pictureWidth, _pictureHeight, periodUs);
 }
 
-bool EveHostCard::ConfigureOutput()
+bool EveHostCard::ConfigureOutput(bool catchUp)
 {
     EveTiming timing{};
     EveGetTiming(_chip, &timing);
@@ -347,9 +350,15 @@ bool EveHostCard::ConfigureOutput()
         for (size_t i = 0; i < pixels; i++)
             _picture[i * 4 + 3] = 0xFF;  // opaque black
     }
-    _drawing = Drawing();
+    const bool drawing = Drawing();
+    const bool changed = resized || drawing != _drawing || !_outputSet;
+    _drawing = drawing;
     _asyncPresent.store(_showing);
-    EveSetOutput(_chip, _chipFrame.data(), width, width, height, _drawing ? 1 : 0);
+    if (catchUp)
+        EveSetOutput(_chip, _chipFrame.data(), width, width, height, _drawing ? 1 : 0);
+    else if (changed)
+        EveSetOutputAfterLoad(_chip, _chipFrame.data(), width, width, height, _drawing ? 1 : 0);
+    _outputSet = true;
     return resized;
 }
 
@@ -723,10 +732,14 @@ bool EveHostCard::TtdLoadState(const uint8_t* src)
     _chipFrames = EveCompletedFrames(_chip);
 
     // The output follows the restored mode; the FT812 picture is not state: what a
-    // position shows is composed by the TTD replay (TTDPrepareComposedPicture)
+    // position shows is composed by the TTD replay (TTDPrepareComposedPicture). The load
+    // invalidated the drawing (lines drawn again from line 0): they are drawn at the chip's
+    // next catch-up, which comes before any input of theirs changes, not here. A live state
+    // put back after a seek is often loaded again before it runs (ttd-design.md §9.4)
     const bool showingChanged = (blob.showing != 0) != _showing;
     _showing = blob.showing != 0;
-    const bool resized = ConfigureOutput();
+    const bool resized = ConfigureOutput(false);
+    _owedFromLoad = true;
     if (showingChanged || resized)
         PublishPicture();
     return true;
