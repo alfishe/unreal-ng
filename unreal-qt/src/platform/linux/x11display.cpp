@@ -147,7 +147,21 @@ linuxpresent::VrrDecision DecideWindowVrr(const QWindow* window, bool nvidia)
         in.coversScreen = linuxpresent::CoversScreen(origin.x(), origin.y(), window->width(), window->height(), g.x(),
                                                      g.y(), g.width(), g.height());
     }
-    Display* x = in.system == linuxpresent::WindowSystem::X11 ? Display::Get() : nullptr;
+    // gamescope's atoms sit on the root of its first XWayland (Steam's ":0", where the games run too): a connection of
+    // its own, kept (GUI thread)
+    const char* gamescope = std::getenv("GAMESCOPE_WAYLAND_DISPLAY");
+    if (gamescope && *gamescope)
+    {
+        static std::unique_ptr<Display> steam = Display::ConnectTo(":0");
+        uint64_t capable = 0;
+        if (steam && steam->RootCardinal("GAMESCOPE_VRR_CAPABLE", capable))
+        {
+            uint64_t enabled = 0;
+            in.gamescopeCapable = capable != 0 ? 1 : 0;
+            in.gamescopeEnabled = steam->RootCardinal("GAMESCOPE_VRR_ENABLED", enabled) ? (enabled != 0 ? 1 : 0) : -1;
+        }
+    }
+    Display* x = in.system == linuxpresent::WindowSystem::X11 && in.gamescopeCapable < 0 ? Display::Get() : nullptr;
     if (x && screen)
     {
         OutputState output;

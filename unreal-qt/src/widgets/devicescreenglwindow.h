@@ -263,6 +263,8 @@ private:
     int idleLimit() const;
     /// After a swap: the next refresh, while frames are pending
     void onFrameSwapped();
+    /// GL way, nothing new drawn at a refresh: the next look at the frame due, by time (no swap paced this one)
+    void scheduleGl();
     /// Native way, the presenter pacing (NativePresenter::SetRefreshHandler): a refresh of the display to draw for
     static void onDisplayRefresh(void* context, int64_t refreshNs, int64_t periodNs);
     /// The display link draws: the presenter paces and a tick came within kLinkWatchdogMs (or is being drawn)
@@ -340,6 +342,13 @@ private:
     std::string _syncReason;                              ///< WindowPresentStats::syncReason
     QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
+    QTimer* _glTimer = nullptr;                   ///< GL way: the next look at the frame due when a refresh drew nothing
+    bool _glPaintAsked = true;                    ///< GL way: a repaint asked (update, Expose, a resize): drawn anyway
+    bool _glDrawn = false;                        ///< GL way: the window holds a picture
+    int64_t _glNextTargetNs = 0;                  ///< GL way: the next frame's target as the last look saw it
+    int64_t _glSwapSecondNs = 0;                  ///< GL way: the start of the second the swaps are counted in
+    int _glSwapsInSecond = 0;
+    bool _glSwapUnpaced = false;                  ///< GL way: more swaps than the display has refreshes (sticky)
     bool _presentPending = false;                 ///< native way: a forced present asked for
     bool _presentHidden = false;                  ///< native way: occluded or minimized, nothing drawn (a slow poll)
     bool _toldWaiting = false;                    ///< native way: "waits for its surface" told for this stall
