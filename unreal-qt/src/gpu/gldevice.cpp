@@ -26,6 +26,10 @@ struct GlFormat
     GLenum type;
 };
 
+// Desktop GL names the GLES headers lack
+constexpr GLenum kGlBgra = 0x80E1;                 // GL_BGRA
+constexpr GLenum kGlUnsignedInt8888Rev = 0x8367;  // GL_UNSIGNED_INT_8_8_8_8_REV
+
 GlFormat ToGl(Format format)
 {
     switch (format)
@@ -287,6 +291,13 @@ GlDevice::~GlDevice()
     if (QOpenGLContext::currentContext() != _context)
         return;  // the context is gone: its objects with it
     DestroyTimestamps(false);
+    for (PixelRead& read : _reads)
+    {
+        if (read.fence)
+            glDeleteSync(read.fence);
+        if (read.buffer)
+            glDeleteBuffers(1, &read.buffer);
+    }
     for (GLuint s : _samplers)
         if (s)
             glDeleteSamplers(1, &s);
@@ -392,6 +403,71 @@ bool GlDevice::Read(Texture& texture, Rect rect, void* out)
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     return glGetError() == GL_NO_ERROR;
+}
+
+bool GlDevice::BeginRead(int slot, Texture& texture, Rect rect, bool bgra)
+{
+    if (slot < 0 || slot >= kReadSlots || rect.Empty())
+        return false;
+    PixelRead& read = _reads[slot];
+    if (read.fence)
+    {
+        glDeleteSync(read.fence);  // not taken: dropped
+        read.fence = nullptr;
+    }
+    read.texel = BytesPerTexel(texture.GetFormat());
+    read.rect = rect;
+    const auto bytes = static_cast<GLsizeiptr>(rect.width) * rect.height * read.texel;
+    if (!read.buffer)
+        glGenBuffers(1, &read.buffer);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, read.buffer);
+    if (read.capacity < bytes)
+    {
+        glBufferData(GL_PIXEL_PACK_BUFFER, bytes, nullptr, GL_STREAM_READ);
+        read.capacity = bytes;
+    }
+    GlFormat f = ToGl(texture.GetFormat());
+    if (bgra && texture.GetFormat() == Format::RGBA8)
+    {
+        // The order macOS reads without converting (desktop GL 1.2+ formats; the context is 3.3 core)
+        f.format = kGlBgra;
+        f.type = kGlUnsignedInt8888Rev;
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, FramebufferId(texture));
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(rect.x, rect.y, rect.width, rect.height, f.format, f.type, nullptr);  // into the buffer: no wait
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    if (glGetError() != GL_NO_ERROR)
+        return false;
+    read.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glFlush();  // on its way now: done when it is taken a frame later
+    return read.fence != nullptr;
+}
+
+bool GlDevice::FinishRead(int slot, uint8_t* out, size_t outStride, bool flip)
+{
+    if (slot < 0 || slot >= kReadSlots || !_reads[slot].fence || !out)
+        return false;
+    PixelRead& read = _reads[slot];
+    // Started a frame ago: done, or nearly. A second at most (a GPU that stopped)
+    const GLenum waited = glClientWaitSync(read.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1'000'000'000);
+    glDeleteSync(read.fence);
+    read.fence = nullptr;
+    if (waited != GL_ALREADY_SIGNALED && waited != GL_CONDITION_SATISFIED)
+        return false;
+    const size_t rowBytes = static_cast<size_t>(read.rect.width) * read.texel;
+    const auto bytes = static_cast<GLsizeiptr>(rowBytes * read.rect.height);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, read.buffer);
+    const auto* mapped = static_cast<const uint8_t*>(glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT));
+    if (mapped)
+    {
+        CopyRows(mapped, rowBytes, read.rect.height, out, outStride, flip);
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    return mapped != nullptr;
 }
 
 void GlDevice::GenerateMipmaps(Texture& texture)

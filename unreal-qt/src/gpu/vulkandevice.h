@@ -46,6 +46,8 @@ public:
     std::unique_ptr<Texture> CreateTexture(int width, int height, Format format, int mipLevels = 1) override;
     void Upload(Texture& texture, Rect rect, const void* data, int rowTexels = 0) override;
     bool Read(Texture& texture, Rect rect, void* out) override;
+    bool BeginRead(int slot, Texture& texture, Rect rect, bool bgra = false) override;
+    bool FinishRead(int slot, uint8_t* out, size_t outStride, bool flip) override;
     void GenerateMipmaps(Texture& texture) override;
     void Blit(Texture& source, Rect from, Texture& target, Rect to, Filter filter) override;
     void Clear(Texture& texture, float r, float g, float b, float a) override;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -173,6 +174,16 @@ public:
     virtual void Upload(Texture& texture, Rect rect, const void* data, int rowTexels = 0) = 0;
     /// `rect` of level 0 into `out`, tight, the first row is rect's row y. Waits for the GPU
     virtual bool Read(Texture& texture, Rect rect, void* out) = 0;
+    /// Reads without waiting (the window recording's pictures): `rect` of level 0 starts on its way into the host
+    /// memory of `slot` (0 .. kReadSlots - 1); FinishRead takes it, a frame later. A slot started again before it was
+    /// finished drops the earlier read. `bgra`: an RGBA8 texture's pixels as B,G,R,A bytes (GL reads that order
+    /// natively on macOS: RGBA took its slow converting path, 5 ms for a 1319x1080 picture). This default reads at once
+    /// (waits); GL reads into a pixel buffer behind a fence, Vulkan into a host buffer of a submission not waited for
+    static constexpr int kReadSlots = 3;
+    virtual bool BeginRead(int slot, Texture& texture, Rect rect, bool bgra = false);
+    /// The read `slot` started, into `out`: rows `outStride` bytes apart, turned over when `flip` (GL's bottom row
+    /// first into top down). Waits only for that read. False: nothing started there, or the read failed
+    virtual bool FinishRead(int slot, uint8_t* out, size_t outStride, bool flip);
     /// Levels 1.. from level 0
     virtual void GenerateMipmaps(Texture& texture) = 0;
     /// `from` of `source` into `to` of `target`, scaled with `filter`; a negative height turns the rows over
@@ -206,6 +217,24 @@ public:
         ns = 0;
         return false;
     }
+
+protected:
+    /// Rows of `rowBytes` from `from` (tight) into `out`, `outStride` apart, turned over when `flip`; `swap`: 4-byte
+    /// texels with their bytes 0 and 2 swapped (RGBA <-> BGRA)
+    static void CopyRows(const uint8_t* from, size_t rowBytes, int rows, uint8_t* out, size_t outStride, bool flip,
+                         bool swap = false);
+
+private:
+    /// The default BeginRead's pixels
+    struct ReadSlot
+    {
+        std::vector<uint8_t> pixels;
+        Rect rect;
+        int texel = 0;
+        bool bgra = false;
+        bool started = false;
+    };
+    ReadSlot _readSlots[kReadSlots];
 };
 
 /// The quad's vertices (Position.xyzw, TexCoord.xy per corner)
