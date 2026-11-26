@@ -184,10 +184,10 @@ struct VulkanPresenter::Impl
     std::atomic<bool> waitStalled{false};
     std::atomic<uint64_t> stalledWaits{0};  ///< waits that timed out (acquire, present_wait)
 
-    // Does the display follow the frames (vrrprobe.h; policy auto)? X11: what RandR says (x11::DecideWindowVrr), then
-    // the steps between the screen times of the frames shown against the frames' own steps. A FIFO swapchain on a
-    // display that follows shows each present when it comes (no tearing): the frames go at their own times, not on a
-    // refresh grid. Wayland and gamescope have no query (V7): never
+    // Does the display follow the frames (vrrprobe.h; policy auto)? X11: what RandR says, gamescope: its root atoms
+    // (x11::DecideWindowVrr), then the steps between the screen times of the frames shown against the frames' own
+    // steps. A FIFO swapchain on a display that follows shows each present when it comes (no tearing): the frames go
+    // at their own times, not on a refresh grid. A Wayland client has no query (V7): never
     static constexpr size_t kStepWindow = 120;
     static constexpr uint32_t kJudgeEvery = 60;
     int64_t decidedNs = 0;  ///< GUI thread
