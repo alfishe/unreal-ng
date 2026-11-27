@@ -1507,7 +1507,7 @@ std::vector<ttd::TTDDeviceType> PortDecoder_TSConf::GetTTDModelStateTypes() cons
                                           ttd::TTDDeviceType::EvoMouse, ttd::TTDDeviceType::EvoAvrVolatile,
                                           ttd::TTDDeviceType::EvoFlash};
     // The VDAC2 card's FT812 (also the VDAC4 Tang's): its memory first, then the card and chip state (restore
-    // order = id order). The VDAC4 board adds the Tang, the ESP and its app host (ttdvdac4.h)
+    // order = id order). The VDAC4 board adds the Tang, the ESP, its app host and the Tang's Quake II core (ttdvdac4.h)
     if (_vdac2 && _vdac2->IsReady())
     {
         ids.push_back(ttd::TTDDeviceType::Vdac2Memory);
@@ -1518,6 +1518,7 @@ std::vector<ttd::TTDDeviceType> PortDecoder_TSConf::GetTTDModelStateTypes() cons
         ids.push_back(ttd::TTDDeviceType::Vdac4Tang);
         ids.push_back(ttd::TTDDeviceType::Vdac4Esp);
         ids.push_back(ttd::TTDDeviceType::Vdac4EspCpu);
+        ids.push_back(ttd::TTDDeviceType::Vdac4Q2);
     }
     return ids;
 }
@@ -1543,7 +1544,11 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
         serializers.push_back(std::make_unique<ttd::TTDVdac4Tang>(*self->_vdac4Tang));
         serializers.push_back(
             std::make_unique<ttd::TTDVdac4Esp>(*self->_vdac4Board, self->_vdac4BaseUs, self->_vdac4Frames));
-        serializers.push_back(std::make_unique<ttd::TTDVdac4EspCpu>(*self->_vdac4Board));
+        auto espCpu = std::make_unique<ttd::TTDVdac4EspCpu>(*self->_vdac4Board);
+        // The Quake II core goes with the ESP's keyframes (the same list owns both)
+        auto q2 = std::make_unique<ttd::TTDVdac4Q2>(*self->_vdac4Tang, *espCpu);
+        serializers.push_back(std::move(espCpu));
+        serializers.push_back(std::move(q2));
     }
     return serializers;
 }

@@ -17,6 +17,7 @@
 #include "common/stringhelper.h"
 #include "common/video/videoutils.h"
 #include "emulator/video/screendigest.h"
+#include "emulator/video/smoothmotion.h"
 #include "emulator/video/atm/atmgeometry.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/video/gmx/gmxgeometry.h"
@@ -1484,7 +1485,15 @@ void Screen::LatchFramebuffer()
             // Queued: its output is to come (CopyNextFrame waits for it)
             _presentSlotQueuedIn[index] = delay > 0 ? generation : 0;
             _temporalQueued = _temporal.get();
-            _temporalDelayFrames.store(static_cast<uint8_t>(delay), std::memory_order_release);
+            // Smooth motion reads ahead: when frame N is due it draws towards N + 1, whose output comes a look-ahead
+            // after N + 1's latch. With the effect's delay alone that output came only as N was due, less the worker's
+            // time; a presenter that draws a picture ahead of its refresh (Metal: ~40 ms) had no next frame for about
+            // 85 % of the pictures (starved 798 of 943 on a 60 Hz Mac, 0 on GL that draws at the refresh). One frame
+            // more while smooth motion is set: the margin of the frames without the effect (the sound follows)
+            const bool readsAhead =
+                _context && _context->config.smoothMotion != static_cast<uint8_t>(smoothmotion::Mode::Off);
+            const int presentDelay = delay > 0 && readsAhead ? delay + 1 : delay;
+            _temporalDelayFrames.store(static_cast<uint8_t>(presentDelay), std::memory_order_release);
         }
         UpdateAudioDelay();
 

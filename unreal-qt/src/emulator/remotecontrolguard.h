@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractItemView>
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QPointer>
@@ -12,6 +13,7 @@
 #include <utility>
 
 class Emulator;
+class EmulatorContext;
 class QShortcut;
 
 /// @brief The GUI side of automation sessions (execution arbiter design §6a, X7c).
@@ -31,9 +33,15 @@ class QShortcut;
 ///   copy / find, drops;
 /// - a window shown during the session (a dialog, a context menu) is locked as it shows;
 /// - the places that change the machine's breakpoints, labels, ports, sectors check Locked() themselves (Refuse).
-/// The guard gives back only what it changed, so the windows' own rules stay. A window that re-enables a control
-/// (its state refresh) is locked again by the next pass (a short timer while locked, which also notices an idle
-/// session's lease running out).
+/// The guard gives back only what it changed, so the windows' own rules stay.
+///
+/// Cost: the whole walk over every window runs once, when a session starts; nothing walks the windows again while it
+/// lasts, a step or a stop under the session costs the guard nothing. What changes later reaches it as events through
+/// the application filter: a control a window enables again (its state refresh after a step: EnabledChange,
+/// ActionChanged, ReadOnlyChange), an object created or re-parented (ChildAdded), an action added to a widget
+/// (ActionAdded), a window shown. Those are queued and locked at the next turn of the event loop, before the user can
+/// act. The session itself changes by NC_RUN_CONTROL_CHANGED (MainWindow calls refresh()); what changes with time alone
+/// (an idle lease running out, a re-take cooldown ending) is a one-shot timer at RunControlTimeToChange.
 class RemoteControlGuard : public QObject
 {
     Q_OBJECT
@@ -74,6 +82,9 @@ public:
     /// For a place that changes the machine: true (refused, the user told why near `where`) while Locked()
     static bool Refuse(QWidget* where);
 
+    /// The objects the lock looked at so far (the cost's measure: the tests count them)
+    quint64 visited() const { return _visited; }
+
 public slots:
     /// Re-read the session, lock or unlock, and announce a change (sessionChanged)
     void refresh();
@@ -94,6 +105,12 @@ protected:
 private:
     void lock();
     void lockTree(QWidget* root);
+    void lockObject(QObject* object);
+    /// Lock @p object at the next turn of the event loop (@p tree: with its children, a widget added with them)
+    void queue(QObject* object, bool tree);
+    void flushQueued();
+    /// The one-shot timer for what changes with time alone (an idle lease, a re-take cooldown)
+    void armClock(const EmulatorContext* context);
     void unlock();
     bool IsExempt(QObject* object) const;
 
@@ -109,9 +126,15 @@ private:
     bool _hasCooldowns = false;
 
     QSet<QObject*> _exempt;
-    QList<QPointer<QObject>> _lockedByUs;
-    QList<QPointer<QObject>> _readOnlyByUs;
-    QList<std::pair<QPointer<QAbstractItemView>, QAbstractItemView::EditTriggers>> _editTriggersByUs;
+    // What the guard changed, by object: a control a window enabled again and the guard locked again is kept once
+    QHash<QObject*, QPointer<QObject>> _lockedByUs;
+    QHash<QObject*, QPointer<QObject>> _readOnlyByUs;
+    QHash<QObject*, std::pair<QPointer<QAbstractItemView>, QAbstractItemView::EditTriggers>> _editTriggersByUs;
     bool _filtering = false;
-    QTimer _relock;
+    bool _locked = false;  // the session's walk over every window ran
+    QList<std::pair<QPointer<QObject>, bool>> _queued;  // object, with its children
+    bool _flushPosted = false;
+    bool _inPass = false;  // the guard itself changes controls: their notifications are not queued
+    quint64 _visited = 0;
+    QTimer _clock{this};
 };

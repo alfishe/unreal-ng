@@ -869,6 +869,144 @@ void bz_shown_rgb (const bz_t *bz, uint8_t *rgb)
 		}
 }
 
+/* ---------------------------------------------------------------- unreal-ng: state (VENDORED.md) */
+
+/* Every field but mem, mask and the hooks, little-endian, in this order: the large tables first (they change
+ * seldom: a time-travel store keeps the pieces that changed), the registers and counters last */
+static void st_put (uint8_t **p, uint32_t v, int bytes)
+{
+	int k;
+	for (k = 0; k < bytes; k++)
+		*(*p)++ = (uint8_t)(v >> (8 * k));
+}
+static uint32_t st_get (const uint8_t **p, int bytes)
+{
+	uint32_t v = 0;
+	int k;
+	for (k = 0; k < bytes; k++)
+		v |= (uint32_t)*(*p)++ << (8 * k);
+	return v;
+}
+
+/* The registers, 4 bytes each: X(field, its type) */
+#define BZ_STATE_SCALARS(X) \
+	X(W, int32_t) X(H, int32_t) X(S, int32_t) X(fb[0], uint32_t) X(fb[1], uint32_t) X(zaddr, uint32_t) \
+	X(amap, uint32_t) X(draw, int32_t) X(phase, int32_t) X(mark, uint32_t) \
+	X(t_addr, uint32_t) X(t_lin, int32_t) X(t_wl, int32_t) X(t_hl, int32_t) X(t_lw, int32_t) X(t_lh, int32_t) \
+	X(t_ls, int32_t) \
+	X(l_addr, uint32_t) X(l_stride, int32_t) X(l_rows, int32_t) X(l_shift, int32_t) X(l_smin, int32_t) \
+	X(l_tmin, int32_t) \
+	X(sx0, int32_t) X(sy0, int32_t) X(sx1, int32_t) X(sy1, int32_t)
+
+void bz_state_save (const bz_t *bz, uint8_t *dst)
+{
+	uint8_t *p = dst;
+	const uint64_t *counters = (const uint64_t *)&bz->st;
+	int k, way;
+
+	memcpy (p, bz->colormap, sizeof(bz->colormap));
+	p += sizeof(bz->colormap);
+	memcpy (p, bz->pal, sizeof(bz->pal));
+	p += sizeof(bz->pal);
+	for (k = 0; k < 128; k++)
+		st_put (&p, (uint32_t)bz->turb[k], 4);
+	for (k = 0; k < 512; k++)
+	{
+		st_put (&p, (uint16_t)bz->vb_u[k], 2);
+		st_put (&p, (uint16_t)bz->vb_v[k], 2);
+		st_put (&p, (uint32_t)bz->vb_zi[k], 4);
+		st_put (&p, (uint32_t)bz->vb_l[k], 4);
+		st_put (&p, (uint16_t)bz->st_s[k], 2);
+		st_put (&p, (uint16_t)bz->st_t[k], 2);
+	}
+	for (k = 0; k < 64; k++)
+	{
+		for (way = 0; way < 2; way++)
+		{
+			st_put (&p, bz->tc_tag[k][way], 4);
+			*p++ = bz->tc_ok[k][way];
+		}
+		*p++ = bz->tc_old[k];
+	}
+#define BZ_PUT(f, type) st_put (&p, (uint32_t)bz->f, 4);
+	BZ_STATE_SCALARS (BZ_PUT)
+#undef BZ_PUT
+	memcpy (p, bz->blend, 4);
+	p += 4;
+	for (k = 0; k < (int)(sizeof(bz->st) / sizeof(uint64_t)); k++)
+	{
+		st_put (&p, (uint32_t)counters[k], 4);
+		st_put (&p, (uint32_t)(counters[k] >> 32), 4);
+	}
+}
+
+void bz_state_load (bz_t *bz, const uint8_t *src)
+{
+	const uint8_t *p = src;
+	uint64_t *counters = (uint64_t *)&bz->st;
+	int k, way;
+
+	memcpy (bz->colormap, p, sizeof(bz->colormap));
+	p += sizeof(bz->colormap);
+	memcpy (bz->pal, p, sizeof(bz->pal));
+	p += sizeof(bz->pal);
+	for (k = 0; k < 128; k++)
+		bz->turb[k] = (int32_t)st_get (&p, 4);
+	for (k = 0; k < 512; k++)
+	{
+		bz->vb_u[k] = (int16_t)st_get (&p, 2);
+		bz->vb_v[k] = (int16_t)st_get (&p, 2);
+		bz->vb_zi[k] = (int32_t)st_get (&p, 4);
+		bz->vb_l[k] = (int32_t)st_get (&p, 4);
+		bz->st_s[k] = (int16_t)st_get (&p, 2);
+		bz->st_t[k] = (int16_t)st_get (&p, 2);
+	}
+	for (k = 0; k < 64; k++)
+	{
+		for (way = 0; way < 2; way++)
+		{
+			bz->tc_tag[k][way] = st_get (&p, 4);
+			bz->tc_ok[k][way] = *p++;
+		}
+		bz->tc_old[k] = *p++;
+	}
+#define BZ_GET(f, type) bz->f = (type)st_get (&p, 4);
+	BZ_STATE_SCALARS (BZ_GET)
+#undef BZ_GET
+	memcpy (bz->blend, p, 4);
+	p += 4;
+	for (k = 0; k < (int)(sizeof(bz->st) / sizeof(uint64_t)); k++)
+	{
+		const uint64_t low = st_get (&p, 4);
+		counters[k] = low | ((uint64_t)st_get (&p, 4) << 32);
+	}
+}
+
+void bz_reset (bz_t *bz)
+{
+	uint8_t       *mem = bz->mem;
+	const uint32_t mask = bz->mask;
+	bz_poly_hook_t  poly = bz->hook_poly;
+	bz_pixel_hook_t pixel = bz->hook_pixel;
+	void           *user = bz->hook_user;
+
+	memset (mem, 0, (size_t)mask + 1);
+	memset (bz, 0, sizeof(*bz));
+	bz->mem = mem;
+	bz->mask = mask;
+	bz->hook_poly = poly;
+	bz->hook_pixel = pixel;
+	bz->hook_user = user;
+}
+
+void bz_layout (const bz_t *bz, uint32_t out[4])
+{
+	out[0] = bz->fb[0];
+	out[1] = bz->fb[1];
+	out[2] = bz->zaddr;
+	out[3] = (uint32_t)bz->draw;
+}
+
 void bz_set_hooks (bz_t *bz, bz_poly_hook_t poly, bz_pixel_hook_t pixel, void *user)
 {
 	bz->hook_poly = poly;

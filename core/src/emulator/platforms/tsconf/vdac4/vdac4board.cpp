@@ -7,7 +7,6 @@
 #include "emulator/config.h"
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
-#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/sound/soundmanager.h"
 #include "esp/espxtensaruntime.h"
 #include "vdac4audio.h"
@@ -47,6 +46,14 @@ public:
         }
         Prepare();
         _board._tang.LinkWrite(address, value);
+        return true;
+    }
+    bool FirmwareLinkWrite(uint32_t address, uint32_t value) override
+    {
+        if (vdac4::EspXtensaRuntime::InJob())
+            return LinkWrite(address, value);  // cannot happen: the firmware runs on the emulation thread
+        Prepare();
+        _board._tang.FirmwareLinkWrite(address, value);
         return true;
     }
     bool LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count) override
@@ -214,23 +221,11 @@ void Vdac4Board::OnFrameEnd()
     // A machine frame ends with the ESP's outputs handed over: no job in flight across a frame boundary (TTD
     // checkpoints, snapshots, the frame-end probes and the published state see a settled ESP)
     _runtime->Flush();
+    // The Quake II core's picture of this frame, the FRAMEs the ESP sent just now included: latched with the ESP
+    // settled, a TTD capture after it finds the picture the core's state gives (no picture bytes in its state)
+    _tang.PresentFrame();
     ApplyJitFeature();
-    UpdateTimeTravelAvailability();
     Publish();
-}
-
-void Vdac4Board::UpdateTimeTravelAvailability()
-{
-    // At the frame end, never inside a LINK access: the Quake II core's SDRAM and drawing state are not part of
-    // the Tang's TTD state, so a session must not record or seek across it
-    const bool blocked = _tang.GetPersonality() == Vdac4Tang::Personality::Q2;
-    if (blocked == _ttdBlocked)
-        return;
-    _ttdBlocked = blocked;
-    if (ttd::ITimeTravelHooks* hooks = _context ? _context->pTimeTravelHooks : nullptr)
-        hooks->SetUnavailableReason(blocked ? "time travel is not available while the VDAC4 Tang runs the Quake II "
-                                              "core (core_load Q2): its GPU state is not recorded"
-                                            : "");
 }
 
 void Vdac4Board::ApplyJitFeature()

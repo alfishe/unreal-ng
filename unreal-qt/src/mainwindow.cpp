@@ -6257,9 +6257,13 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     // An instance starts muted (SoundManager). The interactive GUI unmutes the instance it binds, once; a headless
     // process (offscreen / minimal platform) leaves it muted: only an automation plane (audio/mixer/master) unmutes it.
     // Binding the same instance again keeps whatever mute state the user set.
+    // UNREAL_START_MUTED (agents' and tests' windowed runs): the GUI unmutes nothing either, the sound stays off from
+    // the first sample until an automation plane or the user unmutes it
     const QString platform = QGuiApplication::platformName();
     const bool headless = platform == QLatin1String("offscreen") || platform == QLatin1String("minimal");
-    if (!headless && _audioBoundId != emulator->GetId())
+    static const bool startMuted = !qEnvironmentVariableIsEmpty("UNREAL_START_MUTED") &&
+                                   qEnvironmentVariable("UNREAL_START_MUTED") != QLatin1String("0");
+    if (!headless && !startMuted && _audioBoundId != emulator->GetId())
         emulator->SetHostAudioMuted(false);
     _audioBoundId = emulator->GetId();
 

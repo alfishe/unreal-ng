@@ -385,7 +385,14 @@ showed the same address.
     Exempt: Take Back Control, Allow Automation Again, full screen, Exit.
   - **Restore.** The guard gives back only what it disabled, and the windows' own enablement rules apply again.
   - **Re-lock.** A 250 ms pass while locked catches re-enabled controls and dialogs opened later; it also notices an
-    idle session's lease running out.
+    idle session's lease running out. **Replaced 2026-11-27** (no needless GUI load): the pass walked every object of
+    every window, 1.6 ms of the GUI thread per tick (6.7 ms/s with only the main window, more with the debugger). Now
+    the walk runs once when a session starts; what changes later arrives as events through the application filter
+    (EnabledChange, ActionChanged, ReadOnlyChange, ChildAdded, ActionAdded, a window shown) and is locked at the next
+    turn of the event loop, sooner than the old 250 ms; the lease's end and a cooldown's are a one-shot timer at
+    `EmulatorContext::RunControlTimeToChange`. A step or a stop under a session costs the guard nothing. Tests:
+    `RemoteControlGuard_Test.AControlEnabledAgainDuringTheSessionIsLockedAtOnce`,
+    `NothingIsWalkedWhileTheSessionStaysTheSame`, `AnIdleLeaseRunningOutUnlocksWithoutAPoll`.
   - **Input.** The machine gets no key presses, clicks or mouse capture from the GUI; a captured mouse is
     released. A drop or a file-open is refused with a toast.
   - **The remote-control bar** (owner-reviewed 2026-10-10): a row of its own under the toolbar (never overflows),

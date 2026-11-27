@@ -45,6 +45,7 @@ public:
     bool PacesRefreshes() const override;
     uint64_t Presented() const override;
     uint64_t LatePresents() const override;
+    uint64_t SteppedPresents() const override;
     uint64_t LastLatePresent() const override;
     uint32_t LastLateLag() const override;
     uint64_t LastOnTimePresent() const override;

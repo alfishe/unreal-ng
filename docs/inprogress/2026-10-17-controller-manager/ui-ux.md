@@ -482,6 +482,11 @@ Toast (main window): ControllerToast (frameless top-level, like DropTargetOverla
   `mediapanelwindow.cpp:111, 244`): the connector side polls `ControllerManager::Revision()`, the host side polls
   `HostInputService::Revision()` (devices, bindings, profiles). Live control state (highlight, meters, cord
   pulses) is a separate 30 Hz snapshot read, painted only while the dialog is visible; nothing runs while hidden.
+  As built, `HostControllers::poll` (the 250 ms timer, owned by `HostControllers`) costs ~50-70 us of the GUI thread
+  while nothing changes (measured 2026-11-27, macOS: the auto decision's port reads 17 us, the owners file 15 us by
+  stat, the context and haptics gate 6 us, the `controllers.devices` value 3 us); the device arrival / departure path
+  (~2 ms: profiles re-applied, the seen-devices setting) runs only when a revision changed. Hot-plug, battery and
+  status reach the UI within one poll (250 ms; battery and notice: DevicesFeed's 2 s status period).
 - **Requests** are async (`ControllerControl` replies with `pending` where a change waits for a frame boundary);
   the UI never blocks on the emulator thread.
 - Class mapping: [architecture.md §13](architecture.md#13-code-placement) (`controllersdialog.*`,

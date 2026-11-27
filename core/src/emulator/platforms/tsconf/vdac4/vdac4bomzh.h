@@ -27,6 +27,8 @@
 #include <vector>
 
 struct bz_s;
+class Vdac4EspStateWriter;
+class Vdac4EspStateReader;
 
 class Vdac4BomzhCore
 {
@@ -49,6 +51,31 @@ public:
 
     /// The model has its SDRAM (allocation can fail)
     bool IsReady() const { return _model != nullptr; }
+
+    /// The core as a fresh bitstream has it (core_load): SDRAM zero, every register and table at reset
+    void Reset();
+
+    /// region <State (TTD)>
+    /// The SDRAM (kMemoryBytes; null without a model): the TTD region Vdac4Q2Sdram, recorded apart from Save. TTD
+    /// stores it at the VDAC4 ESP's keyframes only and computes it again in between: every write to it comes from a
+    /// LINK write of the ESP's app, which the ESP's journal replays (ttd-design.md §11)
+    uint8_t* Memory();
+    /// Everything but the SDRAM: the model's registers and on-chip tables, the LINK registers, the RD window, the
+    /// command being received and the WRITE stream in flight. Plain little-endian bytes
+    void Save(Vdac4EspStateWriter& out) const;
+    /// Save's bytes back; false (the core unchanged) when they are not a state of this core
+    bool Load(Vdac4EspStateReader& in);
+    /// The part of the state the Evo side moves (M_SEL, the Evo's SPI, the reset rule's timer, boot_req), apart:
+    /// no LINK write of the ESP touches it but boot_req, so TTD stores it at every capture while the ESP's replay
+    /// gives the rest. LoadEvoSide: false (the core unchanged) when the bytes are not SaveEvoSide's
+    void SaveEvoSide(Vdac4EspStateWriter& out) const;
+    bool LoadEvoSide(Vdac4EspStateReader& in);
+    /// A hash of Save's bytes: a replay that computed the state again checks it reached the recorded one
+    uint64_t StateHash() const;
+    /// Counts the changes that can alter the shown picture (FRAME, SETUP, a WRITE over the shown frame, drawing where
+    /// the frames or z overlap it): equal counts, the same ShownPicture
+    uint64_t ShownSerial() const { return _shownSerial; }
+    /// endregion
 
     uint32_t LinkRead(uint32_t address) const;
     void LinkWrite(uint32_t address, uint32_t value);
@@ -87,6 +114,8 @@ private:
     void Execute();
     void FlushWrite();
     void CopyToWindow(uint32_t bursts);
+    /// The SETUP's frames and z overlap one another (a draw may change the shown frame)
+    void UpdateAliasing();
 
     bz_s* _model = nullptr;
     std::vector<uint32_t> _pending;  ///< the command being received (not WRITE data)
@@ -115,4 +144,8 @@ private:
     uint64_t _words = 0;
     uint64_t _commands = 0;
     uint64_t _badWords = 0;
+
+    // Not state: derived from it (Load computes them again) or the recording's
+    bool _aliased = false;           ///< UpdateAliasing
+    uint64_t _shownSerial = 0;
 };

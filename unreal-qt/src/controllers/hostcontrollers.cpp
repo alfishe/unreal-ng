@@ -350,6 +350,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
 
 HostControllers::~HostControllers()
 {
+    _timer.stop();  // no poll over a half torn-down object
     if (_mainWindow != nullptr || _debuggerWindow != nullptr)
         qApp->removeEventFilter(this);
     onUnbound();
@@ -786,6 +787,10 @@ void HostControllers::onUnbound()
 #ifdef ENABLE_CONTROLLERS
 namespace
 {
+/// The owners file is read again after this many polls even when its time and size say nothing changed (a file system
+/// whose times are coarse: two edits in the same second, the same size): 2 s at the 250 ms poll
+constexpr int kOwnersRereadPolls = 8;
+
 bool ClientAlive(int64_t pid)
 {
     return pid > 0 && pid <= UINT32_MAX && platform::IsProcessAlive(static_cast<uint32_t>(pid));
@@ -833,10 +838,25 @@ void HostControllers::updateOwner()
 {
     if (_ownersPath.isEmpty())
         return;
-    QFile file(_ownersPath);
-    std::vector<int64_t> pids;
-    if (file.open(QIODevice::ReadOnly))
-        pids = ClientQueue::Parse(file.readAll().toStdString());
+    // At every poll: the file is read again only when it changed (a client claimed or left: QSaveFile puts a new one
+    // in place); else the processes of its last list are asked whether they live (an owner that quit or crashed leaves
+    // the file as it was). Two stat calls instead of an open and a read: 15 us instead of 108 us of the GUI thread per
+    // poll (macOS, measured 2026-11-27)
+    std::error_code error;
+    const std::filesystem::path path = FileHelper::ToFsPath(_ownersPath.toStdString());
+    const std::filesystem::file_time_type time = std::filesystem::last_write_time(path, error);
+    const std::uintmax_t size = error ? 0 : std::filesystem::file_size(path, error);
+    if (error || time != _ownersTime || size != _ownersSize || --_ownersPollsLeft <= 0)
+    {
+        _ownerPids.clear();
+        QFile file(_ownersPath);
+        if (file.open(QIODevice::ReadOnly))
+            _ownerPids = ClientQueue::Parse(file.readAll().toStdString());
+        _ownersTime = error ? std::filesystem::file_time_type{} : time;
+        _ownersSize = error ? 0 : size;
+        _ownersPollsLeft = error ? 0 : kOwnersRereadPolls;
+    }
+    const std::vector<int64_t>& pids = _ownerPids;
     const int64_t self = platform::CurrentProcessId();
     int64_t owner = ClientQueue::Owner(pids, ClientAlive);
     if (owner == 0)
