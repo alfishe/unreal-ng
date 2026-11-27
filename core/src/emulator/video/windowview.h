@@ -282,8 +282,10 @@ struct WindowRecordingRequest
     std::string layout = "below";  ///< the keyboard "below" the picture or "side" (right of it, for 16:9)
     /// What ffmpeg gets: "picture" = the window's picture at its own size, ffmpeg scales and borders it (the fewest
     /// bytes); "nv12" = the file's frame composed here at its size and converted to NV12 (4:2:0, by the GPU window),
-    /// nothing left for ffmpeg but the encoder: a GPU encoder's own input; "auto" (the default) = nv12 where the
-    /// file is 4:2:0 anyway (a hardware encoder without 4:4:4), else picture. The Mac's own writer takes none
+    /// nothing left for ffmpeg but the encoder: a GPU encoder's own input; "yuv444" = the same in planar 4:4:4 (3
+    /// bytes a pixel) for the 4:4:4 encoders (x264 / x265, NVENC and VA-API 4:4:4, ProRes); "auto" (the default) =
+    /// nv12 where the file is 4:2:0 anyway (a hardware encoder without 4:4:4), yuv444 for a 4:4:4 encoder up to
+    /// 1080p, else picture. The Mac's own writer takes none
     std::string transfer = "auto";
 };
 
@@ -306,7 +308,7 @@ struct WindowRecordingStatus
     double encoderReadyMs = 0;    ///< the encoder (the Mac's writer, or ffmpeg) was up
     double firstFrameMs = 0;      ///< the first picture was in the encoder
     double slowestFrameMs = 0;    ///< the longest one picture took in the writer (compose + hand over)
-    std::string transfer;       ///< "picture", "nv12" (what ffmpeg gets) or "native" (the Mac's writer, no ffmpeg)
+    std::string transfer;       ///< "picture", "nv12", "yuv444" (what ffmpeg gets) or "native" (the Mac's writer)
     bool finalizing = false;    ///< stopped, the file is being finished in the background (recording is false)
     std::string error;          ///< why the last recording failed to finish ("" = it did not fail)
 };

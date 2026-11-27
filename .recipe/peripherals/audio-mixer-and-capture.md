@@ -229,6 +229,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" -H 'Content-Type: applica
      -d '{"action":"start","seconds":600,"to_file":true,"path":"scratch/span.wav"}'
 curl -s -X POST "$BASE/emulator/$EMU_ID/history/ay-socket/config" -H 'Content-Type: application/json' \
      -d '{"mode":"capture","limit":0,"stream":"scratch/span-ay.jsonl"}'
+#    a long span: add a record-time filter so only what is studied is kept and streamed,
+#    e.g. "filter":"type=write" (register writes, not the selects) or "type=write reg=7-10"
 # 5. Free-run (resume) for the length of the span; the capture closes itself at its target.
 curl -s -X POST "$BASE/emulator/$EMU_ID/resume"
 # 6. Read /audio/capture/status until file_closed, then switch the history off (closes its stream)

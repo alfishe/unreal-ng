@@ -314,10 +314,16 @@ if (NOT TARGET ${PROJECT_NAME})
         target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_GDB_AUTOMATION)
     endif()
 
-    # Enable CTest for Google Test discovery
+    # Enable CTest for Google Test discovery. PRE_TEST: the list is made when ctest runs, not after every link. As a
+    # POST_BUILD step (the default) its script took 37 s of the 42 s relink of core-tests on macOS (14k tests,
+    # 2026-11-27), on every build that touched a test; the test runs (test.sh, test-parallel) do not use ctest
     enable_testing()
     include(GoogleTest)
-    gtest_discover_tests(${PROJECT_NAME})
+    if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
+        gtest_discover_tests(${PROJECT_NAME} DISCOVERY_MODE PRE_TEST)
+    else ()
+        gtest_discover_tests(${PROJECT_NAME})
+    endif ()
 
     # Parallel test execution target
     # Uses GTest sharding; shard count auto-detects from the logical CPU

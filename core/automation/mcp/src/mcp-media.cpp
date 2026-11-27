@@ -629,13 +629,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "window_record_start: the keyboard below the picture (default) or right of it (side, with width / height)";
     schema["properties"]["transfer"]["type"] = "string";
     schema["properties"]["transfer"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* transfer : {"auto", "picture", "nv12"})
+    for (const char* transfer : {"auto", "picture", "nv12", "yuv444"})
         schema["properties"]["transfer"]["enum"].append(transfer);
     schema["properties"]["transfer"]["description"] =
         "window_record_start, ffmpeg only: auto (default: nv12 where the file is 4:2:0 anyway, a hardware encoder "
-        "without 4:4:4; else picture), picture (the window's picture at its own size, ffmpeg scales and borders it) "
-        "or nv12 (the whole frame at the file's size in NV12, 4:2:0, converted by the GPU window: the GPU encoder's "
-        "own input; not with prores)";
+        "without 4:4:4; yuv444 for a 4:4:4 encoder up to 1080p; else picture), picture (the window's picture at its "
+        "own size, ffmpeg scales and borders it), nv12 (the whole frame at the file's size in NV12, 4:2:0, converted "
+        "by the GPU window: the GPU encoder's own input; not with prores) or yuv444 (the same in planar 4:4:4)";
     schema["required"].append("action");
 
     registry.Register(

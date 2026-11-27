@@ -54,6 +54,8 @@ type_input {"action":"type","text":"10 PRINT 1","tokenized":true}
 type_input {"action":"tap","key":"enter","frames":3}
 type_input {"action":"press","key":"caps"}
 type_input {"action":"release","key":"caps"}
+type_input {"action":"press","key":"w+o"}                       # a chord: both keys held
+type_input {"action":"set","keys":["q","p"]}                    # the whole held state; [] releases all
 type_input {"action":"combo","keys":["caps","symbol"],"frames":2}
 type_input {"action":"macro","name":"cat"}
 type_input {"action":"release_all"}
@@ -75,6 +77,11 @@ type_input {"action":"route","route":"ps2"}
   in `key` (`"w+o"`, `"caps+1"`) for `tap` / `press` / `release`, and in an item of `keys`. A
   space or a comma does not separate keys (`"w o"` is an unknown key). The key `+` itself is
   still the name `+` (or `plus`); in a chord a `+` where a name starts is that key (`"ss++"`).
+- `set` makes the held keys exactly the ones given: these held, every other injected key released, a pending
+  sequence dropped; an unknown name changes nothing. It is the one call per step of an input script ("now Q and P,
+  next frame only P") instead of a press / release per key. Other planes: `POST /keyboard/set {"keys": [...]}`,
+  CLI `key set q+p` (`key set none` releases all), Lua `key_set({"q", "p"})`, Python `key_set(["q", "p"])`; the
+  chord text (`caps+5`) also works in the CLI, Lua and Python key verbs.
 - Macros (the library in
   [debugkeyboardmanager.cpp](../../core/src/debugger/keyboard/debugkeyboardmanager.cpp)):
   `e_mode` (Caps Shift + Symbol Shift), `g_mode` (Caps Shift + 9), `format`, `cat`,
@@ -107,6 +114,7 @@ Responses worth asserting:
 |:--|:--|
 | `tap` | `success`, `key`, `frames` |
 | `press`, `release` | `success`, `key` |
+| `set` | the keys now held (named in `message`) |
 | `combo` | `success`, `keys`, `frames` |
 | `macro` | `success`, `macro` (400 and `success:false` for an unknown name) |
 | `type` | `success`, `text`, `length`, `delay_frames`, `tokenized` |

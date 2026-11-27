@@ -105,6 +105,26 @@ on by default; the build hosts run ccache 4.14.3). Two layers:
   writes debug info into the objects (`/Z7`): ccache cannot cache `/Zi`.
 - **Statistics**: `ccache -d <checkout>/scratch/ccache -s` (`Remote storage` = hits in the master cache).
 
+## Linker
+
+gcc and clang off Apple link with **lld** when it is installed (`cmake/Linker.cmake`, every configure, the configure
+log says `Linker: lld`): Linux (`apt install lld`) and MinGW (MSYS2's `mingw64/bin/ld.lld`). Left alone: macOS
+(`ld64.lld` was no faster than Apple's `ld`), MSVC, and LTO builds (gcc's LTO needs GNU ld's plugin; the release
+packages keep their linker). `-DUNREAL_LLD=OFF` keeps the system's linker.
+
+`core-tests` lists its tests for ctest only when ctest runs (`gtest_discover_tests(... DISCOVERY_MODE PRE_TEST)`): as a
+step after every link, CMake's script over the 14k test names took 37 s on macOS. Nothing here runs ctest (`test.sh`
+and `test-parallel` run the shards themselves).
+
+One lone relink of `core-tests` (and `unreal-qt` on Linux), 2026-11-27:
+
+| Host | Before | lld | lld + no discovery step |
+|------|--------|-----|-------------------------|
+| macOS (Apple `ld`) | 42 s | - | 0.9 s |
+| Linux | 39 s (GNU ld 2.42); `unreal-qt` 19 s | 8 s; `unreal-qt` 1.7 s | 2.9 s |
+
+mold 2.30 was no faster than lld 18 on Linux.
+
 ## Landing on master
 
 Work happens in a worktree (`scratch/wt-<name>`), never on a branch switched in the shared main checkout. When the

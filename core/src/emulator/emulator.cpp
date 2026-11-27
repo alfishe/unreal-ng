@@ -963,7 +963,28 @@ std::string Emulator::EditMemoryFromTool(const ToolEdit& what, const std::functi
         // The recording keeps a marker with the edit's bytes, so the engine's replay applies it
         if (session)
             ttd->BeginToolEdit();
-        edit();
+        // A cache of RAM in front of the CPU (TS-Conf) drops what the edit changed, inside the edit so a recording
+        // keeps it
+        struct ToolEditBracket
+        {
+            Memory* memory;
+            explicit ToolEditBracket(Memory* m) : memory(m)
+            {
+                if (memory)
+                    memory->ToolEditBegins();
+            }
+            ~ToolEditBracket()
+            {
+                if (memory)
+                    memory->ToolEditEnds();
+            }
+            ToolEditBracket(const ToolEditBracket&) = delete;
+            ToolEditBracket& operator=(const ToolEditBracket&) = delete;
+        };
+        {
+            const ToolEditBracket bracket(_context ? _context->pMemory : nullptr);
+            edit();
+        }
         if (session)
             ttd->EndToolEdit(source);
         return true;

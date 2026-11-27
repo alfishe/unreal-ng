@@ -2,7 +2,7 @@
 
 One page for everything about time travel in this repository: the designs, the plan folders and their status, the
 automation planes, the code, the tests and tools, and the open tasks. Read this first instead of scanning the tree.
-Updated 2026-11-24.
+Updated 2026-11-27.
 
 ## What TTD is here
 
@@ -65,7 +65,7 @@ Related design docs next door: [device-history.md](../device-history.md) (per-de
 | [2026-11-05-ttd-replay-check](../../../../inprogress/2026-11-05-ttd-replay-check/README.md) | replay reproduces the recording | done 2026-11-06 | [README.md](../../../../inprogress/2026-11-05-ttd-replay-check/README.md) | - | `124fb512f` |
 | [2026-11-07-ttd-backtrace](../../../../inprogress/2026-11-07-ttd-backtrace/README.md) | the call stack at a moment | done 2026-11-07 | [README.md](../../../../inprogress/2026-11-07-ttd-backtrace/README.md) | #119 | - |
 | [2026-11-08-ttd-branches](../../../../inprogress/2026-11-08-ttd-branches/README.md) | branched history, two tiers, surfaces, `ttdtool` | closed 2026-11-16 (P4 not planned) | [DONE.md](../../../../inprogress/2026-11-08-ttd-branches/DONE.md) | #76 (W1) | `e0ac62a53`, `912e8dd68`, `47ebc9dd3` |
-| [2026-11-12-re-api-efficiency](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) | reverse-engineering agents vs MCP / WebAPI (TTD items among others) | open | [TODO.md](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md), [analysis.md](../../../../inprogress/2026-11-12-re-api-efficiency/analysis.md) | #122 | F1-F3, S1, V2, E4 (`e918537f5`), F6, V4; S2 (jobs: TTD long verbs with `async`, [jobs.md](../../control-interfaces/jobs.md)) |
+| [2026-11-12-re-api-efficiency](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) | reverse-engineering agents vs MCP / WebAPI (TTD items among others) | open (left: F4, S3, F7, V6, E7) | [TODO.md](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md), [analysis.md](../../../../inprogress/2026-11-12-re-api-efficiency/analysis.md) | #122 | F1, F2 (`c3ab886b3`), F3 (`d71ac0900`), S1, V2, E4 (`9b6e49897`), F6, V4 (`ac1ddd256`); S2 (`c86776e1c`: TTD long verbs with `async`, [jobs.md](../../control-interfaces/jobs.md)); F9, V5 frames, E3, E5, E8 (`2683ddc69`); V1, V5 `ignore_readers`, E1, E6, V7 (`96aea1d42`, `5aeaf906a`); V3 `preset`, `keys set`, E2 (`df5cd5b79`); S4 (`7f2e66962`, `f8832f6a2`); F5 (`17cc9e78f`, `5552cbf03`) |
 | [2026-09-27-gs-debugger](../../../../inprogress/2026-09-27-gs-debugger/TODO.md) | card CPU debugger; TTD positions on the card's CPU (§8) | open (TTD part landed, D3 done 2026-11-20) | [TODO.md](../../../../inprogress/2026-09-27-gs-debugger/TODO.md), [design.md §8](../../../../inprogress/2026-09-27-gs-debugger/design.md#8-ttd-d1-d4) | #45 | `3945ca4f3` / `7dce0959a`, `a6be6598d`, `61276899f`, `e97d71a26` |
 | [2026-09-29-rzx-replay](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) | RZX playback, recording, TTD interop | open (R0-R3 done; R4, R5 left) | [TODO.md](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) | #27 | R0-R3 2026-09-29 |
 | [2026-09-29-model-what-if](../../../../inprogress/2026-09-29-model-what-if/TODO.md) | machine state transfer, branches (W1), forks to other models | open (W3 postponed) | [TODO.md](../../../../inprogress/2026-09-29-model-what-if/TODO.md) | #76 | W0 `6f5759f3`, `570ca3ce`, `7ddbef11` |
@@ -76,7 +76,7 @@ TTD files in other folders:
 |------|------|--------|
 | [turbosound-fm/ttd-fm-state-gap.md](../../../../inprogress/2026-09-10-turbosound-fm/ttd-fm-state-gap.md) | TSFM FM synth state in TTD | fixed 2026-09-23 |
 | [moonsound/...-opl4-ttd-integration-tdd.md](../../../../inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-ttd-integration-tdd.md) | MoonSound in TTD (tier A blob, tier B wave SRAM) | tier A built |
-| [automation-triage-gaps/designs/ttd-coverage-query-design.md](../../../../inprogress/2026-09-14-automation-triage-gaps/designs/ttd-coverage-query-design.md) | TD-7 coverage index query | not planned (see open tasks) |
+| [automation-triage-gaps/designs/ttd-coverage-query-design.md](../../../../inprogress/2026-09-14-automation-triage-gaps/designs/ttd-coverage-query-design.md) | TD-7 coverage index queries (`coverage/probe`, `scan`, `summary`) | built 2026-09-17, `coverage/rare` added 2026-10; no further query endpoint (owner 2026-11-27) |
 | [automation-triage-gaps/designs/ttd-timeline-summary-design.md](../../../../inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md) | TD-5 first design | superseded by 2026-10-31-ttd-timeline-summary |
 | [automation-triage-gaps/ttd-coverage-evaluation.md](../../../../inprogress/2026-09-14-automation-triage-gaps/ttd-coverage-evaluation.md) | TTD for AI reverse-engineering, evaluation | history (2026-09-15, v1) |
 | [debugger-family/rzx-ttd.md](../../../../inprogress/2026-09-28-debugger-family/rzx-ttd.md) | RZX vs TTD, bridging them | research; RZX playback built since |
@@ -106,6 +106,15 @@ TTD files in other folders:
   the `ttd.position` and `ttd.branches` topics).
 - MCP: the `time_travel` tool, [docs/features/mcp/README.md](../../../../features/mcp/README.md#time-travel-debugging)
   (`core/automation/mcp/src/mcp-tools.cpp`).
+- Long verbs as jobs (`async=true` on `dump`, `load`, `probe-frames`, `memory-series`, `find-event`, `replay-check`,
+  `export-clip`, `journal-build`, `branch-create`; a long-poll instead of a client timeout):
+  [jobs.md](../../control-interfaces/jobs.md), [command-interface §19](../../control-interfaces/command-interface.md#19-jobs);
+  MCP `jobs` (`core/automation/mcp/src/mcp-jobs.cpp`).
+- Analysis over recordings (the `analysis` verbs replay a TTD session on a clone: L1 routines, calls and loops of a
+  whole recording, first / last frame per instruction, one L1 over several sessions, the access trace of a window):
+  [analysis-layers.md](../../../analysis/analysis-layers.md), its
+  [several sessions](../../../analysis/analysis-layers.md#several-sessions); MCP `analysis`
+  (`core/automation/mcp/src/mcp-analysis.cpp`).
 - Lua: [lua-interface.md](../../control-interfaces/lua-interface.md#time-travel-debugging); Python:
   [python-interface.md](../../control-interfaces/python-interface.md#time-travel-debugging).
 - GDB reverse commands: [gdb-protocol.md](../../control-interfaces/gdb-protocol.md#reverse-execution-time-travel-debugging);
@@ -118,6 +127,7 @@ TTD files in other folders:
   [ttd-gameplay-automation.md](../../../../../.recipe/analysis/ttd-gameplay-automation.md),
   [ttd-visual-inspection.md](../../../../../.recipe/analysis/ttd-visual-inspection.md),
   [sprinter-ttd.md](../../../../../.recipe/analysis/sprinter-ttd.md),
+  [reverse-engineering.md](../../../../../.recipe/analysis/reverse-engineering.md) (the analysis layers on a recording),
   [articles/bug-hunt-ttd.md](../../../../../.recipe/articles/bug-hunt-ttd.md),
   [articles/game-reverse-pipeline.md](../../../../../.recipe/articles/game-reverse-pipeline.md).
 
@@ -144,9 +154,11 @@ Outside it:
   `core/src/emulator/slots/slotttd.cpp`, `core/src/emulator/slots/cards/multisound/multisoundttd.*`,
   `core/src/emulator/rzx/rzxttdstate.*`, `core/src/emulator/coordinator/machinepolicy.cpp` (session effects),
   `core/src/emulator/zxpoly/zxpolygroup.cpp`; the analysis layers replay recordings in
-  `core/src/debugger/analyzers/analysis/`.
+  `core/src/debugger/analyzers/analysis/`; the job registry the long verbs run on is `core/src/emulator/jobs/`
+  (`jobregistry.*`, `jobcontrol.*`).
 - Automation: `core/automation/cli/src/commands/cli-processor-ttd.cpp`, `cli-ttd-cards.h`;
-  `core/automation/webapi/src/api/ttd_api.cpp`; `core/automation/mcp/src/mcp-tools.cpp` (`time_travel`);
+  `core/automation/webapi/src/api/ttd_api.cpp`; `core/automation/mcp/src/mcp-tools.cpp` (`time_travel`),
+  `mcp-jobs.cpp` (`jobs`), `mcp-analysis.cpp` (`analysis`);
   `core/automation/lua/src/emulator/lua_emulator.h`; `core/automation/python/src/emulator/python_emulator.h`;
   `core/automation/gdb/src/gdbserver.cpp`; `core/automation/dezog/src/dezogdebugadapter.cpp`.
 - Qt: `unreal-qt/src/widgets/ttdwidget.*` (panel, branch lanes), `ttdbranchcommands.*`,
@@ -174,7 +186,8 @@ Tests:
 - Benchmarks: `core/benchmarks/debugger/ttd/` (capture, frame overhead, matrix, reverse, serialize, coverage, port
   journal, timeline, branches, analysis queries).
 - Live MCP: [tools/verification/mcp/](../../../../../tools/verification/mcp/README.md) `test_time_travel.py`,
-  `test_ttd_past_reads.py`, `test_ttd_card_positions.py`, `test_ttd_card_oracle.py`; TTD calls also in
+  `test_ttd_past_reads.py`, `test_ttd_card_positions.py`, `test_ttd_card_oracle.py`, `test_timeline.py`, `test_jobs.py`
+  (TTD verbs as jobs); TTD calls also in
   `test_surfaces.py`, `test_ws_surface.py`.
 
 Tools, POCs and data:
@@ -189,7 +202,7 @@ Tools, POCs and data:
   [010](../../../../../tools/poc/010-ttd-compression/README.md) codec (retired),
   [011](../../../../../tools/poc/011-ttd-v2-capture-analysis/README.md) v2 capture analysis (retired),
   [027](../../../../../tools/poc/027-ttd-gui/README.md) GUI (retired),
-  [038](../../../../../tools/poc/038-ttd-replay-query-engine/README.md) replay query engine on clones (go, not built),
+  [038](../../../../../tools/poc/038-ttd-replay-query-engine/README.md) replay query engine on clones (go; not built, dropped 2026-11-27),
   [040](../../../../../tools/poc/040-ttd-inplace-replay-profile/README.md) in-place replay profile,
   [048](../../../../../tools/poc/048-ttd-async-compress/README.md) async compression (no-go); TTD is also used by
   019 (zxdlss capture) and 035 (debugger GUI bench).
@@ -198,7 +211,9 @@ Tools, POCs and data:
 
 ## Open tasks
 
-Collected 2026-11-20 from every plan doc; statuses brought up to date 2026-11-27 (open without RZX: S3 alone). Not TTD, kept because they sit next to it: F8, E3. Pure non-TTD items of
+Collected 2026-11-20 from every plan doc; statuses brought up to date 2026-11-27 (open without RZX: S3, RQ-1). Four
+items were dropped for good by the owner on 2026-11-27 and are no longer listed in any table here (the clone pool
+among them: [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md)). Not TTD, kept because they sit next to it: F8, E3. Pure non-TTD items of
 the same TODO (V6 and the rest) are left out.
 
 Open, by priority:
@@ -230,6 +245,8 @@ Open, by priority:
 | DM limit | Diff of two moments: name the fields that changed inside a device | - | done 2026-11-21 (`TTDDescribeFields`, counters apart) | [diff plan](../../../../inprogress/2026-11-03-ttd-diff-moments/plan.md#device-fields-2026-11-21-the-dm-limit) |
 | PD-Q2 | "Same T-state in the next frame" as an explicit operation | - | closed 2026-11-21: `seek` frame + 1 with the T wanted, one call on every plane | [positioning design §7](../../../../inprogress/2026-09-28-ttd-positioning-and-display/design.md#7-open-questions) |
 | R5 | RZX and TTD interop (player state blob, TTD while playing, import, export) | low | open | [rzx TODO](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) |
+| RQ-1 | `find-last` (the replay path, `all`) and `reverse-continue all` as jobs with progress and cancel: the only window replays that are synchronous (38.7 s and 58.5 s at 50k frames, measured 2026-11-27) | P2 | open | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
+| RQ-2 | `memory-at` at a frame start and `memory-diff` read the piece store only and still pause a running machine | P3 | done 2026-11-27 (with `memory-series`: the machine runs on, a recording keeps recording, the bytes equal the stopped recording's, `ttdstorereads_test.cpp`; D8 stays for a point inside a frame, a replay or restore, a parent branch's frames and a segment evicted to its file; left as they are: `find-last` and `find-event` park the machine) | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
 
 Blocked or deferred (waiting for a trigger):
 
@@ -256,11 +273,7 @@ Not planned (owner decisions; do not propose again):
 | P3.S2b | Session replayable without the RZX file | owner 2026-11-17 | [v2 DONE, Phase 3](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-3--everything-a-replay-needs) |
 | P5.S3c | Offer to open a crashed recording at the next start | owner 2026-11-17 | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | W2 | History across snapshot / tape / disk loads | D42, owner 2026-10-06, final | [what-if TODO](../../../../inprogress/2026-09-29-model-what-if/TODO.md) |
-| Clone pool | Replay query engine on cloned machines (POC 038) | owner 2026-10-28, until a measurement asks | [phase-2-plan](../../../../inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md#why-no-clone-pool-now) |
-| TD-7 / G-5 | Dedicated coverage index query endpoint | deferred, PLAN #20 retired; coverage-scan / coverage-rare cover it | [RSI DONE](../../../../inprogress/2026-08-20-ttd-reverse-search-index/DONE.md) |
 | Registry 2-5 | Peripheral registry phases 2-5 | went with v1 (closed 2026-10-30) | [registry TODO](../../../../inprogress/2026-09-10-ttd-registry-integration/TODO.md) |
-| C-mem | Separate TTD-only memory path | left out by the plan (no explicit owner veto) | [phase-2-plan](../../../../inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md#c-halt-idle-while-ttd-records-and-replays) |
-| EF limit | Explain frame across frames (call graph) | design scope | [explain design §7](../../../../inprogress/2026-11-02-ttd-explain-frame/design.md#7-what-it-does-not-do) |
 
 Done since the index was collected: D3, the GS command log follows TTD moves (2026-11-20,
 [gs-debugger design §6.3](../../../../inprogress/2026-09-27-gs-debugger/design.md#63-the-command-log-f1-f1c-f3-f4-w1-w4),

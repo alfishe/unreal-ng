@@ -27,8 +27,8 @@ load_software      {"path":"scratch/buggy.trd","autostart":true}
 invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/snapshot/save",
                    "body":{"path":"scratch/prebug.sna"}}
 
-# phase 1 — record through the failure (development mode):
-time_travel        {"action":"start"}
+# phase 1 — record through the failure (with the write journal: instant "who wrote" answers):
+time_travel        {"action":"start","journal":true}
 control_execution  {"action":"resume"}      # ...poll, then {"action":"pause"} at the symptom
 inspect_state      {"aspects":["screen_ocr"]}                        # symptom on screen?
 time_travel        {"action":"stop"}
@@ -81,9 +81,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
 ### Phase 1 — record through the failure
 
 ```bash
-# development mode: we will ask write-history questions
+# we will ask write-history questions: record the write journal too (off by default; without it
+# find-last gives the same answer by replaying a frame, a few ms each)
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/start" \
-     -H 'Content-Type: application/json' -d '{}' | jq '.state'
+     -H 'Content-Type: application/json' -d '{"journal": true}' | jq '.state'
 
 # let it run to the visible failure (free-run here; run_frames if you know the frame budget)
 curl -s -X POST "$BASE/emulator/$EMU_ID/resume" >/dev/null
@@ -191,7 +192,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
 
 ## Checklist
 
-- [ ] recording started in **development mode** (journal on)
+- [ ] recording started with the write journal (`"journal": true`) when many write questions follow; without it
+      they still answer, by replay, or build it later for a span ([ttd-write-journal.md](../analysis/ttd-write-journal.md))
 - [ ] scrubbing while recording pauses it (`recording_paused`)
 - [ ] tape/disk loads between `ttd/start` and the analysis are events of the recording
       (a seek to before one shows the slot empty); a load wipes a stopped session (a reset and a snapshot load do not: they end the session and keep its history)

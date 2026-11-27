@@ -15,13 +15,21 @@ Preconditions: [ttd-recording.md](ttd-recording.md) (start / stop / seek), [ttd-
 
 ## 1. Start the instance deterministic and silent
 
-- Launch headless (`QT_QPA_PLATFORM=offscreen`, own `UNREAL_WEBAPI_PORT`) and **mute at once**:
-  `PUT /emulator/{id}/audio/mixer/master {"muted": true}` before loading or running anything (a gap of seconds is
-  audible; the owner objects). Do it inside the launch helper, not "after the first screenshot".
-- **Pause right away** (`POST /pause`) and move the machine only with `POST /run_frames {"frames": N}`. A running
-  emulator advances in wall-clock time between your API calls (screenshots included), so a scripted "walk 40 frames,
-  jump" lands differently on every run. Paused + `run_frames` makes a script replay bit for bit.
+- Launch headless (`QT_QPA_PLATFORM=offscreen`) on ports of its own: `--port-base auto --ports-file <file>` lets the
+  emulator pick a free base and write it down ([setup](../_common/setup.md)); no `UNREAL_*_PORT` to hand out.
+- **Make the machine with one call**: `POST /api/v1/emulator/preset {"model":"PENTAGON"}` (MCP `emulator_manage`
+  `preset`) creates it with RAM zeroed, the master **muted**, **paused** at power-on (frame 0) and run control held
+  (`control.session` in the answer: send it as `X-Unreal-Session`). Nothing is audible and nothing has run before
+  your first call; a card or a feature goes into the same call (a 48K's Kempston interface:
+  `"cards":["edge.1=kempston"]`; `"features":{"kempstonmouse":false}`). `"fast_tape": true` keeps the tape accelerators for a tape load. This
+  replaces the old create + mute + pause + take control sequence (a gap of seconds before the mute was audible).
+- Move the machine only with `POST /run_frames {"frames": N}`. A running emulator advances in wall-clock time between
+  your API calls (screenshots included), so a scripted "walk 40 frames, jump" lands differently on every run. Paused
+  + `run_frames` makes a script replay bit for bit, and the answer says what ran (`frames_run`, `frame`, `t`).
 - Keys: `POST /keyboard/press {"key":"d"}`, `run_frames`, `/keyboard/release`. A held key across `run_frames` works.
+  Keys held together are one call: a chord `{"key":"w+o"}`, or the whole held state with
+  `POST /keyboard/set {"keys":["q","p"]}` (these held, every other injected key released; `[]` releases all): one
+  call per frame of an input script instead of a press / release per key.
 - Wait for a moment with one call, not a loop: `POST /run_until {"text":"PRESS"}`, `{"if":"M(#A13C) != M(#A13C)@prev"}`,
   `{"screen":"stable"}`, `{"event":"died"}` stop paused at that frame end ([waiting-and-watching.md](waiting-and-watching.md)).
 - Close the loop on the screen, not on frame counts: `GET /capture/screen?format=png&area=screen`, then test a
@@ -132,9 +140,11 @@ archive.org (`zx_*` items) when a tape image is damaged.
 ## 5. Speedrun shape (design, not run here)
 
 A run is `inputs(frame) -> state`. The recording keeps the input events (`input_event_count` in `/ttd/status`), a
-`seek` into it plus `resume` drops the recorded future and records again from that point (ttd-recording.md, "From a
-past point"). That gives the search loop: bookmark a good state, branch from it with a different input script, keep the
-branch that reaches the checkpoint (a probe counter or a memory value from section 3) in fewer frames. Not exercised
+`seek` into it plus `resume` forks a new branch at that point and records again there; the recorded future stays on
+its parent branch (ttd-recording.md, "From a past point"; `GET /ttd/branches`). One call does a whole probe:
+`POST /ttd/branches` with `run_frames`, `input` and `read` (MCP `time_travel` `branch_create`) forks, plays the
+keys, reads the bytes and with `go_back` returns. That gives the search loop: bookmark a good state, branch from it
+with a different input script, keep the branch that reaches the checkpoint (a probe counter or a memory value from section 3) in fewer frames. Not exercised
 in this session: the loop, replaying a saved `.ttd` input stream, and ranking branches. Treat it as the plan to try
 first, with the deterministic driver from section 1.
 

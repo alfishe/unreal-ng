@@ -58,7 +58,9 @@ read journal (`engine/ttdmediajournal.*`) let a replay run without live devices 
 settings runs and reports that it is not bit-exact.
 
 **Navigation while recording.** A seek, step or reverse query while recording pauses the recording (D8); it goes on
-from where it paused. Resuming from a past point drops the history after it.
+from where it paused. A read of the store at frame starts (`memory-at` without `tinframe`, `memory-diff`,
+`memory-series`) does not: the recording thread is held for the read and records on (RQ-2, 2026-11-27;
+`TimeTravelController::StoredFramesReadableLive` says when). Resuming from a past point drops the history after it.
 
 **What ends a session (D42, D43).** A reset, a snapshot load and a change of the machine end the recording session;
 the same machine's history stays browsable. A recording the user started refuses media loads and holds the host
@@ -1080,7 +1082,7 @@ def iter_records(ttd_path):
 Recording requires the debug write path (that's where the dirty hook lives). Options considered:
 
 1. Require `debugmode` + debug interface while recording (**chosen**; the engine keeps it: TTD's hooks run only with `debugmode` on) — matches how memory tracking works today; overhead of the debug read path is already accepted by anyone using the debugger.
-2. A third "TTD-only" `MemoryInterface` with just the dirty hook (fast reads, hooked writes) — nice optimization, deferred; the `MemoryInterface` struct makes this a 20-line addition later.
+2. A third "TTD-only" `MemoryInterface` with just the dirty hook (fast reads, hooked writes) — rejected: measured on the engine (POC 040), it would save part of 41-60 µs a frame at most (owner 2026-11-27).
 
 When TTD is enabled via FeatureManager, it forces `Z80::MemIf = DbgMemIf` (same mechanism the debugger uses).
 
@@ -1621,7 +1623,7 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 1. **Session persistence to disk** — worth the serializer-versioning cost? **Resolved:** built, with versioned device layouts (§0).
 2. **Tape-driven workloads** — v1 checkpoints tape position but invalidates on tape control commands; is that acceptable for tape-loader debugging, or does Phase 2 need tape-command journaling? **Resolved on the engine:** tape control is input the replay applies, and the tape trap is a recorded edit (4.2).
 3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead? **Resolved:** branches are built on the engine (2026-11-10, [TTD branches](../../../../inprogress/2026-11-08-ttd-branches/README.md)); nothing is truncated.
-4. **Third memory interface** (fast reads + TTD-hooked writes, 7.3) — measure first; implement only if debug-read overhead is noticeable in recording sessions.
+4. **Third memory interface** (fast reads + TTD-hooked writes, 7.3) — **Resolved:** not built and not planned (owner 2026-11-27): measured in POC 040, it would save part of 41-60 µs a frame at most.
 5. **Multi-instance** — TTDManager is per-`EmulatorContext` and therefore per-instance by construction; is per-instance memory budgeting needed when many instances run (videowall scenario), or a global pool?
 6. **CMOS contents** — resolved 2026-09-28 (PLAN #60(c)): the clock chip of every machine is the shared `Ds12887` (`core/src/emulator/io/rtc/ds12887.h`), captured whole as `PeripheralId::Ds12887` (id 18, `core/src/debugger/ttd/ttdds12887.h`): 256 cells, the address latch, the C flags and the time base, 336 bytes per checkpoint before compression. While a session records the chip runs on emulated time (`TTDSerializable::TTDRecordingStarted`, called before the baseline capture), so the blob carries no host-clock dependence. The ZX-Evo AVR's 4 KiB EEPROM and the Scorpion SMUC's 2 KiB LC16 serial EEPROM are captured by the engine as regions 15 and 16, compared at each capture (v1 did not capture them).
 7. **Delta capture for the EEPROMs** — resolved by the regions above. The original note: if the two EEPROMs above ever need capture, a write journal replayed on seek costs exactly the write rate; the clock chip itself is small enough to capture whole.
