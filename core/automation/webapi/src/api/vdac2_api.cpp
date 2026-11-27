@@ -114,6 +114,35 @@ void sendMetrics(EmulatorContext* context, bool withLines, bool inFlight,
         for (uint16_t clocks : m.lineClocks)
             body["line_clocks"].append(clocks);
     }
+    {
+        // What drawing cost this host (wall time, not chip state): the last drawn frame and the summary since reset
+        Json::Value& host = body["host"];
+        host["frame"] = static_cast<Json::UInt64>(m.host.frame);
+        host["valid"] = m.host.valid;
+        host["lines"] = m.host.lines;
+        host["total_us"] = static_cast<double>(m.host.totalNs) / 1000.0;
+        host["worst_line"] = m.host.worstLine;
+        host["worst_line_us"] = static_cast<double>(m.host.worstLineNs) / 1000.0;
+        host["frames"] = static_cast<Json::UInt64>(m.host.frames);
+        host["avg_us"] = m.host.frames ? static_cast<double>(m.host.sumNs) / 1000.0 / static_cast<double>(m.host.frames) : 0.0;
+        host["max_us"] = static_cast<double>(m.host.maxFrameNs) / 1000.0;
+        host["max_frame"] = static_cast<Json::UInt64>(m.host.maxFrame);
+        host["cpu_us"] = static_cast<double>(m.host.cpuNs) / 1000.0;
+        host["avg_cpu_us"] = m.host.frames ? static_cast<double>(m.host.sumCpuNs) / 1000.0 / static_cast<double>(m.host.frames) : 0.0;
+        host["max_cpu_us"] = static_cast<double>(m.host.maxCpuNs) / 1000.0;
+        host["max_cpu_frame"] = static_cast<Json::UInt64>(m.host.maxCpuFrame);
+        host["max_worst_line"] = m.host.maxWorstLine;
+        host["max_worst_line_us"] = static_cast<double>(m.host.maxWorstLineNs) / 1000.0;
+        if (withLines)
+        {
+            host["line_ns"] = Json::Value(Json::arrayValue);
+            for (uint32_t ns : m.host.lineNs)
+                host["line_ns"].append(ns);
+            host["max_line_ns"] = Json::Value(Json::arrayValue);
+            for (uint32_t ns : m.host.maxLineNs)
+                host["max_line_ns"].append(ns);
+        }
+    }
     if (inFlight)
     {
         Json::Value& flight = body["in_flight"];
@@ -153,7 +182,7 @@ void EmulatorAPI::vdac2Metrics(const HttpRequestPtr& req, std::function<void(con
 }
 
 /// @brief PUT /api/v1/emulator/{id}/vdac2/metrics
-/// Body: {"margin": 0..50, "measure_always": bool}, each optional
+/// Body: {"margin": 0..50, "measure_always": bool, "host_reset": bool}, each optional
 void EmulatorAPI::vdac2MetricsSet(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
@@ -186,6 +215,16 @@ void EmulatorAPI::vdac2MetricsSet(const HttpRequestPtr& req, std::function<void(
             return;
         }
         Vdac2Control::SetMeasureAlways(context, (*json)["measure_always"].asBool(), &error);
+    }
+    if (json->isMember("host_reset"))
+    {
+        if (!(*json)["host_reset"].isBool())
+        {
+            sendVdac2Error(callback, HttpStatusCode::k400BadRequest, "Bad Request", "host_reset is a boolean");
+            return;
+        }
+        if ((*json)["host_reset"].asBool())
+            Vdac2Control::ResetHostDrawStats(context, &error);
     }
     sendMetrics(context, false, false, callback);
 }

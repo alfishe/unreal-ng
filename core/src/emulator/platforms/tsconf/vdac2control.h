@@ -62,6 +62,29 @@ struct FrameMetrics
     bool inFlightKnown = false;    ///< false: not asked, or the machine runs
     uint32_t inFlightLinesPassed = 0;      ///< lines of the frame in flight the scan has passed
     std::vector<int32_t> inFlightLineClocks;  ///< cost of each passed line, -1 = passed without drawing (with lines)
+
+    // What drawing cost this host (wall time on the thread that draws; not chip state, differs run to run)
+    struct HostDraw
+    {
+        uint64_t frame = 0;          ///< REG_FRAMES of the last drawn frame measured
+        bool valid = false;          ///< that frame was drawn
+        uint32_t lines = 0;
+        uint64_t totalNs = 0;        ///< its lines
+        uint32_t worstLine = 0;
+        uint64_t worstLineNs = 0;
+        uint64_t frames = 0;         ///< since the last reset: drawn frames
+        uint64_t sumNs = 0;          ///< their totals
+        uint64_t maxFrameNs = 0;     ///< the dearest one
+        uint64_t maxFrame = 0;       ///< its REG_FRAMES
+        uint64_t cpuNs = 0;          ///< CPU time of `frame` (the thread's, not wall)
+        uint64_t sumCpuNs = 0;       ///< since the last reset
+        uint64_t maxCpuNs = 0;       ///< the frame that took the most CPU
+        uint64_t maxCpuFrame = 0;
+        uint32_t maxWorstLine = 0;   ///< its worst line
+        uint64_t maxWorstLineNs = 0;
+        std::vector<uint32_t> maxLineNs;  ///< its lines (only when asked for lines)
+        std::vector<uint32_t> lineNs;  ///< per line of `frame` (only when asked for lines)
+    } host;
 };
 
 /// The machine has a VDAC2 card; `error` says why not
@@ -78,6 +101,8 @@ bool GetCaptureStatus(EmulatorContext* context, CaptureStatus& status, std::stri
 /// frame in flight (paused machine only; inFlightKnown says whether it was read)
 bool GetFrameMetrics(EmulatorContext* context, FrameMetrics& metrics, bool withLines, bool inFlight,
                      std::string* error = nullptr);
+/// Restart the host drawing summary (FrameMetrics::host frames, sum, max)
+bool ResetHostDrawStats(EmulatorContext* context, std::string* error = nullptr);
 /// The metrics of the picture the monitor shows now (the FT812 Debug window's
 /// source: the same moment as the main screen, also after a TTD seek); false
 /// while the monitor shows the Evo or before measure-always kept one

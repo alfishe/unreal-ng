@@ -100,6 +100,8 @@ Out of scope, first round:
   - `FtThread`: 1 = the Tang / FT812 work of those jobs on a thread of its own, 0 (default) = on the job's thread;
   - `FtDrawThread`: 1 (default) = the FT812's drawing on the eve-emu renderer thread, 0 = where the FT812 runs
     ([eve-async-drawing.md](eve-async-drawing.md));
+  - `FtDrawThreads`: threads drawing the FT812's lines, 1 (default) - 64, 0 = chosen by the host's cores (half of them,
+    1-4) (`EveSetDrawThreads`; env `UNREAL_VDAC4_FT_DRAW_THREADS`; the same picture for any count; Metal Slug measured 2026-11-26: more threads gave no faster frame and 20-50 % more CPU);
   - `EspLatencyMs`: 1-16, default 4: emulated ms the app's outputs reach the firmware after its job (§7.5);
   - `EspBootMs`: ESP boot time after power-on, when it arms the Tang (§5.3), default 400;
   - `EspLog`: app log file, empty = off;

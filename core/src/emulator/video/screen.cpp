@@ -1342,6 +1342,20 @@ void Screen::SetExternalPicture(uint8_t* buffer, uint16_t width, uint16_t height
         PostVideoModeChanged();
 }
 
+void Screen::SetExternalSettle(ExternalSettle settle, void* owner)
+{
+    if (!settle && owner != _externalSettleOwner)
+        return;
+    _externalSettle = settle;
+    _externalSettleOwner = settle ? owner : nullptr;
+}
+
+void Screen::SettleExternalFrames()
+{
+    if (_externalSettle)
+        _externalSettle(_externalSettleOwner);
+}
+
 void Screen::ClearExternalPicture()
 {
     if (!IsExternalPictureActive())

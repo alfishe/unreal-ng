@@ -1352,6 +1352,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.vdac4_esp_thread = inimanager.GetLongValue(vdac4, "EspThread", 1) != 0;
 		config.vdac4_ft_thread = inimanager.GetLongValue(vdac4, "FtThread", 0) != 0;
 		config.vdac4_ft_draw_thread = inimanager.GetLongValue(vdac4, "FtDrawThread", 1) != 0;
+		config.vdac4_ft_draw_threads =
+			static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "FtDrawThreads", 1), 0, 64));
 		config.vdac4_esp_latency_ms =
 			static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspLatencyMs", 4), 1, 16));
 		CopyStringValue(inimanager.GetValue(vdac4, "EspCache", ""), config.vdac4_esp_cache, sizeof config.vdac4_esp_cache);
@@ -1369,6 +1371,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// [VDAC2] FtDrawThread: the FT812's drawing on the eve-emu renderer thread (1, default) or on the emulation
 	// thread (0); the same picture either way (eve-async-drawing.md)
 	config.vdac2_ft_draw_thread = inimanager.GetLongValue(vdac2, "FtDrawThread", 1) != 0;
+	// [VDAC2] FtDrawThreads: threads drawing the FT812's lines side by side, the drawing thread included
+	// (EveSetDrawThreads); 1 (default) = one, 0 = by the host's cores; the same picture either way
+	config.vdac2_ft_draw_threads =
+		static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac2, "FtDrawThreads", 1), 0, 64));
 	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
 	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
 	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,

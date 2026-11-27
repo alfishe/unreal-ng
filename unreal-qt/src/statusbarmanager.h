@@ -125,7 +125,7 @@ private:
     StatusIndicator* _tape = nullptr;
     StatusIndicator* _disk = nullptr;
     StatusIndicator* _hdd = nullptr;
-    uint64_t _ideTransfers = 0;  ///< sectors moved at the last tick (the IDE LED blinks on a change)
+    uint64_t _ideTransfers = 0;  ///< IDE + SD blocks moved at the last tick (the storage LED blinks on a change)
     StatusIndicator* _sound = nullptr;
     StatusIndicator* _joystick = nullptr;  ///< Kempston joystick: lit while a button is held, hidden when the guest cannot see one
     HostControllers* _controllers = nullptr;  ///< set: _joystick is the connector LED

@@ -53,7 +53,11 @@
             "(REG_FRAMES), lines, hard_budget (clocks per line: HCYCLE x PCLK), soft_budget (hard minus margin), "
             "worst_line, worst_clocks, total_clocks, lines_over_soft, lines_over_hard (broken on a real card), "
             "margin, measure_always; with lines=1 line_clocks (cost per line, saturating at 65535); with "
-            "in_flight=1 in_flight {known, reason, lines_passed, line_clocks (-1 = passed without drawing)}";
+            "in_flight=1 in_flight {known, reason, lines_passed, line_clocks (-1 = passed without drawing)}; host: what "
+            "drawing cost this host (wall time on the drawing thread, not chip state) {frame, valid, lines, total_us, "
+            "worst_line, worst_line_us, frames, avg_us, max_us, max_frame, max_worst_line, max_worst_line_us, cpu_us, avg_cpu_us, max_cpu_us, max_cpu_frame "
+            "(the drawing thread's CPU time: preemption left out; summary since host_reset)}, with lines=1 "
+            "host.line_ns and host.max_line_ns (the dearest frame's lines)";
         const std::string metricsPath = "/api/v1/emulator/{id}/vdac2/metrics";
         Json::Value& get = paths[metricsPath]["get"];
         get["summary"] = "VDAC2 FT812 line budget metrics";
@@ -81,7 +85,8 @@
         put["summary"] = "Set the VDAC2 line budget margin / measure-always";
         put["tags"].append("VDAC2");
         put["description"] =
-            "Body: {\"margin\": 0..50, \"measure_always\": bool}, each optional. margin: the soft budget, percent "
+            "Body: {\"margin\": 0..50, \"measure_always\": bool, \"host_reset\": bool}, each optional. host_reset "
+            "restarts the host drawing summary. margin: the soft budget, percent "
             "below the line period (default from [VDAC2] LineBudgetMargin, 10); used from the next finished frame. "
             "measure_always: draw and measure every frame, also while not shown (costs the drawing time; nothing "
             "the guest sees changes). Answers with the metrics (without lines).";
