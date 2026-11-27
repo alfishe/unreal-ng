@@ -23,6 +23,24 @@ writer thread of the history's own (the device's path copies the record into its
 there), up to `stream_limit` records (`0`: no limit). A record goes to the file once it is complete (a command with its
 status): when the next one comes, or the stream stops.
 
+A **filter** says which records are recorded at all: the others are counted (`filtered`) and go nowhere, neither into
+memory nor into the stream. A capture of a busy device then holds what is studied, not everything: a GS card's history
+without one wrote 1.7 GB for a 2600-frame tape load, nearly all of it the firmware's idle polls and interrupts; with
+`side=host out=true` it holds the host's writes. The text is the same on every plane:
+
+```text
+side=host out=true             every term must hold
+port=#B3,#BB pc=#8000-#9FFF    a term holds when one of its values does; a-b is an inclusive range
+```
+
+A term is `field=value[,value...]`, terms are separated by spaces. A field is a name of the record as the history
+shows it. A value is a number (decimal; hex as `#B3`, `$B3`, `0xB3`), a range, or a word (`host`, `out`, `true`). A
+record without the field does not pass. The filter tests a record when it is pushed: a field the device completes later
+(a command's final status) is tested with the value it has then. The busy histories (the GS card, the port histories,
+the execution histories) compile the filter into field getters and refuse a field or a word their records do not have,
+naming the valid ones; the others test the rendered record. An empty filter records everything. Code:
+`core/src/debugger/history/historyfilter.h`.
+
 **Pause** holds a history in any mode: nothing is recorded, what it has stays readable; resume goes on with it. A
 configuration starts unpaused.
 
@@ -86,11 +104,11 @@ The FDC state report (`state fdc`, `/state/fdc`, `fdc_state()`, MCP aspect `fdc`
 
 | Plane | List | Read | Configure | Clear |
 |-------|------|------|-----------|-------|
-| CLI | `history` | `history <device> [N] [since=S]` | `history <device> mode <off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N]` | `history <device> clear` |
-| REST, WebSocket `call` | `GET /api/v1/emulator/{id}/history` | `GET .../history/{device}?last=N[&since=S]` | `POST .../history/{device}/config` `{"mode", "limit", "stream", "stream_limit"}` | `POST .../history/{device}/clear` |
-| MCP | `device_history` `action=list` | `action=read device= last= since=` | `action=config device= mode= limit= stream= stream_limit=` | `action=clear device=` |
-| Python | `emu.history_list()` | `emu.history(device, last=0, since=None)` | `emu.history_config(device, mode=None, limit=None, stream=None, stream_limit=None)` | `emu.history_clear(device)` |
-| Lua | `history_list()` | `history(device, last, since)` | `history_config(device, {mode=, limit=, stream=, stream_limit=})` | `history_clear(device)` |
+| CLI | `history` | `history <device> [N] [since=S]` | `history <device> mode <off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N] [filter=<term>]...` | `history <device> clear` |
+| REST, WebSocket `call` | `GET /api/v1/emulator/{id}/history` | `GET .../history/{device}?last=N[&since=S]` | `POST .../history/{device}/config` `{"mode", "limit", "stream", "stream_limit", "filter"}` | `POST .../history/{device}/clear` |
+| MCP | `device_history` `action=list` | `action=read device= last= since=` | `action=config device= mode= limit= stream= stream_limit= filter=` | `action=clear device=` |
+| Python | `emu.history_list()` | `emu.history(device, last=0, since=None)` | `emu.history_config(device, mode=None, limit=None, stream=None, stream_limit=None, filter=None)` | `emu.history_clear(device)` |
+| Lua | `history_list()` | `history(device, last, since)` | `history_config(device, {mode=, limit=, stream=, stream_limit=, filter=})` | `history_clear(device)` |
 
 ### Reading after a cursor
 

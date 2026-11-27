@@ -92,7 +92,7 @@ void EmulatorAPI::getHistory(const HttpRequestPtr& req, std::function<void(const
     Run(id, request, callback);
 }
 
-/// @brief POST /api/v1/emulator/{id}/history/{device}/config {"mode", "limit", "stream", "stream_limit"}
+/// @brief POST /api/v1/emulator/{id}/history/{device}/config {"mode", "limit", "stream", "stream_limit", "filter"}
 void EmulatorAPI::postHistoryConfig(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id, const std::string& device) const
 {
@@ -108,6 +108,8 @@ void EmulatorAPI::postHistoryConfig(const HttpRequestPtr& req, std::function<voi
             request.stream = value.asString();
         else if (name == "stream_limit" || name == "streamLimit")
             request.streamLimit = Number(value);
+        else if (name == "filter")
+            request.filter = value.asString();
     };
     for (const auto& [name, value] : req->getParameters())
         take(name, Json::Value(value));

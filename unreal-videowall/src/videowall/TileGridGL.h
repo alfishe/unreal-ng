@@ -64,8 +64,9 @@ public:
     Q_INVOKABLE void repaintAllTiles();
 
     /// Smooth motion on a display that does not run at the machines' rate: the picture between two frames, per
-    /// tile (off | blend | interpolate | interpolate-lite). Off (the default) costs nothing: no engine, no frame
-    /// kept, the wall draws only when a frame comes, as before
+    /// tile (off | blend | interpolate | interpolate-lite | auto). Off (the default) costs nothing: no engine, no
+    /// frame kept, the wall draws only when a frame comes, as before. Auto: the cheap interpolation on the tiles whose
+    /// machine beats with the display, the frames as they are on the others (smoothmotion::WallTileMode)
     void setSmoothMotion(smoothmotion::Mode mode);
     smoothmotion::Mode smoothMotion() const { return _smoothMode; }
     struct SmoothStats
@@ -126,6 +127,8 @@ private:
     /// updateTextures with smooth motion on: every tile's picture for the coming refresh, the tiles over the pool
     void updateTexturesSmooth();
     void uploadTile(TileState& tile, const uchar* pixels, int width, int height, const PictureGeometry& geometry);
+    /// A tile's frame as it is, when one came (smooth motion off, or none for this tile's machine on this display)
+    void updateTilePlain(TileState& tile);
     int64_t refreshPeriodNs() const;
     QRect calculateTileRect(int index) const;
     void subscribeToNotifications();

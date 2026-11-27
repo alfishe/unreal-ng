@@ -152,70 +152,80 @@ bool ExplainsIn(const Reader& a, const Reader& b, int width, int height, int bi,
     return explained * 2 >= changes;
 }
 
-/// The block decisions' answers from Compose's buffers, each worked out when asked
+/// The block decisions' answers from Compose's buffers. The aliases rule's own(...) of the asked blocks worked out
+/// at the questions, over the pool (each ask its block alone), the regions' answers when asked
 class CpuEvidence final : public LayerFlow::Evidence
 {
 public:
     using Top = LayerFlow::TopOf;
+    using TopBlock = std::array<std::array<Top, 2>, static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock>;
 
-    /// `topAt`: the caller's buffer, a block's pixels
-    CpuEvidence(const View& a, int blocksWide, int n, const uint8_t* fits, const uint16_t* support,
-                const uint8_t* fitCounts, std::vector<std::array<Top, 3>>& topAt)
-        : _a(a), _blocksWide(blocksWide), _n(n), _pixels(static_cast<size_t>(a.width) * a.height), _fits(fits),
-          _support(support), _fitCounts(fitCounts), _blocks(static_cast<size_t>(blocksWide) *
-                                                            ((a.height + MotionField::kBlock - 1) / MotionField::kBlock)),
-          _topAt(topAt)
+    /// `answers`, `askOf`: the caller's buffers
+    CpuEvidence(const View& a, int blocksWide, const std::vector<V>& all, const uint8_t* fits, const uint16_t* support,
+                const uint8_t* fitCounts, ThreadPool* pool, std::vector<int>& answers, std::vector<int>& askOf)
+        : _a(a),
+          _blocksWide(blocksWide),
+          _n(static_cast<int>(all.size())),
+          _all(all),
+          _pixels(static_cast<size_t>(a.width) * a.height),
+          _fits(fits),
+          _support(support),
+          _fitCounts(fitCounts),
+          _blocks(static_cast<size_t>(blocksWide) * ((a.height + MotionField::kBlock - 1) / MotionField::kBlock)),
+          _pool(pool),
+          _answers(answers),
+          _askOf(askOf)
     {
-        _topAt.resize(static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock);
     }
 
     int Own(size_t block, int c, int s) override
     {
-        const int kb = MotionField::kBlock;
-        const int x0 = static_cast<int>(block % _blocksWide) * kb, x1 = std::min(x0 + kb, _a.width);
-        const int y0 = static_cast<int>(block / _blocksWide) * kb, y1 = std::min(y0 + kb, _a.height);
-        if (block != _topBlock)
+        const int ask = _askOf.empty() ? -1 : _askOf[block];
+        if (ask >= 0 && (s < 0 || c == _askVector[ask]))
         {
-            // per pixel, the three fitting vectors with the most support: a vector other than c and s with more
-            // support than c's is among them if there is one
-            _topBlock = block;
-            for (int y = y0; y < y1; y++)
-                for (int x = x0; x < x1; x++)
-                {
-                    auto& top = _topAt[static_cast<size_t>(y - y0) * kb + (x - x0)];
-                    top = {};
-                    const size_t q = static_cast<size_t>(y) * _a.width + x;
-                    for (int u = 0; u < _n; u++)
-                    {
-                        const size_t uq = static_cast<size_t>(u) * _pixels + q;
-                        if (_fitCounts[u * _blocks + block] == 0 || !_fits[uq])
-                            continue;
-                        Top t{u, _support[uq]};
-                        for (auto& slot : top)
-                            if (t.support > slot.support)
-                                std::swap(t, slot);
-                    }
-                }
+            const int answer = _answers[(static_cast<size_t>(ask) * _n + (s < 0 ? c : s)) * 2 + (s < 0 ? 0 : 1)];
+            if (answer >= 0)
+                return answer;
         }
-        int count = 0;
-        for (int y = y0; y < y1; y++)
-            for (int x = x0; x < x1; x++)
-            {
-                const size_t q = static_cast<size_t>(y) * _a.width + x;
-                if (!_fits[static_cast<size_t>(c) * _pixels + q] || (s >= 0 && _fits[static_cast<size_t>(s) * _pixels + q]))
-                    continue;
-                const int mine = _support[static_cast<size_t>(c) * _pixels + q];
-                bool other = false;
-                for (const Top& t : _topAt[static_cast<size_t>(y - y0) * kb + (x - x0)])
-                    other |= t.vector >= 0 && t.vector != c && t.vector != s && t.support > mine;
-                count += !other;
-            }
-        return count;
+        TopBlock top;
+        TopsOf(block, top);
+        return OwnOf(block, c, s, top);
     }
 
-    void Ask(const std::vector<std::pair<size_t, int>>& /*blocks*/, const std::vector<LayerFlow::Edge>& edges) override
+    void Ask(const std::vector<std::pair<size_t, int>>& blocks, const std::vector<LayerFlow::Edge>& edges) override
     {
         _edges = &edges;
+        // the aliases rule asks own(s, none), then own(c, s) where that is positive, for the moving vectors s slower
+        // than the one chosen so far, itself c or slower (Slower is an order): every s slower than c
+        const int asks = static_cast<int>(blocks.size());
+        _askOf.assign(asks > 0 ? _blocks : 0, -1);
+        _askVector.resize(blocks.size());
+        _answers.assign(blocks.size() * _n * 2, -1);
+        for (int i = 0; i < asks; i++)
+        {
+            _askOf[blocks[i].first] = i;
+            _askVector[i] = blocks[i].second;
+        }
+        const auto work = [&](int i0, int i1) {
+            TopBlock top;
+            for (int i = i0; i < i1; i++)
+            {
+                const auto [block, c] = blocks[i];
+                TopsOf(block, top);
+                for (int s = 0; s < _n; s++)
+                    if (!(_all[s] == V{}) && Slower(_all[s], _all[c]))
+                    {
+                        int* answer = &_answers[(static_cast<size_t>(i) * _n + s) * 2];
+                        answer[0] = OwnOf(block, s, -1, top);
+                        if (answer[0] > 0)
+                            answer[1] = OwnOf(block, c, s, top);
+                    }
+            }
+        };
+        if (_pool && asks > 1)
+            _pool->ParallelFor(asks, std::min(asks, kAskParts), work);
+        else
+            work(0, asks);
     }
 
     bool Continues(size_t index, int vector) override
@@ -296,15 +306,77 @@ public:
 private:
     static constexpr size_t kBlockPixels = static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock;
 
+    static constexpr int kAskParts = 12;  ///< the asks' split over a pool
+
+    /// per pixel of the block, the two fitting vectors with the most support (equals: the earlier first)
+    void TopsOf(size_t block, TopBlock& topAt) const
+    {
+        const int kb = MotionField::kBlock;
+        const int x0 = static_cast<int>(block % _blocksWide) * kb, x1 = std::min(x0 + kb, _a.width);
+        const int y0 = static_cast<int>(block / _blocksWide) * kb, y1 = std::min(y0 + kb, _a.height);
+        // the vectors fitting some of the block, in order
+        std::array<int, LayerFlow::kMaxVectors> fitting;
+        int count = 0;
+        for (int u = 0; u < _n; u++)
+            if (_fitCounts[u * _blocks + block] > 0)
+                fitting[static_cast<size_t>(count++)] = u;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                auto& top = topAt[static_cast<size_t>(y - y0) * kb + (x - x0)];
+                top = {};
+                const size_t q = static_cast<size_t>(y) * _a.width + x;
+                for (int k = 0; k < count; k++)
+                {
+                    const int u = fitting[static_cast<size_t>(k)];
+                    const size_t uq = static_cast<size_t>(u) * _pixels + q;
+                    if (!_fits[uq])
+                        continue;
+                    Top t{u, _support[uq]};
+                    for (auto& slot : top)
+                        if (t.support > slot.support)
+                            std::swap(t, slot);
+                }
+            }
+    }
+
+    /// own(c, s) in the block: the pixels c fits and s (if any) does not, less those another vector explains with
+    /// more support. Of the vectors other than c and s fitting a pixel, the one with the most support is the first
+    /// of the two that is not c: s fits none of the pixels counted
+    int OwnOf(size_t block, int c, int s, const TopBlock& topAt) const
+    {
+        if (_fitCounts[c * _blocks + block] == 0)
+            return 0;
+        const int kb = MotionField::kBlock;
+        const int x0 = static_cast<int>(block % _blocksWide) * kb, x1 = std::min(x0 + kb, _a.width);
+        const int y0 = static_cast<int>(block / _blocksWide) * kb, y1 = std::min(y0 + kb, _a.height);
+        int count = 0;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                const size_t q = static_cast<size_t>(y) * _a.width + x;
+                if (!_fits[static_cast<size_t>(c) * _pixels + q] ||
+                    (s >= 0 && _fits[static_cast<size_t>(s) * _pixels + q]))
+                    continue;
+                const auto& top = topAt[static_cast<size_t>(y - y0) * kb + (x - x0)];
+                const Top& other = top[0].vector == c ? top[1] : top[0];
+                count += !(other.vector >= 0 && other.support > _support[static_cast<size_t>(c) * _pixels + q]);
+            }
+        return count;
+    }
+
     const View& _a;
     int _blocksWide, _n;
+    const std::vector<V>& _all;
     size_t _pixels;
     const uint8_t* _fits;
     const uint16_t* _support;
     const uint8_t* _fitCounts;
     size_t _blocks;
-    std::vector<std::array<Top, 3>>& _topAt;
-    size_t _topBlock = static_cast<size_t>(-1);
+    ThreadPool* _pool;
+    std::vector<int>& _answers;  ///< per ask and vector s: own(s, none), own(c, s); -1 not worked out
+    std::vector<int>& _askOf;    ///< per block its ask, -1 none
+    std::vector<int> _askVector;
     const std::vector<LayerFlow::Edge>* _edges = nullptr;
 };
 }  // namespace
@@ -408,6 +480,53 @@ void KeepConfirmed(const MotionField& next, const Picture& p, const Picture& a, 
 }
 }  // namespace
 
+namespace
+{
+/// A cut: a quarter of the picture's blocks or more changed from a to b, and the kCutLayers vectors `next` matches
+/// most among them hold under two thirds of those it matches to a moving vector. A page of text or a room of tiles
+/// flipped: many a new cell is an old one a cell over, matched exactly, its detail confirming the vector; one cell
+/// moves as a letter would. No few layers explain the picture's changes, so none moves. Measured: flipped pages of
+/// text 0.45-0.58, the synthetic suite's pairs that change a quarter of the picture (scrolls, parallax) 0.80 and
+/// more
+bool IsCut(const MotionField& next, const Picture& a, const Picture& b)
+{
+    const int kb = MotionField::kBlock;
+    const int bw = next.BlocksWide(), bh = next.BlocksHigh();
+    int changed = 0, moving = 0;
+    std::vector<std::pair<V, int>> counts;
+    for (int j = 0; j < bh; j++)
+        for (int i = 0; i < bw; i++)
+        {
+            bool differs = false;
+            for (int y = j * kb; y < std::min((j + 1) * kb, a.height) && !differs; y++)
+            {
+                const size_t row = static_cast<size_t>(y) * a.width;
+                const int x0 = i * kb, x1 = std::min(x0 + kb, a.width);
+                differs = !std::equal(a.pixels + row + x0, a.pixels + row + x1, b.pixels + row + x0);
+            }
+            if (!differs)
+                continue;
+            changed++;
+            const MotionField::Block& block = next.At(i, j);
+            if (!block.matched || block.v == V{})
+                continue;
+            moving++;
+            auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == block.v; });
+            if (it == counts.end())
+                counts.push_back({block.v, 1});
+            else
+                it->second++;
+        }
+    if (changed * LayerFlow::kCutChanged < bw * bh)
+        return false;
+    std::sort(counts.begin(), counts.end(), [](const auto& x, const auto& y) { return x.second > y.second; });
+    int top = 0;
+    for (size_t k = 0; k < counts.size() && k < static_cast<size_t>(LayerFlow::kCutLayers); k++)
+        top += counts[k].second;
+    return top * LayerFlow::kCutShareOf < moving * LayerFlow::kCutShare;
+}
+}  // namespace
+
 std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionField& next, const Picture& p,
                                         const Picture& a, const Picture& b)
 {
@@ -449,11 +568,18 @@ void LayerFlow::Prepare(const MotionField& prev, const MotionField& next, const 
     layers.blocksWide = (width + MotionField::kBlock - 1) / MotionField::kBlock;
     layers.blocksHigh = (height + MotionField::kBlock - 1) / MotionField::kBlock;
     layers.allowed.resize(static_cast<size_t>(layers.blocksWide) * layers.blocksHigh);
+    // a cut: every block zero alone (the vectors stay: the passes' work is the same)
+    layers.cut = IsCut(next, a, b);
     for (int bj = 0; bj < layers.blocksHigh; bj++)
         for (int bi = 0; bi < layers.blocksWide; bi++)
         {
             auto& allowed = layers.allowed[static_cast<size_t>(bj) * layers.blocksWide + bi];
             allowed.clear();
+            if (layers.cut)
+            {
+                allowed.push_back(0);
+                continue;
+            }
             for (int c = 0; c < static_cast<int>(layers.common); c++)
                 allowed.push_back(c);
             for (const MotionField* f : {&next, &prev})
@@ -523,6 +649,15 @@ void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fi
     asks.clear();
     auto& nearStill = scratch.nearStill;
     nearStill.assign(blocks, 0);
+    if (layers.cut)
+    {
+        // no layer moves: zero where it may take pixels, the nearer frame elsewhere
+        evidence.Ask({}, {});
+        for (size_t block = 0; block < blocks; block++)
+            blockVector[block] = usableCounts[block] > 0 ? 0 : -1;
+        tied.assign(blocks, 0);
+        return;
+    }
     const auto blockPixels = [&](size_t block) {
         const int kb = MotionField::kBlock;
         const int x0 = static_cast<int>(block % blocksWide) * kb, y0 = static_cast<int>(block / blocksWide) * kb;
@@ -717,9 +852,11 @@ void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fi
         tied[block] = tiedAt[block].size() > 1;
 }
 
-void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const Picture& pictureB, const MotionField& prev,
-                        const MotionField& next, int w, uint32_t* out)
+void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const Picture& pictureB,
+                        const MotionField& prev, const MotionField& next, int weight, uint32_t* out)
 {
+    // a weight past the pair would sample beyond the padded copies' margins (two vectors out)
+    const int w = std::clamp(weight, 0, kOne);
     Prepare(prev, next, pictureP, pictureA, pictureB, _layers);
     const std::vector<V>& all = _layers.all;
     const int width = pictureA.width, height = pictureA.height;
@@ -912,7 +1049,7 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     const int blocksWide = _layers.blocksWide;
     std::vector<int>& blockVector = _blockVector;
     std::vector<uint8_t>& tied = _tied;
-    CpuEvidence evidence(a, blocksWide, n, fits.data(), support.data(), fitCounts.data(), _topAt);
+    CpuEvidence evidence(a, blocksWide, all, fits.data(), support.data(), fitCounts.data(), _pool, _ownAnswers, _askOf);
     Decide(_layers, pictureA, fitCounts.data(), usableCounts.data(), evidence, blockVector, tied, _decide);
     // carryFirst: the block's vector explains at least half of the block's changes (the motion of what is there,
     // not a chance match of content appearing)

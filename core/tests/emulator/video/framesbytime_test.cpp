@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -33,6 +36,7 @@ protected:
     Screen* _screen = nullptr;
     size_t _size = 0;
     int _frames = 0;
+    int64_t _base = kBase;  ///< frame k ends at _base + k periods
 
     void SetUp() override
     {
@@ -46,6 +50,8 @@ protected:
 
     void TearDown() override
     {
+        if (_gate)
+            _gate->Set(true);  // a worker held at the gate goes on: the screen joins it
         if (_emulator)
         {
             _emulator->GetContext()->pAudioDeviceDescriptor.store(nullptr);
@@ -69,7 +75,7 @@ protected:
         FrameStampInput in;
         in.periodNs = kPeriod;
         in.haveEmulated = true;
-        in.emulatedEndNs = kBase + static_cast<int64_t>(_frames) * kPeriod;
+        in.emulatedEndNs = _base + static_cast<int64_t>(_frames) * kPeriod;
         in.nowNs = in.emulatedEndNs;
         return in;
     }
@@ -83,6 +89,60 @@ protected:
     /// Frame k's target on the emulated clock: its end plus one period of delay
     static int64_t Target(int k) { return kBase + static_cast<int64_t>(k + 1) * kPeriod + kPeriod; }
     static uint8_t Marker(int k) { return static_cast<uint8_t>(0x10 + k); }
+
+    /// The temporal worker's write-backs held at will (Screen::SetTemporalWriteGateForTest). Shared with the worker:
+    /// it outlives the test body if a write-back comes after it
+    struct Gate
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool open = true;
+        uint64_t waiting = 0;  ///< the serial whose output waits at the gate (0: none)
+        void Pass(uint64_t serial)
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            waiting = serial;
+            changed.wait(lock, [this] { return open; });
+            waiting = 0;
+        }
+        void Set(bool on)
+        {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                open = on;
+            }
+            changed.notify_all();
+        }
+        uint64_t Waiting()
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return waiting;
+        }
+    };
+    std::shared_ptr<Gate> _gate;
+
+    /// ZX DLSS (mod-tpgwafsd: 6 frames of look-ahead + 1 for the worker) on the synthetic frames: plane B all zero, so
+    /// its output is black where the latched marker was not
+    void StartTemporalEffect()
+    {
+        _gate = std::make_shared<Gate>();
+        _screen->SetTemporalWriteGateForTest([gate = _gate](uint64_t serial) { gate->Pass(serial); });
+        ASSERT_TRUE(_screen->SetTemporalAlgorithm("mod-tpgwafsd"));
+        _screen->SetPlaneBEnabled(true);
+    }
+    /// A frame through the effect, the worker done with it (one at a time: a worker two behind would restart)
+    void LatchProcessed()
+    {
+        const uint64_t before = _screen->GetTemporalStats().processed;
+        LatchAndStamp();
+        ASSERT_TRUE(TestWait::For([&] { return _screen->GetTemporalStats().processed == before + 1; }));
+    }
+    static int64_t SteadyNow()
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
 };
 
 TEST_F(FramesByTime_Test, NewestFrameDueAtTheTime)
@@ -494,4 +554,152 @@ TEST_F(FramesByTime_Test, ReaderNeverSeesATornFrameWhileFramesAreLatched)
     EXPECT_EQ(torn.load(), 0u) << "of " << reads.load() << " reads beside " << latched << " latches";
     EXPECT_GE(reads.load() - readsBefore, 300u) << "the reader barely ran beside the latches";
     EXPECT_GE(latched, 300u);
+}
+
+/// The temporal effect's worker a frame or two behind (it may be up to TemporalEffects::kMaxQueuedJobs): the read
+/// ahead (smooth motion) waits for a frame whose output is still to come. Handed out raw, it was kept by its serial for
+/// good: the flicker drawn, and counted nowhere (shownRaw stayed 0)
+TEST_F(FramesByTime_Test, NextFrameWaitsForTheTemporalOutputToCome)
+{
+    StartTemporalEffect();
+    // 10 frames in step with the worker: the outputs of frames 1..4 are in (each 6 frames of look-ahead later)
+    for (int k = 0; k < 10; k++)
+        LatchProcessed();
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    uint64_t serial = 0;
+    for (int k = 0; k < 3; k++)  // 10 latched, 7 frames of delay: frames 1..3 are served
+    {
+        ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+        EXPECT_NE(out[0], Marker(k)) << "frame " << k << " processed";
+        serial = info.serial;
+    }
+    EXPECT_FALSE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false)) << "frame 4 not served yet";
+
+    // The worker held writing frame 5's output (pushed with frame 11), frame 12 queued behind it: frames 1..5 are
+    // past the delay, frame 4's output is in, frame 5's still to come
+    _gate->Set(false);
+    LatchAndStamp();
+    ASSERT_TRUE(TestWait::For([&] { return _gate->Waiting() != 0; }));
+    const uint64_t held = _gate->Waiting();
+    LatchAndStamp();
+    ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+    EXPECT_NE(out[0], Marker(3)) << "frame 4 processed";
+    serial = info.serial;
+    EXPECT_EQ(held, serial + 1) << "the worker holds the frame after it";
+    EXPECT_FALSE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false))
+        << "frame 5 waits for its output, not handed out raw";
+
+    // The output in: the frame processed
+    const uint64_t processed = _screen->GetTemporalStats().processed;
+    _gate->Set(true);
+    ASSERT_TRUE(TestWait::For([&] { return _screen->GetTemporalStats().processed >= processed + 2; }));
+    ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+    EXPECT_EQ(info.serial, held);
+    EXPECT_NE(out[0], Marker(4)) << "frame 5 processed";
+    EXPECT_EQ(_screen->GetTemporalStats().restarts, 0u);
+
+    // A restart (another algorithm, a seek, the worker too far behind): the output of the frames queued before never
+    // comes, they are served raw at once
+    serial = info.serial;
+    _gate->Set(false);
+    LatchAndStamp();  // frame 7's output at the gate
+    ASSERT_TRUE(TestWait::For([&] { return _gate->Waiting() != 0; }));
+    LatchAndStamp();
+    ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+    serial = info.serial;  // frame 6
+    EXPECT_FALSE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false)) << "frame 7 waits";
+    ASSERT_TRUE(_screen->SetTemporalAlgorithm("mod-tpgwa"));
+    ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false)) << "nothing to wait for";
+    EXPECT_EQ(out[0], Marker(6)) << "frame 7 raw";
+    _gate->Set(true);
+}
+
+/// ZX DLSS switched on mid-stream: its look-ahead (7 frames) is longer than the delay so far, but the picture never
+/// goes back to frames already shown; the frame on screen is held until the look-ahead has passed the ones after it
+TEST_F(FramesByTime_Test, TemporalEffectSwitchedOnNeverGoesBack)
+{
+    for (int k = 0; k < 10; k++)
+        LatchAndStamp();
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    ASSERT_TRUE(_screen->CopyFrameAt(Target(9), out.data(), out.size(), &info));
+    EXPECT_EQ(out[0], Marker(9));
+    uint64_t shown = info.serial;
+
+    StartTemporalEffect();
+    bool advanced = false;
+    for (int k = 0; k < 8; k++)
+    {
+        LatchProcessed();
+        ASSERT_TRUE(_screen->CopyFrameAt(INT64_MAX / 2, out.data(), out.size(), &info));
+        ASSERT_GE(info.serial, shown) << "latch " << k << ": back from frame " << shown << " to " << info.serial;
+        advanced |= info.serial > shown;
+        shown = info.serial;
+    }
+    EXPECT_TRUE(advanced) << "the look-ahead passed the frame held: the frames go on";
+}
+
+/// The effect's readout (the dialog's LED) is of the frame the window shows: a screenshot or the shared-memory export
+/// served another frame does not flip it
+TEST_F(FramesByTime_Test, ScreenshotLeavesTheTemporalReadout)
+{
+    _base = SteadyNow() - 2'000'000'000;  // every target long past: a screenshot gets the newest frame served
+    StartTemporalEffect();
+    for (int k = 0; k < 10; k++)
+        LatchProcessed();
+    // Frame 5's output held back, frame 4's in
+    _gate->Set(false);
+    LatchAndStamp();
+    ASSERT_TRUE(TestWait::For([&] { return _gate->Waiting() != 0; }));
+    LatchAndStamp();
+
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    uint64_t serial = 0;
+    for (int k = 0; k < 4; k++)
+    {
+        ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+        serial = info.serial;
+    }
+    // The window shows frame 4 (processed)
+    ASSERT_TRUE(_screen->CopyFrameAt(info.targetNs, out.data(), out.size(), &info));
+    ASSERT_EQ(info.serial, serial);
+    EXPECT_TRUE(_screen->GetTemporalStats().showingProcessed);
+    // A screenshot now: frame 5, raw
+    ASSERT_TRUE(_screen->CopyPresentedFramebuffer(out.data(), out.size()));
+    EXPECT_EQ(out[0], Marker(4)) << "the screenshot got frame 5 raw";
+    EXPECT_TRUE(_screen->GetTemporalStats().showingProcessed) << "the window's frame is processed";
+    _gate->Set(true);
+}
+
+/// A refresh between two frames asks for the frame it holds already: not copied again (nor its slot pinned, the
+/// latch never waits for it); another frame, or the same slot written again, is
+TEST_F(FramesByTime_Test, FrameHeldAlreadyIsNotCopiedAgain)
+{
+    for (int k = 0; k < 3; k++)
+        LatchAndStamp();
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    ASSERT_TRUE(_screen->CopyFrameAt(Target(2), out.data(), out.size(), &info));
+    EXPECT_TRUE(info.copied);
+    EXPECT_NE(info.content, 0u);
+    const uint64_t content = info.content;
+
+    std::fill(out.begin(), out.end(), uint8_t{0xEE});
+    PresentFrameInfo again;
+    again.content = content;
+    ASSERT_TRUE(_screen->CopyFrameAt(Target(2) + kPeriod / 2, out.data(), out.size(), &again));
+    EXPECT_FALSE(again.copied);
+    EXPECT_EQ(again.content, content);
+    EXPECT_EQ(again.serial, info.serial);
+    EXPECT_EQ(out[0], 0xEE) << "left as it was";
+
+    LatchAndStamp();
+    PresentFrameInfo next;
+    next.content = content;
+    ASSERT_TRUE(_screen->CopyFrameAt(Target(3), out.data(), out.size(), &next));
+    EXPECT_TRUE(next.copied);
+    EXPECT_NE(next.content, content);
+    EXPECT_EQ(out[0], Marker(3));
 }

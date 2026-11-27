@@ -8,10 +8,6 @@
 
 namespace
 {
-/// Frames the worker may be behind before the algorithm is restarted: the
-/// present queue shows raw frames for the gap instead of an ever-growing lag
-constexpr size_t kMaxQueuedJobs = 3;
-
 /// The paper (256 x 192) inside the frames plane B describes: standard ZX
 /// 352 x 288 and Pentagon overscan 384 x 304. Other sizes are not ZX screens.
 bool PaperOrigin(int width, int height, int& paperX, int& paperY)
@@ -67,7 +63,7 @@ bool TemporalEffects::SetAlgorithm(const std::string& name)
     _algorithmDelay = delay;
     _enabled.store(!name.empty(), std::memory_order_release);
     _queue.clear();
-    _generation++;
+    NewGenerationLocked();
     _stats = Stats{};
     return true;
 }
@@ -78,8 +74,14 @@ std::string TemporalEffects::GetAlgorithm() const
     return _algorithmName;
 }
 
+void TemporalEffects::NewGenerationLocked()
+{
+    _generation++;
+    _generationNow.store(_generation, std::memory_order_release);
+}
+
 int TemporalEffects::Submit(uint64_t serial, const uint16_t* planeB, int width, int height,
-                            const uint32_t* palette, const std::string* notApplicable)
+                            const uint32_t* palette, const std::string* notApplicable, uint64_t* generation)
 {
     int paperX = 0;
     int paperY = 0;
@@ -113,7 +115,7 @@ int TemporalEffects::Submit(uint64_t serial, const uint16_t* planeB, int width, 
             {
                 // The worker cannot keep up: restart rather than fall further behind
                 _queue.clear();
-                _generation++;
+                NewGenerationLocked();
                 _stats.restarts++;
             }
             Job job;
@@ -132,6 +134,8 @@ int TemporalEffects::Submit(uint64_t serial, const uint16_t* planeB, int width, 
             std::copy(palette, palette + 16, job.palette.begin());
             _queue.push_back(std::move(job));
             videoDelay = _algorithmDelay + 1;
+            if (generation)
+                *generation = _generation;
         }
     }
     _videoDelay.store(videoDelay, std::memory_order_release);
@@ -146,7 +150,7 @@ void TemporalEffects::Reset()
     if (_algorithmName.empty())
         return;
     _queue.clear();
-    _generation++;
+    NewGenerationLocked();
     _stats.restarts++;
 }
 

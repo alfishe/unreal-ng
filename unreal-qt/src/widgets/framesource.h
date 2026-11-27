@@ -15,6 +15,8 @@
 /// The frame a refresh reaching the screen at `hostNs` (steady clock, ns) shows, copied into `dst` (`dstSize`
 /// bytes): Screen::CopyFrameAt (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, section 4.2).
 /// `info` gets the frame's serial and times; serial 0 = a source without serials (every copy is a new frame).
+/// `info->content` on the way in: the version of the pixels `dst` holds (the last call's `info->content`); a source
+/// may leave `dst` as it is for the same version (Screen::CopyFrameAt), any source may copy anyway.
 /// @return false when there is no frame
 using FrameSourceFn = std::function<bool(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info)>;
 

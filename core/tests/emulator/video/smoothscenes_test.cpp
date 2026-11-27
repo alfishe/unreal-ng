@@ -291,6 +291,105 @@ TEST(SmoothScenes_Test, BorderEffectsInAStreamInventNothing)
         }
 }
 
+// A loader's stripes 8 to 16 lines high, new every frame: a block inside one is of one color, and a vector carrying
+// it exactly from the frame before through a to b happens by chance (two colors). Every pair of 12 frames in order,
+// as the window draws them: nothing invented
+TEST(SmoothScenes_Test, ThickLoaderStripesInventNothing)
+{
+    constexpr int kFrames = 12;
+    const auto frameOf = [](int k) {
+        std::vector<uint32_t> frame = Border(W, H, BORDER, k, true);
+        uint32_t line = 0;
+        for (int y = 0, next = 0; y < H; y++)
+        {
+            if (y == next)
+            {
+                const uint32_t h = Hash(11, static_cast<uint32_t>(y), static_cast<uint32_t>(k));
+                next = y + 8 + static_cast<int>(h % 9);
+                line = ZxColor((h >> 8) & 1 ? 2 : 5, false);
+            }
+            for (int x = 0; x < W; x++)
+                if (!InPaper(W, H, BORDER, x, y))
+                    frame[static_cast<size_t>(y) * W + x] = line;
+        }
+        return frame;
+    };
+    for (Mode mode : kInterpolating)
+    {
+        SmoothMotion engine;
+        engine.SetMode(mode);
+        std::vector<uint32_t> before, out(static_cast<size_t>(W) * H);
+        for (int k = 0; k < kFrames; k++)
+        {
+            const std::vector<uint32_t> frame = frameOf(k);
+            engine.Push(static_cast<uint64_t>(k + 1), Scene::TargetOf(k), frame.data(), W, H);
+            if (k > 0)
+                for (int w : Weights())
+                {
+                    const auto r = engine.Render(Scene::TargetOf(k - 1) + PERIOD * w / kOne, out.data());
+                    ExpectBorderPicture(out, before, frame, w, true,
+                                        std::string(ModeName(mode)) + " pair " + std::to_string(k - 1) + "-" +
+                                            std::to_string(k) + " drew " + KindName(r.kind) + " w " +
+                                            std::to_string(r.weight));
+                }
+            before = frame;
+        }
+    }
+    // LiteFlow itself on every pair, whatever the engine would choose
+    LiteFlow lite;
+    std::vector<uint32_t> out(static_cast<size_t>(W) * H);
+    for (int k = 0; k + 1 < kFrames; k++)
+    {
+        const std::vector<uint32_t> a = frameOf(k), b = frameOf(k + 1);
+        for (int w : Weights())
+        {
+            ASSERT_TRUE(lite.Compose({W, H, a.data(), static_cast<uint64_t>(k + 1)},
+                                     {W, H, b.data(), static_cast<uint64_t>(k + 2)}, w, out.data()));
+            ExpectBorderPicture(out, a, b, w, true,
+                                "LiteFlow pair " + std::to_string(k) + "-" + std::to_string(k + 1) + " w " +
+                                    std::to_string(w));
+        }
+    }
+}
+
+/// endregion
+
+/// region Text
+
+TEST(SmoothScenes_Test, PageFlipInventsNothing)
+{
+    // A page of text flipped to another: nothing moves, though many a new letter is an old one a cell over (the
+    // field matches it, the letters' detail confirms the vector). Every pixel is a frame's or their blend, LayerFlow
+    // alone (the page held before the flip, and flipped every frame) and the engine
+    std::vector<uint32_t> out(static_cast<size_t>(W) * H);
+    LayerFlow flow;
+    for (bool held : {true, false})
+    {
+        const std::vector<uint32_t> p = TextPage(W, H, held ? 1 : 0), a = TextPage(W, H, 1), b = TextPage(W, H, 2);
+        const Picture pp{W, H, p.data()}, pa{W, H, a.data()}, pb{W, H, b.data()};
+        MotionField prev, next;
+        prev.Estimate(pp, pa, MotionField::kRangeFrames);
+        next.Estimate(pa, pb, MotionField::kRangeFrames);
+        for (int w : TestTier::Pick<std::vector<int>>({128}, {43, 85, 128, 171, 213}))
+        {
+            flow.Compose(pp, pa, pb, prev, next, w, out.data());
+            const Tally t = Invented(out, a, b, w, W);
+            EXPECT_EQ(t.count, 0) << (held ? "held page" : "a page every frame") << ", w " << w << ": invented "
+                                  << t.Text();
+        }
+    }
+    for (Mode mode : kInterpolating)
+    {
+        Scene scene(mode, [](int k) { return TextPage(W, H, k < 5 ? 0 : 5); }, 6);
+        for (int w : Weights())
+        {
+            const auto r = scene.Render(w);
+            const Tally t = Invented(scene.out, scene.a, scene.b, w, W);
+            EXPECT_EQ(t.count, 0) << scene.Drew(r) << ": invented " << t.Text();
+        }
+    }
+}
+
 /// endregion
 
 /// region Multicolor and color cycling
