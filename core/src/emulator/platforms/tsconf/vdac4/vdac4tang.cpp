@@ -3,6 +3,8 @@
 #include "vdac4tang.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/video/screen.h"
+#include "vdac4bomzh.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -64,9 +66,33 @@ Vdac4Tang::Vdac4Tang(EmulatorContext* context, std::function<uint32_t()> rasterI
     PowerOn();
 }
 
+Vdac4Tang::~Vdac4Tang()
+{
+    if (_q2)
+    {
+        if (Screen* screen = Context() ? Context()->pScreen : nullptr)
+            screen->ClearExternalPicture();
+    }
+}
+
+void Vdac4Tang::SetState(const State& state)
+{
+    const bool q2 = state.personality == Personality::Q2;
+    if (!q2 && _q2)
+        LeaveQ2();
+    _state = state;
+    if (q2 && !_q2)
+    {
+        _state.personality = Personality::Ts;
+        EnterQ2();
+    }
+}
+
 void Vdac4Tang::PowerOn()
 {
     WaitEsp();
+    if (_q2)
+        LeaveQ2();
     EveHostCard::PowerOn();  // the chip powered down: slot 0 has no FT812
     const uint64_t now = Now();
     const EmulatorContext* context = Context();
@@ -103,6 +129,10 @@ void Vdac4Tang::Update(uint64_t now)
 
     if (_state.personality == Personality::Ft && !_state.msel && !IsEspHost() && !_state.selected &&
         now >= _state.lastEvoTraffic + kSwitchIdleMs * kTactsPerMs)
+        EnterTs();
+
+    // The Quake II core asks the BL616 for slot 0 (BOOT, the Evo's reset, M_SEL idle)
+    if (_state.personality == Personality::Q2 && _q2 && _q2->BootRequested(now / kTactsPerMs))
         EnterTs();
 }
 
@@ -145,11 +175,101 @@ void Vdac4Tang::ApplyRamMode()
 
 void Vdac4Tang::EnterTs()
 {
+    const bool fromQ2 = _q2 != nullptr;
+    if (fromQ2)
+        LeaveQ2();
     // The slot-0 core is loaded again: the FT812 core and all its memory are gone
     EveHostCard::PowerOn();
     _state.personality = Personality::Ts;
     _state.windowBytes = 0;
     _state.windowAllZero = 1;
+    // The Evo picture again, blanked while M_SEL = 1 as slot 0 does
+    if (fromQ2)
+        EveHostCard::SetShowing(_state.msel != 0);
+}
+
+void Vdac4Tang::EnterQ2()
+{
+    // The FT812 core (if it ran) is gone; the picture is the new core's own HDMI output, whatever M_SEL says
+    if (_state.personality == Personality::Ft)
+        EveHostCard::PowerOn();
+    EveHostCard::SetShowing(false);
+    _q2 = std::make_unique<Vdac4BomzhCore>();
+    _state.personality = Personality::Q2;
+    _state.windowBytes = 0;
+    _state.windowAllZero = 1;
+    _q2->SetMsel(_state.msel != 0, NowMs());
+    _q2Frames = 0;
+    _q2Latched = 0;
+    // Black until the first FRAME, at the core's HDMI size
+    _q2Width = 424;
+    _q2Height = 240;
+    _q2Picture.assign(static_cast<size_t>(_q2Width) * _q2Height * 4, 0);
+    for (size_t i = 3; i < _q2Picture.size(); i += 4)
+        _q2Picture[i] = 0xFF;
+    if (Screen* screen = Context() ? Context()->pScreen : nullptr)
+    {
+        screen->SetExternalPicture(_q2Picture.data(), _q2Width, _q2Height, kQ2FramePeriodUs);
+        // The black frame goes out now: until the first FRAME the monitor would keep showing the last TS-Conf frame
+        // in the new 424x240 geometry (a quarter of the old picture, zoomed)
+        if (!Context()->ttdReplayActive)
+            screen->LatchExternalFrame();
+    }
+}
+
+void Vdac4Tang::LeaveQ2()
+{
+    if (Screen* screen = Context() ? Context()->pScreen : nullptr)
+        screen->ClearExternalPicture();
+    _q2.reset();
+    _q2Picture.clear();
+    _q2Picture.shrink_to_fit();
+    _q2Width = _q2Height = 0;
+    _q2Frames = 0;
+}
+
+void Vdac4Tang::PresentQ2()
+{
+    if (!_q2 || _q2->Frames() == _q2Frames)
+        return;
+    _q2Frames = _q2->Frames();
+    Screen* screen = Context() ? Context()->pScreen : nullptr;
+    const uint16_t oldWidth = _q2Width, oldHeight = _q2Height;
+    if (!_q2->ShownPicture(_q2Picture, _q2Width, _q2Height))
+        return;
+    if (!screen || (Context() && Context()->ttdReplayActive))
+        return;
+    if (_q2Width != oldWidth || _q2Height != oldHeight)
+        screen->SetExternalPicture(_q2Picture.data(), _q2Width, _q2Height, kQ2FramePeriodUs);
+    screen->LatchExternalFrame();
+    ++_q2Latched;
+}
+
+int Vdac4Tang::LoadCore(uint32_t usercode, uint32_t& version)
+{
+    WaitEsp();
+    Update(Now());
+    if (usercode != Vdac4BomzhCore::kUserCode)
+        return -1;
+    if (_q2)
+        LeaveQ2();
+    EnterQ2();
+    if (!_q2->IsReady())
+    {
+        EnterTs();
+        return -1;
+    }
+    version = _q2->LinkRead(LinkVersion);
+    return 0;
+}
+
+bool Vdac4Tang::CoreBack()
+{
+    WaitEsp();
+    Update(Now());
+    if (_state.personality == Personality::Q2)
+        EnterTs();
+    return _state.personality == Personality::Ts || _state.personality == Personality::Ft;
 }
 
 void Vdac4Tang::OnFrameEnd()
@@ -157,12 +277,19 @@ void Vdac4Tang::OnFrameEnd()
     WaitEsp();
     EveHostCard::OnFrameEnd();
     Update(GetTime().frameBase);
+    PresentQ2();
 }
 
 void Vdac4Tang::SetShowing(bool showing)
 {
     WaitEsp();
     _state.msel = showing ? 1 : 0;
+    if (_q2)
+    {
+        // The Quake II core shows its own picture; M_SEL only arms its reset rule
+        _q2->SetMsel(showing, NowMs());
+        return;
+    }
     // M_SEL = 1 in slot 0 blanks the Evo picture; in slot 1 the FT picture is shown.
     // The chip of a slot-0 Tang is powered down: its picture is black
     EveHostCard::SetShowing(showing);
@@ -186,6 +313,15 @@ void Vdac4Tang::select(bool selected)
     _state.selected = selected ? 1 : 0;
     _state.lastEvoTraffic = now;
     _state.ftSeen = 1;
+    if (_q2)
+    {
+        if (!selected)
+        {
+            _q2->EvoDeselect(now / kTactsPerMs);
+            Update(now);  // the Evo's reset (RST_PULSE) boots slot 0 at once
+        }
+        return;
+    }
 
     if (_state.personality == Personality::Ft && !IsEspHost())
     {
@@ -205,6 +341,11 @@ uint8_t Vdac4Tang::exchange(uint8_t mosi)
     const uint64_t now = Now();
     Update(now);
     _state.lastEvoTraffic = now;
+    if (_q2)
+    {
+        _q2->EvoByte(mosi, now / kTactsPerMs);
+        return 0;  // the Evo's SPI goes to bz_evo_in (SDRAM uploads), which answers nothing
+    }
     if (_state.personality == Personality::Ft)
     {
         if (IsEspHost())
@@ -268,6 +409,8 @@ uint32_t Vdac4Tang::LinkRead(uint32_t address)
 {
     const uint64_t now = Now();
     Update(now);
+    if (_q2)
+        return _q2->LinkRead(address);
     const bool ft = _state.personality == Personality::Ft;
     switch (address)
     {
@@ -339,6 +482,18 @@ void Vdac4Tang::LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t cou
 {
     // The time does not move between the words: Update has nothing to change after the first call
     Update(Now());
+    if (_q2)
+    {
+        // FT_ADDR / FT_DATA are not the Quake II core's registers
+        _q2->LinkWrite(LinkFtAddr, ftAddress);
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint8_t* p = words + 4 * i;
+            _q2->LinkWrite(LinkFtData, static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+                                           (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24));
+        }
+        return;
+    }
     _state.ftAddr = ftAddress & 0x3FFFFF;
     if (count == 0)
         return;
@@ -351,6 +506,13 @@ void Vdac4Tang::LinkWrite(uint32_t address, uint32_t value)
 {
     const uint64_t now = Now();
     Update(now);
+    if (_q2)
+    {
+        _q2->LinkWrite(address, value);
+        if (address == LinkBoot)
+            Update(now);  // BOOT: the BL616 loads slot 0
+        return;
+    }
     const bool ft = _state.personality == Personality::Ft;
     if (address >= LinkFtBurst && address < LinkFtBurstEnd)
     {

@@ -21,11 +21,22 @@ namespace Vdac4Control
 struct BoardState
 {
     // Tang
-    std::string personality;    ///< "ts", "loading", "ft"
+    std::string personality;    ///< "ts", "loading", "ft", "q2" (the Quake II core from the Evo card)
     bool armed = false;         ///< the ESP armed the Tang (TS personality switches on Evo FT traffic)
     bool espHost = false;       ///< FT_CFG ESP_HOST: the ESP drives the FT812
     bool ramG3M = false;        ///< FT_CFG RAM_G 3 MB
     uint32_t ftCfg = 0;
+
+    // The Quake II core (personality "q2"; zeros otherwise)
+    uint32_t q2Frames = 0;      ///< FRAME commands executed (the core's FRAMES)
+    uint64_t q2Latched = 0;     ///< its pictures latched to the screen
+    uint64_t q2Commands = 0;    ///< commands executed
+    uint64_t q2Words = 0;       ///< words written into its queue
+    uint64_t q2BadWords = 0;    ///< words dropped as not a command
+    bool q2BadCommand = false;  ///< STATUS bad_cmd
+    uint32_t q2Mark = 0;        ///< MARK
+    uint32_t q2Width = 0;       ///< the picture SETUP set
+    uint32_t q2Height = 0;
 
     // ESP
     std::string espPhase;       ///< "off", "booting", "running", "flushing", "restart_wait"
@@ -35,6 +46,32 @@ struct BoardState
     uint8_t lastStep = 0;       ///< the last command the firmware handled (SYS_INFO step)
     std::string lastError;      ///< the firmware's last error text ("" none)
     size_t resources = 0;       ///< resources held in PSRAM
+    uint32_t psramFree = 0;     ///< bytes of PSRAM an app can still allocate (UNREAL_VDAC4_PSRAM_RESERVE_KB)
+    /// FPGA cores the Z80 program sent from the Evo card (MOD_QUERY flag 2), as the BL616 cache holds them
+    struct HeldCore
+    {
+        std::string name;
+        uint32_t size = 0;
+        uint32_t usercode = 0;      ///< the VDAC4 mark 0x564434xx
+    };
+    std::vector<HeldCore> cores;
+    /// Data files registered for reading from the Z80 program (MOD_QUERY flag 4 with a file number)
+    struct DataFile
+    {
+        std::string app;
+        std::string name;
+        uint32_t size = 0;
+        uint8_t index = 0;          ///< the file's number at the Z80 program
+    };
+    std::vector<DataFile> dataFiles;
+    // The running app's data_read of them (0x6E requests, 0x6F pieces)
+    uint32_t dataOpen = 0;          ///< open handles
+    bool dataReading = false;       ///< a read waits for the Z80 now
+    uint64_t dataRequests = 0;      ///< requests answered whole
+    uint64_t dataRepeats = 0;       ///< requests asked again (no answer in 4 s, or the Z80 could not read)
+    uint64_t dataFailures = 0;      ///< data_read calls failed after three attempts
+    uint64_t dataBytes = 0;
+    uint32_t dataLongestMs = 0;
     uint64_t clockRestarts = 0; ///< machine resets the ESP's clock stepped over (it keeps running)
     uint64_t clockOffsetUs = 0; ///< ESP time ahead of the machine's emulated time
 

@@ -111,6 +111,29 @@ EspXtensaRuntime::EspXtensaRuntime(std::function<void(const int16_t*, size_t, ui
     ports.moduleBytes = [this](const std::string& name, std::vector<uint8_t>& bytes) {
         return _appHost ? _appHost->ReadModule(name.c_str(), bytes) : static_cast<int>(kZmError);
     };
+    // The firmware's core and data file tables: never from a job (they are the main thread's); the board answers
+    // a busy firmware the same way
+    ports.dataLookup = [this](const std::string& app, const std::string& name, uint8_t& index, uint32_t& size) {
+        if (_deferring || _appHost == nullptr)
+            return static_cast<int>(kZmBusy);
+        return _appHost->DataFile(app, name, index, size);
+    };
+    ports.coreLoad = [this](const std::string& name, uint32_t& version) {
+        if (_deferring || _appHost == nullptr)
+            return static_cast<int>(kZmBusy);
+        return _appHost->CoreLoad(name, version);
+    };
+    ports.coreBack = [this]() {
+        if (_appHost == nullptr)
+            return static_cast<int>(kZmError);
+        if (!_deferring)
+            return _appHost->CoreBack();
+        Defer([this]() {
+            if (_appHost)
+                _appHost->CoreBack();
+        });
+        return static_cast<int>(kZmOk);
+    };
     ports.log = [this](const std::string& line) {
         if (!_log)
             return;
@@ -398,6 +421,18 @@ int EspXtensaRuntime::Command(uint8_t command, const uint8_t* data, size_t size)
         return kZmError;
     }
     return _host->LastCommandResult();
+}
+
+void EspXtensaRuntime::DataPiece(const uint8_t* data, size_t size)
+{
+    Flush();
+    _host->DataPiece(data, size);
+}
+
+void EspXtensaRuntime::DataFilesChanged()
+{
+    Flush();
+    _host->DataFilesChanged();
 }
 
 void EspXtensaRuntime::Poll(uint32_t nowMs)

@@ -41,6 +41,9 @@ public:
     bool Free(uint32_t address);
     /// Size the block was allocated with (rounded to 16), 0 when not a block start
     uint32_t BlockSize(uint32_t address) const;
+    /// The block at `address` to `size` bytes where it is: smaller always, larger when the space after it is
+    /// free. False: not a block start, or no room to grow
+    bool Resize(uint32_t address, uint32_t size);
     bool Contains(uint32_t address) const { return address >= _base && address - _base < _size; }
     uint32_t FreeBytes() const;
     void Clear();
@@ -103,6 +106,8 @@ public:
     void HeapCapsFree(uint32_t address);
     /// heap_caps_get_allocated_size
     uint32_t AllocatedSize(uint32_t address) const;
+    /// heap_caps_realloc without a move (EspHeap::Resize in the block's heap)
+    bool Resize(uint32_t address, uint32_t size);
 
     EspHeap& Psram() { return _psramHeap; }
     EspHeap& Sram() { return _sramHeap; }

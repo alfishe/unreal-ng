@@ -181,6 +181,21 @@ void CLIProcessor::HandleVdac4(const ClientSession& session, const std::vector<s
             << "  ESP:     " << s.espPhase << ", " << s.espMs << " ms, boots " << s.boots << " (nonce "
             << static_cast<unsigned>(s.bootNonce) << "), last step " << static_cast<unsigned>(s.lastStep) << ", resources "
             << s.resources << ", clock restarts " << s.clockRestarts << ", ahead " << s.clockOffsetUs << " us" << NEWLINE;
+        out << "  PSRAM:   " << s.psramFree / 1024 << " KB free" << NEWLINE;
+        if (s.personality == "q2")
+            out << "  Quake II core: " << s.q2Frames << " frames (" << s.q2Latched << " shown), " << s.q2Width << "x"
+                << s.q2Height << ", commands " << s.q2Commands << ", words " << s.q2Words << ", bad words "
+                << s.q2BadWords << (s.q2BadCommand ? ", bad_cmd set" : "") << ", MARK " << s.q2Mark << NEWLINE;
+        for (const auto& core : s.cores)
+            out << "  Core:    " << core.name << ", " << core.size << " bytes, UserCode 0x" << std::hex << core.usercode
+                << std::dec << " (BL616 cache)" << NEWLINE;
+        for (const auto& file : s.dataFiles)
+            out << "  Data:    " << file.app << "/" << file.name << ", " << file.size << " bytes, file #"
+                << static_cast<unsigned>(file.index) << " of the Z80 program" << NEWLINE;
+        if (!s.dataFiles.empty())
+            out << "  Reads:   " << s.dataRequests << " requests, " << s.dataBytes / 1024 << " KB, repeats "
+                << s.dataRepeats << ", failures " << s.dataFailures << ", longest " << s.dataLongestMs << " ms, open "
+                << s.dataOpen << (s.dataReading ? ", reading now" : "") << NEWLINE;
         if (!s.lastError.empty())
             out << "  ESP error: " << s.lastError << NEWLINE;
         out << "  App:     ";

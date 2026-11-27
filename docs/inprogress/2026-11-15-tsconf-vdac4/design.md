@@ -546,8 +546,9 @@ emulation thread. The answer is the same JSON tree on every plane:
 
 | Block | Keys |
 |---|---|
-| `tang` | `personality` (`ts`, `loading`, `ft`), `armed`, `esp_host`, `ram_g_3mb`, `ft_cfg` |
-| `esp` | `phase` (`off`, `booting`, `running`, `flushing`, `restart_wait`), `ms`, `boots`, `boot_nonce`, `last_step`, `last_error`, `resources`, `clock_restarts`, `clock_offset_us` |
+| `tang` | `personality` (`ts`, `loading`, `ft`, `q2`), `armed`, `esp_host`, `ram_g_3mb`, `ft_cfg`, `q2` (the Quake II core, [quake2.md](quake2.md): `frames`, `latched`, `commands`, `words`, `bad_words`, `bad_command`, `mark`, `width`, `height`) |
+| `esp` | `phase` (`off`, `booting`, `running`, `flushing`, `restart_wait`), `ms`, `boots`, `boot_nonce`, `last_step`, `last_error`, `resources`, `clock_restarts`, `clock_offset_us`, `psram_free`, `cores` (held in the BL616 cache: `name`, `size`, `usercode`) |
+| `data` | the app's data files from the Evo card: `files` (`app`, `name`, `size`, `index`), `open`, `reading`, `requests`, `repeats`, `failures`, `bytes`, `longest_ms` |
 | `app` | `running`, `module`, `name`, `version`, `command_first`, `command_last`, `error` |
 | `link` | `pending_from_z80`, `pending_to_z80`, `send_blocked`, `bad_checksums`, `resyncs`, `dropped_frames` |
 | `packets` | `count`, `recent` (the last 64: `command`, `length`, `ms`) |

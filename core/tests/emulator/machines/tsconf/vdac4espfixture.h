@@ -125,6 +125,8 @@ public:
         }
     }
     void Poll(uint32_t nowMs) override { lastPollMs = nowMs; }
+    void DataPiece(const uint8_t* data, size_t size) override { pieces.emplace_back(data, data + size); }
+    void DataFilesChanged() override { ++dataChanges; }
     void SaveState(std::vector<uint8_t>& out) const override { out = {0xAB, static_cast<uint8_t>(commands.size())}; }
     bool LoadState(const std::string& module, const Vdac4AppInfo& info, IVdac4AppHost& host,
                    const std::vector<uint8_t>& state) override
@@ -143,6 +145,8 @@ public:
     std::string startedModule;
     std::vector<uint8_t> startedImage;
     std::vector<uint8_t> commands;
+    std::vector<std::vector<uint8_t>> pieces;
+    int dataChanges = 0;
     uint32_t lastPollMs = 0;
     int starts = 0;
     int stops = 0;

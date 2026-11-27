@@ -54,7 +54,43 @@ constexpr uint32_t kNetStack = 16384;
 constexpr uint8_t kLoopPriority = 1;
 constexpr uint8_t kNetPriority = 2;
 
-const char* const kFirmware = "unreal-ng-hle-0.1.122";
+/// Data file handles: the firmware's static AppDataFiles::Handle slots (DRAM outside the heaps), opaque to apps
+constexpr uint32_t kDataHandleBase = 0x3FC80400u;
+constexpr uint32_t kDataHandleStride = 32;
+
+/// app_data_files.cpp validName: 8.3, letters, digits, '_' and '-'
+bool DataNameValid(const std::string& name)
+{
+    size_t base = 0, ext = 0;
+    bool dot = false;
+    for (const char c : name)
+    {
+        if (c == '.')
+        {
+            if (dot || base == 0)
+                return false;
+            dot = true;
+            continue;
+        }
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+                        c == '-';
+        if (!ok)
+            return false;
+        if (dot ? ++ext > 3 : ++base > 8)
+            return false;
+    }
+    return base > 0 && name != "WRITING.TMP";
+}
+
+std::string Upper(std::string text)
+{
+    for (char& c : text)
+    {
+        if (c >= 'a' && c <= 'z')
+            c = static_cast<char>(c - 'a' + 'A');
+    }
+    return text;
+}
 
 /// ROM traps the host serves, by name (traps.txt)
 enum class RomTrap : uint8_t
@@ -219,6 +255,7 @@ void EspAppHost::Reset()
     for (ModuleState& module : _modules)
         module = ModuleState{};
     _codeRam = CodeRamState{};
+    _data = DataState{};
     _pcm = Pcm{};
     _nowUs = 0;
     _nextPollUs = 0;
@@ -265,6 +302,19 @@ void EspAppHost::BuildCore()
 
     _loop = NewTask("loopTask", kLoopPriority, true, kLoopStack, false);
     _net = NewTask("zifi-net", kNetPriority, true, kNetStack, false);
+
+    // What the board's firmware keeps of the PSRAM for itself (its tasks, buffers, the core and file caches)
+    // and the HLE does not model: an app sees as much free PSRAM as on the board
+    if (const uint32_t reserve = PsramReserveBytes(); reserve != 0)
+        _memory.HeapCapsMalloc(reserve, EspMemory::kCapSpiram);
+}
+
+uint32_t EspAppHost::PsramReserveBytes()
+{
+    uint32_t kb = kDefaultPsramReserveKb;
+    if (const char* env = std::getenv("UNREAL_VDAC4_PSRAM_RESERVE_KB"); env && *env)
+        kb = static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
+    return std::min<uint32_t>(kb, EspMemory::kPsramSize >> 11) << 10;  // at most half the PSRAM
 }
 
 /// endregion
@@ -355,6 +405,10 @@ void EspAppHost::WakeDue()
                 break;
             case TaskState::WaitPcm:
                 if (PcmWriteStep(task))
+                    MakeReady(task);
+                break;
+            case TaskState::WaitData:
+                if (DataReadStep(task))
                     MakeReady(task);
                 break;
             default:
@@ -1076,8 +1130,16 @@ bool EspAppHost::HandleZm(Task& task, uint32_t slot)
             ModuleClose(cpu.Arg(0));
             return ret(0);
         case ZmResource:
-        case ZmCoreLoad:
             return retInt(kZmNotFound);
+        case ZmCoreLoad:
+            return retInt(CoreLoad(cpu.Arg(0), cpu.Arg(1)));
+        case ZmDataOpen:
+            return retInt(DataOpen(cpu.Arg(0), cpu.Arg(1), cpu.Arg(2)));
+        case ZmDataRead:
+            return DataReadCall(task);
+        case ZmDataClose:
+            DataClose(cpu.Arg(0));
+            return ret(0);
         case ZmResourceRelease:
         case ZmNetClose:
         case ZmSockClose:
@@ -1123,7 +1185,16 @@ bool EspAppHost::HandleZm(Task& task, uint32_t slot)
             }
             return ret(0);
         case ZmCoreBack:
-            return retInt(kZmOk);
+        {
+            // module_app.cpp coreBack: the core counts as gone only when slot 0 runs again
+            const int result = _ports.coreBack ? _ports.coreBack() : kZmOk;
+            if (result == kZmOk)
+                _app.coreLoaded = false;
+            return retInt(result);
+        }
+        case ZmLinkReadChecked:
+            // Two reads under one LINK lock, a third and the median on a mismatch: the emulated LINK has no bit
+            // errors and nothing runs between the reads, so the first read is the answer
         case ZmLinkRead:
         case ZmLinkWrite:
         case ZmLinkBurst:
@@ -1131,12 +1202,13 @@ bool EspAppHost::HandleZm(Task& task, uint32_t slot)
             const uint32_t address = cpu.Arg(0);
             const uint32_t words = cpu.Arg(1);
             const uint32_t count = cpu.Arg(2);
+            const bool read = slot == ZmLinkRead || slot == ZmLinkReadChecked;
             if ((address & 3) != 0 || count == 0 || (slot != ZmLinkBurst && count > 16) ||
                 _memory.Bytes(words, count * 4) == nullptr || !_ports.linkRead)
                 return retInt(kZmError);
             for (uint32_t i = 0; i < count; i++)
             {
-                if (slot == ZmLinkRead)
+                if (read)
                     _memory.Write32(words + 4 * i, _ports.linkRead(address + 4 * i));
                 else if (slot == ZmLinkWrite)
                     _ports.linkWrite(address + 4 * i, _memory.Read32(words + 4 * i));
@@ -1244,6 +1316,10 @@ uint32_t EspAppHost::CoreRealloc(uint32_t pointer, uint32_t size)
     if (_memory.Read32(header + 12) != kAllocMagic)
         return 0;
     const uint32_t old = _memory.AllocatedSize(header) - kAllocHeader;
+    // heap_caps_realloc (0.1.166+): a block shrinks where it is, and grows there when the space after it is free
+    // (Quake II's Hunk_End gives back the unused tail of a hunk and refuses a block that moved)
+    if (size <= UINT32_MAX - kAllocHeader && _memory.Resize(header, size + kAllocHeader))
+        return pointer;
     const uint32_t fresh = CoreAlloc(size, _memory.Read32(header + 8));
     if (fresh == 0)
         return 0;
@@ -1252,6 +1328,409 @@ uint32_t EspAppHost::CoreRealloc(uint32_t pointer, uint32_t size)
     CoreFree(pointer);
     return fresh;
 }
+
+/// region <FPGA cores and data files (ABI 1.4 core_load, ABI 1.20 data_*)>
+
+int EspAppHost::CoreLoad(uint32_t name, uint32_t version)
+{
+    const std::string core = _memory.ReadString(name, 16);
+    if (core.empty())
+        return kZmError;
+    uint32_t word = 0;
+    int result = kZmNotFound;
+    if (_outer.coreLoad)
+    {
+        // Through the journal: the result and the core's VERSION word are inputs
+        result = JournalResult([&]() { return _outer.coreLoad(core, word); });
+        word = static_cast<uint32_t>(JournalResult([&]() { return static_cast<int>(word); }));
+    }
+    if (result != kZmOk)
+    {
+        Log("core_load " + core + ": " + (result == kZmNotFound ? "no such core" : "failed"));
+        return result;
+    }
+    // A core the app loaded is its own: the unload gives the Tang back (module_app.cpp coreLoaded_)
+    _app.coreLoaded = true;
+    if (version != 0 && _memory.Bytes(version, 4) != nullptr)
+        _memory.Write32(version, word);
+    return kZmOk;
+}
+
+int EspAppHost::DataOpen(uint32_t name, uint32_t file, uint32_t size)
+{
+    if (file != 0 && _memory.Bytes(file, 4) != nullptr)
+        _memory.Write32(file, 0);
+    if (size != 0 && _memory.Bytes(size, 4) != nullptr)
+        _memory.Write32(size, 0);
+    const std::string text = _memory.ReadString(name, 16);
+    // The app's folder: its ELF name without ".ELF" (Q2.ELF -> Q2)
+    const std::string app = Upper(_app.name.substr(0, std::min<size_t>(_app.name.find('.'), 8)));
+    if (file == 0 || _memory.Bytes(file, 4) == nullptr || !DataNameValid(text) || app.empty())
+        return kZmNotFound;
+    const std::string upper = Upper(text);
+    uint8_t index = 0;
+    uint32_t length = 0;
+    int found = kZmNotFound;
+    if (_outer.dataLookup)
+    {
+        found = JournalResult([&]() { return _outer.dataLookup(app, upper, index, length); });
+        index = static_cast<uint8_t>(JournalResult([&]() { return static_cast<int>(index); }));
+        length = static_cast<uint32_t>(JournalResult([&]() { return static_cast<int>(length); }));
+    }
+    if (found != kZmOk)
+    {
+        Log("data_open " + text + " of " + app + ": neither on the USB drive nor registered from the Evo card");
+        return kZmNotFound;
+    }
+    for (int i = 0; i < kMaxDataFiles; ++i)
+    {
+        DataFile& slot = _data.files[i];
+        if (slot.used)
+            continue;
+        slot.used = true;
+        slot.index = index;
+        slot.size = length;
+        _memory.Write32(file, kDataHandleBase + kDataHandleStride * static_cast<uint32_t>(i));
+        if (size != 0 && _memory.Bytes(size, 4) != nullptr)
+            _memory.Write32(size, length);
+        return kZmOk;
+    }
+    Log("data_open " + text + " of " + app + ": no free handle");
+    return kZmError;
+}
+
+namespace
+{
+int DataSlot(uint32_t handle)
+{
+    if (handle < kDataHandleBase || (handle - kDataHandleBase) % kDataHandleStride != 0)
+        return -1;
+    const uint32_t slot = (handle - kDataHandleBase) / kDataHandleStride;
+    return slot < static_cast<uint32_t>(EspAppHost::kMaxDataFiles) ? static_cast<int>(slot) : -1;
+}
+}  // namespace
+
+bool EspAppHost::DataReadCall(Task& task)
+{
+    IEspCpu& cpu = *_cpu;
+    const int slot = DataSlot(cpu.Arg(0));
+    DataRead read;
+    read.offset = cpu.Arg(1);
+    read.dest = cpu.Arg(2);
+    read.count = cpu.Arg(3);
+    read.got = cpu.Arg(4);
+    if (read.got != 0 && _memory.Bytes(read.got, 4) != nullptr)
+        _memory.Write32(read.got, 0);
+    if (slot < 0 || !_data.files[slot].used || (read.dest == 0 && read.count != 0))
+    {
+        cpu.ReturnFromTrap(static_cast<uint32_t>(kZmError));
+        return true;
+    }
+    const DataFile& file = _data.files[slot];
+    if (read.offset >= file.size || read.count == 0)
+    {
+        cpu.ReturnFromTrap(static_cast<uint32_t>(kZmOk));  // past the end: 0 bytes, not an error
+        return true;
+    }
+    read.count = std::min(read.count, file.size - read.offset);
+    if (_memory.Bytes(read.dest, read.count) == nullptr)
+    {
+        cpu.ReturnFromTrap(static_cast<uint32_t>(kZmError));
+        return true;
+    }
+    read.file = static_cast<uint8_t>(slot);
+    read.phase = DataRead::Turn;
+    task.data = read;
+    if (DataReadStep(task))
+    {
+        task.hasPending = false;
+        cpu.ReturnFromTrap(task.pendingReturn);
+        return true;
+    }
+    return false;
+}
+
+bool EspAppHost::DataReadStep(Task& task)
+{
+    DataRead& read = task.data;
+    const uint64_t now = SliceNowUs();
+    auto wait = [&](uint64_t untilUs) {
+        task.wakeUs = untilUs;
+        Block(task, TaskState::WaitData);
+        return false;
+    };
+    // The handle may have been closed by another task while this one waited
+    if (read.phase != DataRead::None && !_data.files[read.file].used)
+    {
+        if (_data.owner == task.id)
+        {
+            _data.owner = 0;
+            _data.active = false;
+        }
+        DataReadFinish(task, false);
+        return true;
+    }
+    for (;;)
+    {
+        switch (read.phase)
+        {
+            case DataRead::None:
+                DataReadFinish(task, false);
+                return true;
+            case DataRead::Turn:
+                // One read at a time (remoteLock_): the others wait their turn
+                if (_data.owner != 0 && _data.owner != task.id && FindTask(_data.owner) != nullptr)
+                    return wait(now + 1000);
+                _data.owner = task.id;
+                read.phase = DataRead::Next;
+                break;
+            case DataRead::Next:
+            {
+                const DataFile& file = _data.files[read.file];
+                if (read.done >= read.count)
+                {
+                    DataReadFinish(task, true);
+                    return true;
+                }
+                const uint32_t at = read.offset + read.done;
+                const uint32_t left = read.count - read.done;
+                // What the block holds from the last short read
+                if (_data.blockIndex == static_cast<int>(file.index) && at >= _data.blockAt &&
+                    at - _data.blockAt < _data.blockLength)
+                {
+                    const uint32_t n = std::min(_data.blockLength - (at - _data.blockAt), left);
+                    std::memcpy(_memory.Bytes(read.dest + read.done, n), _data.block.data() + (at - _data.blockAt), n);
+                    read.done += n;
+                    break;
+                }
+                _data.index = file.index;
+                if (at % kDataSectorBytes == 0 && left >= kDataSectorBytes)
+                {
+                    // Whole sectors straight into the app's buffer (the file's tail as it is)
+                    uint32_t n = std::min(left, kDataRequestMax);
+                    if (at + n != file.size)
+                        n -= n % kDataSectorBytes;
+                    _data.toBlock = false;
+                    _data.dest = read.dest + read.done;
+                    _data.at = at;
+                    _data.count = n;
+                }
+                else
+                {
+                    // A short or unaligned read: the block from the sector's start
+                    const uint32_t blockAt = at - at % kDataSectorBytes;
+                    _data.toBlock = true;
+                    _data.blockIndex = -1;  // not valid while the pieces come
+                    _data.at = blockAt;
+                    _data.count = std::min(file.size - blockAt, kDataBlockBytes);
+                    _data.block.resize(kDataBlockBytes);
+                }
+                read.attempt = 0;
+                read.beganUs = now;
+                read.sendUs = now;
+                read.phase = DataRead::Send;
+                _data.active = false;
+                break;
+            }
+            case DataRead::Send:
+            {
+                const uint8_t seq = ++_data.seq;
+                uint8_t event[8];
+                event[0] = seq;
+                event[1] = _data.index;
+                for (int i = 0; i < 4; ++i)
+                    event[2 + i] = static_cast<uint8_t>(_data.at >> (8 * i));
+                event[6] = static_cast<uint8_t>(_data.count);
+                event[7] = static_cast<uint8_t>(_data.count >> 8);
+                const int sent = _ports.event ? _ports.event(kEventDataRead, event, sizeof(event)) : kZmError;
+                if (sent == kZmOk)
+                {
+                    _data.active = true;
+                    _data.failed = false;
+                    _data.complete = false;
+                    _data.received = 0;
+                    _data.seq = seq;
+                    _data.deadlineUs = now + kDataWaitUs;
+                    read.phase = DataRead::Wait;
+                    return wait(_data.deadlineUs);
+                }
+                --_data.seq;
+                if (now - read.sendUs < kDataEventWaitUs)
+                    return wait(now + 2000);  // the event queue is full: try again (sendEvent's wait)
+                // Not sent in 1 s: the attempt is over without a wait
+                _data.active = false;
+                read.phase = DataRead::Wait;
+                _data.failed = true;
+                break;
+            }
+            case DataRead::Wait:
+            {
+                if (_data.complete)
+                {
+                    _data.active = false;
+                    _data.complete = false;
+                    const uint64_t took = (now - read.beganUs) / 1000;
+                    ++_data.requests;
+                    _data.bytes += _data.count;
+                    _data.ms += took;
+                    _data.longestMs = std::max<uint32_t>(_data.longestMs, static_cast<uint32_t>(took));
+                    if (_data.toBlock)
+                    {
+                        _data.blockIndex = _data.index;
+                        _data.blockAt = _data.at;
+                        _data.blockLength = _data.count;
+                    }
+                    else
+                    {
+                        read.done += _data.count;
+                    }
+                    read.phase = DataRead::Next;
+                    break;
+                }
+                if (!_data.failed && now < _data.deadlineUs)
+                    return wait(_data.deadlineUs);
+                // The Z80 could not read it, or no answer in 4 s: ask again under a new number
+                const bool failed = _data.failed;
+                _data.active = false;
+                _data.failed = false;
+                ++_data.repeats;
+                char line[160];
+                std::snprintf(line, sizeof(line), "data file %u of the Z80 program, %u bytes at %u: %s",
+                              static_cast<unsigned>(_data.index), static_cast<unsigned>(_data.count),
+                              static_cast<unsigned>(_data.at), failed ? "the Z80 could not read it" : "no answer in 4 s");
+                Log(line);
+                if (++read.attempt >= kDataAttempts)
+                {
+                    std::snprintf(line, sizeof(line), "data file %u of the Z80 program: read at %u FAILED",
+                                  static_cast<unsigned>(_data.index), static_cast<unsigned>(_data.at));
+                    Log(line);
+                    ++_data.failures;
+                    DataReadFinish(task, false);
+                    return true;
+                }
+                read.sendUs = now;
+                read.phase = DataRead::Send;
+                break;
+            }
+        }
+    }
+}
+
+void EspAppHost::DataReadFinish(Task& task, bool ok)
+{
+    DataRead& read = task.data;
+    if (read.got != 0 && _memory.Bytes(read.got, 4) != nullptr)
+        _memory.Write32(read.got, read.done);
+    if (_data.owner == task.id)
+        _data.owner = 0;
+    task.pendingReturn = static_cast<uint32_t>(ok && read.done == read.count ? kZmOk : kZmError);
+    task.hasPending = true;
+    read = DataRead{};
+}
+
+void EspAppHost::DataPiece(const uint8_t* data, size_t size)
+{
+    JournalEntry entry(*this);
+    if (entry.Record())
+    {
+        JournalPutToken(TokDataPiece);
+        JournalPutVarint(size);
+        JournalPutBytes(data, size);
+    }
+    // AppDataRequest::piece: only its own number, right after what came, not past the request
+    constexpr size_t kPrefix = 5;
+    if (!_data.active || data == nullptr || size < kPrefix || data[0] != _data.seq)
+        return;
+    const uint32_t at = static_cast<uint32_t>(data[1]) | (static_cast<uint32_t>(data[2]) << 8) |
+                        (static_cast<uint32_t>(data[3]) << 16) | (static_cast<uint32_t>(data[4]) << 24);
+    const size_t n = size - kPrefix;
+    if (at != _data.at + _data.received)
+        return;
+    if (n == 0)
+    {
+        _data.active = false;
+        _data.failed = true;  // the Z80 could not read the sector
+    }
+    else
+    {
+        if (n > _data.count - _data.received)
+            return;
+        uint8_t* to = _data.toBlock ? _data.block.data() + _data.received
+                                    : _memory.Bytes(_data.dest + _data.received, static_cast<uint32_t>(n));
+        if (to != nullptr)
+            std::memcpy(to, data + kPrefix, n);
+        _data.received += static_cast<uint32_t>(n);
+        ++_data.pieces;
+        if (_data.received < _data.count)
+            return;
+        _data.active = false;
+        _data.complete = true;
+    }
+    // The waiting read goes on at the next slice
+    if (Task* task = FindTask(_data.owner); task != nullptr && task->state == TaskState::WaitData)
+        task->wakeUs = 0;
+}
+
+void EspAppHost::DataFilesChanged()
+{
+    JournalEntry entry(*this);
+    if (entry.Record())
+        JournalPutToken(TokDataChanged);
+    // AppDataFiles generation_: a block read before the table changed is not trusted
+    if (!_data.active || !_data.toBlock)
+        _data.blockIndex = -1;
+}
+
+void EspAppHost::DataClose(uint32_t file)
+{
+    const int slot = DataSlot(file);
+    if (slot >= 0)
+        _data.files[slot] = DataFile{};
+}
+
+void EspAppHost::DataCloseAll()
+{
+    // remoteCancel: a request in flight ends; the totals go to the log
+    if (_data.requests != 0)
+    {
+        char line[200];
+        std::snprintf(line, sizeof(line),
+                      "app %s: data files read from the Evo card: %u KB in %u ms, %u requests (%u repeated), "
+                      "longest %u ms",
+                      _app.name.c_str(), static_cast<unsigned>(_data.bytes / 1024), static_cast<unsigned>(_data.ms),
+                      static_cast<unsigned>(_data.requests), static_cast<unsigned>(_data.repeats),
+                      static_cast<unsigned>(_data.longestMs));
+        Log(line);
+    }
+    const int blockIndex = _data.blockIndex;
+    const uint32_t blockAt = _data.blockAt, blockLength = _data.blockLength;
+    std::vector<uint8_t> block = std::move(_data.block);
+    const uint8_t seq = _data.seq;
+    _data = DataState{};
+    // The block and the request numbers belong to the firmware, not to the app
+    _data.block = std::move(block);
+    _data.blockIndex = blockIndex;
+    _data.blockAt = blockAt;
+    _data.blockLength = blockLength;
+    _data.seq = seq;
+}
+
+EspAppHost::DataStats EspAppHost::GetDataStats() const
+{
+    DataStats stats;
+    for (const DataFile& file : _data.files)
+        stats.openFiles += file.used ? 1u : 0u;
+    stats.reading = _data.owner != 0;
+    stats.requests = _data.requests;
+    stats.repeats = _data.repeats;
+    stats.failures = _data.failures;
+    stats.pieces = _data.pieces;
+    stats.bytes = _data.bytes;
+    stats.longestMs = _data.longestMs;
+    return stats;
+}
+
+/// endregion
 
 int EspAppHost::TaskStart(uint32_t fn, uint32_t arg, uint32_t stackBytes, uint8_t priority)
 {
@@ -1682,6 +2161,14 @@ void EspAppHost::ForceCleanup()
     }
     _pcm.open = false;
     _pcm.queued = 0;
+    DataCloseAll();
+    // An app that loaded a core gives the Tang back to slot 0 (module_app.cpp stopApp: coreCoreBack)
+    if (_app.coreLoaded)
+    {
+        _app.coreLoaded = false;
+        if (_ports.coreBack && _ports.coreBack() != kZmOk)
+            Log("app stopped: back to slot 0 FAILED");
+    }
     for (uint32_t header : _app.allocations)
         _memory.HeapCapsFree(header);
     for (auto& task : _tasks)
@@ -2153,6 +2640,52 @@ void EspAppHost::SaveState(std::vector<uint8_t>& out) const
 
     PutBlocks(w, _memory.Psram().Blocks());
     PutBlocks(w, _memory.Sram().Blocks());
+
+    // Tail (0.1.166 data files, core_load): absent in older states, which had neither
+    w.Bool(_app.coreLoaded);
+    for (const DataFile& file : _data.files)
+    {
+        w.Bool(file.used);
+        w.U8(file.index);
+        w.U32(file.size);
+    }
+    w.U32(_data.owner);
+    w.Bool(_data.active);
+    w.Bool(_data.failed);
+    w.Bool(_data.complete);
+    w.U8(_data.seq);
+    w.U8(_data.index);
+    w.U32(_data.at);
+    w.U32(_data.count);
+    w.U32(_data.received);
+    w.Bool(_data.toBlock);
+    w.U32(_data.dest);
+    w.U64(_data.deadlineUs);
+    w.Blob(_data.block);
+    w.U32(static_cast<uint32_t>(_data.blockIndex));
+    w.U32(_data.blockAt);
+    w.U32(_data.blockLength);
+    w.U64(_data.requests);
+    w.U64(_data.repeats);
+    w.U64(_data.failures);
+    w.U64(_data.pieces);
+    w.U64(_data.bytes);
+    w.U64(_data.ms);
+    w.U32(_data.longestMs);
+    for (const auto& task : _tasks)
+    {
+        const DataRead& d = task->data;
+        w.U8(static_cast<uint8_t>(d.phase));
+        w.U8(d.file);
+        w.U32(d.offset);
+        w.U32(d.dest);
+        w.U32(d.count);
+        w.U32(d.got);
+        w.U32(d.done);
+        w.U32(d.attempt);
+        w.U64(d.sendUs);
+        w.U64(d.beganUs);
+    }
 }
 
 bool EspAppHost::LoadState(const uint8_t* data, size_t size)
@@ -2319,8 +2852,65 @@ bool EspAppHost::LoadState(const uint8_t* data, size_t size)
     _pcm.playedFraction = r.U64();
 
     std::map<uint32_t, uint32_t> psram, sram;
-    if (!GetBlocks(r, psram) || !GetBlocks(r, sram) || !r.AtEnd())
+    if (!GetBlocks(r, psram) || !GetBlocks(r, sram))
         return fail();
+    _data = DataState{};
+    if (!r.AtEnd())
+    {
+        _app.coreLoaded = r.Bool();
+        for (DataFile& file : _data.files)
+        {
+            file.used = r.Bool();
+            file.index = r.U8();
+            file.size = r.U32();
+        }
+        _data.owner = r.U32();
+        _data.active = r.Bool();
+        _data.failed = r.Bool();
+        _data.complete = r.Bool();
+        _data.seq = r.U8();
+        _data.index = r.U8();
+        _data.at = r.U32();
+        _data.count = r.U32();
+        _data.received = r.U32();
+        _data.toBlock = r.Bool();
+        _data.dest = r.U32();
+        _data.deadlineUs = r.U64();
+        r.Blob(_data.block, kDataBlockBytes);
+        _data.blockIndex = static_cast<int>(r.U32());
+        _data.blockAt = r.U32();
+        _data.blockLength = r.U32();
+        _data.requests = r.U64();
+        _data.repeats = r.U64();
+        _data.failures = r.U64();
+        _data.pieces = r.U64();
+        _data.bytes = r.U64();
+        _data.ms = r.U64();
+        _data.longestMs = r.U32();
+        for (auto& task : _tasks)
+        {
+            DataRead& d = task->data;
+            const uint8_t phase = r.U8();
+            if (phase > DataRead::Wait)
+                return fail();
+            d.phase = static_cast<DataRead::Phase>(phase);
+            d.file = r.U8();
+            d.offset = r.U32();
+            d.dest = r.U32();
+            d.count = r.U32();
+            d.got = r.U32();
+            d.done = r.U32();
+            d.attempt = r.U32();
+            d.sendUs = r.U64();
+            d.beganUs = r.U64();
+            if (d.file >= kMaxDataFiles)
+                return fail();
+        }
+        // A block shorter than its length, or a request past the block, is a broken state
+        if (!r.Ok() || !r.AtEnd() || _data.blockLength > _data.block.size() || _data.count > kDataRequestMax ||
+            (_data.toBlock && _data.count > _data.block.size()) || _data.received > _data.count)
+            return fail();
+    }
     _memory.Psram().SetBlocks(std::move(psram));
     _memory.Sram().SetBlocks(std::move(sram));
     _startDone = nullptr;
@@ -2365,6 +2955,8 @@ void EspAppHost::InstallPorts()
         };
     if (_outer.linkRead)
         _ports.linkRead = [this](uint32_t address) { return JournalLinkRead(address); };
+    if (_outer.coreBack)
+        _ports.coreBack = [this]() { return JournalResult([&]() { return _outer.coreBack(); }); };
     // Outputs: dropped while replaying
     if (_outer.declared)
         _ports.declared = [this](const std::string& name, const std::string& version, uint8_t first, uint8_t last) {
@@ -2647,6 +3239,23 @@ bool EspAppHost::JournalReplay(const uint8_t* data, size_t size, size_t from, si
             }
             case TokReset:
                 Reset();
+                break;
+            case TokDataPiece:
+            {
+                const uint64_t length = JournalTakeVarint();
+                if (j.diverged || length > j.bytes.size() - j.position)
+                {
+                    JournalDiverged("bad data piece");
+                    break;
+                }
+                blob.assign(j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position),
+                            j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position + length));
+                j.position += length;
+                DataPiece(blob.data(), blob.size());
+                break;
+            }
+            case TokDataChanged:
+                DataFilesChanged();
                 break;
             default:
                 // An input here means the host asked less than when recording

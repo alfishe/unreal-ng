@@ -440,8 +440,10 @@ class Emulator:
 
     def vdac4_state(self, log: int = 50) -> dict:
         """TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3), the keys of GET /vdac4/state: tang {personality,
-        armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources,
-        clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last,
+        armed, esp_host, ram_g_3mb, ft_cfg, q2 {frames, latched, commands, words, bad_words, bad_command, mark,
+        width, height}}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts,
+        clock_offset_us, psram_free, cores [{name, size, usercode}]}, data {files [{app, name, size, index}], open,
+        reading, requests, repeats, failures, bytes, longest_ms}, app {running, module, name, version, command_first, command_last,
         error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames},
         packets {count, recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns,
         dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits,
