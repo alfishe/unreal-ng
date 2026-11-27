@@ -59,7 +59,7 @@ The FT812 reuses the VDAC2 types: it is the same `EveHostCard` code, the region 
 ## 4. Keyframes
 
 - When: every capture the engine rescans (a session's first, the first after a restore: every piece is offered then,
-  so the ESP memory of that frame is stored whatever the device says), every K frames (K = 25, §9.1), and when the journal
+  so the ESP memory of that frame is stored whatever the device says), every K captures (K = 25 in slot 0 and the FT812, §9.1; 50 while the Quake II core runs, §9.5), and when the journal
   holds more than J bytes (J = 256 KB; an `APP_START` carries the ELF). The engine tells its region sources at the
   start of each capture, before the device states are taken: `ITTDRegionSource::TTDCaptureBegins(rescan)`.
 - At a keyframe the device marks every ESP piece written; the engine compares each with its delta base and stores the
@@ -191,6 +191,54 @@ ESP memory checked at 72:
 
 K = 25 costs 5 % of the history (the ESP keyframes twice as often) for 6-7 ms of every seek.
 
+### 9.5 K per personality: the Quake II core at 50 (2026-11-27)
+
+K swept on one build (`UNREAL_VDAC4_TTD_KEYFRAME`, one headless, muted instance per K, all K at once, launch order
+rotated, two rounds; .20 M3 Ultra, load average 30-100 from other sessions, the same for every K). The streams are
+byte for byte the same in both rounds; seek times agree within a few ms.
+
+- **Quake II** (`_Q2.SPG`): recording from frame 300 (TS-Conf loader, `core_load` at ~2100, the map load) with
+  `run_frames`, points at fixed frames, then 60 s of the demo in real time. 13 points, 26 seeks in a shuffled order,
+  9 seeks across `core_load`, 9 step-backs.
+- **Metal Slug** (`_MSLUG.SPG`, slot 0 with the ESP's app): recorded 60 s in real time after `MS BOOT` and one
+  `MS PERF` window (as `msfps.py`), 7 points, 14 seeks.
+
+| K | Q2 demo MB/min | Q2 session MB/min | Q2 file | Q2 seek median / p90 / max | MS MB/min | MS file | MS seek median / p90 / max |
+|---|---|---|---|---|---|---|---|
+| 10 | 72.8 | 45.6 | 300 MB | 20 / 58 / 89 ms | 78.0 | 92 MB | 36 / 47 / 67 ms |
+| 25 | 40.7 | 33.4 | 228 MB | 19 / 166 / 184 ms | 63.0 | 77 MB | 53 / 93 / 105 ms |
+| 35 | 33.2 | 30.8 | 213 MB | 19 / 137 / 149 ms | 58.8 | 73 MB | 33 / 42 / 153 ms |
+| 50 | 27.8 | 28.6 | 199 MB | 18 / 181 / 326 ms | 55.6 | 70 MB | 63 / 111 / 181 ms |
+| 100 | 21.4 | 25.9 | 183 MB | 19 / 382 / 490 ms | 52.3 | 66 MB | 85 / 287 / 310 ms |
+| 200 | 20.3 | 25.3 | 180 MB | 23 / 466 / 622 ms | 50.2 | 64 MB | 197 / 470 / 532 ms |
+
+The demo rate from the history counter; the session rate and the regions from the session file. Across `core_load`
+13-19 ms at every K up to 100 (the loader's span is short of keyframes anyway), step back 16-18 ms (Q2), recording
+4.6-5.0 ms/frame at every K (Q2 demo), 5.5-6.0 (MS): K does not show in the recording's cost.
+
+- **Where the bytes go.** An ESP keyframe stores the ESP memory that changed since the last one and the CPU state;
+  while the Quake II core runs it also stores the SDRAM pieces the frame and z buffers rewrote (§11): Q2 demo at
+  K = 25: SDRAM 21.6, PSRAM 11.0, ESP CPU state 7.5 MB/min; at K = 50: 14.2, 7.6, 6.0. Above K = 100 the other
+  keys (the journal over 256 KB, the firmware's LINK writes) come first: K = 200 and 400 store the same.
+- **Where the seek goes.** The replay from the keyframe, a few ms per capture of the demo: the tail (p90, max)
+  grows with K, the median is the points near a keyframe. DOOM (§9.1): 25 -> 50 is 5 % of the history for 6-7 ms
+  of every seek.
+- **The knee.** Q2: 25 -> 50 takes 32 % off the demo's stream and 13 % off the session file; 50 -> 100 only 23 %
+  more of the stream for twice the tail. Metal Slug: 25 -> 50 only 12 % of the stream (9 % of the file) for a third
+  more seek; DOOM 5 %. So K = 50 while the Quake II core runs (`kKeyframeFramesQ2`), 25 elsewhere
+  (`kKeyframeFrames`): `TTDCaptureBegins` takes the interval of the Tang's personality at the capture. A change of
+  personality keys the capture anyway (`Q2Epoch`), so a span never mixes the two. Keyframes only place what is
+  stored: the replay and the restore are the same either way.
+- **Checked on the default build** (no override, beside `UNREAL_VDAC4_TTD_KEYFRAME=25`, same round): Quake II
+  stores what K = 50 stored (199 MB, 28.6 MB/min; the loader's span at 25), Metal Slug what K = 25 stored (77 MB).
+- **Not taken.** A rule by the bytes since the keyframe: the bytes a keyframe stores are known only after the
+  engine compared the pieces, after `TTDCaptureBegins` decided; and the seek's cost is the captures replayed, not
+  the bytes. K = 35 for Q2: half the gain (-18 % of the stream).
+- **Seen on the way, not K's.** Seeks to the loader's points read a stale `tang.q2.latched` (the count of the last
+  run of the core): `LeaveQ2` now zeroes it, as a state without the core carries none (22/26 -> 26/26 exact). Metal Slug: 6-10 of 14 seeks
+  show another picture than the live point at a pause in real time (the ESP's app on its worker thread), at every
+  K, while the engine's check says exact and PC, memory, Tang agree; open (§10).
+
 ### 9.2 Seek time: the ESP memory left to the replay point (2026-11-25)
 
 A profile of the seeks (DOOM, the grid above, `sample` of the seek phase only): of a seek, the memory restore
@@ -280,7 +328,11 @@ Tried before and dropped (patches kept outside the tree):
   bytes in the delivery's header, no tail) still load. The Quake II loading run: 205 -> 22 MB stored.
 - Fixed 2026-11-27: `vdac4.q2.sdram` was stored at every capture while Quake II draws (278 MB/min in the demo); now
   at the ESP's keyframes only (§11), 27 MB/min. The rest of the demo's stream is the ESP's own keyframes (PSRAM
-  17 MB/min, the ESP CPU state 9 MB/min): K (§9.1) trades those for the seek's replay.
+  17 MB/min, the ESP CPU state 9 MB/min): K (§9.1) trades those for the seek's replay; K = 50 while the core
+  runs since 2026-11-27 (§9.5).
+- Metal Slug (slot 0, the ESP's app on its worker thread): a seek to a point taken at a pause in real time shows
+  another picture in 6-10 of 14 seeks at every K, the engine's check exact (§9.5). Not looked into yet: the live
+  picture at a pause or the restored one.
 
 ## 11. The Quake II core between keyframes (2026-11-27)
 

@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <map>
@@ -655,6 +656,52 @@ TEST_F(TTDEngineModels_Fixture, Vdac4Quake2CoreOffTheJournalIsReportedNotExact)
     board->Runtime().WaitIdle();
     EXPECT_EQ(_ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::NotBitExact);
     EXPECT_NE(_ttd->LastEngineCheck().message.find("Quake II"), std::string::npos) << _ttd->LastEngineCheck().message;
+}
+
+/// The ESP's keyframe interval goes with the personality (ttd-design.md §9.5): kKeyframeFramesQ2 captures while the
+/// Quake II core runs, kKeyframeFrames in slot 0. core_back keys the capture after it, the next comes
+/// kKeyframeFrames later. (While the core runs without an app, the firmware's own LINK writes key the captures
+/// sooner than either interval, so that half is the interval the device reports.)
+TEST_F(TTDEngineModels_Fixture, Vdac4EspKeyframeIntervalFollowsPersonality)
+{
+    if (const char* env = std::getenv("UNREAL_VDAC4_TTD_KEYFRAME"); env && *env)
+        GTEST_SKIP() << "UNREAL_VDAC4_TTD_KEYFRAME overrides the interval";
+    ASSERT_NO_FATAL_FAILURE(Start("TSL-VDAC4"));
+    auto* ports = dynamic_cast<PortDecoder_TSConf*>(_emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    Vdac4Board* board = ports->GetVdac4Board();
+    Vdac4Tang* tang = ports->GetVdac4Tang();
+    ASSERT_NE(board, nullptr);
+    ASSERT_NE(tang, nullptr);
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    board->Runtime().WaitIdle();
+    uint32_t version = 0;
+    ASSERT_EQ(tang->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    ASSERT_TRUE(_ttd->StartRecording());
+    ttd::TTDVdac4EspCpu* esp = nullptr;
+    for (const ttd::TTDDeviceEntry& e : Engine().Devices().Entries())
+        if (auto* d = dynamic_cast<ttd::TTDVdac4EspCpu*>(e.device))
+            esp = d;
+    ASSERT_NE(esp, nullptr);
+    static_assert(ttd::TTDVdac4EspCpu::kKeyframeFramesQ2 > ttd::TTDVdac4EspCpu::kKeyframeFrames);
+    EXPECT_EQ(esp->KeyframeFrames(false), ttd::TTDVdac4EspCpu::kKeyframeFrames);
+    EXPECT_EQ(esp->KeyframeFrames(true), ttd::TTDVdac4EspCpu::kKeyframeFramesQ2);
+    auto run = [&](uint32_t frames) {
+        for (uint32_t f = 0; f < frames; ++f)
+        {
+            _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+            board->Runtime().WaitIdle();
+        }
+        return esp->GetStats().keyframes;
+    };
+    run(2);
+    ASSERT_TRUE(tang->CoreBack());
+    const uint64_t back = run(1);
+    EXPECT_TRUE(esp->LastCaptureKeyed()) << "core_back keys the capture after it";
+    EXPECT_EQ(run(ttd::TTDVdac4EspCpu::kKeyframeFrames - 1), back) << "slot 0: no keyframe before its interval";
+    EXPECT_EQ(run(1), back + 1) << "slot 0: a keyframe at its interval";
+    EXPECT_TRUE(esp->LastCaptureKeyed());
+    _ttd->StopRecording();
 }
 
 #endif  // ENABLE_VDAC2
