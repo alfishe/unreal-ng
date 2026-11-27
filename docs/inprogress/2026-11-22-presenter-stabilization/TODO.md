@@ -5,8 +5,11 @@ fixed, and checked on macOS, Linux (.238), Windows and the Steam Deck where it a
 
 - [x] 0. Video Synchronization window: tiles, only what judges the mode in effect (`0d30e77ea`)
 - [ ] 1. One VRR verdict for every presenter (V1-V5 in code, `9c45c7c79`; hardware checks: G-Sync on .101, ProMotion)
-- [ ] 2. A waiting present is replaced: the timed GL swap done (a pile of two); Vulkan and Metal need back-pressure
-  in the window, not built (no pile reproduced: README 1.2). Found on the way and fixed: K10, K7
+- [ ] 2. A waiting present is replaced: the timed GL swap done (a pile of two); Vulkan and Metal: back-pressure in
+  the window (`PresentSlot`, README 1.2), Metal's pool full held too and its lead no longer widened by the pool's
+  waits; unit tests positive and negative, live on Metal and on Vulkan FIFO on the Deck (README 1.2). Found on the
+  way and fixed: K10, K7. Open, found on the way: the Deck bundle has no Vulkan renderer (its build image lacks the
+  Vulkan headers); smooth motion stays off under Vulkan on the Deck
 - [x] 3. Smooth motion: S1-S5 (counters `present.smooth.behind` / `starved`)
 - [ ] 4. Vulkan: K1-K10 done (K8 measured on .238 with the session locked); V6 in code, open: a Linux VRR display
   (README 1.4)

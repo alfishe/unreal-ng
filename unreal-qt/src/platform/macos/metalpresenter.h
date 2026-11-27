@@ -46,6 +46,8 @@ public:
     uint64_t Presented() const override;
     uint64_t LatePresents() const override;
     uint64_t SteppedPresents() const override;
+    bool QueuesPresents() const override { return true; }
+    bool PoolFull() const override;
     uint64_t LastLatePresent() const override;
     uint32_t LastLateLag() const override;
     uint64_t LastOnTimePresent() const override;

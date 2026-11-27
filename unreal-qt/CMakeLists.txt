@@ -1018,7 +1018,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/videosyncwindow.h"
         # The native presenters' adaptive lead, the screen window's presenter recovery, their shared statistics
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentlead_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentslot_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presentlead.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presentslot.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presenterrecovery_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presenterrecovery.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentstats_test.cpp"

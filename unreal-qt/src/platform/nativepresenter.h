@@ -139,6 +139,15 @@ public:
     virtual uint64_t Presented() const { return 0; }
     /// Presents shown a refresh late so far (Stats::late, without the statistics' locks: asked every picture)
     virtual uint64_t LatePresents() const { return 0; }
+    /// Shows every present handed over, each after the one before (Metal's drawables with display sync, Vulkan's FIFO
+    /// images): two for one refresh would show the second a refresh late, and all after it. The window then hands
+    /// over one per refresh (PresentSlot). false: a later present replaces a waiting one (DXGI, a mailbox) or the
+    /// presenter gives way itself (the timed GL swap)
+    virtual bool QueuesPresents() const { return false; }
+    /// Every image of the presenter's pool waits for the screen: the next present's BeginFrame would block the GUI
+    /// thread until one comes back (Metal's nextDrawable). The window then holds a frame at its own time
+    /// (PresentSlot) instead of waiting; false: never (a presenter that does not block, or cannot tell)
+    virtual bool PoolFull() const { return false; }
     /// Presents shown at another lag than the one before them (PresentLead::Steps): what smooth motion's guard counts,
     /// a run evenly a refresh late is none
     virtual uint64_t SteppedPresents() const { return LatePresents(); }

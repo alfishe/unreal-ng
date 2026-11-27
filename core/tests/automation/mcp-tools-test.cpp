@@ -3962,6 +3962,38 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesLowLatency)
         EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
 }
 
+/// Back-pressure of a queuing presenter: the frames held for a refresh already taken and those given up are in the
+/// text an agent reads; none held, no words about it
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheFramesHeldForATakenRefresh)
+{
+    Json::Value settings;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "metal";
+    present["refresh_hz"]["max"] = 60.0;
+    present["clock"] = "audio";
+    present["presented"] = 600;
+    present["back_pressure"]["held"] = 0;
+    present["back_pressure"]["pool"] = 0;
+    present["back_pressure"]["gave_way"] = 0;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult none = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(none.isError) << none.text;
+    EXPECT_EQ(none.text.find("held for a refresh"), std::string::npos) << none.text;
+
+    settings["present"]["back_pressure"]["held"] = 120;
+    settings["present"]["back_pressure"]["pool"] = 30;
+    settings["present"]["back_pressure"]["gave_way"] = 95;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult held = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(held.isError) << held.text;
+    EXPECT_NE(held.text.find("120 frames held for a refresh taken or the presenter's pool full (30 for the pool, 95 "
+                             "gave way to a newer one)"),
+              std::string::npos)
+        << held.text;
+}
+
 /// The software screen times its paints: the text gives them as such, without a refresh grid, a lead or a sound offset
 TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheSoftwareScreensPaintTimes)
 {
