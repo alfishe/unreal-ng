@@ -210,6 +210,11 @@ paused point (`POST /ttd/resume` while there, or seek back to it first)
 continues the same recording; running the machine forward through it
 continues it too; `POST /ttd/stop` ends it.
 
+`memory-at` at a frame start, `memory-diff` and `memory-series` do not pause:
+they read the store, the machine runs on and the recording keeps recording
+(no resume needed after them). With `tinframe` (a point inside a frame) they
+pause like a seek.
+
 ### Traveling
 
 ```bash

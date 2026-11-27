@@ -192,5 +192,78 @@ def check_the_other_planes(s, emu, frame, session):
         expect(out.split() == hexes + ['image/png'], 'Lua answers as REST', out)
 
 
+def run_state(s):
+    """(paused, state, recording_paused, frame, the history's last frame) as the position and the status report them
+    (the end from the position: it follows every frame, the status counts are published at intervals)"""
+    position = s.call('time_travel', {'action': 'position'}).structured
+    status = s.call('time_travel', {'action': 'status'}).structured
+    return (position.get('paused'), status.get('state'), status.get('recording_paused'),
+            position.get('current', {}).get('frame'), position.get('session_end', {}).get('frame'))
+
+
+def wait_frames(s, frames, seconds=20):
+    start = run_state(s)[3]
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        now = run_state(s)
+        if now[3] >= start + frames:
+            return now
+        time.sleep(0.02)
+    expect(False, f'the machine ran {frames} frames', run_state(s))
+
+
+def test_store_reads_leave_a_running_recording_running(s):
+    """RQ-2: memory_at at a frame start, memory_diff and memory_series read the store. A running, recording machine
+    runs and records on after each; a point inside a frame parks it and pauses the recording (D8)"""
+    s.call('time_travel', {'action': 'stop'}, ok=False)
+    s.call('time_travel', {'action': 'invalidate'}, ok=False)
+    s.call('time_travel', {'action': 'start'})
+    s.call('control_execution', {'action': 'resume'})
+    try:
+        before = wait_frames(s, 10)
+        expect(before[:3] == (False, 'recording', False), 'running and recording', before)
+        frame = before[3] - 4
+        reads = [
+            ('memory_at cpu', {'action': 'memory_at', 'space': 'cpu', 'frame': frame, 'offset': FRAMES, 'length': 2}),
+            ('memory_at ram5', {'action': 'memory_at', 'space': 'ram5', 'frame': frame, 'offset': '0x1C78', 'length': 2}),
+            ('memory_diff', {'action': 'memory_diff', 'space': 'ram5', 'from_frame': frame - 2, 'to_frame': frame}),
+            ('memory_series', {'action': 'memory_series', 'memory_ranges': f'{FRAMES}:2, ram5:0x1C78:2',
+                               'from_frame': frame - 2, 'to_frame': frame}),
+        ]
+        answers = {}
+        for name, args in reads:
+            answers[name] = s.call('time_travel', args)
+            after = run_state(s)
+            expect(after[:3] == (False, 'recording', False), f'{name}: still running and recording', (before, after))
+            later = wait_frames(s, 2)
+            expect(later[4] > after[4], f'{name}: the history keeps growing', (after, later))
+        expect(answers['memory_at cpu'].structured.get('hex') == answers['memory_at ram5'].structured.get('hex'),
+               'the CPU view and page 5 agree', (answers['memory_at cpu'].structured, answers['memory_at ram5'].structured))
+        rows = answers['memory_series'].structured.get('rows', [])
+        expect(len(rows) == 3 and rows[-1]['data'][0] == answers['memory_at cpu'].structured.get('hex'),
+               'the series row equals memory_at', rows)
+        expect(answers['memory_diff'].structured.get('changed_bytes', 0) > 0, 'FRAMES changed between the frames',
+               answers['memory_diff'].structured)
+
+        # D8 stays for what replays
+        recorded = wait_frames(s, 2)
+        s.call('time_travel', {'action': 'memory_at', 'space': 'cpu', 'frame': frame, 'tinframe': 30000,
+                               'offset': FRAMES, 'length': 2})
+        inside = run_state(s)
+        expect(inside[:3] == (True, 'detached', True), 'a point inside a frame parks the machine and pauses the '
+               'recording (D8)', inside)
+        expect(inside[4] >= recorded[4], 'what was recorded after the reads is kept', (recorded, inside))
+        # The stopped recording holds the bytes read while it recorded
+        s.call('time_travel', {'action': 'stop'})
+        for name, args in reads:
+            again = s.call('time_travel', args).structured
+            first = answers[name].structured
+            for key in ('hex', 'rows', 'ranges', 'changed_bytes'):
+                expect(again.get(key) == first.get(key), f'{name}: {key} as read while recording', (first, again))
+    finally:
+        s.call('control_execution', {'action': 'pause'}, ok=False)
+        s.call('time_travel', {'action': 'stop'}, ok=False)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

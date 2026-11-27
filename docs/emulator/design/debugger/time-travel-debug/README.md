@@ -211,7 +211,7 @@ Tools, POCs and data:
 
 ## Open tasks
 
-Collected 2026-11-20 from every plan doc; statuses brought up to date 2026-11-27 (open without RZX: S3, RQ-1, RQ-2). Four
+Collected 2026-11-20 from every plan doc; statuses brought up to date 2026-11-27 (open without RZX: S3, RQ-1). Four
 items were dropped for good by the owner on 2026-11-27 and are no longer listed in any table here (the clone pool
 among them: [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md)). Not TTD, kept because they sit next to it: F8, E3. Pure non-TTD items of
 the same TODO (V6 and the rest) are left out.
@@ -246,7 +246,7 @@ Open, by priority:
 | PD-Q2 | "Same T-state in the next frame" as an explicit operation | - | closed 2026-11-21: `seek` frame + 1 with the T wanted, one call on every plane | [positioning design §7](../../../../inprogress/2026-09-28-ttd-positioning-and-display/design.md#7-open-questions) |
 | R5 | RZX and TTD interop (player state blob, TTD while playing, import, export) | low | open | [rzx TODO](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) |
 | RQ-1 | `find-last` (the replay path, `all`) and `reverse-continue all` as jobs with progress and cancel: the only window replays that are synchronous (38.7 s and 58.5 s at 50k frames, measured 2026-11-27) | P2 | open | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
-| RQ-2 | `memory-at` at a frame start and `memory-diff` read the piece store only and still pause a running machine | P3 | open | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
+| RQ-2 | `memory-at` at a frame start and `memory-diff` read the piece store only and still pause a running machine | P3 | done 2026-11-27 (with `memory-series`: the machine runs on, a recording keeps recording, the bytes equal the stopped recording's, `ttdstorereads_test.cpp`; D8 stays for a point inside a frame, a replay or restore, a parent branch's frames and a segment evicted to its file; left as they are: `find-last` and `find-event` park the machine) | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
 
 Blocked or deferred (waiting for a trigger):
 

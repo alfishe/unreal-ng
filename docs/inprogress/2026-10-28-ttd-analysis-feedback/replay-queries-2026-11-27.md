@@ -68,6 +68,14 @@ What the check found instead, in the open tasks of the
 1. `find-last` (the replay path and `all`) and `reverse-continue all` are the only window replays that are not jobs:
    38.7 s and 58.5 s at 50k frames, synchronous, no cancel.
 2. `memory-at` at a frame start and `memory-diff` read the piece store only and still pause a running machine.
+   Outcome (RQ-2, 2026-11-27): fixed. `memory-at` at a frame start, `memory-diff` and `memory-series` hold the
+   machine for the call only; a running machine runs on and a recording keeps recording, with the bytes the
+   stopped recording holds (`ttdstorereads_test.cpp`). `memory-series` on a recording did not leave it alone
+   before either: it paused the recording, and the machine running on continued it at the next instruction (a
+   new baseline in a recording folder). D8 stays for a point inside a frame, a read that replays or restores,
+   and, while recording, a parent branch's frames or a segment evicted to its file. `find-last` (also of a port
+   or with the write journal) and `find-event` still park the machine and pause a recording: `find-last` counts
+   back from the machine's position and D8 names it, `find-event` replays its hits.
 3. Should a long window without pausing the machine be needed, the background path exists (`analysis trace` with
    its `kinds` / `pc` / `addresses` filter); raising its 3000-frame limit is cheaper than moving verbs.
 
