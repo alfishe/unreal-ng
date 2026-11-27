@@ -340,7 +340,7 @@ private:
     gpu::Texture* _frameTarget = nullptr;  ///< Vulkan: what paintGL draws into (the presenter's texture, an image's)
     std::unique_ptr<gpu::Texture> _hudTexture;  ///< Vulkan: the HUD painted on the CPU, over the picture
     std::unique_ptr<gpu::Program> _hudProgram;
-    std::unique_ptr<gpu::Program> _recordCopyProgram;  ///< the recording's picture into the encoder's frame (macOS)
+    std::unique_ptr<gpu::Program> _recordCopyProgram;  ///< the recording's picture copied (frame, blocks)
     std::unique_ptr<gpu::Program> _recordNv12Program;  ///< the recording's picture as NV12 (packRecordingNv12)
     QImage _hudImage;
     std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
@@ -545,7 +545,7 @@ private:
     bool _recordCapture = false;
     int _recordHeight = 0;
     std::unique_ptr<gpu::Texture> _recordTarget;  ///< kept from picture to picture (a new one each time cost 0.1 ms)
-    std::unique_ptr<gpu::Texture> _recordScaled;  ///< the picture in blocks, then scaled smooth (macOS compose)
+    std::unique_ptr<gpu::Texture> _recordScaled;  ///< the picture in blocks, then scaled smooth (compose, NV12)
     std::unique_ptr<gpu::Texture> _recordNv12;    ///< the picture as NV12 bytes in RGBA8 texels (packRecordingNv12)
     /// The frame itself while smooth motion shows a picture between two frames: the recording has one picture per
     /// emulated frame, labelled with its number (a picture between N and N+1 put the border's change a frame early)

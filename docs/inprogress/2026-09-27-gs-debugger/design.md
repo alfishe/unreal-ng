@@ -1541,7 +1541,6 @@ the GS slot.
   - `PcHistoryPane_Test.AStopPaintsOnlyItsNewRowWhileTheListFills` and `.AStopPaintsOnlyItsNewRowOnceTheRingIsFull`
     (both fail on master: 335 px painted, rows not moved);
   - `PcHistoryPane_Test.ThePickedRowFollowsItsEntry`;
-  - `QHexViewRepaint_Test.TheRowLayoutsPaintWhatTheDocumentPainted` (pixel equality);
   - `QuietScrollBar_Test` (`.AStepThatLeavesTheHandleInPlacePaintsNothing` fails with a plain `QScrollBar`).
 
 ### 7.4 External debuggers (A3)
