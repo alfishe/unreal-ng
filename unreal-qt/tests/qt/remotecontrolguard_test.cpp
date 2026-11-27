@@ -282,19 +282,30 @@ TEST_F(RemoteControlGuard_Test, NothingIsWalkedWhileTheSessionStaysTheSame)
 }
 
 /// An idle lease running out posts nothing by itself: the guard's one-shot timer at RunControlTimeToChange asks then,
-/// and the controls come back without a periodic pass
+/// and the controls come back without a periodic pass. The run-control clock is the test's: the lease runs out when the
+/// test moves it, not after real milliseconds (a loaded host only makes the timer late, never the answer different)
 TEST_F(RemoteControlGuard_Test, AnIdleLeaseRunningOutUnlocksWithoutAPoll)
 {
+    auto now = std::chrono::steady_clock::now();
+    Context()->SetRunControlClock([&now] { return now; });
     _guard.setEmulator(_emulator);
     const unreal::UUID owner = unreal::UUID::Generate();
     ASSERT_TRUE(Context()->TakeRunControl(owner, "webapi", nullptr, "bot", std::chrono::milliseconds(30)));
     _guard.refresh();
     ASSERT_TRUE(_guard.active());
     ASSERT_FALSE(_button->isEnabled());
+    // The guard's check before the lease ran out (its clock not moved): still locked
+    _guard.refresh();
+    EXPECT_TRUE(_guard.active());
+    EXPECT_FALSE(_button->isEnabled());
+
+    // The lease ran out: the guard's one-shot timer (whenever the event loop fires it) unlocks
+    now += std::chrono::milliseconds(31);
     EXPECT_TRUE(TestWait::For([&] {
         QApplication::processEvents();
         return !_guard.active();
-    }));
+    }, std::chrono::seconds(5)));
     EXPECT_TRUE(_button->isEnabled());
     EXPECT_FALSE(RemoteControlGuard::Locked());
+    Context()->SetRunControlClock({});
 }
