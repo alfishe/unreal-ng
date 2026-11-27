@@ -1155,9 +1155,10 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                                        DescribeErrorBody(armResponse)));
                                 return;
                             }
-                            done(ToolResult::Ok("Audio capture armed to " + armResponse.get("wav_path", "").asString() +
-                                                " - run the machine and poll audio_status (file_closed)",
-                                                std::move(armResponse)));
+                            // Read before the move: the order of a call's arguments is unspecified
+                            std::string text = "Audio capture armed to " + armResponse.get("wav_path", "").asString() +
+                                               " - run the machine and poll audio_status (file_closed)";
+                            done(ToolResult::Ok(text, std::move(armResponse)));
                         });
                     });
                     return;
