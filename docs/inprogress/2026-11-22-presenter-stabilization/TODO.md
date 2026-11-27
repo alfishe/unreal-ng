@@ -33,5 +33,7 @@ fixed, and checked on macOS, Linux (.238), Windows and the Steam Deck where it a
   smooth motion (2026-11-27, unreal-qt on .20, `interpolate`, `interpolate-lite`, `blend`, `auto`, 30 s each plus DLSS
   toggled and modes switched mid-stream): no frame raw, missed or repeated; it found D10 (the read ahead cut by the
   whole delay: half the frames starved) and D11 (the delay's step carried: ~3 s starved after each switch on), both
-  fixed with a test each (README 1.11). Open: the same check on the Metal presenter (the host's screen was locked:
-  measured with the GL present)
+  fixed with a test each (README 1.11). On Metal (the owner's 60 Hz Mac, 2026-11-27) it found D12 (starved 85 %:
+  the presenter draws ~40 ms ahead), fixed. Open: interpolation with ZX DLSS on Metal once came a refresh late on 77 %
+  of its presents and stepped down to the blend, once not (8 in 5 s); measure again with the screen unlocked and the
+  window in view (a full-screen remote desktop client over the main display hid it: the earlier ~5 % lates)
