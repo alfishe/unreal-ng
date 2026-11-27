@@ -4,6 +4,7 @@
  */
 
 #include "videosyncwindow.h"
+#include "ui/activecolors.h"
 
 #include <algorithm>
 #include <chrono>
@@ -105,7 +106,7 @@ namespace
         void paintEvent(QPaintEvent*) override
         {
             QPainter p(this);
-            p.setPen(palette().color(foregroundRole()));
+            p.setPen(palette().color(QPalette::Active, foregroundRole()));
             const QRect area = contentsRect();
             p.drawText(area, static_cast<int>(alignment()) | Qt::TextSingleLine,
                        fontMetrics().elidedText(text(), Qt::ElideRight, area.width()));
@@ -159,7 +160,7 @@ protected:
             else
                 path.lineTo(point);
         }
-        p.setPen(QPen(palette().color(QPalette::Highlight), 1.5));
+        p.setPen(QPen(palette().color(QPalette::Active, QPalette::Highlight), 1.5));
         p.drawPath(path);
     }
 
@@ -171,6 +172,7 @@ VideoSyncWindow::VideoSyncWindow(std::function<WindowDisplaySettings()> settings
     : QWidget(parent), _settings(std::move(settings))
 {
     setWindowTitle(tr("Video Synchronization"));
+    KeepActiveColors(this);
     auto* layout = new QVBoxLayout(this);
     layout->setSpacing(kGap);
     layout->setSizeConstraint(QLayout::SetFixedSize);  // the window is as large as the tiles of the mode in effect
@@ -320,8 +322,8 @@ VideoSyncWindow::Tile& VideoSyncWindow::addTile(const char* id, const QString& c
 void VideoSyncWindow::applyColors()
 {
     // The palette's own colours, so a light and a dark theme both work: a card a step off the window, dimmed captions
-    const QColor window = palette().color(QPalette::Window);
-    const QColor text = palette().color(QPalette::WindowText);
+    const QColor window = palette().color(QPalette::Active, QPalette::Window);
+    const QColor text = palette().color(QPalette::Active, QPalette::WindowText);
     const QColor cardColor = Mix(window, text, 0.07);
     const QColor chipColor = Mix(window, text, 0.16);
     const QColor dim = Mix(text, window, 0.42);
@@ -346,8 +348,8 @@ void VideoSyncWindow::applyColors()
     if (_uneven)
         _state->setStyleSheet(pill.arg(QStringLiteral("#c77700"), QStringLiteral("#ffffff")));
     else if (_state->text() == tr("Steady"))
-        _state->setStyleSheet(pill.arg(palette().color(QPalette::Highlight).name(),
-                                       palette().color(QPalette::HighlightedText).name()));
+        _state->setStyleSheet(pill.arg(palette().color(QPalette::Active, QPalette::Highlight).name(),
+                                       palette().color(QPalette::Active, QPalette::HighlightedText).name()));
     else
         _state->setStyleSheet(pill.arg(chipColor.name(), text.name()));
 }

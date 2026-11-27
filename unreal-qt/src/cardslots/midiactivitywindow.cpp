@@ -19,6 +19,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/midi/midicontrol.h"
 #include "emulator/state/devicestate.h"
+#include "ui/activecolors.h"
 
 namespace
 {
@@ -79,9 +80,9 @@ void MidiKeyStrip::paintEvent(QPaintEvent* event)
     const double keyWidth = width() / 128.0;
     const double rowHeight = height() / 16.0;
     static const bool kBlack[12] = {false, true, false, true, false, false, true, false, true, false, true, false};
-    const QColor white = palette().color(QPalette::Base);
+    const QColor white = palette().color(QPalette::Active, QPalette::Base);
     const QColor black = palette().color(QPalette::AlternateBase).darker(115);
-    const QColor lit = palette().color(QPalette::Highlight);
+    const QColor lit = palette().color(QPalette::Active, QPalette::Highlight);
     for (int part = 0; part < 16; part++)
     {
         for (int key = 0; key < 128; key++)
@@ -91,7 +92,7 @@ void MidiKeyStrip::paintEvent(QPaintEvent* event)
             painter.fillRect(cell, on ? lit : (kBlack[key % 12] ? black : white));
         }
     }
-    painter.setPen(palette().color(QPalette::Mid));
+    painter.setPen(palette().color(QPalette::Active, QPalette::Mid));
     for (int part = 1; part < 16; part++)
         painter.drawLine(QPointF(0, part * rowHeight), QPointF(width(), part * rowHeight));
 }
@@ -101,6 +102,7 @@ void MidiKeyStrip::paintEvent(QPaintEvent* event)
 MidiActivityWindow::MidiActivityWindow(QWidget* parent) : QWidget(parent)
 {
     setWindowTitle(tr("MIDI Activity"));
+    KeepActiveColors(this);
     auto* layout = new QVBoxLayout(this);
     auto* top = new QHBoxLayout();
     _summary = new QLabel(this);
