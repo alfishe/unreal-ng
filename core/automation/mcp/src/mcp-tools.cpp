@@ -2069,8 +2069,11 @@ void RegisterControlExecution(ToolRegistry& registry)
                     for (const char* key : {"text", "screen", "stable_frames", "event", "match"})
                         if (args.isMember(key))
                             body[key] = args[key];
-                    for (const char* key : run ? std::initializer_list<const char*>{"max_frames", "breakpoints"}
-                                               : std::initializer_list<const char*>{"label", "then", "once"})
+                    // Named arrays: an initializer_list in each arm of ?: had its backing array end before the loop
+                    // ran (gcc 13 -O3 without LTO sent neither max_frames nor label)
+                    static const std::vector<const char*> kRunKeys{"max_frames", "breakpoints"};
+                    static const std::vector<const char*> kWatchKeys{"label", "then", "once"};
+                    for (const char* key : run ? kRunKeys : kWatchKeys)
                         if (args.isMember(key))
                             body[key] = args[key];
                     const std::string path = Endpoint(id, run ? "/run_until" : "/watches");

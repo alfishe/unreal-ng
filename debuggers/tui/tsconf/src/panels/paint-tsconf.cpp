@@ -150,7 +150,7 @@ public:
     }
     void Hex24(const std::string& title, uint32_t v) {
         cv_.Pr(title, N()).NextCol().NextCol().Pr("=", Eq()).NextCol();
-        char hi[4];
+        char hi[8];  // "%02X" of a value up to 18 bits wide: up to 5 digits
         std::snprintf(hi, sizeof hi, "%02X", v >> 14);
         char lo[6];
         std::snprintf(lo, sizeof lo, "%04X", v & 0x3FFF);

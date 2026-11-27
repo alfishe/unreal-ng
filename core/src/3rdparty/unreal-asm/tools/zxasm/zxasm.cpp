@@ -55,6 +55,7 @@
 // Decoded text is written as UTF-8 (decision D-11). Exit code 0 on success, 1 on errors, 2 on bad usage.
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
@@ -294,16 +295,19 @@ bool NameMatches(const std::string& pattern, const std::string& name)
 /// entry TR-DOS finds; a wildcard the last fitting one (ALASM help, Work)
 const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>& files, const std::string& spec)
 {
-    std::vector<std::pair<std::string, char>> candidates;
+    // At most three, in a fixed array: gcc 13 -O3 reported a false -Wstringop-overflow in a vector's push_back of them
+    std::array<std::pair<std::string, char>, 3> candidates;
+    size_t count = 0;
     const size_t dot = spec.rfind('.');
     if (dot != std::string::npos && dot + 2 == spec.size())
-        candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
-    candidates.push_back({spec, '\0'});
+        candidates[count++] = {spec.substr(0, dot), spec[dot + 1]};
+    candidates[count++] = {spec, '\0'};
     // ZAsm shows a name with the type letter and the two bytes of the catalog's start as its extension ("FONT.fn1")
     if (dot != std::string::npos && dot > 0 && dot + 4 == spec.size())
-        candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
-    for (const auto& [pattern, type] : candidates)
+        candidates[count++] = {spec.substr(0, dot), spec[dot + 1]};
+    for (size_t i = 0; i < count; ++i)
     {
+        const auto& [pattern, type] = candidates[i];
         const bool wildcard = pattern.find_first_of("*?") != std::string::npos;
         const containers::TrdosFile* found = nullptr;
         for (const auto& file : files)

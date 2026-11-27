@@ -324,9 +324,10 @@ bool SzxReader::ParsePlusD(const uint8_t* body, uint32_t size, Stage& stage, std
         return false;
     }
     // A custom ROM (or UNI-DOS) is reported, not loaded: the configured G+DOS stays, as with B128
+    // Built in place from the literal: gcc 13 -O3 reported a false -Warray-bounds for moving a temporary string in
     if (plusd.romType != kPlusDRomGdos)
-        stage.warnings.push_back(plusd.romType == kPlusDRomUnidos ? "PLSD was saved with UNI-DOS: the configured G+DOS stays"
-                                                                  : "PLSD carries a custom ROM: the configured G+DOS stays");
+        stage.warnings.emplace_back(plusd.romType == kPlusDRomUnidos ? "PLSD was saved with UNI-DOS: the configured G+DOS stays"
+                                                                     : "PLSD carries a custom ROM: the configured G+DOS stays");
     stage.plusd = std::move(plusd);
     return true;
 }
