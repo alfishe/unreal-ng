@@ -36,6 +36,10 @@
 #include <vulkan/vulkan.h>
 #endif
 #include "platform/presenterrecovery.h"
+#include "recordingpicture.h"
+#ifdef __APPLE__
+#include "platform/macos/recordingsurfaces.h"
+#endif
 #include "slangpresetrunner.h"
 #include "smoothmotiongpu.h"
 
@@ -162,10 +166,14 @@ public:
     /// window's own size, only the picture's rectangle kept) and read back without waiting (gpu::Device::BeginRead).
     /// takeRecordingPictures gives them, about a frame later. Off: the pending reads and the target go
     void setRecordingCapture(bool enabled, int pictureHeight = 0);
-    /// The recording pictures captured and not taken yet, oldest first (B,G,R,A bytes: Format_ARGB32, top row first),
-    /// appended to `out`, each one's emulated frame number to `frames` (0: not known); none when the window presented
-    /// no new frame (hidden, minimized) or the capture is off
-    void takeRecordingPictures(std::vector<QImage>& out, std::vector<uint64_t>& frames);
+    /// The file's frame for the GPU to compose (before setRecordingCapture; off with it): on macOS under GL each
+    /// capture is the whole frame drawn into the hardware encoder's own buffer, no copy through the CPU. Elsewhere
+    /// (Vulkan, Linux, Windows) the captures stay pictures read back
+    void setRecordingFrame(const RecordingFrameLayout& layout);
+    /// The recording pictures captured and not taken yet, oldest first, appended to `out`: a picture read back
+    /// (B,G,R,A bytes: Format_ARGB32, top row first) or a frame the GPU composed, with its emulated frame number (0:
+    /// not known); none when the window presented no new frame (hidden, minimized) or the capture is off
+    void takeRecordingPictures(std::vector<RecordingPicture>& out);
     /// A recording picture drawn now and read at once, the frame due (the window presents nothing: hidden,
     /// minimized); the capture must be on. False: no GPU picture
     bool grabRecordingPicture(QImage& out, uint64_t& frame);
@@ -499,9 +507,19 @@ private:
     /// The texture's picture into _recordTarget as the recording wants it; `rect`: the part to read (GL rows),
     /// `kept`: its size. False: nothing to draw
     bool drawRecordingPicture(gpu::Rect& rect, QSize& kept);
+    /// The drawn picture (`rect` of _recordTarget, GL rows) composed by the GPU into a frame of the file
+    /// (setRecordingFrame) in `slot`. False: not this way (no layout, not GL, not macOS)
+    bool composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot);
+    RecordingFrameLayout _recordFrame;
+#ifdef __APPLE__
+    std::unique_ptr<RecordingSurfaces> _recordSurfaces;
+#endif
     bool _recordCapture = false;
     int _recordHeight = 0;
     std::unique_ptr<gpu::Texture> _recordTarget;  ///< kept from picture to picture (a new one each time cost 0.1 ms)
+    /// The frame itself while smooth motion shows a picture between two frames: the recording has one picture per
+    /// emulated frame, labelled with its number (a picture between N and N+1 put the border's change a frame early)
+    std::unique_ptr<gpu::Texture> _recordSource;
     int _recordSlot = 0;          ///< the read slot the next capture starts in
     /// The captures not taken, oldest first: their read slot and size. Two may come between two latches (a present
     /// late across one), so each is kept until taken; a full queue drops the oldest
@@ -510,8 +528,13 @@ private:
         int slot = 0;
         QSize size;
         uint64_t frame = 0;  ///< the emulated frame shown (0: not known)
+#ifdef __APPLE__
+        RecordingSurfaces::Pending composed;  ///< a frame the GPU composes (else a read in the slot)
+#endif
     };
     std::deque<PendingCapture> _recordPending;
+    /// A capture not taken: its read or composed frame let go (the context current)
+    void dropCapture(PendingCapture& capture);
     uint64_t _recordSerial = 0;   ///< the frame captured last: one picture per frame (smooth motion presents more)
 public:
     void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }

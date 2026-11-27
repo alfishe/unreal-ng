@@ -394,7 +394,7 @@ if (APPLE)
     # sample-rate changes (AppSoundManager nominal-rate watch)
     # Metal, QuartzCore, IOSurface, OpenGL: the native presenter (GL draws into IOSurfaces, CAMetalLayer shows them)
     set(common_libraries iconv "-framework CoreAudio" "-framework AppKit" "-framework Metal" "-framework QuartzCore"
-        "-framework IOSurface" "-framework OpenGL")
+        "-framework IOSurface" "-framework OpenGL" "-framework CoreVideo")
     find_package(Threads REQUIRED)
 elseif (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)
