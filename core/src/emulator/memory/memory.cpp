@@ -2091,7 +2091,15 @@ void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
         baseAddress = _bank_write[bank];
     }
 
-    *(baseAddress + address) = value;
+    // A cache of RAM in front of the CPU drops the entry of a byte the tool changed (as for a page the tool edits,
+    // ToolEditEnds). One flag test on a tool path
+    if (_toolWriteNotify && _bank_mode[bank] == BANK_RAM && *(baseAddress + address) != value) [[unlikely]]
+    {
+        *(baseAddress + address) = value;
+        ToolWroteWindow(bank, address);
+    }
+    else
+        *(baseAddress + address) = value;
 
     // TTD dirty-page tracking (parent TDD §6.2). Mirrors the hook in
     // MemoryWriteDebug. Callers of DirectWriteToZ80Memory (WebAPI

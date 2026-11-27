@@ -79,11 +79,18 @@ public:
         if (_waitCpu && _arbiter && _arbiter->Refusing()) [[unlikely]]
             RefusedBeforeM1();
     }
+    /// A tool's edit (Emulator::EditMemoryFromTool): the entries whose RAM word the edit changed are dropped, as a
+    /// CPU write to them would drop them, whatever path wrote the RAM (the CPU's view or a physical page). An entry
+    /// a DMA left stale before the edit stays as it is on the board
+    void ToolEditBegins() override;
+    void ToolEditEnds() override;
     /// endregion </Model overrides>
 
     /// region <Latch-to-bank translation>
 protected:
     bool UpdateModelBanks() override;
+    /// A tool's byte in a RAM window: the entry it hits is dropped, as AfterWrite drops it for a CPU write
+    void ToolWroteWindow(uint8_t bank, uint16_t offset) override;
     /// endregion </Latch-to-bank translation>
 
 private:
@@ -102,6 +109,12 @@ private:
     /// 14 MHz, a machine cycle without a DRAM cycle while video refuses the CPU cycles (TsConfArbiter::Settle)
     void RefusedWait(TsConfArbiter::Access kind);
     void RefusedBeforeM1();
+
+    /// The RAM word an entry's tag names; the tags and words when the outermost tool edit began (ToolEditBegins)
+    uint16_t RamWordOfEntry(uint8_t index) const;
+    uint16_t _toolEditTags[256] = {};
+    uint16_t _toolEditWords[256] = {};
+    int _toolEditDepth = 0;
 
     TsConfState* _ts = nullptr;
     EvoFlash* _flash = nullptr;
