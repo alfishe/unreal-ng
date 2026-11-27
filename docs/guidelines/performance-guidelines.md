@@ -144,11 +144,14 @@ by 3x.
    ```bash
    git worktree add --detach scratch/wt-bench-A <before>
    git worktree add --detach scratch/wt-bench-B <after>
-   # in each: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBENCHMARKS=ON
+   # in each: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBENCHMARKS=ON -DUNREAL_LTO=ON
    #          ninja -C build core-benchmarks
    ```
    For a merge commit, A is its first parent, so the difference is exactly
    the merged change.
+   Measure with LTO, as the release packages are built (`UNREAL_LTO`, on by
+   default with `BENCHMARKS=ON`; development builds go without it). An A/B of
+   `unreal-qt` frame times needs `-DUNREAL_LTO=ON` on its configure too.
 2. **Do not wait for a quiet machine** (owner decision, 2026-10-09). The
    development Mac is never quiet: the load stays at 20-45 for hours. Run at
    once, and buy the precision with more rounds instead: 20 rounds rather than

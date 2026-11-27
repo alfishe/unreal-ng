@@ -1208,10 +1208,12 @@ BackendResult AlasmBackend::Write(const ir::Program& given, const BackendOptions
                     decided.push_back({0, true});
                     continue;
                 }
-                if (value)
+                if (value.has_value())
                 {
-                    decided.push_back({*value != 0 ? 1 : 0, false});
-                    note(*value != 0 ? "IF: taken" : "IF: left out");
+                    // value_or, not *value: gcc 13 -O3 reported a false -Wmaybe-uninitialized for the dereference
+                    const bool taken = value.value_or(0) != 0;
+                    decided.push_back({taken ? 1 : 0, false});
+                    note(taken ? "IF: taken" : "IF: left out");
                     continue;
                 }
                 decided.push_back({-1, false});

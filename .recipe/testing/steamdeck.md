@@ -50,6 +50,9 @@ tools/deploy/steamdeck/remote-build.sh --host <build-host> --dir <path> [--deck 
 # -> scratch/deploy-steamdeck/UnrealNG-SteamDeck-x86_64.tar.gz, and with --deck installed on the Deck
 ```
 
+- Without LTO by default (fast links); `--lto` (or `UNREAL_LTO=1`) for a pre-release bundle or for measuring frame
+  times on the Deck, a few percent faster ([cmake/Lto.cmake](../../cmake/Lto.cmake)).
+
 - It copies the files that differ from the host's HEAD (commits since it, uncommitted edits, new files) and the files
   of its previous run; the host's HEAD must be a commit you have. Deleted files and submodule changes are not copied.
 - The first run configures `build-deck/` and builds the image `unreal-ng-deck-build`: tens of minutes. Later runs
