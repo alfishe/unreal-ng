@@ -1,4 +1,5 @@
 #include "stackwidget.h"
+#include "debugger/widgetupdates.h"
 
 #include <cstdlib>
 
@@ -165,11 +166,12 @@ void StackWidget::refresh()
         const QString hint =
             ReturnHint([context, cpu = m_cpu](uint16_t at) { return debuggercpu::Peek(context, cpu, at); }, words[i]);
         m_hints[i]->setText(hint.isEmpty() ? QString() : QStringLiteral("<- %1").arg(hint));
-        m_hints[i]->setToolTip(hint.isEmpty() ? QString()
-                                              : tr("A return address: the %1 that ends right before it pushes it")
-                                                    .arg(hint.section(' ', 0, 0)));
+        widgetupdates::SetToolTip(m_hints[i], hint.isEmpty() ? QString()
+                                                             : tr("A return address: the %1 that ends right before it "
+                                                                  "pushes it")
+                                                                   .arg(hint.section(' ', 0, 0)));
     }
-    update();
+    // No update() of the whole pane: a label repaints itself when its text changes
 }
 
 QString StackWidget::ReturnHint(Memory& memory, uint16_t address)

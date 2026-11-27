@@ -12,6 +12,8 @@
 #include <QScrollBar>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QAbstractTextDocumentLayout>
+#include <QTextBlock>
 #include <QToolTip>
 #include <QWheelEvent>
 #include <QtGlobal>
@@ -47,11 +49,11 @@ QHexView::QHexView(QWidget* parent)
     p.setBrush(QPalette::Window, p.base());
 
     connect(this->verticalScrollBar(), &QScrollBar::valueChanged, this,
-            [this](int) { this->viewport()->update(); });
+            [this](int) { this->updateView(); });
 
     m_hexmetadata = new QHexMetadata(&m_options, this);
     connect(m_hexmetadata, &QHexMetadata::changed, this,
-            [this]() { this->viewport()->update(); });
+            [this]() { this->updateView(); });
 
     m_hexcursor = new QHexCursor(&m_options, this);
     this->setDocument(
@@ -60,13 +62,16 @@ QHexView::QHexView(QWidget* parent)
 
     connect(m_hexcursor, &QHexCursor::positionChanged, this, [this]() {
         m_writing = false;
-        this->ensureVisible();
+        if(m_changes > 0)
+            m_ensureVisiblePending = true;  // unreal-ng: scrolled once, to the cursor's last place (endChanges)
+        else
+            this->ensureVisible();
         Q_EMIT positionChanged();
     });
 
     connect(m_hexcursor, &QHexCursor::modeChanged, this, [this]() {
         m_writing = false;
-        this->viewport()->update();
+        this->updateView();
         Q_EMIT modeChanged();
     });
 }
@@ -415,20 +420,231 @@ void QHexView::setAutoWidth(bool r) {
     this->checkState();
 }
 
-void QHexView::paint(QPainter* painter) const {
-    QTextDocument doc;
-    doc.setDocumentMargin(0);
-    doc.setUndoRedoEnabled(false);
-    doc.setDefaultFont(this->font());
+void QHexView::paint(QPainter* painter, const QRegion& exposed) const {
+    // unreal-ng: a paint of some rows only (endChanges repaints the rows that changed) lays out and draws only them;
+    // the rows have one height (one font), so a row's place is its index times that height
+    const int headerrows = m_options.hasFlag(QHexFlags::NoHeader) ? 0 : 1;
+    const qint64 rows = m_hexdocument->isEmpty() ? 0 : this->visibleLines();
+    const QByteArray key = this->paintKey();
+    const quint64 top = static_cast<quint64>(this->verticalScrollBar()->value());
+    const bool partial = m_blockHeight > 0 && rows > 0 && key == m_paintedKey && top == m_paintedTop &&
+                         m_paintedLines.size() == static_cast<size_t>(rows) && !exposed.isEmpty() &&
+                         !(QRegion(this->viewport()->rect()) - exposed).isEmpty();
+    // The view rows to paint (the header is row 0), as runs of neighbours: [first, last]
+    std::vector<std::pair<qint64, qint64>> runs;
+    if(partial) {
+        std::vector<bool> wanted(static_cast<size_t>(rows + headerrows), false);
+        for(const QRect& r : exposed) {
+            const qint64 from = qMax<qint64>(0, qFloor(r.top() / m_blockHeight));
+            const qint64 to = qMin<qint64>(rows + headerrows - 1, qFloor(r.bottom() / m_blockHeight));
+            for(qint64 row = from; row <= to; row++)
+                wanted[static_cast<size_t>(row)] = true;
+        }
+        for(qint64 row = 0; row < rows + headerrows; row++)
+            if(wanted[static_cast<size_t>(row)]) {
+                if(!runs.empty() && runs.back().second == row - 1)
+                    runs.back().second = row;
+                else
+                    runs.push_back({row, row});
+            }
+    }
+    else
+        runs.push_back({0, rows + headerrows - 1});
 
-    QTextCursor c(&doc);
+    bool header = false;
+    for(const auto& run : runs) {
+        QTextDocument doc;
+        doc.setDocumentMargin(0);
+        doc.setUndoRedoEnabled(false);
+        doc.setDefaultFont(this->font());
 
-    this->drawHeader(c);
-    this->drawDocument(c);
+        QTextCursor c(&doc);
+        const bool withheader = headerrows != 0 && run.first == 0;
+        if(withheader)
+            this->drawHeader(c);
+        header = header || withheader;
+        const qint64 first = qMax<qint64>(0, run.first - headerrows), last = run.second - headerrows;
+        if(!partial)
+            this->drawDocument(c);
+        else if(first <= last)
+            this->drawDocument(c, first, last);
 
+        const qreal y = partial ? run.first * m_blockHeight : 0;
+        painter->translate(-this->horizontalScrollBar()->value(), y);
+        doc.drawContents(painter);
+        painter->translate(this->horizontalScrollBar()->value(), -y);
+
+        if(!partial) {
+            // The rows' height, when every row has the one height; else every paint stays a whole one
+            m_blockHeight = 0;
+            QAbstractTextDocumentLayout* layout = doc.documentLayout();
+            const QTextBlock firstblock = doc.begin();
+            if(firstblock.isValid() && firstblock.next().isValid()) {
+                const qreal h = layout->blockBoundingRect(firstblock).height();
+                bool uniform = h > 0;
+                int n = 0;
+                for(QTextBlock b = firstblock; uniform && b.isValid() && n <= rows; b = b.next(), n++)
+                    uniform = b.length() <= 1 || qFuzzyCompare(layout->blockBoundingRect(b).height(), h);
+                if(uniform)
+                    m_blockHeight = h;
+            }
+        }
+    }
     painter->translate(-this->horizontalScrollBar()->value(), 0);
-    doc.drawContents(painter);
     this->drawSeparators(painter);
+
+    if(header)
+        m_paintedHeader = this->headerKey();
+    if(!partial) {
+        m_paintedKey = key;
+        m_paintedTop = top;
+        m_paintedLines.assign(static_cast<size_t>(rows), QByteArray());
+        for(qint64 r = 0; r < rows; r++)
+            m_paintedLines[static_cast<size_t>(r)] = this->lineKey(static_cast<qint64>(top) + r);
+    }
+    else
+        for(const auto& run : runs)
+            for(qint64 r = qMax<qint64>(0, run.first - headerrows); r <= run.second - headerrows; r++)
+                m_paintedLines[static_cast<size_t>(r)] = this->lineKey(static_cast<qint64>(top) + r);
+}
+
+void QHexView::scrollContentsBy(int, int) {
+    this->updateView();  // unreal-ng: as QAbstractScrollArea's (a whole repaint), deferred in a batch of changes
+}
+
+void QHexView::updateView() {
+    if(m_changes > 0)
+        m_changesPending = true;
+    else
+        this->viewport()->update();
+}
+
+void QHexView::beginChanges() { m_changes++; }
+
+void QHexView::endChanges() {
+    if(m_changes <= 0 || --m_changes > 0)
+        return;
+    if(m_ensureVisiblePending) {
+        m_ensureVisiblePending = false;
+        m_changes++;  // the scroll it may make is one of the changes
+        this->ensureVisible();
+        m_changes--;
+    }
+    if(!m_changesPending)
+        return;
+    m_changesPending = false;
+    const qint64 rows = m_hexdocument && !m_hexdocument->isEmpty() ? this->visibleLines() : 0;
+    if(m_blockHeight <= 0 || rows <= 0 || m_paintedLines.size() != static_cast<size_t>(rows) ||
+       this->paintKey() != m_paintedKey) {
+        this->viewport()->update();
+        return;
+    }
+    const int headerrows = m_options.hasFlag(QHexFlags::NoHeader) ? 0 : 1;
+    const int width = this->viewport()->width();
+    const auto rowRect = [&](qint64 row) {
+        return QRectF(0, row * m_blockHeight, width, m_blockHeight).toAlignedRect();
+    };
+    if(headerrows && this->headerKey() != m_paintedHeader)
+        this->viewport()->update(rowRect(0));
+    const qint64 top = this->verticalScrollBar()->value();
+    const qint64 delta = top - static_cast<qint64>(m_paintedTop);
+    if(delta != 0) {
+        // Scrolled (the cursor's line moved off the middle): the rows on screen move as pixels, below the header
+        if(qAbs(delta) >= rows || qAbs(delta) * m_blockHeight != qRound(qAbs(delta) * m_blockHeight)) {
+            this->viewport()->update();
+            return;
+        }
+        const int y = qRound(headerrows * m_blockHeight);
+        this->viewport()->scroll(0, -qRound(delta * m_blockHeight),
+                                 QRect(0, y, width, qMax(0, this->viewport()->height() - y)));
+        std::vector<QByteArray> moved(static_cast<size_t>(rows));
+        for(qint64 r = 0; r < rows; r++)
+            if(r + delta >= 0 && r + delta < rows)
+                moved[static_cast<size_t>(r)] = std::move(m_paintedLines[static_cast<size_t>(r + delta)]);
+        m_paintedLines = std::move(moved);  // the rows scrolled in are empty: painted again below
+        m_paintedTop = static_cast<quint64>(top);
+    }
+    for(qint64 r = 0; r < rows; r++)
+        if(this->lineKey(top + r) != m_paintedLines[static_cast<size_t>(r)])
+            this->viewport()->update(rowRect(r + headerrows));
+}
+
+namespace {
+void appendInt(QByteArray& key, qint64 value) {
+    key.append(reinterpret_cast<const char*>(&value), sizeof(value));
+}
+void appendColor(QByteArray& key, const QColor& color) {
+    appendInt(key, color.isValid() ? static_cast<qint64>(color.rgba64()) : -1);
+}
+void appendString(QByteArray& key, const QString& text) {
+    appendInt(key, text.size());
+    key.append(text.toUtf8());
+}
+} // namespace
+
+QByteArray QHexView::paintKey() const {
+    QByteArray key;  // the vertical scroll is m_paintedTop: endChanges scrolls the rows painted
+    appendInt(key, this->horizontalScrollBar()->value());
+    appendInt(key, this->viewport()->width());
+    appendInt(key, this->viewport()->height());
+    appendString(key, this->font().key());
+    appendInt(key, static_cast<qint64>(this->palette().cacheKey()));
+    appendInt(key, this->hasFocus());
+    appendInt(key, static_cast<qint64>(m_hexcursor->mode()));
+    appendInt(key, static_cast<qint64>(m_currentarea));
+    appendInt(key, m_writing);
+    appendInt(key, m_hexdocument ? m_hexdocument->length() : -1);
+    appendInt(key, m_hexdocument ? m_hexdocument->isEmpty() : 1);
+    appendInt(key, reinterpret_cast<qintptr>(m_hexdelegate));
+    appendString(key, m_options.unprintablechar);
+    appendString(key, m_options.invalidchar);
+    appendString(key, m_options.addresslabel);
+    appendString(key, m_options.hexlabel);
+    appendInt(key, m_options.hexlabel.isNull());
+    appendString(key, m_options.asciilabel);
+    appendInt(key, m_options.asciilabel.isNull());
+    appendInt(key, static_cast<qint64>(m_options.baseaddress));
+    appendInt(key, m_options.flags);
+    appendInt(key, m_options.linelength);
+    appendInt(key, this->addressWidth());
+    appendInt(key, m_options.grouplength);
+    for(auto it = m_options.bytecolors.cbegin(); it != m_options.bytecolors.cend(); ++it) {
+        appendInt(key, it.key());
+        appendColor(key, it->foreground);
+        appendColor(key, it->background);
+    }
+    appendColor(key, m_options.linealternatebackground);
+    appendColor(key, m_options.linebackground);
+    appendColor(key, m_options.headercolor);
+    appendColor(key, m_options.commentcolor);
+    appendColor(key, m_options.separatorcolor);
+    return key;
+}
+
+QByteArray QHexView::headerKey() const {
+    QByteArray key;
+    appendInt(key, m_hexcursor->column());
+    return key;
+}
+
+QByteArray QHexView::lineKey(qint64 line) const {
+    QByteArray key = this->getLine(line);
+    appendInt(key, line);
+    if(const QHexMetadataLine* metadata = m_hexmetadata->find(line))
+        for(const QHexMetadataItem& item : *metadata) {
+            appendInt(key, item.begin);
+            appendInt(key, item.end);
+            appendColor(key, item.foreground);
+            appendColor(key, item.background);
+            appendInt(key, item.comment.isEmpty());
+        }
+    appendInt(key, m_hexcursor->line() == line ? m_hexcursor->column() : -1);
+    if(m_hexcursor->hasSelection() && line >= m_hexcursor->selectionStart().line &&
+       line <= m_hexcursor->selectionEnd().line) {
+        appendInt(key, m_hexcursor->selectionStartOffset());
+        appendInt(key, m_hexcursor->selectionEndOffset());
+    }
+    return key;
 }
 
 void QHexView::checkOptions() {
@@ -500,7 +716,7 @@ void QHexView::checkAndUpdate(bool calccolumns) {
     this->checkState();
     if(calccolumns)
         this->calcColumns();
-    this->viewport()->update();
+    this->updateView();
 }
 
 void QHexView::calcColumns() {
@@ -541,7 +757,7 @@ void QHexView::ensureVisible() {
     if (scrollValue != targetScroll) {
         this->verticalScrollBar()->setValue(targetScroll);
     } else {
-        this->viewport()->update();
+        this->updateView();
     }
 }
 
@@ -701,19 +917,19 @@ void QHexView::drawHeader(QTextCursor& c) const {
     c.insertBlock();
 }
 
-void QHexView::drawDocument(QTextCursor& c) const {
+void QHexView::drawDocument(QTextCursor& c, qint64 first, qint64 last) const {
     if(!m_hexdocument)
         return;
 
     qreal y = !m_options.hasFlag(QHexFlags::NoHeader) ? this->lineHeight() : 0;
-    quint64 line = static_cast<quint64>(this->verticalScrollBar()->value());
+    quint64 line = static_cast<quint64>(this->verticalScrollBar()->value()) + static_cast<quint64>(first);
 
     QTextCharFormat addrformat;
     addrformat.setForeground(
         this->palette().color(QPalette::Normal, QPalette::Highlight));
 
-    for(qint64 l = 0; m_hexdocument->isEmpty() ||
-                      (line < this->lines() && l < this->visibleLines());
+    for(qint64 l = first; m_hexdocument->isEmpty() ||
+                      (line < this->lines() && l < this->visibleLines() && l <= last);
         l++, line++, y += this->lineHeight()) {
         quint64 address = line * m_options.linelength + this->baseAddress();
         QString addrstr = QString::number(address, 16)
@@ -1461,7 +1677,7 @@ void QHexView::showEvent(QShowEvent* e) {
     this->checkAndUpdate(true);
 }
 
-void QHexView::paintEvent(QPaintEvent*) {
+void QHexView::paintEvent(QPaintEvent* e) {
     if(!m_hexdocument)
         return;
 
@@ -1469,7 +1685,7 @@ void QHexView::paintEvent(QPaintEvent*) {
     if(m_hexdelegate)
         m_hexdelegate->paint(&painter, this);
     else
-        this->paint(&painter);
+        this->paint(&painter, e->region());
 }
 
 void QHexView::resizeEvent(QResizeEvent* e) {
@@ -1480,13 +1696,13 @@ void QHexView::resizeEvent(QResizeEvent* e) {
 void QHexView::focusInEvent(QFocusEvent* e) {
     QAbstractScrollArea::focusInEvent(e);
     if(m_hexdocument)
-        this->viewport()->update();
+        this->updateView();
 }
 
 void QHexView::focusOutEvent(QFocusEvent* e) {
     QAbstractScrollArea::focusOutEvent(e);
     if(m_hexdocument)
-        this->viewport()->update();
+        this->updateView();
 }
 
 void QHexView::mousePressEvent(QMouseEvent* e) {
@@ -1514,7 +1730,7 @@ void QHexView::mousePressEvent(QMouseEvent* e) {
         default: return;
     }
 
-    this->viewport()->update();
+    this->updateView();
 }
 
 void QHexView::mouseMoveEvent(QMouseEvent* e) {
