@@ -458,6 +458,17 @@ public:
     /// sentinel maps to 0 for external observers.
     size_t GetConsumptionCursor() const;
 
+    /// A block the head can play or a trap can deliver; a control entry (a TZX $20 pause 0, a $2A, a flow
+    /// leftover) has none and takes no tape
+    static bool BlockHasSignal(const TapeBlock& block)
+    {
+        // A byte block keeps its bytes when its edges are freed after it played: it has a signal
+        return !block.data.empty() || !block.edgePulseTimings.empty();
+    }
+
+    /// The first block with a signal at or after `from` (the block count when none is left)
+    size_t NextSignalBlock(size_t from) const;
+
     /// Advance the consumption cursor past block `index` (trap consumption path).
     void ConsumeBlock(size_t index);
 

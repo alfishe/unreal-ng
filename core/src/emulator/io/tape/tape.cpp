@@ -1261,13 +1261,19 @@ void Tape::ParkAtNextBlock()
     _currentClockCount = 0;
 }
 
+size_t Tape::NextSignalBlock(size_t from) const
+{
+    while (from < _tapeBlocks.size() && !BlockHasSignal(_tapeBlocks[from]))
+        from++;
+    return from;
+}
+
 void Tape::SkipSignalLessBlocks(bool* stop48k)
 {
     while (_currentTapeBlockIndex < _tapeBlocks.size())
     {
         const TapeBlock& block = _tapeBlocks[_currentTapeBlockIndex];
-        // A byte block keeps its bytes when its edges are freed after it played: it has a signal
-        if (!block.data.empty() || !block.edgePulseTimings.empty())
+        if (BlockHasSignal(block))
             break;
         if (stop48k != nullptr && block.stopIn48kMode && IsIn48kMode())
             *stop48k = true;
