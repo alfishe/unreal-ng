@@ -204,6 +204,9 @@ public:
         _retryAtNs = 0;
         return true;
     }
+    /// One level up again and still below the top (the blend back to the cheap interpolation): the next level is tried
+    /// after the wait now, not doubled (a step down in between doubles it)
+    void RetryLater(int64_t nowNs) { _retryAtNs = nowNs + _retryNs; }
     void StartOver(uint64_t latePresents = 0)
     {
         Reset(latePresents);

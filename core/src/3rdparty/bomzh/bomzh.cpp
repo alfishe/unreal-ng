@@ -370,6 +370,8 @@ static void poly (bz_t *bz, const uint32_t *xy, int n, poly_t *p)
 {
 	int vx[16], vy[16], i, y, y0, y1, top = 0, bot = 0, a0, a1, b0, b1;
 
+	if (n <= 0)                                  /* unreal-ng: no vertices - nothing to draw (vy[top] unset) */
+		return;
 	for (i = 0; i < n; i++)
 	{
 		vx[i] = (int16_t)(xy[i] & 0xFFFF);

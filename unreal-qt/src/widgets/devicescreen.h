@@ -190,7 +190,7 @@ private:
     void updateVideoSync();
     bool _smoothAuto = false;
     /// The interpolation's pictures take most of a refresh to draw: the cheap interpolation instead, then the blend
-    /// (SmoothGuard), until the frame source is set again
+    /// (SmoothGuard), for a while (tried again after SmoothGuard's wait) or until the frame source is set again
     SmoothGuard _smoothGuard;
     bool _smoothSteppedDown = false;
     bool _smoothTooSlow = false;

@@ -10,7 +10,7 @@ against, pixel for pixel.
 | Source | Quake-II-for-ZX-Evolution-VDAC4, `gpu/model/bomzh.c` and `gpu/model/bomzh.h`, commit `c5b4143` (2026-11-25) |
 | License | MIT, Copyright (c) 2026 Andrew Lazarev (`LICENSE`, the repository's root license; `gpu/` carries no other) |
 | Copied | `bomzh.h` as is, `bomzh.c` as `bomzh.cpp` (the model builds as C++: the core library globs `*.cpp`) |
-| Local changes | `bz_shown_rgb` reads the shown frame through `rd8` (the address wraps in SDRAM): the original indexed `mem` directly and could read past its end for a frame placed near the top of SDRAM |
+| Local changes | `bz_shown_rgb` reads the shown frame through `rd8` (the address wraps in SDRAM): the original indexed `mem` directly and could read past its end for a frame placed near the top of SDRAM. `poly` returns at once for `n <= 0` (gcc 13 -O3 -Wmaybe-uninitialized: `vy[top]` was read with no vertex written) |
 | Build | `core/src/CMakeLists.txt`: no precompiled header (`SKIP_PRECOMPILE_HEADERS`) |
 
 Update: copy both files again (`bomzh.c` to `bomzh.cpp`), reapply the local change, replace the commit above, build

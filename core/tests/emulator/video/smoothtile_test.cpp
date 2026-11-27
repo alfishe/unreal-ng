@@ -235,6 +235,43 @@ TEST(SmoothTile_Test, TooSlowStepsDownToTheCheapInterpolationThenTheBlend)
     EXPECT_FALSE(tile.GetStats().tooSlow);
 }
 
+/// A step down of the tile's own guard is for a while: the cheap interpolation is tried again after the guard's wait,
+/// then the full one after the wait again, each only if in time. The interpolation stayed blended for good
+/// before (the owner's Mac: one stall dropped it to the blend)
+TEST(SmoothTile_Test, ASteppedDownTileTriesTheLevelsAboveAgain)
+{
+    constexpr int STEP = static_cast<int>(SmoothGuard::kWindow * SmoothGuard::kBadWindows);
+    constexpr int64_t HOUR = 3600LL * 1000 * MS;
+    Tile tile;
+    tile.SetMode(Mode::Interpolate);
+    Source source;
+    source.Latch(Scroller(0));
+    int k = 1;
+    // A refresh of one nanosecond: every picture slow, down twice
+    for (; k <= 3 * STEP && !tile.GetStats().tooSlow; k++)
+    {
+        source.Latch(Scroller(4 * k));
+        tile.Advance(source.Next(), W, H, source.TargetOf(static_cast<uint64_t>(k)) + PERIOD / 2, 1);
+    }
+    ASSERT_TRUE(tile.GetStats().tooSlow);
+    const int64_t steppedAt = source.TargetOf(static_cast<uint64_t>(k - 1)) + PERIOD / 2;
+    // The second step down doubled the wait: the blend until then (refreshes with no new frame), the cheap one after
+    const int64_t wait = 2 * SmoothGuard::kFirstRetryNs;
+    tile.Advance(source.Next(), W, H, steppedAt + wait - 1, HOUR);
+    EXPECT_TRUE(tile.GetStats().tooSlow) << "too early";
+    tile.Advance(source.Next(), W, H, steppedAt + wait, HOUR);
+    EXPECT_FALSE(tile.GetStats().tooSlow);
+    EXPECT_TRUE(tile.GetStats().steppedDown);
+    EXPECT_TRUE(tile.Engine().Lite());
+    // The full one after the wait as it stands (each step down doubled it: 40 s), if the cheap one is in time
+    const int64_t upAt = steppedAt + wait;
+    tile.Advance(source.Next(), W, H, upAt + 2 * wait - 1, HOUR);
+    EXPECT_TRUE(tile.GetStats().steppedDown) << "too early";
+    tile.Advance(source.Next(), W, H, upAt + 2 * wait, HOUR);
+    EXPECT_FALSE(tile.GetStats().steppedDown);
+    EXPECT_FALSE(tile.Engine().Lite());
+}
+
 TEST(SmoothTile_Test, LiteOverItsColoursIsDrawnByTheLayersAndStillGuarded)
 {
     // Frames of over 256 colours (a still band of a colour a pixel over the scroll) are not LiteFlow's pictures:
