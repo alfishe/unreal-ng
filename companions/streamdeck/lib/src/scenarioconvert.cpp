@@ -1,6 +1,7 @@
 // v1 -> v2 scenario documents (scenarios.md §1, §2; migration.md §4): the v1 kinds and the REST steps that have a
 // catalogue action become `action` steps; settings that belong to the daemon and the host go.
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <optional>
 #include <string>
@@ -171,8 +172,10 @@ struct Converter
         }
         else if (kind == "dir" || kind == "toggle")
         {
-            for (const char* f : kind == "dir" ? std::initializer_list<const char*>{"left", "right"}
-                                               : std::initializer_list<const char*>{"on", "off"})
+            // Named arrays: an initializer_list in each arm of ?: had its backing array end before the loop ran
+            static constexpr std::array<const char*, 2> kDirKeys{"left", "right"};
+            static constexpr std::array<const char*, 2> kToggleKeys{"on", "off"};
+            for (const char* f : kind == "dir" ? kDirKeys : kToggleKeys)
                 if (a.contains(f))
                     out[f] = Step(a[f]);
         }

@@ -489,7 +489,9 @@ inline void ForwardCall(const std::string& method, const std::string& path, cons
         if (status == 202 && responseBody.isObject() && responseBody.isMember("job"))
         {
             // A long verb run as a job (async=true): the text says the job id and how to wait for it
-            done(ToolResult::Ok(okPrefix + ": " + responseBody.get("text", "").asString(), std::move(responseBody)));
+            // Read before the move: the order of a call's arguments is unspecified
+            std::string text = okPrefix + ": " + responseBody.get("text", "").asString();
+            done(ToolResult::Ok(text, std::move(responseBody)));
             return;
         }
         if (status >= 200 && status < 300)
