@@ -1313,6 +1313,7 @@ void LoaderTZX::EmitEntry(const TzxRawEntry& entry, TapeImage& image, TzxEmitCon
 
                 TapeBlockDescriptor descriptor;
                 descriptor.kind = TapeBlockKindEnum::Control;
+                descriptor.control = TapeControlEnum::StopTape;
                 descriptor.playable = false;
 
                 image.blocks.push_back(std::move(block));
@@ -1361,6 +1362,7 @@ void LoaderTZX::EmitEntry(const TzxRawEntry& entry, TapeImage& image, TzxEmitCon
 
                 TapeBlockDescriptor descriptor;
                 descriptor.kind = TapeBlockKindEnum::Control;
+                descriptor.control = TapeControlEnum::Pause;
                 descriptor.timing.pauseMs = static_cast<uint16_t>(std::min<uint32_t>(pauseMs, 0xFFFF));
                 descriptor.playable = true;
 
@@ -1384,14 +1386,18 @@ void LoaderTZX::EmitEntry(const TzxRawEntry& entry, TapeImage& image, TzxEmitCon
             break;
         }
 
-        case 0x2A:  // Stop tape if in 48K — inert in v1 (no machine check here)
+        case 0x2A:  // Stop the tape if in 48K mode
         {
+            // No signal of its own. The machine is not known here: the deck decides when the head passes
+            // the entry (Tape::AdvanceToNextBlock stops on a machine in 48K mode, else goes on)
             TapeBlock block;
             block.blockIndex = image.blocks.size();
             block.type = TAP_BLOCK_FLAG_DATA;
+            block.stopIn48kMode = true;
 
             TapeBlockDescriptor descriptor;
             descriptor.kind = TapeBlockKindEnum::Control;
+            descriptor.control = TapeControlEnum::StopIn48kMode;
             descriptor.playable = false;
 
             image.blocks.push_back(std::move(block));
@@ -1416,6 +1422,7 @@ void LoaderTZX::EmitEntry(const TzxRawEntry& entry, TapeImage& image, TzxEmitCon
 
             TapeBlockDescriptor descriptor;
             descriptor.kind = TapeBlockKindEnum::Control;
+            descriptor.control = TapeControlEnum::Flow;
             descriptor.playable = false;
 
             image.blocks.push_back(std::move(block));

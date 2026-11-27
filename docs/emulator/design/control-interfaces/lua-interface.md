@@ -158,7 +158,10 @@ local ok, why = tape_load("/path/to/game.tap")  -- A tape (.tap/.tzx/.spc/.sta/.
 local ok = tape_eject()                     -- The tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 -- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-tape_play()      -- start at consumption cursor; resumes in place when paused; queued for a tape still landing
+local ok, report = tape_play()  -- resumes in place when frozen in a block; a playing tape is left as it is; else starts
+                 -- at the first block with a signal from the cursor on; queued for a tape still landing.
+                 -- ok: false without a tape. report: the deck after the call (report.result, .playing, .state,
+                 -- .reason, .position.block, .block.kind, .skipped_blocks, .text): command-interface.md "The play answer"
 tape_pause()     -- freeze mid-block (idempotent); false when not playing
 tape_stop()      -- terminal stop: invalidates the loaded image
 tape_rewind()    -- rewind to block 0, image kept

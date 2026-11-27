@@ -16,6 +16,14 @@ jobs on a worker thread), the board state on every automation plane and time tra
   (done, below), then the Xtensa JIT (regions chained across CALL / ENTRY / RETW: as many interpreter entries as
   native ones today), then the TS-Conf side (DramWait, the arbiter, DrawRange, the interrupt catch-up).
 
+- [ ] Quake II: time travel for the `q2` personality (the core's registers, 8 MB SDRAM and on-chip tables per
+  keyframe); today TTD is unavailable while it runs, with the reason ([quake2.md](quake2.md) §8).
+- [ ] Quake II PSRAM: Qcommon_Init takes ~220 KB more PSRAM here than in the author's emulator, so the reserve
+  stays at 1440 KB (4336 KB free before init, board 4192); at 1584 KB base2 runs out of memory ([quake2.md](quake2.md) §8).
+- [x] Quake II: the firmware's LINK watchdog (tang_link.cpp): the `0x5C564434` mark in SCRATCH, checked every 2 s; a
+  foreign value with ID answering logs "LINK: Tang reloaded" and writes the mark again. Q2's `link_diag` at core open
+  still logs `SCRATCH 00000000 BAD` (the fresh bitstream, as on the board); later checks see the mark.
+
 ## Not planned (design §5.2, §7.1)
 
 - Xtensa PIE / SIMD `EE.*`, MAC16, `RECIP0.S` / `RSQRT0.S` / `DIV0.S` / `SQRT0.S`, privileged instructions: the
@@ -23,6 +31,13 @@ jobs on a worker thread), the board state on every automation plane and time tra
 - The Tang's renderer omissions, HDMI 1366×768, dithering, frame drops: eve-emu draws the full FT812; cosmetic.
 
 ## Done
+
+- [x] Quake II for ZX Evolution VDAC4 (2026-11-27, [quake2.md](quake2.md)): firmware string
+  `vdac4-0.1.174-unreal-ng-hle`, ABI 1.21 (`data_open` / `data_read` / `data_close` over 0x6E / 0x6F through the Z80
+  program, `link_read_checked`), MOD_QUERY flags 2 (cores into the BL616 cache) and 4 (data files), realloc in
+  place, `core_load` / `core_back`, the bomzh-3D core (vendored C model, `3rdparty/bomzh`) as the Tang personality
+  `q2` with its own 424x240 picture, PSRAM reserve `UNREAL_VDAC4_PSRAM_RESERVE_KB`, state fields on every plane.
+  The demo runs (base2) at the game's own 30-35 fps figure.
 
 - [x] FT812 drawing for Metal Slug (2026-11-26): LinePlan bands and history, index signatures, LineRepeat, palette
   hits; single-thread replay of a Metal Slug capture 1.73 -> 0.67 s in `EveAdvance`, the same picture hashes for

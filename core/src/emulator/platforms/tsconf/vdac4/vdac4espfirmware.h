@@ -18,6 +18,9 @@
 /// here), PATH_GET 2A / PATH_SET 2B (path.cfg in the cache directory), LINK_PROBE 3E, TANG_READ 45 /
 /// TANG_WRITE 46 (through IVdac4TangLink; only the setting registers are writable), MOD_QUERY 69 / MOD_PUT 6A /
 /// MOD_COMMIT 6B, APP_START 6C / APP_STOP 6D, the app's command range and media range (IVdac4AppRuntime).
+/// MOD_QUERY flag 2 (0.1.164): an FPGA core NAME.BIN from the Evo card, checked as checkEvoImage does and held as
+/// the BL616 cache holds it (core_load). MOD_QUERY flag 4 with a file number (0.1.166): a data file of an app the
+/// Z80 program reads on request (event 6E, pieces 6F; there is no USB drive, so a query without a number gets 4).
 ///
 /// Answered as this firmware answers without the service ("not available"):
 ///   - Wi-Fi / network 01 03 06-0E 10-14 20 21 23: ACK (not 12), EE "network not available", the failure
@@ -52,6 +55,13 @@ class Vdac4EspFirmware final : private IVdac4AppHost
 {
 public:
     static constexpr const char* kVersion = "unreal-ng";
+    /// SYS_INFO FW: (ZIFI_BUILD_VERSION): the board's form vdac4-A.B.C, then who made it
+    static constexpr const char* kFirmwareVersion = "vdac4-0.1.174-unreal-ng-hle";
+    /// core_store.cpp: cores from the Evo card it keeps track of; tang::kSlotBytes
+    static constexpr size_t kEvoCores = 4;
+    static constexpr uint32_t kMaxCoreBytes = 1024 * 1024;
+    /// app_data_files.hpp kMaxRemote: data files read from the Z80 program
+    static constexpr size_t kMaxRemote = 8;
     static constexpr uint32_t kMaxModuleBytes = 2 * 1024 * 1024;
     static constexpr uint32_t kMaxResourceBytes = 7 * 1024 * 1024;
     static constexpr size_t kMaxResources = 4;
@@ -67,6 +77,10 @@ public:
 
     void SetRuntime(IVdac4AppRuntime* runtime) { _runtime = runtime; }
     void SetTang(IVdac4TangLink* tang) { _tang = tang; }
+    /// The firmware's own log lines (bringupLog of ModuleApp: cores, data files)
+    void SetLog(std::function<void(const std::string&)> log) { _log = std::move(log); }
+    /// SCRATCH checks that found a foreign value (the FPGA reloaded) and wrote the mark again
+    uint32_t LinkReloads() const { return _linkReloads; }
     /// Every packet the Z80 sent, before it is handled (diagnostics)
     void SetPacketObserver(std::function<void(uint8_t command, size_t length, uint32_t nowMs)> observer)
     {
@@ -91,6 +105,28 @@ public:
     const char* LastError() const { return _lastError; }
     EspModuleCache& Cache() { return _cache; }
     size_t ResourceCount() const;
+
+    /// An FPGA core the Z80 program sent (MOD_QUERY flag 2), as the BL616 cache holds it
+    struct HeldCore
+    {
+        std::string name;          ///< without ".BIN"
+        uint32_t size = 0;
+        uint32_t stamp = 0;
+        uint32_t usercode = 0;     ///< 0x564434xx: the core's VDAC4 mark
+    };
+    /// A data file registered for reading from the Z80 program (MOD_QUERY flag 4 with a file number)
+    struct RemoteFile
+    {
+        std::string app;
+        std::string name;
+        uint32_t size = 0;
+        uint32_t stamp = 0;
+        uint8_t index = 0;
+    };
+    const std::vector<HeldCore>& HeldCores() const { return _cores; }
+    const std::vector<RemoteFile>& RemoteFiles() const { return _remotes; }
+    /// core_store::checkEvoImage: nullptr for a VDAC4 core bitstream, else what is wrong; `usercode` its mark
+    static const char* CoreImageProblem(const uint8_t* data, size_t size, uint32_t* usercode);
 
     void Save(Vdac4EspStateWriter& out) const;
     bool Load(Vdac4EspStateReader& in);
@@ -127,6 +163,12 @@ private:
     bool AllocateDelivery(uint32_t size, bool resource);
     void HandlePut(const EspPacket& packet);
     void HandleCommit();
+    void HandleCoreQuery(const std::string& name, uint32_t size, uint32_t stamp);
+    void HandleDataQuery(const std::string& name, uint32_t size, uint32_t stamp, const std::string& app, int index);
+    bool AddRemote(const std::string& app, const std::string& name, uint32_t size, uint32_t stamp, uint8_t index);
+    /// The accepted core: checked, then held (the BL616 cache); false: not a VDAC4 core
+    bool CommitCore();
+    void Log(const std::string& line);
     void HandleStart(const EspPacket& packet);
     void DropDelivery();
     int StartApp(const std::string& name);
@@ -134,6 +176,7 @@ private:
     bool ModuleInUse(const std::string& name) const;
     size_t PsramUsed() const;
     void PollFtDetach();
+    void PollLinkWatch();
 
     // IVdac4AppHost
     bool SendFrame(uint8_t command, const uint8_t* data, size_t size) override;
@@ -148,6 +191,9 @@ private:
     void FtOpened(bool selected) override;
     size_t EventQueueRoom() const override;
     IVdac4TangLink* Tang() override { return _tang; }
+    int DataFile(const std::string& app, const std::string& name, uint8_t& index, uint32_t& size) override;
+    int CoreLoad(const std::string& name, uint32_t& version) override;
+    int CoreBack() override;
 
     EspFrameTransport& _transport;
     EspSpiLink& _link;
@@ -156,6 +202,7 @@ private:
     EspModuleCache _cache;
     IVdac4AppRuntime* _runtime = nullptr;
     IVdac4TangLink* _tang = nullptr;
+    std::function<void(const std::string&)> _log;
     uint32_t _nowMs = 0;
 
     uint8_t _lastStep = 0;
@@ -172,7 +219,12 @@ private:
     uint32_t _deliveryStamp = 0;
     uint32_t _deliveryReceived = 0;
     bool _deliveryResource = false;
+    bool _deliveryCore = false;
     std::vector<HeldResource> _resources;
+    // Cores from the Evo card (the BL616 cache is flash: they outlive a restart) and the data files of apps
+    std::vector<HeldCore> _cores;
+    size_t _coreNext = 0;
+    std::vector<RemoteFile> _remotes;
 
     // App
     bool _appRunning = false;
@@ -183,4 +235,9 @@ private:
     std::string _appModule;
     Vdac4AppInfo _appInfo;
     uint32_t _ftDetachState = 0;  // FtDetachGuard: bit 0 armed, bit 1 personality 2 seen, rest: last check ms
+
+    // tang_link.cpp link task: the firmware's mark in SCRATCH, checked every 2 s; a foreign value = the FPGA reloaded
+    bool _linkWatchArmed = false;
+    uint32_t _linkWatchAtMs = 0;
+    uint32_t _linkReloads = 0;
 };

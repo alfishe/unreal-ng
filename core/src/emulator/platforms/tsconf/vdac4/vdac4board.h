@@ -108,6 +108,9 @@ private:
     std::unique_ptr<Vdac4Audio> _audio;
     bool _audioAttached = false;
     int _jit = -1; ///< what ApplyJitFeature last set: -1 nothing yet
+    /// Time travel is unavailable while the Tang runs the Quake II core (its GPU state is not recorded)
+    bool _ttdBlocked = false;
+    void UpdateTimeTravelAvailability();
     std::unique_ptr<vdac4::EspXtensaRuntime> _runtime;
     std::unique_ptr<Vdac4FtWorker> _ft;  ///< the Tang's work for the ESP's jobs (vdac4ftworker.h)
     uint64_t _jobStamp = 0;              ///< the running ESP job's stamp (its thread)

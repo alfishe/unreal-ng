@@ -16,6 +16,9 @@ namespace
 constexpr uint8_t kAudioData = 0x31;
 constexpr uint8_t kModPut = 0x6A;
 constexpr uint8_t kVfsReadMedia = 0x5F;
+/// A piece of an app data file read from the Evo card (0.1.166): [request][offset LE32] before the data
+constexpr uint8_t kDataPiece = 0x6F;
+constexpr uint16_t kDataPiecePrefix = 5;
 }  // namespace
 
 // --- EspFrameParser --------------------------------------------------------------------------------------------
@@ -57,7 +60,8 @@ bool EspFrameParser::Feed(uint8_t byte, uint32_t nowMs, EspPacket& packet)
             return false;
 
         case kCommand:
-            if (_rawMedia && byte != kAudioData && byte != kModPut && byte != kVfsReadMedia && !_media.Contains(byte))
+            if (_rawMedia && byte != kAudioData && byte != kModPut && byte != kVfsReadMedia && byte != kDataPiece &&
+                !_media.Contains(byte))
             {
                 ++_resyncs;
                 Reset();
@@ -79,7 +83,8 @@ bool EspFrameParser::Feed(uint8_t byte, uint32_t nowMs, EspPacket& packet)
             _checksum ^= byte;
             _position = 0;
             if (_length > (_rawMedia ? kMaxMediaPayload : kMaxPayload) ||
-                (_rawMedia && (_length <= (_command == kModPut ? 4 : 0) || (_command == kAudioData && _length > 8192))))
+                (_rawMedia && (_length <= (_command == kModPut ? 4 : _command == kDataPiece ? kDataPiecePrefix : 0) ||
+                               (_command == kAudioData && _length > 8192))))
             {
                 // A large length means lost sync: do not skip that many bytes
                 ++_resyncs;

@@ -203,7 +203,7 @@ The trap is consulted only when armed and `pc == $0556`. Each row is checked in 
 | 1 | `Fc == 0` (VERIFY) | Decline → authentic signal emulation (byte-compare at real speed) |
 | 2 | `DE == 0` | Decline (degenerate call; real behavior is pilot-wait) |
 | 3 | No tape image loaded and image cannot be loaded (`coreState.tapeFilePath` empty / unreadable) | Decline |
-| 4 | Cursor at end of `_tapeBlocks` | Decline |
+| 4 | Cursor at end of `_tapeBlocks`, after the control entries at the cursor are passed (a TZX `$20` pause 0, a `$2A`, a flow leftover take no tape: the block the routine would find is the first one with a signal, `Tape::NextSignalBlock`; 2026-11-27) | Decline |
 | 5 | Signal playback currently active (`_tapeStarted`) | Decline (cursor is mid-stream; avoids double consumption) |
 | 6 | Next block flag byte != `A` (expected flag) | Decline — covers custom-flag blocks and header/data sequence breaks |
 | 7 | Next block checksum invalid (XOR != 0) | Decline → signal path reproduces the authentic "R Tape loading error" |

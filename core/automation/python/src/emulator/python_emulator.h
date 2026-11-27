@@ -3536,18 +3536,24 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 return ctx ? ctx->coreState.tapeFilePath : "";
             }, "Get tape file path")
-            .def("tape_play", [](Emulator& self) -> bool {
+            .def("tape_play", [](Emulator& self, bool report) -> py::object {
                 auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTape) return false;
+                if (!ctx || !ctx->pTape) return report ? py::object(py::none()) : py::object(py::bool_(false));
 
                 EmulatorPauseBracket bracket(&self);
 
-                // Parse-once (idempotent); paused -> resume the frozen position
-                // in place, otherwise start at the consumption cursor — the same
+                // Parse-once (idempotent); frozen in a block -> resume in place, playing -> left as it is,
+                // otherwise start at the first block with a signal from the consumption cursor on - the same
                 // semantics as `tape play` / POST /tape/play
                 // A tape still on its way (a load while a TTD recording runs) plays once it lands
-                return ctx->pTape->Play() != TapePlayResult::NoBlocks;
-            }, "Start (or resume in place) tape playback")
+                const TapePlayReport played = ctx->pTape->PlayWithReport();
+                if (!report)
+                    return py::bool_(played.Ok());
+                return StateNodeToPy(played.ToNode());
+            }, "Start (or resume in place) tape playback. Returns True unless there is no tape with loadable "
+               "blocks; with report=True the deck after the call as a dict (result, playing, state, reason, "
+               "position, block, skipped_blocks, text), None without a tape subsystem",
+               py::arg("report") = false)
             .def("tape_stop", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 if (ctx && ctx->pTape) {

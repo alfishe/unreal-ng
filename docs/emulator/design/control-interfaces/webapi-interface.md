@@ -699,7 +699,7 @@ GET  /api/v1/emulator/{id}/state/cdaudio       CD drives' audio: disc and tracks
 POST /api/v1/emulator/{id}/cdaudio/{verb}      CD audio control: status | play (track, to | lba, frames | msf, end) | pause | resume | stop | volume (left, right, route, sotc) | mixer (volume, mute, solo); drive picks the drive. 409 recording / no-disc / not-playing, 404 no-cd-drive
 GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vdac_ver, blt2 - [MISC] TS_VDAC), memory map (+ fm_maps raw), video (mode, geometry, TSU, the engine's line with t0_gpage / t1_gpage), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs[72] = the register file as last written (404 on other machines)
 GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette for debug views: t_config, tilemap_page, sprite_page, tile_layers[] (t0 / t1: enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette bits), sprites[] (all 85 descriptors: active, leap, layer s0 / s1 / s2, x, y, width, height, flips, tile, bitmap_x, bitmap_y, palette, words[]), active_sprites, cram[] (256 cells: value, rgb) (404 on other machines)
-GET  /api/v1/emulator/{id}/vdac4/state         TS-Conf VDAC4 board (Tang + ESP32-S3) [?log=N recent ESP log lines, default 50, max 256]: tang {personality, armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last, error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames}, packets {count, recent[]}, audio {input_rate, output_rate, queued, underruns, dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits, esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits, ft_owner_wait_ms}, log[]; 409 "No VDAC4 Board" with the reason. Never parks the emulation thread (safe to poll)
+GET  /api/v1/emulator/{id}/vdac4/state         TS-Conf VDAC4 board (Tang + ESP32-S3) [?log=N recent ESP log lines, default 50, max 256]: tang {personality (ts / loading / ft / q2), armed, esp_host, ram_g_3mb, ft_cfg, q2 {frames, latched, commands, words, bad_words, bad_command, mark, width, height}}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, clock_offset_us, psram_free, cores[{name, size, usercode}]}, data {files[{app, name, size, index}], open, reading, requests, repeats, failures, bytes, longest_ms}, app {running, module, name, version, command_first, command_last, error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames}, packets {count, recent[]}, audio {input_rate, output_rate, queued, underruns, dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits, esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits, ft_owner_wait_ms}, log[]; 409 "No VDAC4 Board" with the reason. Never parks the emulation thread (safe to poll)
 GET  /api/v1/emulator/{id}/vdac4/esp/memory    VDAC4 ESP memory, read-only [?address=A (32-bit, 0x hex)&size=N (default 16, max 4096)&app=1 (A is an address of the running app's ELF image)]: {address, size, app, hex}; 400 bad range / no app / unmapped, 409 no board
 GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, ppi8255, pit8253, usart8251 (404 with the reason on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
@@ -1890,7 +1890,7 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 |:-------|:---------|:-----|:------------|
 | `POST` | `/tape/load` | `{"path": "..."}` | Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder into the tape slot; 400 names the reason |
 | `POST` | `/tape/eject` | — | The tape leaves the tape slot; while a TTD recording runs it is an event of the recording: it lands at the next frame boundary |
-| `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
+| `POST` | `/tape/play` | — | Play: resumes in place when frozen inside a block, leaves a playing tape as it is, else starts at the first block with a signal from the consumption cursor on. Answers the deck after the call (below) |
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
 | `POST` | `/tape/rewind` | — | Rewind to block 0, image kept |
@@ -1901,7 +1901,27 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 | `POST` | `/tape/render` | see below | Render a tape image to WAV/FLAC audio |
 | `POST` | `/tape/import` | see below | Import WAV/FLAC/MP3 as a .tzx/.tap image |
 
-Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python. `GET /tape` adds `reason` when the tape does not play (`end_of_tape`, `stopped`, or why it is paused: `user`, `loader_quiet`, `parked`, `stop_48k`), and a control entry of `blocks[]` carries `control` (`pause`, `stop`, `stop_48k`, `flow`).
+
+**`POST /tape/play` response**: the deck after the call, read under the same CPU hold as the play (nothing waits on the emulation thread). Fields and rules: [command-interface.md, The play answer](./command-interface.md#the-play-answer). `400` with `result` `no_blocks` when there is no tape with loadable blocks; every other result is `200`, also `end_of_tape` (`playing` false).
+
+```json
+{
+  "status": "success",
+  "message": "Tape playback started, passed block 4 (no signal). Tape: playing, block 5 of 6 (data, 36354 bytes), pulse 0, 0.0 of 198.7 s; with no loader listening it pauses again within 100 frames, and a loader that listens starts it by itself",
+  "result": "started",
+  "playing": true,
+  "state": "playing",
+  "mode_48k": true,
+  "block_count": 6,
+  "position": {"block": 5, "pulse": 0, "seconds_into_block": 0.0, "block_total_seconds": 198.66},
+  "block": {"index": 5, "kind": "data", "bytes": 36354},
+  "skipped_blocks": [4],
+  "text": "..."
+}
+```
+
+A tape stopped by a TZX `$2A` block on a 48K reads `"state": "paused", "reason": "stop_48k"` in `GET /tape`, with `position.block` on the block after the `$2A`.
 
 **`GET /tape` response shape** (trimmed):
 

@@ -27,5 +27,11 @@ fixed, and checked on macOS, Linux (.238), Windows and the Steam Deck where it a
   times faster with the same masks on a corpus of 26 clips; the wall of 12 Across the Edge keeps 9-10 tiles smooth, 3-5 before (README 1.10). Open: a real low-end
   machine, Windows and gcc builds of it, the game cadence modes by it, the wall's software grid
 - [ ] 8. The seams of the temporal filters (README 1.11): D1-D9 fixed with a test each, the frame copy skipped for
-  the version held, the wall's auto per tile; each test fails with its fix undone (gcc, .74). Open: a live check of
-  ZX DLSS with smooth motion
+  the version held, the wall's auto per tile; each test fails with its fix undone (gcc, .74). D2b: the smooth guard
+  steps down after three bad windows in a row, counts nothing in a window's first 3 s, retries after 10 s doubling to
+  5 min. D2c: the Video Synchronization box shows the setting, not the step in effect. The live check of ZX DLSS with
+  smooth motion (2026-11-27, unreal-qt on .20, `interpolate`, `interpolate-lite`, `blend`, `auto`, 30 s each plus DLSS
+  toggled and modes switched mid-stream): no frame raw, missed or repeated; it found D10 (the read ahead cut by the
+  whole delay: half the frames starved) and D11 (the delay's step carried: ~3 s starved after each switch on), both
+  fixed with a test each (README 1.11). Open: the same check on the Metal presenter (the host's screen was locked:
+  measured with the GL present)

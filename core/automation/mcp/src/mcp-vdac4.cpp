@@ -23,6 +23,31 @@ std::string Vdac4StateText(const Json::Value& reply, size_t logLines)
         << "\nESP: " << esp["phase"].asString() << ", " << esp["ms"].asUInt64() << " ms, boots " << esp["boots"].asUInt64()
         << ", last step " << esp["last_step"].asUInt64() << ", resources " << esp["resources"].asUInt64()
         << ", clock restarts " << esp["clock_restarts"].asUInt64() << ", ahead " << esp["clock_offset_us"].asUInt64() << " us";
+    out << ", PSRAM free " << esp["psram_free"].asUInt64() / 1024 << " KB";
+    if (tang["personality"].asString() == "q2")
+    {
+        const Json::Value& q2 = tang["q2"];
+        out << "\nQuake II core: " << q2["frames"].asUInt64() << " frames (" << q2["latched"].asUInt64()
+            << " shown), " << q2["width"].asUInt64() << "x" << q2["height"].asUInt64() << ", commands "
+            << q2["commands"].asUInt64() << ", words " << q2["words"].asUInt64() << ", bad words "
+            << q2["bad_words"].asUInt64() << (q2["bad_command"].asBool() ? ", bad_cmd set" : "") << ", MARK "
+            << q2["mark"].asUInt64();
+    }
+    for (const Json::Value& core : esp["cores"])
+        out << "\nCore held: " << core["name"].asString() << ", " << core["size"].asUInt64() << " bytes, UserCode 0x"
+            << std::hex << core["usercode"].asUInt64() << std::dec;
+    const Json::Value& data = reply["data"];
+    if (!data["files"].empty())
+    {
+        out << "\nData files:";
+        for (const Json::Value& file : data["files"])
+            out << " " << file["app"].asString() << "/" << file["name"].asString() << " (" << file["size"].asUInt64()
+                << " bytes, #" << file["index"].asUInt64() << ")";
+        out << "\nData reads: " << data["requests"].asUInt64() << " requests, " << data["bytes"].asUInt64() / 1024
+            << " KB, repeats " << data["repeats"].asUInt64() << ", failures " << data["failures"].asUInt64()
+            << ", longest " << data["longest_ms"].asUInt64() << " ms, open " << data["open"].asUInt64()
+            << (data["reading"].asBool() ? ", reading now" : "");
+    }
     if (!esp["last_error"].asString().empty())
         out << "\nESP error: " << esp["last_error"].asString();
     out << "\nApp: ";

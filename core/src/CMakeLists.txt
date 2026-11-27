@@ -231,6 +231,10 @@ if (NOT MSVC)
     set_source_files_properties(${UNREAL_XTENSA_FILES} PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 
+# bomzh (the "bomzh-3D" GPU model of the Quake II FPGA core for the VDAC4 Tang): vendored C, compiled as C++ from
+# bomzh.cpp (3rdparty/bomzh/VENDORED.md). Integer only; kept out of the stdafx.h PCH like the other vendored units
+set_source_files_properties(${SOURCE_DIR}/3rdparty/bomzh/bomzh.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})

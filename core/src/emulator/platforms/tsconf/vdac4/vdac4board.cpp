@@ -7,6 +7,7 @@
 #include "emulator/config.h"
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/sound/soundmanager.h"
 #include "esp/espxtensaruntime.h"
 #include "vdac4audio.h"
@@ -58,6 +59,19 @@ public:
         Prepare();
         _board._tang.LinkFtWrite(ftAddress, words, count);
         return true;
+    }
+    int LoadCore(uint32_t usercode, uint32_t& version) override
+    {
+        // Never from a job: the runtime refuses core_load there (kZmBusy)
+        Prepare();
+        return _board._tang.LoadCore(usercode, version);
+    }
+    bool CoreBack() override
+    {
+        if (vdac4::EspXtensaRuntime::InJob())
+            return false;
+        Prepare();
+        return _board._tang.CoreBack();
     }
 
 private:
@@ -160,6 +174,7 @@ Vdac4Board::Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<
     _esp = std::make_unique<Vdac4Esp>(std::move(monotonic), espConfig);
     _esp->SetRuntime(_runtime.get());
     _esp->SetTang(_link.get());
+    _esp->Firmware().SetLog([this](const std::string& line) { Log(line); });
     _esp->Firmware().SetPacketObserver([this](uint8_t command, size_t length, uint32_t nowMs) {
         std::lock_guard<std::mutex> lock(_ringLock);
         ++_packetCount;
@@ -200,7 +215,22 @@ void Vdac4Board::OnFrameEnd()
     // checkpoints, snapshots, the frame-end probes and the published state see a settled ESP)
     _runtime->Flush();
     ApplyJitFeature();
+    UpdateTimeTravelAvailability();
     Publish();
+}
+
+void Vdac4Board::UpdateTimeTravelAvailability()
+{
+    // At the frame end, never inside a LINK access: the Quake II core's SDRAM and drawing state are not part of
+    // the Tang's TTD state, so a session must not record or seek across it
+    const bool blocked = _tang.GetPersonality() == Vdac4Tang::Personality::Q2;
+    if (blocked == _ttdBlocked)
+        return;
+    _ttdBlocked = blocked;
+    if (ttd::ITimeTravelHooks* hooks = _context ? _context->pTimeTravelHooks : nullptr)
+        hooks->SetUnavailableReason(blocked ? "time travel is not available while the VDAC4 Tang runs the Quake II "
+                                              "core (core_load Q2): its GPU state is not recorded"
+                                            : "");
 }
 
 void Vdac4Board::ApplyJitFeature()

@@ -299,6 +299,44 @@ TEST_F(McpRouter_Test, InvokeApi_Non2xx_BecomesToolErrorWithBody)
     EXPECT_NE(result.text.find("404"), std::string::npos);
 }
 
+/// The answer is in the text, not only in structuredContent: a message when the body has one, the answer's own
+/// text, else the body as compact JSON, cut at a bound with the rest counted
+TEST_F(McpRouter_Test, InvokeApi_TheAnswerIsInTheText)
+{
+    Json::Value tape;
+    tape["state"] = "paused";
+    tape["reason"] = "stop_48k";
+    tape["position"]["block"] = 5;
+    _caller->routes["GET /api/v1/emulator/emu-1/tape/info"] = {200, tape};
+    Json::Value args;
+    args["method"] = "GET";
+    args["path"] = "/api/v1/emulator/{id}/tape/info";
+    mcp::ToolResult result = RunTool(_registry, "invoke_api", args, *_caller);
+    ASSERT_FALSE(result.isError);
+    EXPECT_EQ(result.text.find("HTTP 200 GET /api/v1/emulator/emu-1/tape/info\n"), 0u) << result.text;
+    EXPECT_NE(result.text.find("\"reason\":\"stop_48k\""), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("\"block\":5"), std::string::npos) << result.text;
+
+    Json::Value withText;
+    withText["text"] = "L2: 514 regions";
+    withText["regions"] = 514;
+    _caller->routes["GET /api/v1/emulator/emu-1/analysis/status"] = {200, withText};
+    args["path"] = "/api/v1/emulator/{id}/analysis/status";
+    result = RunTool(_registry, "invoke_api", args, *_caller);
+    EXPECT_NE(result.text.find("\nL2: 514 regions"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("\"regions\""), std::string::npos) << "the answer's own text, not its JSON";
+
+    Json::Value big;
+    for (int i = 0; i < 2000; i++)
+        big["bytes"].append(i);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/big"] = {200, big};
+    args["path"] = "/api/v1/emulator/{id}/memory/big";
+    result = RunTool(_registry, "invoke_api", args, *_caller);
+    EXPECT_LT(result.text.size(), 4300u);
+    EXPECT_NE(result.text.find("more characters: the whole body is in structuredContent"), std::string::npos);
+    EXPECT_EQ(result.structured["body"]["bytes"].size(), 2000u);
+}
+
 TEST_F(McpRouter_Test, InvokeApi_MissingMethodOrPath_IsError)
 {
     Json::Value args;
