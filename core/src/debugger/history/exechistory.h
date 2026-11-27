@@ -48,6 +48,11 @@ struct ExecRecord
     uint32_t IdleIterations() const { return IsEvent() ? 0 : idle; }
 
     void ToState(StateNode& node) const;
+
+    /// The record-time filter's fields (debugger/history/historyfilter.h): the ones ToState shows, as getters
+    static history::FieldGetter<ExecRecord> FilterField(const std::string& name);
+    static bool FilterWord(const std::string& field, const std::string& word, int64_t& value);
+    static const char* FilterFields();
 };
 static_assert(sizeof(ExecRecord) == 16, "ExecRecord keeps 16 bytes: the execution rings are sized by it");
 

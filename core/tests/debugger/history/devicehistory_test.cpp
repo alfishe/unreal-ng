@@ -9,6 +9,9 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "debugger/history/exechistory.h"
+#include "emulator/ports/porthistory.h"
+#include "emulator/sound/chips/gs/gsporttrace.h"
 #include "_helpers/testwaithelper.h"
 
 namespace
@@ -367,3 +370,216 @@ TEST(DeviceHistory_Test, RecordsSinceSeesStagedRecords)
     EXPECT_EQ(SeqValues(page), (std::vector<std::string>{ "3:3", "4:4", "5:5", "6:6" }));
     EXPECT_EQ(page.missed, 1u);
 }
+
+/// region <Record-time filter (historyfilter.h)>
+
+TEST(HistoryFilter_Test, ParsesTermsValuesAndRanges)
+{
+    history::RecordFilter filter;
+    std::string error;
+    ASSERT_TRUE(history::RecordFilter::Parse("  Side=host,GS  port=#B3,0xBB,$33  pc=100-#200 ", filter, error)) << error;
+    ASSERT_EQ(filter.Terms().size(), 3u);
+    EXPECT_EQ(filter.Text(), "Side=host,GS port=#B3,0xBB,$33 pc=100-#200");
+    EXPECT_EQ(filter.Terms()[0].field, "side");
+    EXPECT_EQ(filter.Terms()[0].words, (std::vector<std::string>{ "host", "gs" }));
+    ASSERT_EQ(filter.Terms()[1].numbers.size(), 3u);
+    EXPECT_EQ(filter.Terms()[1].numbers[1].lo, 0xBB);
+    EXPECT_EQ(filter.Terms()[2].numbers[0].lo, 100) << "plain digits are decimal";
+    EXPECT_EQ(filter.Terms()[2].numbers[0].hi, 0x200);
+
+    ASSERT_TRUE(history::RecordFilter::Parse("", filter, error));
+    EXPECT_TRUE(filter.Empty());
+    for (const char* bad : { "side", "=host", "side=", "side=host,,gs" })
+    {
+        EXPECT_FALSE(history::RecordFilter::Parse(bad, filter, error)) << bad;
+        EXPECT_NE(error.find("field=value"), std::string::npos) << error;
+    }
+}
+
+TEST(DeviceHistory_Test, FilterKeepsOnlyTheRecordsThatPass)
+{
+    TestHistory h("dev", "things");
+    history::Config config;
+    config.mode = history::Mode::Capture;
+    config.stream = TestPathHelper::GetUniqueTestScratchPath("history-filter.jsonl");
+    config.filter = "value=2-3,7 done=false";
+    std::string error;
+    ASSERT_TRUE(h.Configure(config, error)) << error;
+    for (int i = 0; i < 10; i++)
+        h.Push({ i, i == 3 });
+    EXPECT_EQ(Values(h), (std::vector<int>{ 2, 7 })) << "3 is done: the other term does not hold";
+    history::Stats stats = h.GetStats();
+    EXPECT_EQ(stats.written, 2u);
+    EXPECT_EQ(stats.filtered, 8u);
+    EXPECT_EQ(stats.config.filter, "value=2-3,7 done=false");
+    const StateNode node = history::StatsNode(h);
+    EXPECT_EQ(node.find("filtered")->i, 8);
+
+    // A record left out is not the one a later completion means
+    h.UpdateLast([](TestRecord& r) { r.value = 99; });
+    EXPECT_EQ(Values(h), (std::vector<int>{ 2, 7 })) << "9 was left out: nothing to complete";
+    h.Push({ 2, false });
+    h.UpdateLast([](TestRecord& r) { r.done = true; });
+    EXPECT_TRUE(h.Snapshot().back().done);
+
+    // The stream holds the same records and no other
+    config.mode = history::Mode::Off;
+    config.stream.clear();
+    const std::string path = stats.config.stream;
+    ASSERT_TRUE(h.Configure(config, error)) << error;
+    EXPECT_EQ(Lines(path).size(), 3u);
+
+    // A filter dropped: every record again; the counts start afresh
+    config.mode = history::Mode::Ring;
+    config.filter.clear();
+    ASSERT_TRUE(h.Configure(config, error)) << error;
+    h.Push({ 5, false });
+    EXPECT_EQ(Values(h), (std::vector<int>{ 5 }));
+    EXPECT_EQ(h.GetStats().filtered, 0u);
+    EXPECT_EQ(history::StatsNode(h).find("filter"), nullptr);
+}
+
+TEST(DeviceHistory_Test, ARefusedFilterLeavesTheHistoryAsItWas)
+{
+    TestHistory h("dev", "things");
+    history::Config config;
+    config.mode = history::Mode::Ring;
+    std::string error;
+    ASSERT_TRUE(h.Configure(config, error));
+    h.Push({ 1, false });
+    config.filter = "value";
+    EXPECT_FALSE(h.Configure(config, error));
+    EXPECT_EQ(Values(h), (std::vector<int>{ 1 })) << "the records stay";
+    EXPECT_TRUE(h.GetStats().config.filter.empty());
+
+    // A record that names its fields refuses an unknown field and an unknown word with the valid ones
+    GSHistory gs("zxbus.1", "GS events");
+    config.filter = "sidee=host";
+    EXPECT_FALSE(gs.Configure(config, error));
+    EXPECT_NE(error.find("no field 'sidee'"), std::string::npos) << error;
+    EXPECT_NE(error.find("side: host, gs"), std::string::npos) << error;
+    config.filter = "side=hots";
+    EXPECT_FALSE(gs.Configure(config, error));
+    EXPECT_NE(error.find("'hots' is not a value of side"), std::string::npos) << error;
+}
+
+TEST(DeviceHistory_Test, FilterOnAFastPushedRing)
+{
+    history::DeviceHistory<ExecRecord> h("cpu", "instructions", 8);
+    h.EnableFastPush(4);
+    history::Config config;
+    config.mode = history::Mode::Ring;
+    config.filter = "pc=#8000-#8002 kind=ram";
+    std::string error;
+    ASSERT_TRUE(h.Configure(config, error)) << error;
+    for (uint16_t pc = 0x7FFE; pc < 0x8006; pc++)
+    {
+        ExecRecord record;
+        record.pc = pc;
+        record.kind = pc == 0x8001 ? 0 : 1;
+        h.PushFast(record);
+    }
+    std::vector<uint16_t> pcs;
+    for (const ExecRecord& r : h.Snapshot())
+        pcs.push_back(r.pc);
+    EXPECT_EQ(pcs, (std::vector<uint16_t>{ 0x8000, 0x8002 }));
+    EXPECT_EQ(h.GetStats().filtered, 6u);
+}
+
+/// The compiled getters of a record that names its fields and its rendered ToState give the same answer
+template <typename Record>
+void ExpectCompiledAsRendered(const std::vector<Record>& records, const std::vector<std::string>& filters)
+{
+    for (const std::string& text : filters)
+    {
+        history::DeviceHistory<Record> h("dev", "records");
+        history::Config config;
+        config.mode = history::Mode::Capture;
+        config.filter = text;
+        std::string error;
+        ASSERT_TRUE(h.Configure(config, error)) << text << ": " << error;
+        history::RecordFilter filter;
+        ASSERT_TRUE(history::RecordFilter::Parse(text, filter, error));
+        size_t expected = 0;
+        for (const Record& record : records)
+        {
+            StateNode node = StateNode::Object();
+            record.ToState(node);
+            expected += filter.Matches(node) ? 1 : 0;
+            h.Push(record);
+        }
+        EXPECT_EQ(h.GetStats().written, expected) << text;
+        EXPECT_EQ(h.GetStats().filtered, records.size() - expected) << text;
+    }
+}
+
+TEST(DeviceHistory_Test, CompiledFiltersAgreeWithTheRenderedRecords)
+{
+    std::vector<GSTraceEvent> gs;
+    for (int side = 0; side <= 5; side++)
+    {
+        for (uint8_t flags = 0; flags < 8; flags++)
+        {
+            GSTraceEvent e;
+            e.side = static_cast<GSTraceSide>(side);
+            e.flags = flags;
+            e.port = static_cast<uint16_t>(side == 0 ? 0xB3 + 8 * (flags & 1) : 0x6000 + flags);
+            e.pc = static_cast<uint16_t>(0x100 * side + flags);
+            e.value = static_cast<uint8_t>(flags * 3);
+            e.channel = static_cast<uint8_t>(flags & 3);
+            e.iterations = 5 + flags;
+            e.frameNumber = 100 + side;
+            gs.push_back(e);
+        }
+    }
+    ExpectCompiledAsRendered(gs, { "side=host", "side=host out=true", "side=host,gs port=#B3,#BB", "out=false",
+                                   "nmi=true", "side=interrupt nmi=0", "channel=1-2", "iterations=6-9", "dropped=yes",
+                                   "pc=#100-#2FF value=3,6", "frame=101 side=gs", "card_address=#6001-#26003",
+                                   "wait=0", "host_t=5-12", "side=zx-dma,idle" });
+
+    std::vector<PortAccessRecord> ports;
+    for (int i = 0; i < 16; i++)
+    {
+        PortAccessRecord r;
+        r.frame = static_cast<uint64_t>(i / 4);
+        r.tacts = static_cast<uint16_t>(i * 100);
+        r.pc = static_cast<uint16_t>(0x8000 + i);
+        r.port = static_cast<uint16_t>((i & 1) ? 0xFFFD : 0xBFFD);
+        r.value = static_cast<uint8_t>(i);
+        r.out = (i & 2) != 0;
+        r.dos = (i & 4) != 0;
+        ports.push_back(r);
+    }
+    ExpectCompiledAsRendered(ports, { "dir=out", "dir=in port=#FFFD", "dos=true", "dos=1 dir=out,in",
+                                      "pc=#8004-#8008 value=5,6,7", "frame=2-3 tacts=900-1200" });
+
+    std::vector<ExecRecord> exec;
+    for (int i = 0; i < 12; i++)
+    {
+        ExecRecord r;
+        r.frame = static_cast<uint32_t>(i / 3);
+        r.t = static_cast<uint32_t>(i * 1000);
+        r.pc = static_cast<uint16_t>(0x4000 * (i % 4) + i);
+        r.kind = static_cast<uint8_t>(i % 4 == 3 ? 0xFF : i % 4);
+        r.page = static_cast<uint8_t>(i);
+        r.idle = i == 5 ? 40 : 0;
+        exec.push_back(r);
+    }
+    for (uint8_t event : { ExecRecord::kInt, ExecRecord::kNmi, ExecRecord::kClock })
+    {
+        ExecRecord r;
+        r.frame = 2;
+        r.t = 5000;
+        r.pc = 0x8000;
+        r.kind = event;
+        r.page = 12;
+        r.idle = 10000000;
+        exec.push_back(r);
+    }
+    ExpectCompiledAsRendered(exec, { "kind=ram", "kind=rom,none", "pc=#4000-#7FFF", "page=2-6 kind=cache",
+                                     "idle_iterations=40", "frame=1 kind=ram,rom", "event=int,nmi", "t=2000-5000",
+                                     "event=clock_change clock_hz=10000000", "from_hz=12000000", "page=12",
+                                     "pc=#8000" });
+}
+
+/// endregion </Record-time filter>

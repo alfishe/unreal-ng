@@ -55,6 +55,8 @@ HistoryReply Execute(EmulatorContext* context, const HistoryRequest& request)
                 config.stream = *request.stream;
             if (request.streamLimit)
                 config.streamLimit = *request.streamLimit;
+            if (request.filter)
+                config.filter = *request.filter;
             std::string error;
             if (!h.Configure(config, error))
             {

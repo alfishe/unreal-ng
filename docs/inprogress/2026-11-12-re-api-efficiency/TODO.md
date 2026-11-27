@@ -168,8 +168,11 @@
   `AnalysisL1_Test.CallGraphTailJump`.
 - [ ] S4: history / trace filters, event-only trace (M). Verified 2026-11-24, partly there: the machine port trace
   (`/profiler/porttrace`) is event-only (frame, PC) with record-time filters (port, device, direction, PC range,
-  value) on WebAPI, CLI, Lua, Python. Left: the filter on the MCP `porttrace` action, record-time filters of the
-  device histories (the GS side is filtered on read only), the instruction access trace.
+  value) on WebAPI, CLI, Lua, Python. Record-time filters of the device histories built 2026-11-26: `filter` in the
+  history config on every plane (`side=host out=true`, `port=#B3,#BB pc=#8000-#9FFF`), the records left out counted
+  and neither kept nor streamed (`historyfilter.h`, docs/emulator/design/debugger/device-history.md). The 1.7 GB
+  history of the case was a capture with a stream and no filter, not a ring. Left: the filter on the MCP `porttrace`
+  action, the instruction access trace.
 - [x] V4: counting breakpoints with per-hit frames (with PLAN #6) (M).
   As built (2026-11-19, uncommitted on `find-count`): a breakpoint that only counts (`stop: false`, CLI `--count`)
   records its hits in a bounded `BreakpointHitLog` (`hit_log` N, default 1000, 0 none, at most 100000;
