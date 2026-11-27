@@ -219,6 +219,33 @@ def test_the_card_names_its_firmware(s):
            'and not the main CPU\'s', r.structured)
 
 
+def test_the_card_history_records_only_what_its_filter_passes(s):
+    """A record-time filter (device_history config filter=): a capture of the card's history holds the host's writes
+    alone, the firmware's polls and interrupts are counted as left out and go nowhere"""
+    r = s.call('device_history', {'action': 'list'})
+    logs = sorted(set(re.findall(r'([\w-]+(?:\.[\w-]+)*)\.commands\b', r.text)))
+    expect(logs, 'the card among the histories', r.text)
+    device = logs[0]
+    r = s.call('device_history', {'action': 'config', 'device': device, 'mode': 'capture', 'filter': 'sidee=host'},
+               ok=False)
+    expect(r.is_error and "no field 'sidee'" in r.text and 'side: host, gs' in r.text,
+           'an unknown field is refused with the fields', r.text)
+    r = s.call('device_history', {'action': 'config', 'device': device, 'mode': 'capture',
+                                  'filter': 'side=host out=true'})
+    expect("filter 'side=host out=true'" in r.text, 'the filter in the text', r.text)
+    for port, value in (('0xB3', '0x05'), ('0xBB', '0x2C')):
+        s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/ports/out',
+                              'body': {'port': port, 'value': value}}, ok=False)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 5})
+    r = s.call('device_history', {'action': 'read', 'device': device})
+    records = (r.structured or {}).get('records', [])
+    expect(len(records) >= 2 and all(x.get('side') == 'host' and x.get('out') is True for x in records),
+           'only the host writes are kept', r.text[:800])
+    left = re.search(r"left out (\d+)", r.text)
+    expect(left and int(left.group(1)) > 0, 'the card\'s own traffic is counted as left out', r.text[:300])
+    s.call('device_history', {'action': 'config', 'device': device, 'mode': 'off', 'filter': ''})
+
+
 def test_the_command_log_is_a_device_history(s):
     """The host's GS commands (gs-debugger design §6.3): `<slot>.commands` in device_history, off until configured; a
     port write of the host's (#B3 then #BB) is a data and a command record, each with its text (the firmware profile

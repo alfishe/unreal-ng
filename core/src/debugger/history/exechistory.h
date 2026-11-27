@@ -23,6 +23,11 @@ struct ExecRecord
     uint32_t idle = 0;
 
     void ToState(StateNode& node) const;
+
+    /// The record-time filter's fields (debugger/history/historyfilter.h): the ones ToState shows, as getters
+    static history::FieldGetter<ExecRecord> FilterField(const std::string& name);
+    static bool FilterWord(const std::string& field, const std::string& word, int64_t& value);
+    static const char* FilterFields();
 };
 
 using ExecHistory = history::Registered<ExecRecord>;

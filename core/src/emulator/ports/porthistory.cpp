@@ -19,6 +19,44 @@ void PortAccessRecord::ToState(StateNode& node) const
         node["dos"] = true;
 }
 
+history::FieldGetter<PortAccessRecord> PortAccessRecord::FilterField(const std::string& name)
+{
+    using R = PortAccessRecord;
+    if (name == "frame")
+        return [](const R& r, int64_t& v) { v = static_cast<int64_t>(r.frame); return true; };
+    if (name == "tacts")
+        return [](const R& r, int64_t& v) { v = r.tacts; return true; };
+    if (name == "pc")
+        return [](const R& r, int64_t& v) { v = r.pc; return true; };
+    if (name == "dir")
+        return [](const R& r, int64_t& v) { v = r.out; return true; };
+    if (name == "port")
+        return [](const R& r, int64_t& v) { v = r.port; return true; };
+    if (name == "value")
+        return [](const R& r, int64_t& v) { v = r.value; return true; };
+    // ToState shows `dos` only when it is set
+    if (name == "dos")
+        return [](const R& r, int64_t& v) { v = 1; return r.dos; };
+    return nullptr;
+}
+
+bool PortAccessRecord::FilterWord(const std::string& field, const std::string& word, int64_t& value)
+{
+    bool flag = false;
+    if (field == "dir" && (word == "in" || word == "out"))
+        value = word == "out";
+    else if (field == "dos" && history::RecordFilter::FlagWord(word, flag))
+        value = flag ? 1 : 0;
+    else
+        return false;
+    return true;
+}
+
+const char* PortAccessRecord::FilterFields()
+{
+    return "dir: in, out; dos: true; numbers: port, pc, value, frame, tacts";
+}
+
 PortHistories::PortHistories() = default;
 PortHistories::~PortHistories() = default;
 

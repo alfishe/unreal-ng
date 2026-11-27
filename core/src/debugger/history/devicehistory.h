@@ -10,6 +10,10 @@
 /// | ring    | a copy into a preallocated ring              | the last `limit` records (the standby mode)      |
 /// | capture | a copy into a growing buffer                 | every record up to `limit` (0: no limit), then it counts the dropped ones |
 ///
+/// With a filter (Config::filter, historyfilter.h) only the records that pass it are recorded: the others are counted
+/// (`filtered`) and go nowhere, the stream included. The filter tests a record as it is pushed: a field a device
+/// completes later (UpdateLast) is tested with the value it has then.
+///
 /// and, with any mode but off, an optional stream: every record is also written to a file (JSON Lines, one record
 /// per line) by a writer thread of its own, up to `streamLimit` records (0: no limit). The device's path only copies
 /// the record into the writer's queue; rendering and file I/O happen on the writer thread. Stats keep counting what
@@ -28,17 +32,20 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <concepts>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "debugger/history/historyfilter.h"
 #include "emulator/state/statenode.h"
 #include "emulator/state/statenodejson.h"
 
@@ -62,6 +69,7 @@ struct Config
     size_t limit = 0;           ///< ring: its size (0: the device's default); capture: the cap (0: no cap)
     std::string stream{};       ///< a file every record is written to as well (JSON Lines); "": none
     uint64_t streamLimit = 0;   ///< records to the file at most (0: no limit)
+    std::string filter{};       ///< which records are recorded at all (historyfilter.h); "": every one
 };
 
 struct Stats
@@ -70,6 +78,7 @@ struct Stats
     uint64_t written = 0;       ///< records pushed since the last clear
     uint64_t kept = 0;          ///< records in memory now
     uint64_t dropped = 0;       ///< records not kept: overwritten in the ring, over the capture cap
+    uint64_t filtered = 0;      ///< records the filter left out: neither kept, counted in `written` nor streamed
     uint64_t streamed = 0;      ///< records written to the stream file
     std::string streamError;    ///< why the stream stopped ("" while it runs or when there is none)
     bool paused = false;        ///< held: nothing recorded, the records kept
@@ -315,6 +324,17 @@ private:
 
 }  // namespace detail
 
+namespace detail
+{
+/// A record that names its filter fields: compiled getters instead of a rendered ToState per test (historyfilter.h)
+template <typename Record>
+concept NamesFilterFields = requires(const std::string& name, int64_t& value) {
+    { Record::FilterField(name) } -> std::convertible_to<FieldGetter<Record>>;
+    { Record::FilterWord(name, name, value) } -> std::convertible_to<bool>;
+    { Record::FilterFields() } -> std::convertible_to<const char*>;
+};
+}  // namespace detail
+
 template <typename Record>
 class DeviceHistory final : public IDeviceHistory
 {
@@ -393,7 +413,7 @@ private:
         auto* self = const_cast<DeviceHistory*>(this);
         const size_t head = _stageHead.load(std::memory_order_acquire);
         size_t tail = _stageTail.load(std::memory_order_relaxed);
-        if (tail != head && self->_config.mode == Mode::Ring && !self->_stream.IsOpen())
+        if (tail != head && self->_config.mode == Mode::Ring && !self->_stream.IsOpen() && !self->_filterOn)
             self->DrainRingLocked(tail, head);
         else
         {
@@ -428,6 +448,15 @@ private:
         if (_config.mode == Mode::Off)
         {
             return;
+        }
+        if (_filterOn) [[unlikely]]
+        {
+            _lastFiltered = !PassesLocked(record);
+            if (_lastFiltered)
+            {
+                _filterState->filtered++;
+                return;
+            }
         }
         FlushOpen();
         _written++;
@@ -466,6 +495,9 @@ public:
     {
         std::lock_guard lock(_mutex);
         DrainLocked();
+        // The record this completes was left out by the filter: the newest kept one is another record
+        if (_lastFiltered) [[unlikely]]
+            return;
         if (Record* last = Newest())
         {
             f(*last);
@@ -547,6 +579,11 @@ public:
     bool Configure(const Config& config, std::string& error) override
     {
         std::lock_guard lock(_mutex);
+        // The filter first: a refused one leaves the history as it is, its stream included
+        auto state = std::make_unique<FilterState>();
+        if (!RecordFilter::Parse(config.filter, state->filter, error) ||
+            !CompileLocked(state->filter, state->compiled, error))
+            return false;
         DrainLocked();
         FlushOpen();
         _stream.Close();
@@ -557,10 +594,14 @@ public:
             return false;
         }
         _config = config;
+        _config.filter = state->filter.Text();
         if (_config.mode == Mode::Off)
         {
             _config.stream.clear();
         }
+        // Kept beside the history, not in it: the object stays small for the device that holds it
+        _filterOn = !state->filter.Empty();
+        _filterState = _filterOn ? std::move(state) : nullptr;
         _capacity = _config.mode == Mode::Ring ? (_config.limit ? _config.limit : _defaultRing) : 0;
         ResetLocked();
         if (_config.mode == Mode::Ring)
@@ -614,6 +655,7 @@ public:
         stats.written = _written;
         stats.kept = _records.size();
         stats.dropped = _dropped;
+        stats.filtered = _filterState ? _filterState->filtered : 0;
         stats.streamed = _stream.Written();
         stats.streamError = _stream.Error();
         stats.paused = _paused;
@@ -802,7 +844,89 @@ private:
         _head = 0;
         _written = 0;
         _dropped = 0;
+        if (_filterState)
+            _filterState->filtered = 0;
+        _lastFiltered = false;
         _hasOpen = _hasOverflow = false;
+    }
+
+    /// One term of the filter for a record that names its fields: the field's getter and the values that pass
+    struct CompiledTerm
+    {
+        FieldGetter<Record> get = nullptr;
+        std::vector<FilterRange> ranges;
+    };
+
+    /// The filter of a history that has one (Config::filter), allocated when it is set
+    struct FilterState
+    {
+        RecordFilter filter;                    ///< parsed; tested per record when the record names no fields
+        std::vector<CompiledTerm> compiled;     ///< the same for a record that names its fields
+        uint64_t filtered = 0;                  ///< records left out since the last clear
+    };
+
+    /// The filter's terms as getters and ranges (a record that names its fields; nothing to do for another). False
+    /// with `error` for a field or a word the record does not have
+    bool CompileLocked(const RecordFilter& filter, std::vector<CompiledTerm>& compiled, std::string& error) const
+    {
+        if constexpr (detail::NamesFilterFields<Record>)
+        {
+            for (const FilterTerm& term : filter.Terms())
+            {
+                CompiledTerm one;
+                one.get = Record::FilterField(term.field);
+                if (one.get == nullptr)
+                {
+                    error = "filter: " + Device() + " has no field '" + term.field + "' (" + Record::FilterFields() + ")";
+                    return false;
+                }
+                one.ranges = term.numbers;
+                for (const std::string& word : term.words)
+                {
+                    int64_t value = 0;
+                    if (!Record::FilterWord(term.field, word, value))
+                    {
+                        error = "filter: '" + word + "' is not a value of " + term.field + " (" +
+                                Record::FilterFields() + ")";
+                        return false;
+                    }
+                    one.ranges.push_back(FilterRange{ value, value });
+                }
+                compiled.push_back(std::move(one));
+            }
+        }
+        else
+        {
+            (void)filter;
+            (void)compiled;
+            (void)error;
+        }
+        return true;
+    }
+
+    bool PassesLocked(const Record& record) const
+    {
+        if constexpr (detail::NamesFilterFields<Record>)
+        {
+            for (const CompiledTerm& term : _filterState->compiled)
+            {
+                int64_t value = 0;
+                if (!term.get(record, value))
+                    return false;
+                bool holds = false;
+                for (const FilterRange& range : term.ranges)
+                    holds = holds || (value >= range.lo && value <= range.hi);
+                if (!holds)
+                    return false;
+            }
+            return true;
+        }
+        else
+        {
+            StateNode node = StateNode::Object();
+            record.ToState(node);
+            return _filterState->filter.Matches(node);
+        }
     }
 
     const std::string _device;
@@ -834,6 +958,8 @@ private:
     uint64_t _written = 0;
     uint64_t _dropped = 0;
     bool _paused = false;
+    bool _filterOn = false;
+    bool _lastFiltered = false;             ///< the newest pushed record was left out (UpdateLast has nothing to do)
     bool _hasOpen = false;          ///< the newest kept record is not streamed yet
     Record _overflow{};             ///< a capture's newest record over its cap: streamed, not kept
     bool _hasOverflow = false;
@@ -842,6 +968,7 @@ private:
     size_t _stageMask = 0;                       ///< the stage's size is a power of two
     std::atomic<size_t> _stageHead{ 0 };         ///< written by the one writer
     mutable std::atomic<size_t> _stageTail{ 0 }; ///< advanced under the lock
+    std::unique_ptr<FilterState> _filterState;   ///< set while _filterOn
 };
 
 /// A device's own history, listed in its machine's histories while it lives: the member a device holds
