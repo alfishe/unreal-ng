@@ -305,6 +305,75 @@ TEST_F(AccessTrace_Test, EveryAccessWithItsInstruction)
     EXPECT_EQ(differ, 0u);
 }
 
+/// A filter writes only the records it passes: a port trace (kinds), a routine (pc), the writes into a region
+/// (kinds + addresses). An instruction is in the file only with a cycle of its own
+TEST_F(AccessTrace_Test, AFilterWritesOnlyWhatItPasses)
+{
+    Record(4);
+    ASSERT_FALSE(HasFatalFailure());
+    AccessTraceOptions options;
+    options.fromFrame = _bundle.firstFrame + 1;
+    AccessTraceSummary all;
+    const TraceFile whole = Trace(options, all, "whole.uatr");
+    ASSERT_TRUE(whole.ok);
+    size_t outs = 0, screenWrites = 0;
+    const uint16_t fill = Symbol("fill");
+    size_t fillCycles = 0, fillInstructions = 0;
+    for (const Cycle& c : whole.bus)
+    {
+        outs += c.tag == 'O';
+        screenWrites += c.tag == 'W' && c.address >= 0x4000 && c.address <= 0x57FF;
+        fillCycles += whole.code[c.instruction].pc == fill;
+    }
+    for (const TracedInstruction& x : whole.code)
+        fillInstructions += x.pc == fill;
+    ASSERT_GT(outs, 100u);
+
+    // The port writes alone: every record an OUT with the instruction that made it
+    AccessTraceOptions ports = options;
+    ports.kinds = "O";
+    AccessTraceSummary summary;
+    const TraceFile p = Trace(ports, summary, "ports.uatr");
+    ASSERT_TRUE(p.ok);
+    EXPECT_EQ(p.bus.size(), outs);
+    EXPECT_EQ(p.code.size(), outs) << "one instruction a port write, no other instruction";
+    EXPECT_EQ(summary.ports, outs);
+    EXPECT_EQ(summary.fetches + summary.reads + summary.writes, 0u);
+    for (const Cycle& c : p.bus)
+        EXPECT_EQ(c.tag, 'O');
+    EXPECT_LT(summary.bytes, all.bytes / 2) << "the 64 KB start view and the port writes";
+
+    // One routine's instruction, with all its cycles
+    AccessTraceOptions routine = options;
+    routine.pcRanges = {{fill, fill}};
+    const TraceFile r = Trace(routine, summary, "routine.uatr");
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.code.size(), fillInstructions);
+    EXPECT_EQ(r.bus.size(), fillCycles);
+    for (const TracedInstruction& x : r.code)
+        EXPECT_EQ(x.pc, fill);
+
+    // The writes into the screen
+    AccessTraceOptions screen = options;
+    screen.kinds = "W";
+    screen.addressRanges = {{0x4000, 0x57FF}};
+    const TraceFile s = Trace(screen, summary, "screen.uatr");
+    ASSERT_TRUE(s.ok);
+    EXPECT_EQ(s.bus.size(), screenWrites);
+    EXPECT_EQ(s.code.size(), screenWrites);
+
+    // Through the action: names or letters for the kinds, hex ranges; a bad one is refused
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("action.uatr");
+    const Reply reply = Execute(*_emulator, "trace", {{"from_frame", std::to_string(options.fromFrame)},
+                                                      {"path", path},
+                                                      {"kinds", "out, W"},
+                                                      {"addresses", "4000-57FF,5800-5AFF"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_NE(reply.text.find("filtered"), std::string::npos) << reply.text;
+    EXPECT_FALSE(Execute(*_emulator, "trace", {{"path", path}, {"kinds", "jump"}}).Ok());
+    EXPECT_FALSE(Execute(*_emulator, "trace", {{"path", path}, {"pc", "zz"}}).Ok());
+}
+
 TEST_F(AccessTrace_Test, CapAndRefusals)
 {
     Record(3);

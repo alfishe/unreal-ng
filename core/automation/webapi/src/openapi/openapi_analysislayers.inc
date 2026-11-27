@@ -391,9 +391,12 @@
                         {"from_tinframe", "The point inside from_frame, TTD time units"},
                         {"to_frame", "The frame the window ends in (default from_frame + 1)"},
                         {"to_tinframe", "The point inside to_frame the window ends before"},
-                        {"max_cycles", "The most bus cycles written (default 8000000)"}});
+                        {"max_cycles", "The most bus cycles written (default 8000000)"},
+                        {"kinds", "Filter: only these bus cycles, comma-separated: fetch, read, write, in, out, edit"},
+                        {"pc", "Filter: only instructions whose PC is in these ranges, 8000-9FFF,C000-C0FF (hex)"},
+                        {"addresses", "Filter: only cycles whose address (a port for in / out) is in these ranges"}});
             op["responses"]["200"]["description"] =
-                "path, from_frame, from_tinframe, to_frame, to_tinframe, instructions, cycles, fetches, reads, writes, ports, bytes, truncated, text";
+                "path, from_frame, from_tinframe, to_frame, to_tinframe, instructions, cycles, fetches, reads, writes, ports, bytes, truncated, filtered, text";
             op["responses"]["400"]["description"] = "No path, or a window that ends before it starts";
             op["responses"]["409"]["description"] = "No recording, a window outside it or over 3000 frames, a build running";
         }

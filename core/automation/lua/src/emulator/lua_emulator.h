@@ -8157,7 +8157,7 @@ public:
         // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=, kind=, names=<JSON text>, reason=,
         // offset=, limit=, experiment=<JSON text>} (or the op), experiment {spec=<JSON text>, path=, finding=} (or the
         // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget), trace {path=, from_frame=, from_tinframe=,
-        // to_frame=, to_tinframe=, max_cycles=} (or the path: the CPU access trace of a window, accesstrace.h)
+        // to_frame=, to_tinframe=, max_cycles=, kinds=, pc=, addresses=} (or the path: the CPU access trace of a window, accesstrace.h)
         lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
                                             sol::optional<sol::object> opts) -> sol::object {
             const std::string verb = action.value_or("status");

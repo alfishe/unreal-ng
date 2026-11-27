@@ -963,7 +963,8 @@ POST /api/v1/emulator/{id}/analysis/cover      {budget?, per_branch?, frames?, p
                                                coverage {candidates, tried, flipped, attempts, new_code, branches [...],
                                                text}
 POST /api/v1/emulator/{id}/analysis/trace      {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?,
-                                               max_cycles?}: the CPU access trace of a window, written to path
+                                               max_cycles?, kinds?, pc?, addresses?}: the CPU access trace of a window, written to path
+                                               (kinds / pc / addresses: a filter, only these records)
                                                {path, from_frame, from_tinframe, to_frame, to_tinframe, instructions,
                                                cycles, fetches, reads, writes, ports, bytes, truncated, text}
 ```

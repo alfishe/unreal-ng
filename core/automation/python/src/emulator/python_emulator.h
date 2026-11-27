@@ -4138,7 +4138,7 @@ namespace PythonBindings
                "dict or a list of dicts, or path='e.json', finding='F12', parallel=N: poke / regs / input, N frames, "
                "checks on a muted clone) | cover (budget=64, per_branch=8, frames=50, ranges=: flip one-sided "
                "branches) | trace (path='pass.uatr', from_frame=F, from_tinframe=T, to_frame=E, "
-               "to_tinframe=U, max_cycles=N: the CPU access trace of a window, written to path). "
+               "to_tinframe=U, max_cycles=N, kinds='in,out', pc='8000-9FFF', addresses='4000-5AFF': the CPU access trace of a window, written to path, the last three a filter). "
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")

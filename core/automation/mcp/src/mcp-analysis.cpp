@@ -47,7 +47,7 @@
 //   build {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?, sessions?, ignore_readers?} → POST /analysis/build (wait default
 //                         20000 ms: one call answers the result; the window: analysis-layers.md#stages-and-windows)
 //   cancel                → POST /analysis/cancel
-//   trace {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?} → POST /analysis/trace (the CPU
+//   trace {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?, kinds?, pc?, addresses?} → POST /analysis/trace (the CPU
 //                         access trace of a window, written to path)
 //   explain {address, page?, what?} → GET /analysis/explain?address=&page=&what=
 //   query {kind?, range?, limit?}   → GET /analysis/query?kind=&range=&limit=      (L2 claims, P3)
@@ -778,6 +778,13 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["frames"]["type"] = "integer";
     schema["properties"]["frames"]["default"] = 10;
     schema["properties"]["frames"]["description"] = "Emulated frames to run for porttrace (1-1000)";
+    schema["properties"]["filter"]["description"] =
+        "porttrace: which port accesses are recorded at all (set before the capture starts, so a long capture holds "
+        "only what is studied). A preset name - all, ay-only, fdc-only, no-fdc, outs-only, ins-only, unmapped, no-fe, "
+        "sound, paging - or {include: [rule...], exclude: [rule...]}; a rule is {port: '0xFFFD' (decoded), raw: "
+        "'0x7FFD', code, device: 'AY_FFFD', direction: 'in'|'out', pc: ['8000', '9FFF'], unmapped: true}, every field "
+        "given must match; an access is recorded when an include rule matches (or there is none) and no exclude rule "
+        "does. Omitted: the filter in force stays";
     schema["properties"]["lines"]["type"] = "boolean";
     schema["properties"]["lines"]["description"] = "vdac2_line_budget: include the cost of every line (line_clocks)";
     schema["properties"]["in_flight"]["type"] = "boolean";
@@ -1040,8 +1047,20 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 if (limit < 1) limit = 1;
                 if (limit > 1024) limit = 1024;
 
+                // filter: a preset name, or the include / exclude rules of POST /profiler/porttrace/filter
+                Json::Value filter;
+                if (args.isMember("filter") && args["filter"].isString())
+                    filter["preset"] = args["filter"];
+                else if (args.isMember("filter") && args["filter"].isObject())
+                    filter = args["filter"];
+                else if (args.isMember("filter") && !args["filter"].isNull())
+                {
+                    done(ToolResult::Error("filter: a preset name or {include: [...], exclude: [...]}"));
+                    return;
+                }
+
                 TargetResolver::ResolveFromArgs(
-                    args, caller, [frames, limit, &caller, done, progress](bool ok, const std::string& idOrError) {
+                    args, caller, [frames, limit, filter, &caller, done, progress](bool ok, const std::string& idOrError) {
                         if (!ok)
                         {
                             done(ToolResult::Error(idOrError));
@@ -1058,6 +1077,27 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                             (*body)["enabled"] = true;
                             caller.Call("PUT", Endpoint(id, "/feature/porttrace"), body.get(),
                                         [body, next](int, Json::Value) { next(true); });
+                        });
+                        steps.push_back([&caller, id, filter](Json::Value& acc, std::function<void(bool)> next) {
+                            if (filter.isNull())
+                            {
+                                next(true);
+                                return;
+                            }
+                            // Record-time: set before the start, a refused rule stops the action
+                            auto body = std::make_shared<Json::Value>(filter);
+                            caller.Call("POST", Endpoint(id, "/profiler/porttrace/filter"), body.get(),
+                                        [body, &acc, next](int status, Json::Value answer) mutable {
+                                            if (status < 200 || status >= 300)
+                                            {
+                                                acc["error"] = "Port trace filter refused (HTTP " +
+                                                               std::to_string(status) + "): " + DescribeErrorBody(answer);
+                                                next(false);
+                                                return;
+                                            }
+                                            acc["filter"] = answer["filter"];
+                                            next(true);
+                                        });
                         });
                         steps.push_back([&caller, id](Json::Value& acc, std::function<void(bool)> next) {
                             caller.Call("POST", Endpoint(id, "/profiler/porttrace/start"), nullptr,
@@ -1098,7 +1138,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                         });
 
                         RunSeries(ReportSeriesProgress(std::move(steps), progress,
-                                                       {"enable porttrace", "start capture", "run frames", "stop capture", "read events"}),
+                                                       {"enable porttrace", "set filter", "start capture", "run frames",
+                                                        "stop capture", "read events"}),
                                   [id, done](Json::Value acc) {
                             if (acc.isMember("error") && acc["error"].isString())
                             {
@@ -1113,6 +1154,16 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                             std::ostringstream out;
                             out << "Port trace: " << eventCount << " event(s) over " << acc.get("frames_run", 0).asUInt()
                                 << " frames [target " << id << "]";
+                            if (acc.isMember("filter"))
+                                out << "\nFilter: " << acc["filter"].asString();
+                            // The events in the text too: an agent may see nothing else
+                            if (eventCount != 0)
+                            {
+                                for (const Json::Value& e : acc["events"]["events"])
+                                    out << "\n  frame " << e["frame"].asUInt() << " pc " << e["pc"].asString() << " "
+                                        << e["direction"].asString() << " " << e["raw_port"].asString() << " = "
+                                        << e["value"].asString() << " " << e["device"].asString();
+                            }
                             done(ToolResult::Ok(out.str(), std::move(acc)));
                         });
                     });
@@ -1624,6 +1675,17 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["to_tinframe"]["description"] = "trace: the point inside to_frame the window ends before (TTD units)";
     schema["properties"]["max_cycles"]["type"] = "integer";
     schema["properties"]["max_cycles"]["description"] = "trace: the most bus cycles written (default 8000000)";
+    schema["properties"]["kinds"]["type"] = "string";
+    schema["properties"]["kinds"]["description"] =
+        "trace: a filter - only these bus cycles are written, comma-separated: fetch, read, write, in, out, edit "
+        "(\"in,out\" is a port trace with each access's frame, T and PC and no instruction stream); an instruction "
+        "is then in the file only with a cycle of its own";
+    schema["properties"]["pc"]["type"] = "string";
+    schema["properties"]["pc"]["description"] =
+        "trace: a filter - only instructions whose PC is in these ranges, \"8000-9FFF,C000-C0FF\" (hex, inclusive)";
+    schema["properties"]["addresses"]["type"] = "string";
+    schema["properties"]["addresses"]["description"] =
+        "trace: a filter - only cycles whose address (a port for in / out) is in these ranges, \"4000-5AFF\"";
     schema["properties"]["what"]["type"] = "string";
     schema["properties"]["what"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* what : {"auto", "routine", "byte"})
@@ -1851,7 +1913,7 @@ void RegisterAnalysis(ToolRegistry& registry)
             {
                 Json::Value body(Json::objectValue);
                 for (const char* name : {"path", "from_frame", "from_tinframe", "to_frame", "to_tinframe", "max_cycles",
-                                         "async"})
+                                         "kinds", "pc", "addresses", "async"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name];
                 ResolveAndForward(args, "POST", "/analysis/trace", &body, caller, "Analysis access trace", withText);

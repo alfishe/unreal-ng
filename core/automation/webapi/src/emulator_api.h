@@ -1347,7 +1347,7 @@ public:
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void analysisCover(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
-    // POST trace {path, from_frame, from_tinframe, to_frame, to_tinframe, max_cycles}: the CPU access trace of a
+    // POST trace {path, from_frame, from_tinframe, to_frame, to_tinframe, max_cycles, kinds, pc, addresses}: the CPU access trace of a
     // window of the recording, written to path (accesstrace.h)
     void analysisTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
