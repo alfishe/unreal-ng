@@ -53,6 +53,11 @@ public:
         InvalidateCode(0, 0xFFFFFFFFu);
         return false;
     }
+    /// Write watch (TTD hashes only the ESP memory written): while on, the host address of every 4 KB page a
+    /// guest store wrote since the last arming is appended to `out` by TakeWrittenPages, which arms the watch
+    /// again. False: no watch (an implementation without one), the caller takes all memory as written
+    virtual bool WatchWrites(bool /*on*/) { return false; }
+    virtual void TakeWrittenPages(std::vector<uintptr_t>& /*out*/) {}
 
     virtual Result Run(uint64_t maxInstructions) = 0;
     /// Translated code (the JIT) or the interpreter, from the next Run on; any thread

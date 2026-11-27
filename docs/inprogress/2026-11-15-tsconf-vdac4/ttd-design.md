@@ -107,8 +107,41 @@ M3 Ultra with the code kept), plus decoding the ESP pieces.
 
 A replay that does not reach the recorded host state (or does not fit its journal) makes the position not
 bit-exact: the engine asks the source after the load (`ITTDRegionSource::TTDLoadDiverged`) and the seek's check
-reports `replay_diverged` (`not_bit_exact`, `GET /ttd/position` `check`). The hash covers the host state, not the
-ESP memory: a memory difference that leaves the host state alike is not seen.
+reports `replay_diverged` (`not_bit_exact`, `GET /ttd/position` `check`). Since 2026-11-27 the ESP memory is checked
+too (§6.3).
+
+### 6.3 The ESP memory check (2026-11-27)
+
+A replay that ends at the recorded host state may still leave other ESP memory bytes (PSRAM, SRAM with its I and D
+views, the ROM's RW copy): nothing read them yet, so the host state agrees. Each capture now records, per region, a
+hash of the memory beside the host state's (`TTDVdac4EspCpu::MemoryHashes`, the blob's `VD4M` tail; older blobs have
+none and are not checked). A replay that ends at another memory reports `replay_diverged` on `Vdac4EspCpu`, the
+detail naming the region (`replay ended at another ESP memory (vdac4.esp.psram)`).
+
+Cost, kept to what was written:
+
+- **The hash is a sum** over the region's 4 KB pieces of a 4-lane hash of each piece, seeded by its place. A capture
+  hashes again only the pieces written since the last one and updates the sum; the whole memory (9 MB, about
+  0.5 ms on the M3 Ultra) is hashed only when the table does not match the memory: the first capture, the capture
+  after a load or restore, and a load's check itself (once per load).
+- **The write watch.** The Xtensa CPU's stores already test the page's decoded-code pointer
+  (`xtensa::Cpu::Store`, the JIT's `Translate`); while watched, a page without code gets a shared sentinel
+  there, a page with code a flag in its bitmap: the first store into it takes the existing slow path once, records
+  the page's host address and clears the watch (`Cpu::WatchWrites`, `ArmWriteWatch`, `WrittenPages`). The host's own
+  writes go through `EspMemory::Bytes` (writable view), `Write32`, `WriteString`: each records its range while
+  watched; `Reset` all of it. `EspAppHost::WatchWrites` / `TakeWrites` join both. Each capture takes the
+  ranges, hashes their pieces and arms the watch again (a few thousand page entries, microseconds).
+- **Off: nothing.** The watch is on only while recording (`TTDRecordingStarted` / `Stopped`); off, the store
+  paths are as before (the sentinel is never set), `Bytes()` pays one test of a flag.
+- **The check of the watch:** `UNREAL_VDAC4_TTD_MEMORY_CHECK=1` hashes the whole memory at each capture as well and
+  prints every piece the watch missed (stats `watchMisses`); a run of new ESP code should come out clean.
+
+Measured 2026-11-27 (M3 Ultra, A = master 14790bf91, B = this, both at once, order rotated): TTD off, Quake II demo
+7.106 / 7.147 ms per frame (5 rounds, noise), Metal Slug 8.401 / 8.393 (3 rounds). Recording: Quake II 7.953 /
+8.040 (+0.09 ms, +1.1 %, 5 rounds), Metal Slug 6.528 / 6.645 (+0.12 ms, +1.8 %, 3 rounds). With
+`UNREAL_VDAC4_TTD_MEMORY_CHECK=1` on both games no page was missed, and every seek was exact (Quake II 26 of 26,
+Metal Slug every point but the session's first frame, `picture_incomplete`). Each load hashes the whole memory once
+(about 0.5 ms; seeks take 12-150 ms).
 
 ### 6.2 Replay points
 
@@ -237,7 +270,7 @@ The demo rate from the history counter; the session rate and the regions from th
 - **Seen on the way, not K's.** Seeks to the loader's points read a stale `tang.q2.latched` (the count of the last
   run of the core): `LeaveQ2` now zeroes it, as a state without the core carries none (22/26 -> 26/26 exact). Metal Slug: 6-10 of 14 seeks
   show another picture than the live point at a pause in real time (the ESP's app on its worker thread), at every
-  K, while the engine's check says exact and PC, memory, Tang agree; open (§10).
+  K, while the engine's check says exact and PC, memory, Tang agree; fixed 2026-11-27 (§10).
 
 ### 9.2 Seek time: the ESP memory left to the replay point (2026-11-25)
 
@@ -311,8 +344,9 @@ Tried before and dropped (patches kept outside the tree):
 
 ## 10. Open
 
-- A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame (about
-  1 ms per frame).
+- ~~A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame
+  (about 1 ms per frame).~~ Done 2026-11-27 (owner: do it, at the least cost): the memory's hash per capture from
+  the pieces written only (§6.3).
 - The blob's limit (4 MB) holds: a journal over 256 KB keys the capture that finds it, so the blob carries the host
   state and at most 256 KB of journal whatever one frame sent (an `APP_START` with its ELF). Only a host state over
   3.7 MB would pass it.
@@ -330,9 +364,19 @@ Tried before and dropped (patches kept outside the tree):
   at the ESP's keyframes only (§11), 27 MB/min. The rest of the demo's stream is the ESP's own keyframes (PSRAM
   17 MB/min, the ESP CPU state 9 MB/min): K (§9.1) trades those for the seek's replay; K = 50 while the core
   runs since 2026-11-27 (§9.5).
-- Metal Slug (slot 0, the ESP's app on its worker thread): a seek to a point taken at a pause in real time shows
-  another picture in 6-10 of 14 seeks at every K, the engine's check exact (§9.5). Not looked into yet: the live
-  picture at a pause or the restored one.
+- ~~Metal Slug (slot 0, the ESP's app on its worker thread): a seek to a point taken at a pause in real time shows
+  another picture in 6-10 of 14 seeks at every K, the engine's check exact (§9.5).~~ Fixed 2026-11-27, both sides
+  were wrong. The live machine stopped inside a frame showed the FT812 frame that finished last, while the display
+  rule (and the seek) shows the frame in flight drawn up to the position: a stop now catches the FT812 picture up
+  (`EveHostCard::CatchUpPicture`, `Screen::CatchUpExternalPicture`, at a pause, a park, the end of a direct run).
+  And a seek inside a frame replayed from the frame before only: lines of the FT812 frame in flight at that
+  checkpoint were drawn with the checkpoint's `RAM_G`, which Metal Slug rewrites all the time; the compose now
+  replays the device's lead-in for time targets too and retries from earlier checkpoints until both FT812 frames
+  are drawn by the replay, else reports `picture_incomplete` (the session's first frames). Rows of the difference
+  were contiguous top bands, the live picture of the next point: the frame in flight. Rerun: 6 real-time points
+  sought twice each, all 12 equal (`capture/screen?source=live`, three of them inside a frame); the start point,
+  in the session's first frame, reported `picture_incomplete` on both seeks; 38 deterministic and real-time points of `ms5.py` equal. The window's picture
+  (`source=presented`) keeps the last finished frame on a pause, for every machine; a seek shows the composed one.
 
 ## 11. The Quake II core between keyframes (2026-11-27)
 

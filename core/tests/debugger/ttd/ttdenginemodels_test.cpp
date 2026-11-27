@@ -440,6 +440,65 @@ TEST_F(TTDEngineModels_Fixture, Vdac4EspSeekReportsAReplayDivergence)
     EXPECT_EQ(seek(8).status, ttd::TTDRestoreStatus::Exact);
 }
 
+/// The ESP memory is checked as the host state is (ttd-design.md §6.3): a byte the journal does not give back (here
+/// a host write behind the journal while recording, the host state untouched) makes a seek after it not bit-exact,
+/// replay_diverged naming the region; before it, exact. Recording hashes only the pieces written
+TEST_F(TTDEngineModels_Fixture, Vdac4EspSeekReportsAMemoryDivergence)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("TSL-VDAC4"));
+    auto* ports = dynamic_cast<PortDecoder_TSConf*>(_emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    Vdac4Board* board = ports->GetVdac4Board();
+    ASSERT_NE(board, nullptr);
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    constexpr int kFrames = 22, kTamperAt = 15;
+    ASSERT_TRUE(_ttd->StartRecording());
+    ttd::TTDVdac4EspCpu* esp = nullptr;
+    for (const ttd::TTDDeviceEntry& e : Engine().Devices().Entries())
+        if (auto* d = dynamic_cast<ttd::TTDVdac4EspCpu*>(e.device))
+            esp = d;
+    ASSERT_NE(esp, nullptr);
+    std::vector<uint8_t> hostBefore, hostAfter;
+    for (int f = 0; f < kFrames; ++f)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        board->Runtime().WaitIdle();
+        if (f == kTamperAt)
+        {
+            board->Runtime().Host().SaveState(hostBefore);
+            board->Runtime().Host().Memory().Write32(vdac4::EspMemory::kPsramDbus + 0x123450, 0xDEADBEEFu);
+            board->Runtime().Host().SaveState(hostAfter);
+        }
+    }
+    _ttd->StopRecording();
+    ASSERT_GE(Engine().CheckpointCount(), size_t(kFrames));
+    ASSERT_EQ(hostBefore, hostAfter) << "the host state alike: only the memory can tell";
+    EXPECT_GE(esp->GetStats().memoryFullHashes, 1u);
+    EXPECT_GE(esp->GetStats().memoryPiecesHashed, 1u) << "the written piece, not the whole memory, per capture";
+    EXPECT_LE(esp->GetStats().memoryFullHashes, 2u) << "one whole hash when the recording starts";
+
+    auto seek = [&](size_t i) {
+        const ttd::TTDPosition& p = Engine().Checkpoint(i)->position;
+        EXPECT_TRUE(_ttd->SeekTo({p.frame, static_cast<uint32_t>(p.tInFrame)}));
+        return _ttd->LastEngineCheck();
+    };
+    const ttd::TTDRestoreResult before = seek(10);
+    EXPECT_EQ(before.status, ttd::TTDRestoreStatus::Exact) << before.message;
+
+    const ttd::TTDRestoreResult after = seek(Engine().CheckpointCount() - 3);
+    EXPECT_EQ(after.status, ttd::TTDRestoreStatus::NotBitExact) << after.message;
+    const auto issue = std::find_if(after.issues.begin(), after.issues.end(), [](const ttd::TTDRestoreIssue& i) {
+        return i.kind == ttd::TTDRestoreIssueKind::ReplayDiverged;
+    });
+    ASSERT_NE(issue, after.issues.end()) << after.message;
+    EXPECT_EQ(issue->device.type, ttd::TTDDeviceType::Vdac4EspCpu);
+    EXPECT_NE(issue->detail.find("vdac4.esp.psram"), std::string::npos) << issue->detail;
+    EXPECT_EQ(issue->detail.find("vdac4.esp.sram"), std::string::npos) << issue->detail;
+
+    EXPECT_EQ(seek(8).status, ttd::TTDRestoreStatus::Exact);
+}
+
 /// The engine leaves the ESP regions to the device's load only when that load goes on from a replay point
 /// (TTDLoadRestoresRegions; its hits are checked on DOOM, ttd-design.md §9.2). Without one (no app: an empty
 /// journal keeps none) the engine restores them as before: ESP memory changed behind the engine comes back exact

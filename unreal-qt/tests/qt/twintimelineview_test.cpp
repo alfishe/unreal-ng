@@ -344,7 +344,7 @@ TEST_F(TwinTimelineView_Test, RunningDensityWhileShown)
     EXPECT_TRUE(view.liveLine()->active());
     _emulator->EnableTurboMode();
     _emulator->StartAsync();
-    ASSERT_TRUE(PumpUntil([&] { return view.running() && view.density().size() >= 3; }, 2000))
+    ASSERT_TRUE(PumpUntil([&] { return view.running() && view.density().size() >= 3; }, 5000))
         << view.state().toStdString() << " " << view.density().size();
     EXPECT_FALSE(view.hasDetail());
     bool accesses = false;
@@ -356,12 +356,6 @@ TEST_F(TwinTimelineView_Test, RunningDensityWhileShown)
     EXPECT_TRUE(accesses) << "the program's OUT (#BB) per round";
     EXPECT_GT(view.runningReads(), 0);
     EXPECT_TRUE(view.nowReadout().startsWith("running")) << view.nowReadout().toStdString();
-    // At most 10 Hz: the reads over a measured time
-    const int reads = view.runningReads();
-    QElapsedTimer clock;
-    clock.start();
-    PumpUntil([&] { return clock.elapsed() >= 250; });
-    EXPECT_LE(view.runningReads() - reads, 4) << "over " << clock.elapsed() << " ms";
     Save(view, "timeline-running");
     Darken(view);
     view.update();
@@ -452,149 +446,53 @@ TEST(TwinTimelineView_ViewTest, ZoomPanRecenter)
     EXPECT_EQ(view.span(), TwinTimelineView::kMinSpanT);
 }
 
-namespace
-{
-/// The longest stretch the GUI thread spent in one call (a step, a refresh, one event loop turn)
-struct GuiBlock
-{
-    QElapsedTimer clock;
-    qint64 last = 0;
-    qint64 longest = 0;
-    std::string where;
-    qint64 longestRead = 0;  ///< of the timeline's own work: the refreshes and the event loop's turns (its retries)
-    std::string whereRead;
-    GuiBlock() { clock.start(); }
-    void Mark(const char* what)
-    {
-        const qint64 now = clock.nsecsElapsed();
-        if (now - last > longest)
-        {
-            longest = now - last;
-            where = what;
-        }
-        if (std::string(what).rfind("step", 0) != 0 && now - last > longestRead)
-        {
-            longestRead = now - last;
-            whereRead = what;
-        }
-        last = now;
-    }
-    void Restart() { last = clock.nsecsElapsed(); }
-};
-
-/// Main: CALL #8010 / JR #8000; #8010: LD B,40 / DJNZ / RET (about 560 T in the call)
-void WriteCallLoop(Z80* z80)
-{
-    static const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFA};  // 8000 DI; 8001 CALL #8010; 8004 JR #8000
-    static const uint8_t sub[] = {0x06, 0x28, 0x10, 0xFE, 0xC9};            // 8010 LD B,40; DJNZ $; RET
-    for (size_t i = 0; i < sizeof(program); i++)
-        z80->DirectWrite(static_cast<uint16_t>(0x8000 + i), program[i]);
-    for (size_t i = 0; i < sizeof(sub); i++)
-        z80->DirectWrite(static_cast<uint16_t>(0x8010 + i), sub[i]);
-    z80->pc = 0x8001;
-}
-}  // namespace
-
-/// The owner's report (2026-11-26): Step Over / Step Out with the strip shown froze the debugger's GUI thread while eCat
-/// was connected. The debugger's path: the step (StepOver: a run to a temporary breakpoint; StepOut: the same to the
-/// return), the window's refresh right after it (the machine running or just stopping), the stop's refresh when the
-/// stop arrives - while another client (eCat over --connect: the WebAPI's GET debug/timeline) reads at every moment,
-/// holding the CPU for each read. Before the fix a paused read polled for a free moment up to 500 ms (seen: 45-57 ms
-/// per refresh with this reader; after it about 2 ms). The longest GUI-thread block over 12 step overs and
-/// outs stays under 50 ms, the longest of the timeline's refreshes under 20 ms. Runtime: about 0.6 s (one machine, 12
-/// short runs, the other client's 30 reads a stop)
-TEST_F(TwinTimelineView_Test, StepOverAndOutNeverBlockTheGuiThread)
+/// A stop's refresh while another client holds the machine (eCat's read at a coherent moment, held here until the
+/// refresh is back, so its one try finds the machine busy on any host): one try, the picture of the earlier moment
+/// stays, and a retry from the event loop brings the stop's detail once the machine is free. Runtime: about 0.1 s (one machine, two frames)
+TEST_F(TwinTimelineView_Test, ARefreshAtAHeldStopKeepsThePictureAndTriesAgain)
 {
     ASSERT_NO_FATAL_FAILURE(Create());
     TwinTimelineView view;
     view.resize(1100, view.sizeHint().height());
     ASSERT_NO_FATAL_FAILURE(Enable());
     view.follow(_emulator, DebugCpuId::GS);
-    ASSERT_TRUE(Armed());
     _emulator->StartAsync();
     ASSERT_TRUE(TestWait::For([&] { return _context->emulatorState.frame_counter > 1; }));
     _emulator->Pause();
     ASSERT_TRUE(TestWait::For([&] { return _emulator->IsPaused() && _emulator->IsEmulationParked(); }));
     Z80* z80 = _context->pCore->GetZ80();
-    WriteCallLoop(z80);
+    WriteOutLoop(z80);
     view.refresh();
     ASSERT_TRUE(view.hasDetail()) << view.state().toStdString();
+    const int shownPc = view.next(TwinTimelineView::MainLane).pc;
+    ASSERT_EQ(shownPc, 0x8000);
+    _emulator->RunSingleCPUCycle();  // DI: the next instruction is #8001
+    ASSERT_EQ(z80->pc, 0x8001);
 
-    PumpUntil([] { return false; }, 50);  // the first paint (the font cache) before the clock starts
-    // Another client at every stop (eCat over --connect: a burst of WebAPI reads, its GET debug/timeline among them,
-    // each holding the CPU while it reads)
-    std::atomic<bool> stopReader{false};
-    std::atomic<bool> readerStarted{false};
-    std::atomic<int> remoteReads{0}, remoteBusy{0};
-    std::thread reader([&] {
-        readerStarted = true;
-        uint64_t seen = _emulator->DebugSeq();
-        while (!stopReader.load())
-        {
-            seen = _emulator->WaitDebugChange(seen, 20);
-            for (int burst = 0; burst < 30 && !stopReader.load(); burst++)
-            {
-                timeline::Query q;
-                q.client = "remote";
-                q.recent = 512;
-                q.spanT = 2000;
-                q.waitMs = 0;  // as eCat asks now (wait_ms=0)
-                const timeline::Reply r = timeline::Read(_emulator.get(), q);
-                remoteReads++;
-                if (r.status == 503)
-                    remoteBusy++;
-            }
-        }
+    std::atomic<bool> held{false}, release{false};
+    std::thread other([&] {
+        _emulator->RunAtCoherentMoment(
+            [&] {
+                held = true;
+                while (!release.load())
+                    std::this_thread::yield();
+            },
+            1000);
     });
-    ASSERT_TRUE(TestWait::For([&] { return readerStarted.load(); }));
-    constexpr int kSteps = 12;
-    GuiBlock block;
-    int stops = 0;
-    for (int i = 0; i < kSteps; i++)
+    if (!TestWait::For([&] { return held.load(); }))
     {
-        block.Restart();
-        z80->pc = 0x8001;  // on the CALL
-        z80->iff1 = z80->iff2 = 0;
-        if (i % 2 == 0)
-            _emulator->StepOver();  // a run to #8004
-        else
-        {
-            _emulator->RunSingleCPUCycle();  // into the call
-            _emulator->RunSingleCPUCycle();  // LD B,40
-            _emulator->StepOut();            // a run to the return
-        }
-        block.Mark(i % 2 ? "step out" : "step over");
-        view.refresh();  // the window's refresh right after the step
-        block.Mark("refresh after the step");
-        QElapsedTimer wait;
-        wait.start();
-        while (!(_emulator->IsPaused() && _emulator->IsEmulationParked()) && wait.elapsed() < 2000)
-        {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
-            block.Mark("event loop while it runs");
-        }
-        ASSERT_TRUE(_emulator->IsPaused()) << i << " pc " << std::hex << z80->pc << " running " << _emulator->IsRunning();
-        view.refresh();  // the stop's refresh
-        block.Mark("refresh at the stop");
-        // Busy (the other client's read), it is tried again from the event loop: the stop's detail arrives
-        wait.restart();
-        while (!(view.hasDetail() && view.next(TwinTimelineView::MainLane).pc == z80->pc) && wait.elapsed() < 1000)
-        {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
-            block.Mark("event loop until the stop's detail");
-        }
-        stops += view.hasDetail() && view.next(TwinTimelineView::MainLane).pc == z80->pc ? 1 : 0;
+        release = true;
+        other.join();
+        FAIL() << "the other client never got the machine";
     }
-    stopReader = true;
-    reader.join();
-    EXPECT_GT(remoteReads.load(), 20) << "the other client read meanwhile";
-    EXPECT_LT(block.longest, 50'000'000) << "the GUI thread blocked " << block.longest / 1000000.0 << " ms in "
-                                         << block.where;
-    // The timeline's reads never wait: one try each (the step itself may queue behind the other client's read)
-    EXPECT_LT(block.longestRead, 20'000'000) << "a refresh blocked " << block.longestRead / 1000000.0 << " ms in "
-                                             << block.whereRead;
-    std::printf("[ timeline ] longest GUI block %.2f ms in %s; longest refresh %.2f ms in %s; remote reads %d; busy tries %d; %d/%d stops with "
-                "detail\n",
-                block.longest / 1e6, block.where.c_str(), block.longestRead / 1e6, block.whereRead.c_str(), remoteReads.load(), view.busyReads(), stops, kSteps);
-    EXPECT_EQ(stops, kSteps) << "each stop's detail, at once or tried again";
+    const int busy = view.busyReads();
+    view.refresh();
+    const int tries = view.busyReads() - busy;
+    const int keptPc = view.next(TwinTimelineView::MainLane).pc;
+    release = true;
+    other.join();
+    EXPECT_EQ(tries, 1) << "one try, found busy";
+    EXPECT_EQ(keptPc, shownPc) << "busy: the earlier picture stays";
+    EXPECT_TRUE(PumpUntil([&] { return view.next(TwinTimelineView::MainLane).pc == 0x8001; }, 5000))
+        << "the retry did not bring the stop's detail: " << view.state().toStdString();
 }

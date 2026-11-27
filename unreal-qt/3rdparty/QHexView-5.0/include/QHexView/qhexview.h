@@ -127,9 +127,15 @@ public Q_SLOTS:
     // highlight by a row or two); a change of the view itself (a scroll, the size, the options) repaints it all
     void beginChanges();
     void endChanges();
-    // unreal-ng: rows painted as kept QTextLayouts (default) or through a QTextDocument per paint, as upstream (tests
-    // compare the two)
+    // unreal-ng: rows painted as kept QTextLayouts (default) or through a QTextDocument per paint, as upstream
     qsizetype rowPixmapCount() const { return m_rowPixmaps.size(); }  // the rows kept as pixels (tests)
+    // unreal-ng: whether text drawn into a pixmap gets the glyphs it gets on the widget. Not with FreeType (Linux, the
+    // BSDs, the Steam Deck, Windows' offscreen platform or fontengine=freetype): QRasterPaintEngine draws a widget's
+    // glyphs in the desktop's antialiasing (subpixel / LCD when it is on) and a pixmap's in gray (Format_A8), so the
+    // rows are drawn from their kept layouts straight onto the widget there. CoreText (Apple) and Windows' own engines
+    // pick the glyphs by the target image (ClearType on an opaque RGB32 pixmap as on the backing store): the rows are
+    // kept as pixmaps
+    static bool rowPixmapsDrawLikeTheWidget();
     void setRowLayouts(bool on) {
         m_rowLayoutsOn = on;
         m_rowLayouts.clear();

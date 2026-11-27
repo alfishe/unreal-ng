@@ -458,11 +458,31 @@ private:
 };
 } // namespace
 
+bool QHexView::rowPixmapsDrawLikeTheWidget() {
+#if defined(Q_OS_APPLE)
+    return true;  // CoreText, whatever the platform plugin
+#elif defined(Q_OS_WIN)
+    // Windows' own font engines unless FreeType was asked for (-platform windows:fontengine=freetype); the offscreen
+    // platform draws with FreeType
+    static const bool alike = [] {
+        if(QGuiApplication::platformName() != QLatin1String("windows"))
+            return false;
+        const QString spec = qEnvironmentVariable("QT_QPA_PLATFORM") + QLatin1Char(' ') +
+                             QCoreApplication::arguments().join(QLatin1Char(' '));
+        return !spec.contains(QLatin1String("fontengine=freetype"), Qt::CaseInsensitive);
+    }();
+    return alike;
+#else
+    return false;  // FreeType
+#endif
+}
+
 bool QHexView::paintRows(QPainter* painter, const std::vector<std::pair<qint64, qint64>>& runs, qint64 rows,
                          int headerrows, const QByteArray& key) const {
     // The rows drawn once into pixmaps over the viewport's background, then copied (a QTextLayout's draw of a row of
     // coloured bytes cost more than its making); drawn directly when a pixmap could not match: a background that is
-    // no plain colour, a row height in fractions of a pixel, a scaled painter
+    // no plain color, a row height in fractions of a pixel, a scaled painter, glyphs a pixmap gets otherwise than the
+    // widget (rowPixmapsDrawLikeTheWidget)
     const QBrush background = this->viewport()->palette().brush(this->viewport()->backgroundRole());
     const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
     const QColor text = QPalette().color(QPalette::Text);
@@ -524,7 +544,8 @@ bool QHexView::paintRows(QPainter* painter, const std::vector<std::pair<qint64, 
             break;
         }
     const qreal x = -this->horizontalScrollBar()->value();
-    const bool pixmaps = background.style() == Qt::SolidPattern && background.color().alpha() == 255 &&
+    const bool pixmaps = rowPixmapsDrawLikeTheWidget() && background.style() == Qt::SolidPattern &&
+                         background.color().alpha() == 255 &&
                          m_blockHeight > 0 && qFuzzyCompare(m_blockHeight, qRound(m_blockHeight)) &&
                          painter->transform().type() <= QTransform::TxTranslate;
     if(!pixmaps) {

@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -501,6 +502,48 @@ TEST_F(XtensaCpu_Test, PsramAliasesShareOneBuffer)
     uint8_t b = 0;
     EXPECT_TRUE(cpu.Read8(0x3C000800, b));
     EXPECT_EQ(b, 0xAB);
+}
+
+/// The write watch (TTD hashes only the ESP memory written): every page a guest or host store wrote since the
+/// last arming is recorded, once per arming, code pages included (their decoded code still drops on a write);
+/// off, nothing is recorded and the stores take their usual path
+TEST_F(XtensaCpu_Test, WriteWatchRecordsEveryWrittenPageOnce)
+{
+    auto page = [&](uint32_t guest) {
+        return reinterpret_cast<uintptr_t>(guest >= kDram && guest < kDram + kDramSize ? dram.data() + (guest - kDram)
+                                                                                        : iram.data() + (guest - kIram)) &
+               ~uintptr_t(0xFFF);
+    };
+    auto count = [&](uintptr_t p) {
+        return std::count(cpu.WrittenPages().begin(), cpu.WrittenPages().end(), p);
+    };
+    EXPECT_EQ(Call(kIncrement, {5}), 6u);  // decoded code in its page
+    cpu.WatchWrites(true);
+    EXPECT_TRUE(cpu.WrittenPages().empty());
+
+    EXPECT_EQ(Call(kStorebyte, {kBuf + 0x10, 0x11}), 0x11u);
+    EXPECT_EQ(Call(kStorebyte, {kBuf + 0x20, 0x22}), 0x22u);
+    EXPECT_EQ(count(page(kBuf)), 1) << "a guest store, once per arming";
+    const uint32_t far = kBuf + 0x8000;
+    ASSERT_TRUE(cpu.Write32(far, 0xDEADBEEFu));
+    EXPECT_EQ(count(page(far)), 1) << "a host Write32";
+    ASSERT_TRUE(cpu.Write8(kIncrement + 5, 10));  // ADDI imm8: into decoded code
+    EXPECT_EQ(count(page(kIncrement)), 1) << "a code page";
+    EXPECT_EQ(Call(kIncrement, {5}), 15u) << "the code still drops on a write while watched";
+
+    cpu.WrittenPages().clear();
+    cpu.ArmWriteWatch();
+    EXPECT_EQ(Call(kStorebyte, {kBuf + 0x30, 0x33}), 0x33u);
+    EXPECT_EQ(count(page(kBuf)), 1) << "armed again: recorded again";
+    ASSERT_TRUE(cpu.Write8(kIncrement + 5, 1));
+    EXPECT_EQ(count(page(kIncrement)), 1) << "the code page decoded again is watched again";
+    EXPECT_EQ(Call(kIncrement, {5}), 6u);
+
+    cpu.WatchWrites(false);
+    EXPECT_EQ(Call(kStorebyte, {kBuf + 0x40, 0x44}), 0x44u);
+    ASSERT_TRUE(cpu.Write32(far, 1));
+    EXPECT_TRUE(cpu.WrittenPages().empty()) << "off: nothing recorded";
+    EXPECT_EQ(dram[kBuf - kDram + 0x40], 0x44);
 }
 
 TEST_F(XtensaCpu_Test, SelfModifyingCodeIsRedecoded)

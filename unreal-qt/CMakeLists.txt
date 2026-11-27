@@ -11,6 +11,7 @@ project(unreal-qt LANGUAGES CXX)
 # -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Sanitize.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Lto.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Linker.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Ccache.cmake)
 
 # Automation options follow the root CMakeLists.txt (single source of truth).

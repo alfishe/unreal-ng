@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -109,11 +110,18 @@ struct EncoderConfig
 
     /// region <FFmpeg-specific>
 
+    /// The process's default for useHardwareAccel and for RecordingManager's Auto acceleration: true (the GPU when the
+    /// machine has one). The test programs set false (core/tests/main.cpp, unreal-qt/tests/qt/qttestmain.cpp): their
+    /// parallel shards each opened a GPU session for every recording with the defaults, and VideoToolbox refuses
+    /// sessions past about 20 at once ("Error while opening encoder"); a test of the hardware path asks for it
+    static bool HardwareDefault() { return HardwareDefaultFlag().load(std::memory_order_relaxed); }
+    static void SetHardwareDefault(bool on) { HardwareDefaultFlag().store(on, std::memory_order_relaxed); }
+
     /// Path to ffmpeg binary (empty = auto-detect)
     std::string ffmpegPath;
 
-    /// Prefer hardware-accelerated encoder when available
-    bool useHardwareAccel = true;
+    /// Prefer hardware-accelerated encoder when available. Default: HardwareDefault()
+    bool useHardwareAccel = HardwareDefault();
 
     /// Encoder preset for libx264/libx265 (e.g., "ultrafast", "fast", "medium")
     std::string encoderPreset;
@@ -147,4 +155,11 @@ struct EncoderConfig
     bool allowNonRealtime = true;
 
     /// endregion </Realtime>
+
+private:
+    static std::atomic<bool>& HardwareDefaultFlag()
+    {
+        static std::atomic<bool> on{true};
+        return on;
+    }
 };

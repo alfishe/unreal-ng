@@ -1175,6 +1175,8 @@ protected:
     uint32_t _externalFramePeriodUs = 0;
     void (*_externalSettle)(void* owner) = nullptr;  // SetExternalSettle (emulation thread)
     void* _externalSettleOwner = nullptr;
+    void (*_externalCatchUp)(void* owner) = nullptr;  // SetExternalCatchUp (emulation thread)
+    void* _externalCatchUpOwner = nullptr;
     /// The monitor's current picture and its geometry (the external picture while one is active); emulation
     /// thread, or a thread that knows it is parked
     bool CaptureCurrentFrame(FrameSnapshot& out) const;
@@ -1404,6 +1406,16 @@ public:
     using ExternalSettle = void (*)(void* owner);
     void SetExternalSettle(ExternalSettle settle, void* owner);
     void SettleExternalFrames();
+    /// An owner whose picture runs on a frame clock of its own (the FT812): `catchUp` makes the external picture
+    /// the one of this moment, the owner's frame in flight drawn up to the CPU's position over its previous frame
+    /// (display rule, docs/inprogress/2026-09-28-ttd-positioning-and-display/design.md §3). CatchUpExternalPicture
+    /// calls it where the machine stops for whoever looks (a park inside a frame, a pause, the end of a direct
+    /// run), next to UpdateScreen for the native picture. The present slots are not touched: as with the native
+    /// picture, the monitor keeps the last finished frame. Emulation thread; a null `catchUp` clears it (only for
+    /// the same owner)
+    using ExternalCatchUp = void (*)(void* owner);
+    void SetExternalCatchUp(ExternalCatchUp catchUp, void* owner);
+    void CatchUpExternalPicture();
     /// endregion
 
     /// Display viewport for cropping framebuffer to display

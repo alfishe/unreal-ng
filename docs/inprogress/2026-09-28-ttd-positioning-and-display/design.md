@@ -71,6 +71,18 @@ branch order.
 | **By frame number** | the frame's **final** state — the complete picture the beam drew for that frame (border, multicolor, mid-frame bank flips included) |
 | **By time mark / T-state not at frame end** | what the beam rendered **from the start of that frame up to that moment**; the not-yet-drawn part keeps the previous frame's pixels, exactly as on a live machine paused there |
 
+A device picture with a frame clock of its own (the FT812 of the TS-Conf VDAC2 card and the VDAC4 board,
+`ttd::ITTDDisplayParticipant`) follows the same rule on its own frames: by frame number the device frame that
+finished last by the end of that machine frame; at a moment, the device frame in flight drawn up to it over its
+previous frame. Since 2026-11-27 a live machine stopped there (a pause, the end of a direct run such as `run_frames`
+or `run_tstates`) holds that picture too (`Screen::CatchUpExternalPicture`, next to the beam's `UpdateScreen`);
+before, it kept the device frame that finished last, so a seek to the same point showed another picture (Metal
+Slug on VDAC4, `docs/inprogress/2026-11-15-tsconf-vdac4/ttd-design.md` §10). The monitor window (the present queue)
+keeps the last finished frame on a pause, for the beam and the device alike. The compose replays from the
+device's lead-in checkpoint (`TTDLeadInFrames`, for frame and time targets) so that both device frames are drawn
+by the replay; where the session holds no checkpoint early enough, the seek's check says so (`picture_incomplete`,
+`not_bit_exact`).
+
 ---
 
 ## 4. Target design
