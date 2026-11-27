@@ -158,8 +158,9 @@ void main() {
 }
 )";
 
-/// The window recording's picture into the encoder's frame (macOS: composeRecordingFrame), as it is
-[[maybe_unused]] const char* const kRecordCopyFragment = R"(
+/// The window recording's picture copied as it is: into the encoder's frame (macOS: composeRecordingFrame), into its
+/// blocks before a smooth scale (packRecordingNv12 too)
+const char* const kRecordCopyFragment = R"(
 #version 330
 uniform sampler2D source;
 in vec2 texCoord;
@@ -2298,38 +2299,73 @@ bool DeviceScreenGLWindow::packRecordingNv12(const gpu::Rect& rect, const QSize&
     if (place.isEmpty() || ((place.width() | place.height()) & 1) != 0)
         return false;
     // The picture where the CPU way puts it in its place (composeNv12 / composeInto): in scale x scale blocks; a few
-    // pixels off, centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept (not
-    // in blocks: that stays the CPU's)
+    // pixels off, centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept (the
+    // blocks made first, then the whole scaled smooth: the CPU way's order, the CRT mask stays sharp)
     const int scale = std::clamp(_recordFrame.scale, 1, 4);
     const QSize picture = kept * scale;
-    const float w = static_cast<float>(_recordTarget->Width());
-    const float h = static_cast<float>(_recordTarget->Height());
-    // A pixel of the picture (from its top left) is (rect.x + px / sx, rect.y + kept.h - py / sy) in the target's
-    // GL texels: its texture coordinate goes from the picture's top left corner
-    float originX = static_cast<float>(rect.x) / w;
-    float originY = static_cast<float>(rect.y + kept.height()) / h;
-    float stepX = 1.0f / (w * static_cast<float>(scale));
-    float stepY = -1.0f / (h * static_cast<float>(scale));
+    const bool linear =
+        std::abs(picture.width() - place.width()) > 4 || std::abs(picture.height() - place.height()) > 4;
     QRect inside;
-    bool linear = false;
-    if (std::abs(picture.width() - place.width()) <= 4 && std::abs(picture.height() - place.height()) <= 4)
+    if (linear)
+        inside = QRect(QPoint(0, 0), picture.scaled(place.size(), Qt::KeepAspectRatio));
+    else
+        inside = QRect(QPoint((place.width() - picture.width()) / 2, (place.height() - picture.height()) / 2), picture)
+                     .intersected(QRect(QPoint(0, 0), place.size()));
+    if (inside.isEmpty())
+        return false;
+    // The source: the drawn picture, a texel per `scale` pixels; scaled smooth, the blocks drawn first (nearest)
+    gpu::Texture* source = _recordTarget.get();
+    gpu::Rect from = rect;
+    int texelPixels = scale;
+    if (linear && scale > 1)
     {
-        const int left = (place.width() - picture.width()) / 2;
-        const int top = (place.height() - picture.height()) / 2;
-        inside = QRect(QPoint(left, top), picture).intersected(QRect(QPoint(0, 0), place.size()));
-        originX -= static_cast<float>(left) * stepX;
-        originY -= static_cast<float>(top) * stepY;
+        if (!_recordCopyProgram)
+        {
+            std::string log;
+            _recordCopyProgram = _gpu->CreateProgram(CRT_VERTEX_SHADER, kRecordCopyFragment, log);
+            if (!_recordCopyProgram)
+            {
+                qWarning() << "DeviceScreenGLWindow: the recording copy program failed:" << QString::fromStdString(log);
+                return false;
+            }
+        }
+        if (!_recordScaled || _recordScaled->Width() != picture.width() || _recordScaled->Height() != picture.height())
+            _recordScaled = _gpu->CreateTexture(picture.width(), picture.height(), gpu::Format::RGBA8);
+        if (!_recordScaled)
+            return false;
+        const float tw = static_cast<float>(_recordTarget->Width());
+        const float th = static_cast<float>(_recordTarget->Height());
+        _recordCopyProgram->SetTexture("source", _recordTarget.get(), {});
+        // Texture to texture, GL rows both: the quad's top corners (texRect.xy) take the source's top rows
+        _recordCopyProgram->SetFloat4("texRect", static_cast<float>(rect.x) / tw,
+                                      static_cast<float>(rect.y + rect.height) / th,
+                                      static_cast<float>(rect.x + rect.width) / tw, static_cast<float>(rect.y) / th);
+        gpu::DrawState blocks;
+        blocks.viewport = {0, 0, picture.width(), picture.height()};
+        _gpu->Draw(*_recordCopyProgram, *_recordScaled, blocks);
+        _recordCopyProgram->SetTexture("source", nullptr);
+        source = _recordScaled.get();
+        from = {0, 0, picture.width(), picture.height()};
+        texelPixels = 1;
+    }
+    const float w = static_cast<float>(source->Width());
+    const float h = static_cast<float>(source->Height());
+    // A pixel of the picture (from its top left) is (from.x + px / n, from.y + from.h - py / n) in the source's GL
+    // texels (n: pixels per texel): its texture coordinate goes from the picture's top left corner, then per pixel of
+    // the place (scaled: the picture's pixels per the place's)
+    float stepX = 1.0f / (w * static_cast<float>(texelPixels));
+    float stepY = -1.0f / (h * static_cast<float>(texelPixels));
+    float originX = static_cast<float>(from.x) / w;
+    float originY = static_cast<float>(from.y + from.height) / h;
+    if (linear)
+    {
+        stepX *= static_cast<float>(picture.width()) / static_cast<float>(inside.width());
+        stepY *= static_cast<float>(picture.height()) / static_cast<float>(inside.height());
     }
     else
     {
-        if (scale > 1)
-            return false;
-        inside = QRect(QPoint(0, 0), picture.scaled(place.size(), Qt::KeepAspectRatio));
-        if (inside.isEmpty())
-            return false;
-        stepX *= static_cast<float>(kept.width()) / static_cast<float>(inside.width());
-        stepY *= static_cast<float>(kept.height()) / static_cast<float>(inside.height());
-        linear = true;
+        originX -= static_cast<float>((place.width() - picture.width()) / 2) * stepX;
+        originY -= static_cast<float>((place.height() - picture.height()) / 2) * stepY;
     }
     if (!_recordNv12Program)
     {
@@ -2353,7 +2389,7 @@ bool DeviceScreenGLWindow::packRecordingNv12(const gpu::Rect& rect, const QSize&
     const QColor color = _recordFrame.background;
     const int32_t background[3] = {color.red(), color.green(), color.blue()};
     gpu::Program& p = *_recordNv12Program;
-    p.SetTexture("source", _recordTarget.get(), sampler);
+    p.SetTexture("source", source, sampler);
     p.SetFloat2("origin", originX, originY);
     p.SetFloat2("stepPx", stepX, stepY);
     p.SetInt4("inside", inside.left(), inside.top(), inside.left() + inside.width(), inside.top() + inside.height());
