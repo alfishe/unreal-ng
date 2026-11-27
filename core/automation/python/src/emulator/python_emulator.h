@@ -8541,8 +8541,9 @@ namespace PythonBindings
            "video frame per emulated frame, to path (.mov: prores, .mp4: h264): keyboard= ('default', a picture id, "
            "False), codec= ('prores', 'h264'), audio= (bool), fps= (1..100, audio=False only), scale= (1..4), "
            "hardware= / fit= (booleans), picture_height= (0..4320: the CRT drawn at that height), width= / height= (the frame), layout= ('below', 'side'), "
-           "transfer= ('auto', the default: nv12 where the file is 4:2:0 anyway, else picture; 'picture': the "
-           "window's picture scaled by ffmpeg; 'nv12': the frame at its size as NV12, 4:2:0, for a GPU encoder); returns {recording, path, keyboard, frames, width, height, fps, audio, "
+           "transfer= ('auto', the default: nv12 where the file is 4:2:0 anyway, yuv444 for a 4:4:4 encoder up to 1080p, "
+           "else picture; 'picture': the window's picture scaled by ffmpeg; 'nv12': the frame at its size as NV12, "
+           "4:2:0, for a GPU encoder; 'yuv444': the same in planar 4:4:4); returns {recording, path, keyboard, frames, width, height, fps, audio, "
            "sample_rate, audio_samples, transfer} or {ok: False, error, kind}",
            py::arg("path"))
         .def("window_record_frames", [](Emulator& self, int frames) -> py::object {

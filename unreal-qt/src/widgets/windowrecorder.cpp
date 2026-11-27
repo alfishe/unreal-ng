@@ -105,7 +105,7 @@ QByteArray EbmlUint(uint32_t id, uint64_t value)
 }
 
 /// The file's start: one video track of width x height frames in `colorSpace` (the FourCC of uncompressed video:
-/// "BGRA", or "NV12": the Y plane, then U,V interleaved at half resolution), times in microseconds, the segment's size
+/// "BGRA", "NV12": the Y plane, then U,V interleaved at half resolution, or "444P": the Y, U and V planes), times in microseconds, the segment's size
 /// unknown (it is a stream)
 QByteArray MatroskaStreamHeader(int width, int height, const char* colorSpace)
 {
@@ -346,6 +346,7 @@ struct WindowRecorder::Writer
     MuxJob mux;
     bool native = false;   ///< the macOS hardware encoder writes the file itself (no ffmpeg, no muxing)
     bool nv12 = false;     ///< transfer nv12: the composed frame goes to ffmpeg as NV12 (else B,G,R,A)
+    bool yuv444 = false;   ///< transfer yuv444: the composed frame goes to ffmpeg as planar Y, U, V (yuv444p)
     double fps = 50;
     int nativeQuality = 8;
     std::string nativeCodec = "h264";
@@ -389,7 +390,7 @@ struct WindowRecorder::Writer
     bool timing = false;
 
     /// One picture handled: the first one's time, the slowest one's duration. `how`: `native` (the Mac's writer),
-    /// `nv12` (built in NV12), `composed` (composed B,G,R,A, sent as it is or as NV12), `same` (not sent: as before)
+    /// `nv12` / `yuv444` (built in its planes), `composed` (composed B,G,R,A, sent as it is or as NV12), `same` (not sent: as before)
     void pictureHandled(int64_t startedUs, const char* how)
     {
         const int64_t now = sinceCreatedUs();
@@ -616,11 +617,32 @@ struct WindowRecorder::Writer
         inParts(band);
     }
 
+    /// The composed B,G,R,A frame as planar Y, U, V into `out` (three width x height planes): FrameScaler::PackedToYuv
+    /// in bands of rows, as ToNv12
+    void ToYuv444(const QImage& frame, uint8_t* out) const
+    {
+        const int width = frame.width();
+        const int height = frame.height();
+        const size_t stride = static_cast<size_t>(frame.bytesPerLine());
+        const size_t plane = static_cast<size_t>(width) * height;
+        const auto band = [&](int part)
+        {
+            const int first = height * part / kParts;
+            const int last = height * (part + 1) / kParts;
+            const size_t at = static_cast<size_t>(first) * width;
+            FrameScaler::PackedToYuv(frame.constBits() + static_cast<size_t>(first) * stride, stride,
+                                     static_cast<uint32_t>(width), static_cast<uint32_t>(last - first), true,
+                                     out + at, out + plane + at, out + plane * 2 + at, static_cast<size_t>(width));
+        };
+        inParts(band);
+    }
+
     /// One NV12 frame of transfer nv12 built in place: the background is written once per buffer, then only the
     /// picture's rectangle every frame and the keyboard's when it changes
     struct Nv12Frame
     {
-        std::vector<uint8_t> bytes;  ///< Y plane (width x height), then the U,V pairs (width x height / 2)
+        std::vector<uint8_t> bytes;  ///< Y plane (width x height), then the U,V pairs (width x height / 2); for
+                                     ///< transfer yuv444 the Y, U and V planes (width x height each)
         bool background = false;     ///< the background is in
         QImage keyboard;             ///< the keyboard drawn into it (a shared copy: compared with the next)
     };
@@ -646,23 +668,152 @@ struct WindowRecorder::Writer
                 std::memcmp(a.constBits(), b.constBits(), static_cast<size_t>(a.sizeInBytes())) == 0);
     }
 
-    /// Whether composeNv12 takes this job: even rectangles (NV12's 2x2 chroma blocks), a 32-bit picture no larger
-    /// than its place (a smaller one is scaled up; Qt's area averaging stays for the rare one to scale down)
+    /// Whether composeNv12 takes this job: even rectangles (NV12's 2x2 chroma blocks), a 32-bit picture whose blocks
+    /// are at most twice its place (BlocksFit)
     bool canComposeNv12(const Job& job) const
     {
+        if (yuv444)
+            return canComposeYuv444(job);
         const QImage& picture = job.picture;
         const QImage::Format format = picture.format();
         const bool keyboardFits =
             job.keyboard.isNull() || (Even(keyboardRect) && QRect(QPoint(0, 0), size).contains(keyboardRect));
-        // NV12 from the GPU (RecordingFrameLayout::nv12): the place's size, any scale (the window made the blocks)
+        // NV12 from the GPU (RecordingFrameLayout::planes): the place's size, any scale (the window made the blocks)
         if (format == QImage::Format_Grayscale8)
             return picture.width() == screenRect.width() && picture.height() == screenRect.height() * 3 / 2 &&
                    Even(screenRect) && QRect(QPoint(0, 0), size).contains(screenRect) && keyboardFits;
-        if (scale != 1 || !(Bgra(format) || format == QImage::Format_RGBA8888) || picture.width() < 4 ||
-            picture.height() < 4 || picture.width() > screenRect.width() || picture.height() > screenRect.height() ||
-            !Even(screenRect) || !QRect(QPoint(0, 0), size).contains(screenRect))
+        if (!(Bgra(format) || format == QImage::Format_RGBA8888) || picture.width() < 4 || picture.height() < 4 ||
+            !BlocksFit(picture.size(), screenRect.size()) || !Even(screenRect) ||
+            !QRect(QPoint(0, 0), size).contains(screenRect))
             return false;
         return keyboardFits;
+    }
+
+    /// canComposeNv12 for transfer yuv444: any rectangles (no chroma blocks), the GPU's planes (three times the place's
+    /// rows) or a 32-bit picture whose blocks are at most twice its place (BlocksFit)
+    bool canComposeYuv444(const Job& job) const
+    {
+        const QImage& picture = job.picture;
+        const QImage::Format format = picture.format();
+        const QRect frame(QPoint(0, 0), size);
+        if (!frame.contains(screenRect) || screenRect.isEmpty() ||
+            (!job.keyboard.isNull() && !frame.contains(keyboardRect)))
+            return false;
+        if (format == QImage::Format_Grayscale8)
+            return picture.width() == screenRect.width() && picture.height() == screenRect.height() * 3;
+        return (Bgra(format) || format == QImage::Format_RGBA8888) && picture.width() >= 4 && picture.height() >= 4 &&
+               BlocksFit(picture.size(), screenRect.size());
+    }
+
+    /// The picture in its blocks scaled to its place by PlaneScaler: up, or down to half at most (its four taps;
+    /// Qt's area averaging keeps a picture of more than twice its place)
+    bool BlocksFit(const QSize& picture, const QSize& place) const
+    {
+        return picture.width() * scale <= place.width() * 2 && picture.height() * scale <= place.height() * 2;
+    }
+
+    /// The picture's Y, U, V planes at its own size (w x h each), PlaneScaler's source: it scales them as drawn in
+    /// scale x scale blocks first (as composeInto does before its smooth scaling) without a copy in blocks
+    const uint8_t* PictureToPlanes(const QImage& picture)
+    {
+        const uint32_t w = static_cast<uint32_t>(picture.width());
+        const uint32_t h = static_cast<uint32_t>(picture.height());
+        const size_t own = static_cast<size_t>(w) * h;
+        pictureYuv.resize(own * 3);
+        FrameScaler::PackedToYuv(picture.constBits(), static_cast<size_t>(picture.bytesPerLine()), w, h,
+                                 Bgra(picture.format()), pictureYuv.data(), pictureYuv.data() + own,
+                                 pictureYuv.data() + own * 2, w);
+        return pictureYuv.data();
+    }
+
+    /// The frame of transfer yuv444 in its planes, as composeNv12 builds NV12: the background once per buffer, the
+    /// picture's rectangle every frame (the GPU's rows copied, or converted here and scaled in each plane), the
+    /// keyboard when it changes
+    void composeYuv444(Nv12Frame& out, const Job& job)
+    {
+        const int width = size.width();
+        const int height = size.height();
+        const size_t plane = static_cast<size_t>(width) * height;
+        const size_t stride = static_cast<size_t>(width);
+        if (out.bytes.size() != plane * 3 || (job.keyboard.isNull() && !out.keyboard.isNull()))
+            out.background = false;
+        if (!out.background)
+        {
+            out.bytes.resize(plane * 3);
+            const uint32_t argb = kBackground.rgb();
+            const uint8_t pixel[4] = {static_cast<uint8_t>(argb), static_cast<uint8_t>(argb >> 8),
+                                      static_cast<uint8_t>(argb >> 16), 255};
+            uint8_t y, u, v;
+            FrameScaler::PackedToYuv(pixel, 4, 1, 1, true, &y, &u, &v, 1);
+            std::memset(out.bytes.data(), y, plane);
+            std::memset(out.bytes.data() + plane, u, plane);
+            std::memset(out.bytes.data() + plane * 2, v, plane);
+            out.background = true;
+            out.keyboard = QImage();
+        }
+        uint8_t* planes[3] = {out.bytes.data(), out.bytes.data() + plane, out.bytes.data() + plane * 2};
+        const size_t offset = static_cast<size_t>(screenRect.y()) * stride + screenRect.x();
+
+        const QImage& picture = job.picture;
+        const uint32_t pw = static_cast<uint32_t>(picture.width());
+        const uint32_t ph = static_cast<uint32_t>(picture.height());
+        const uint32_t rw = static_cast<uint32_t>(screenRect.width());
+        const uint32_t rh = static_cast<uint32_t>(screenRect.height());
+        const size_t srcStride = static_cast<size_t>(picture.bytesPerLine());
+        const bool bgra = Bgra(picture.format());
+        std::function<void(int)> band;
+        if (picture.format() == QImage::Format_Grayscale8)
+        {
+            // Converted by the GPU: its Y, U and V rows into the place
+            band = [&](int part)
+            {
+                for (uint32_t row = rh * part / kParts; row < rh * (part + 1) / kParts; ++row)
+                    for (uint32_t p = 0; p < 3; ++p)
+                        std::memcpy(planes[p] + offset + row * stride,
+                                    picture.constScanLine(static_cast<int>(p * rh + row)), rw);
+            };
+        }
+        else if (pw == rw && ph == rh && scale == 1)
+        {
+            band = [&](int part)
+            {
+                const uint32_t first = rh * part / kParts;
+                const uint32_t last = rh * (part + 1) / kParts;
+                const size_t at = offset + first * stride;
+                FrameScaler::PackedToYuv(picture.constBits() + first * srcStride, srcStride, rw, last - first, bgra,
+                                         planes[0] + at, planes[1] + at, planes[2] + at, stride);
+            };
+        }
+        else
+        {
+            // Converted at its own size, then each plane scaled to the place (as in scale x scale blocks)
+            const uint8_t* source = PictureToPlanes(picture);
+            const size_t planeSize = static_cast<size_t>(pw) * ph;
+            lumaScaler.Prepare(pw, ph, rw, rh, static_cast<uint32_t>(scale));
+            // By value: the band runs after this block
+            band = [this, &planes, source, planeSize, pw, rh, offset, stride](int part)
+            {
+                for (uint32_t p = 0; p < 3; ++p)
+                    lumaScaler.Rows(source + planeSize * p, pw, planes[p] + offset, stride, rh * part / kParts,
+                                    rh * (part + 1) / kParts);
+            };
+        }
+        inParts(band);
+
+        if (!job.keyboard.isNull() && !SameImage(job.keyboard, out.keyboard))
+        {
+            QImage drawn(keyboardRect.size(), QImage::Format_ARGB32_Premultiplied);
+            drawn.fill(kBackground);
+            {
+                QPainter painter(&drawn);
+                painter.drawImage(QPoint(0, 0), job.keyboard);
+            }
+            const size_t at = static_cast<size_t>(keyboardRect.y()) * stride + keyboardRect.x();
+            FrameScaler::PackedToYuv(drawn.constBits(), static_cast<size_t>(drawn.bytesPerLine()),
+                                     static_cast<uint32_t>(drawn.width()), static_cast<uint32_t>(drawn.height()), true,
+                                     planes[0] + at, planes[1] + at, planes[2] + at, stride);
+            out.keyboard = job.keyboard;
+        }
     }
 
     /// The frame of transfer nv12 straight in NV12, no B,G,R,A frame: the picture converted at its own size and
@@ -670,6 +821,11 @@ struct WindowRecorder::Writer
     /// picture of its place's size converted into it. The layout's rectangles are even (canComposeNv12)
     void composeNv12(Nv12Frame& out, const Job& job)
     {
+        if (yuv444)
+        {
+            composeYuv444(out, job);
+            return;
+        }
         const int width = size.width();
         const int height = size.height();
         const size_t ySize = static_cast<size_t>(width) * height;
@@ -724,7 +880,7 @@ struct WindowRecorder::Writer
                     std::memcpy(uvAt + row * stride, picture.constScanLine(static_cast<int>(rh + row)), rw);
             };
         }
-        else if (pw == rw && ph == rh)
+        else if (pw == rw && ph == rh && scale == 1)
         {
             band = [&](int part)
             {
@@ -737,15 +893,12 @@ struct WindowRecorder::Writer
         else
         {
             // Converted at its own size (a few hundred thousand pixels), then each plane scaled: Y to the place,
-            // U and V to half of it, written as NV12's pairs
+            // U and V to half of it, written as NV12's pairs (as in scale x scale blocks: PlaneScaler's `blocks`)
+            const uint8_t* planes = PictureToPlanes(picture);
             const size_t planeSize = static_cast<size_t>(pw) * ph;
-            pictureYuv.resize(planeSize * 3);
-            FrameScaler::PackedToYuv(picture.constBits(), srcStride, pw, ph, bgra, pictureYuv.data(),
-                                     pictureYuv.data() + planeSize, pictureYuv.data() + planeSize * 2, pw);
-            lumaScaler.Prepare(pw, ph, rw, rh);
-            chromaScaler.Prepare(pw, ph, rw / 2, rh / 2);
+            lumaScaler.Prepare(pw, ph, rw, rh, static_cast<uint32_t>(scale));
+            chromaScaler.Prepare(pw, ph, rw / 2, rh / 2, static_cast<uint32_t>(scale));
             // By value: the band runs after this block (planeSize is its own)
-            const uint8_t* planes = pictureYuv.data();
             band = [this, planes, planeSize, pw, rh, yAt, uvAt, stride](int part)
             {
                 lumaScaler.Rows(planes, pw, yAt, stride, rh * part / kParts, rh * (part + 1) / kParts);
@@ -924,7 +1077,7 @@ struct WindowRecorder::Writer
         if (!failure.empty())
             failed = true;
         else
-            process.write(MatroskaStreamHeader(size.width(), size.height(), nv12 ? "NV12" : "BGRA"));
+            process.write(MatroskaStreamHeader(size.width(), size.height(), nv12 ? "NV12" : yuv444 ? "444P" : "BGRA"));
         ready = true;  // a failed start is told by `failed`
         encoderReadyUs = std::max<int64_t>(1, sinceCreatedUs());  // after `ready`: > 0 tells a recorded step it may run
 
@@ -1036,7 +1189,7 @@ struct WindowRecorder::Writer
             // B,G,R,A bytes on a little-endian host: the stream's order. Premultiplied, QPainter's own format (the
             // keyboard drawn into plain ARGB32 took most of a frame's time at 1080p); the frame is opaque, so the bytes
             // are the same
-            if (nv12 && canComposeNv12(job))
+            if ((nv12 || yuv444) && canComposeNv12(job))
             {
                 // Compared by the picture and the keyboard (a few hundred KB, not the 4K frame), built only when sent
                 const bool same = lastSent && lastDirect && job.frameStart < lastSentFrame + resendFrames &&
@@ -1058,7 +1211,7 @@ struct WindowRecorder::Writer
                 framesDone = job.frameStart + job.repeat;
                 if (!pumpSound())
                     fail(soundFailure());
-                pictureHandled(pictureStartUs, send ? "nv12" : "same");
+                pictureHandled(pictureStartUs, send ? (yuv444 ? "yuv444" : "nv12") : "same");
                 continue;
             }
             QImage& frame = frames[composing];
@@ -1072,11 +1225,15 @@ struct WindowRecorder::Writer
             if (send)
             {
                 QByteArrayView bytes(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
-                if (nv12)
+                if (nv12 || yuv444)
                 {
                     std::vector<uint8_t>& out = converted[composing];
-                    out.resize(static_cast<size_t>(size.width()) * size.height() * 3 / 2);
-                    ToNv12(frame, out.data());
+                    const size_t pixels = static_cast<size_t>(size.width()) * size.height();
+                    out.resize(yuv444 ? pixels * 3 : pixels * 3 / 2);
+                    if (yuv444)
+                        ToYuv444(frame, out.data());
+                    else
+                        ToNv12(frame, out.data());
                     bytes = QByteArrayView(reinterpret_cast<const char*>(out.data()), static_cast<qsizetype>(out.size()));
                 }
                 sendFrame(&frame, bytes, job.frameStart);
@@ -1295,7 +1452,8 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     }
     _ffmpeg = ffmpeg;
     // transfer auto: NV12 where the file is 4:2:0 anyway (a hardware encoder without 4:4:4: its trial is the one the
-    // picture way runs, so no second one); x264 / x265, ProRes and 4:4:4 encoders keep the picture
+    // picture way runs, so no second one); x264 / x265, ProRes and 4:4:4 encoders get YUV444 (decided below, by the
+    // frame's size)
     const bool h265 = request.codec == "h265";
     const bool hardwareWay = !native && request.codec != "prores" && request.hardware;
     HardwareEncoder hardware = hardwareWay && request.transfer != "nv12" ? FfmpegHardwareEncoder(ffmpeg, h265, false)
@@ -1482,12 +1640,27 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // twelve times less). The keyboard is drawn at its size there, so it is scaled with the picture
     // With transfer nv12 the frame is composed here at the file's size and goes as NV12: ffmpeg only encodes (a GPU
     // encoder takes NV12 as it is; 4K BGRA was too much for ffmpeg in front of Intel's encoder, POC 054)
-    _transfer = native ? "native" : (nv12 ? "nv12" : "picture");
+    // With transfer yuv444 the same in planar 4:4:4 (twice NV12's bytes): the 4:4:4 encoders (x264 / x265, NVENC and
+    // VA-API 4:4:4, ProRes through prores_ks) without ffmpeg's scaling and conversion, which took a core and more of
+    // it. auto takes it up to 1080p: a 6 MB frame went through a pipe in 9 ms (Linux, 1080p50, POC data in the
+    // window recording's notes); a 4K one would not keep up, there the native picture goes
+    bool appleProres = false;
+#ifdef __APPLE__
+    appleProres = request.codec == "prores";  // prores_videotoolbox converts B,G,R,A itself
+#endif
+    // Software and ProRes encoders take 4:4:4, a GPU's only where its trial found it (VideoToolbox never)
+    const bool takes444 = !appleProres && (hardware.name.isEmpty() || hardware.full) &&
+                          !hardware.name.contains("videotoolbox");
+    const bool yuv444 =
+        !native && !nv12 &&
+        (request.transfer == "yuv444" ||
+         (request.transfer == "auto" && takes444 && static_cast<qint64>(_size.width()) * _size.height() <= 1920 * 1088));
+    _transfer = native ? "native" : (nv12 ? "nv12" : yuv444 ? "yuv444" : "picture");
     QSize pipeSize = _size;
     QRect pipeScreen = _screenRect;
     QRect pipeKeyboard = _keyboardRect;
     QString pipeFilter;
-    if (!native && !nv12)
+    if (!native && !nv12 && !yuv444)
     {
         QRect content = _keyboardRect.isEmpty() ? _screenRect : _screenRect.united(_keyboardRect);
         content = content.intersected(QRect(QPoint(0, 0), _size));
@@ -1543,13 +1716,13 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // and transfer tags but no range (a YUV range tag on B,G,R,A stops the encoder; it writes limited range itself).
     // Elsewhere ProRes is ffmpeg's own prores_ks (no VideoToolbox): 4:4:4 10-bit made by the scaler like the others
 #ifdef __APPLE__
-    if (request.codec == "prores")
+    if (request.codec == "prores" && !yuv444)
         pipeFilter += QString(pipeFilter.isEmpty() ? "" : ",") + FrameScaler::FfmpegColorTagsNoRange;
     else
 #endif
     {
         QStringList color;
-        if (!nv12)
+        if (!nv12 && !yuv444)
             color << (request.codec == "prores" ? "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p10le"
                                                 : "scale=out_color_matrix=bt709:out_range=tv");
         color << FrameScaler::FfmpegColorTags;
@@ -1648,6 +1821,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     writer->soundDir = soundDir;
     writer->native = native;
     writer->nv12 = nv12;
+    writer->yuv444 = yuv444;
     const char* timing = std::getenv("UNREAL_WINDOW_RECORDER_TIMING");
     writer->timing = timing && *timing && std::strcmp(timing, "0") != 0;
     writer->fps = _fps;
@@ -1694,9 +1868,12 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     if (_writer->native)
         _screen->setRecordingFrame({_writer->size, _writer->screenRect, kBackground, _writer->scale});
 #endif
-    // Transfer nv12: the GPU window converts the picture in its place, the writer only puts the bytes in the frame
-    if (_writer->nv12)
-        _screen->setRecordingFrame({_writer->size, _writer->screenRect, kBackground, _writer->scale, true});
+    // Transfer nv12 / yuv444: the GPU window converts the picture in its place, the writer only puts the bytes in the
+    // frame
+    if (_writer->nv12 || _writer->yuv444)
+        _screen->setRecordingFrame({_writer->size, _writer->screenRect, kBackground, _writer->scale,
+                                    _writer->nv12 ? RecordingFrameLayout::Planes::Nv12
+                                                  : RecordingFrameLayout::Planes::Yuv444});
     _capture = _screen->setRecordingCapture(true, _request.pictureHeight);
     fill(out);
     return true;

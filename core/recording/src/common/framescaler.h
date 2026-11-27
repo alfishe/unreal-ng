@@ -81,8 +81,9 @@ class PlaneScaler
 {
 public:
     /// The weights for srcW x srcH into dstW x dstH (kept while the sizes stay); false for a source side under 4
-    /// samples or a zero size
-    bool Prepare(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH);
+    /// samples or a zero size. `blocks` > 1: the source as if drawn in blocks x blocks pixels first (the scale of the
+    /// window recording), its weights folded onto the samples themselves: no copy in blocks
+    bool Prepare(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH, uint32_t blocks = 1);
 
     /// Output rows [firstRow, endRow): `src` rows `srcStride` bytes apart, `dst` at the target's top left
     void Rows(const uint8_t* src, size_t srcStride, uint8_t* dst, size_t dstStride, uint32_t firstRow,
@@ -98,9 +99,9 @@ private:
         std::vector<int32_t> first;    ///< the first of 4 source samples per output position (inside the plane)
         std::vector<int16_t> weights;  ///< 4 per output position, summing to 1 << 14
     };
-    static Axis MakeAxis(uint32_t src, uint32_t dst);
+    static Axis MakeAxis(uint32_t src, uint32_t dst, uint32_t blocks);
 
-    uint32_t _srcW = 0, _srcH = 0, _dstW = 0, _dstH = 0;
+    uint32_t _srcW = 0, _srcH = 0, _dstW = 0, _dstH = 0, _blocks = 1;
     Axis _x, _y;
 };
 

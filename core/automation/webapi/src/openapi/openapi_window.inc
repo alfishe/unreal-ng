@@ -236,7 +236,7 @@
             schema["properties"]["sample_rate"]["type"] = "integer";
             schema["properties"]["transfer"]["type"] = "string";
             schema["properties"]["transfer"]["description"] =
-                "What ffmpeg gets: picture or nv12; native = the Mac's own writer (no ffmpeg)";
+                "What ffmpeg gets: picture, nv12 or yuv444; native = the Mac's own writer (no ffmpeg)";
             schema["properties"]["audio_samples"]["type"] = "integer";
             schema["properties"]["audio_samples"]["description"] = "Sample pairs in the sound track so far";
             op["responses"]["404"]["description"] = "Emulator not found";

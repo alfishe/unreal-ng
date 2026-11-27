@@ -1744,8 +1744,8 @@ emu.window_record("/abs/demo.mp4", {keyboard = "default", codec = "h264"})  -- r
                                      --   frame); options: keyboard ("default", a picture id, false), codec ("prores" /
                                      --   "h264"), audio (boolean), fps (1..100, audio = false only), scale (1..4),
                                      --   hardware, fit, picture_height (0..4320: the CRT at that height), width / height
-                                     --   (the frame), layout ("below" / "side"), transfer ("auto" / "picture" / "nv12": what
-                                     --   ffmpeg gets; auto = nv12 where the file is 4:2:0 anyway). Returns { recording, path, keyboard, frames, width, height, fps,
+                                     --   (the frame), layout ("below" / "side"), transfer ("auto" / "picture" / "nv12" / "yuv444":
+                                     --   what ffmpeg gets; auto = nv12 where the file is 4:2:0 anyway, yuv444 for a 4:4:4 encoder up to 1080p). Returns { recording, path, keyboard, frames, width, height, fps,
                                      --   audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms, first_frame_ms,
                                      --   slowest_frame_ms, transfer }, or { ok = false, error, kind }
 emu.window_record_frames(100)        -- a paused machine runs 100 frames, every one recorded; the status with ran

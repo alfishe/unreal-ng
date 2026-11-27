@@ -43,8 +43,9 @@ std::string Validate(const WindowRecordingRequest& request)
         return "codec takes prores, h264 or h265";
     if (request.layout != "below" && request.layout != "side")
         return "layout takes below or side";
-    if (request.transfer != "auto" && request.transfer != "picture" && request.transfer != "nv12")
-        return "transfer takes auto, picture or nv12";
+    if (request.transfer != "auto" && request.transfer != "picture" && request.transfer != "nv12" &&
+        request.transfer != "yuv444")
+        return "transfer takes auto, picture, nv12 or yuv444";
     // NV12 is 4:2:0: ProRes 4444 is there for the full colour
     if (request.transfer == "nv12" && request.codec == "prores")
         return "transfer nv12 is 4:2:0: use h264 or h265 (prores keeps the full colour)";
@@ -264,6 +265,8 @@ std::string Summary(const WindowRecordingStatus& s)
     line += s.keyboard.empty() ? ", no keyboard" : ", keyboard " + s.keyboard;
     if (s.transfer == "nv12")
         line += ", NV12 frames to ffmpeg";
+    else if (s.transfer == "yuv444")
+        line += ", YUV444 frames to ffmpeg";
     return line;
 }
 }  // namespace WindowRecording
