@@ -521,17 +521,25 @@ bool VideoToolboxEncoder::WaitWriterReady()
     AVAssetWriterInput* videoInput = (__bridge AVAssetWriterInput*)_videoInput;
     AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
 
-    // Wait briefly for the input to become ready. VideoToolbox HW keeps up
-    // with ZX-sized frames easily, so a bounded wait protects turbo-mode
-    // capture from drops without risking a long stall.
+    // Video sync: every frame goes into the file, so the emulation waits for the encoder as long as it takes (the
+    // recording is realtime or the machine runs at the encoder's pace, never in between with frames dropped). The
+    // queued sound goes in meanwhile: the writer may hold the picture back until the sound of its time came. Only a
+    // writer that takes nothing for kStuckUs is stuck: that frame is dropped with an error
+    constexpr int kStuckUs = 5'000'000;
     int waitedUs = 0;
-    while (![videoInput isReadyForMoreMediaData] && waitedUs < 100000)  // max 100ms
+    for (;;)
     {
-        usleep(1000);
-        waitedUs += 1000;
+        FlushAudio();
+        if ([videoInput isReadyForMoreMediaData] || writer.status != AVAssetWriterStatusWriting)
+            break;
+        if (waitedUs >= kStuckUs)
+        {
+            _lastError = "The VideoToolbox writer took no frame for 5 s: frame dropped";
+            return false;
+        }
+        usleep(500);
+        waitedUs += 500;
     }
-    if (![videoInput isReadyForMoreMediaData])
-        return false;  // Drop frame — writer is stuck
 
     // A failed writer still reports the input ready, but it has no pixel
     // buffer pool any more: nothing it is given is written. Drop the frame
@@ -595,10 +603,36 @@ void VideoToolboxEncoder::SubmitFrameTarget(FrameTarget& target, double timestam
     if (!pixelBuffer)
         return;
 
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+    appendFrame(pixelBuffer, timestampSec);
+    CVPixelBufferRelease(pixelBuffer);
+    target = FrameTarget();
+}
+
+bool VideoToolboxEncoder::AppendPixelBuffer(void* pixelBuffer, double timestampSec)
+{
+    CVPixelBufferRef buffer = static_cast<CVPixelBufferRef>(pixelBuffer);
+    if (!buffer || !_isRecording || !_videoInput || !_pixelBufferAdaptor)
+        return false;
+    if (CVPixelBufferGetWidth(buffer) != _width || CVPixelBufferGetHeight(buffer) != _height ||
+        CVPixelBufferGetPixelFormatType(buffer) != kCVPixelFormatType_32BGRA)
+    {
+        _lastError = "The pixel buffer is not of the output's size and format: dropped";
+        return false;
+    }
     @autoreleasepool
     {
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+        if (!WaitWriterReady())
+            return false;
+    }
+    return appendFrame(pixelBuffer, timestampSec);
+}
 
+bool VideoToolboxEncoder::appendFrame(void* pixelBuffer, double timestampSec)
+{
+    bool appended = false;
+    @autoreleasepool
+    {
         // A frame at or before the previous one would fail the writer (and the file): drop it
         if (timestampSec <= _lastVideoTimestamp)
         {
@@ -610,7 +644,7 @@ void VideoToolboxEncoder::SubmitFrameTarget(FrameTarget& target, double timestam
                 (__bridge AVAssetWriterInputPixelBufferAdaptor*)_pixelBufferAdaptor;
             AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
             CMTime pts = CMTimeMakeWithSeconds(timestampSec, 1000000);
-            if (![adaptor appendPixelBuffer:pixelBuffer withPresentationTime:pts])
+            if (![adaptor appendPixelBuffer:static_cast<CVPixelBufferRef>(pixelBuffer) withPresentationTime:pts])
             {
                 NSString* errDesc = writer.error ? [writer.error localizedDescription] : @"unknown";
                 _lastError = std::string("appendPixelBuffer failed: ") + [errDesc UTF8String];
@@ -619,11 +653,11 @@ void VideoToolboxEncoder::SubmitFrameTarget(FrameTarget& target, double timestam
             {
                 _framesEncoded++;
                 _lastVideoTimestamp = timestampSec;
+                appended = true;
             }
         }
-        CVPixelBufferRelease(pixelBuffer);
     }
-    target = FrameTarget();
+    return appended;
 }
 
 void VideoToolboxEncoder::ReleaseFrameTarget(FrameTarget& target)
@@ -650,20 +684,49 @@ void VideoToolboxEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCo
     {
         AVAssetWriterInput* audioInput = (__bridge AVAssetWriterInput*)_audioInput;
 
-        // Wait briefly for the input, like the video path: AVAssetWriter interleaves the tracks and holds the
-        // audio input back until the video catches up, which is a frame at most. A long block would stall the
-        // emulation thread, so the wait is bounded (a chunk still not accepted is dropped)
-        int waitedUs = 0;
-        while (![audioInput isReadyForMoreMediaData] && waitedUs < 20000)  // max 20ms
+        // AVAssetWriter interleaves the tracks and holds the sound back until the picture of its time came, which the
+        // emulation thread hands over after this sound: the chunk waits in a queue (no wait here, nothing dropped),
+        // handed over with the next frame
+        FlushAudio();
+        if (!_queuedAudio.empty() || ![audioInput isReadyForMoreMediaData])
         {
-            usleep(500);
-            waitedUs += 500;
-        }
-        if (![audioInput isReadyForMoreMediaData])
-        {
-            _audioChunksDropped++;
+            // A writer stuck for good would grow the queue forever: past kMaxQueuedAudioSec the oldest goes
+            constexpr double kMaxQueuedAudioSec = 4.0;
+            const size_t limit = static_cast<size_t>(kMaxQueuedAudioSec * _audioSampleRate * _audioChannels);
+            while (!_queuedAudio.empty() && _queuedAudioSamples + sampleCount > limit)
+            {
+                _queuedAudioSamples -= _queuedAudio.front().samples.size();
+                _queuedAudio.pop_front();
+                _audioChunksDropped++;
+                _lastError = "The VideoToolbox writer took no sound for 4 s: sound dropped";
+            }
+            _queuedAudio.push_back({std::vector<int16_t>(samples, samples + sampleCount), timestampSec});
+            _queuedAudioSamples += sampleCount;
             return;
         }
+        AppendAudio(samples, sampleCount, timestampSec);
+    }
+}
+
+void VideoToolboxEncoder::FlushAudio()
+{
+    if (_queuedAudio.empty() || !_audioInput)
+        return;
+    AVAssetWriterInput* audioInput = (__bridge AVAssetWriterInput*)_audioInput;
+    while (!_queuedAudio.empty() && [audioInput isReadyForMoreMediaData])
+    {
+        QueuedAudio chunk = std::move(_queuedAudio.front());
+        _queuedAudio.pop_front();
+        _queuedAudioSamples -= chunk.samples.size();
+        AppendAudio(chunk.samples.data(), chunk.samples.size(), chunk.timestamp);
+    }
+}
+
+void VideoToolboxEncoder::AppendAudio(const int16_t* samples, size_t sampleCount, double timestampSec)
+{
+    @autoreleasepool
+    {
+        AVAssetWriterInput* audioInput = (__bridge AVAssetWriterInput*)_audioInput;
 
         // Format description created once in initAudioConverter from config
         CMAudioFormatDescriptionRef formatDesc = (CMAudioFormatDescriptionRef)_audioFormatDesc;
@@ -751,6 +814,20 @@ void VideoToolboxEncoder::Stop()
     {
         AVAssetWriter* writer = _assetWriter ? (__bridge AVAssetWriter*)_assetWriter : nil;
         bool writerActive = writer && writer.status == AVAssetWriterStatusWriting;
+
+        // 0. The sound still queued goes in first (the writer took the picture it waited for): a second at most
+        if (writerActive && _audioInput)
+        {
+            AVAssetWriterInput* audioInput = (__bridge AVAssetWriterInput*)_audioInput;
+            for (int waitedUs = 0; !_queuedAudio.empty() && waitedUs < 1'000'000; waitedUs += 500)
+            {
+                FlushAudio();
+                if (!_queuedAudio.empty() && ![audioInput isReadyForMoreMediaData])
+                    usleep(500);
+            }
+        }
+        _queuedAudio.clear();
+        _queuedAudioSamples = 0;
 
         // 1. Mark inputs as finished — tells AVAssetWriter no more data is coming.
         //    Only legal while the writer is actually writing (guards the

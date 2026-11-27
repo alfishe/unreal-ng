@@ -8,6 +8,7 @@
 #include "emulator/execution/runcontrol.h"
 #include "debugger/watch/framewatch.h"
 #include "emulator/execution/scriptsession.h"
+#include "emulator/preset/machinepreset.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
 #include "emulator/io/keyboard/pckey.h"
@@ -23,6 +24,7 @@
 #include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -1021,6 +1023,11 @@ protected:
         t["present"] = state.present;
         t["wired"] = state.wired;
         t["fit"] = state.fit;
+        t["port_decoded"] = state.portDecoded;
+        t["port_source"] = state.portSource;
+        t["kempston_mouse_feature"] = state.mouseFeatureOn;
+        t["kempston_mouse_fitted"] = state.mouseFitted;
+        t["ports_text"] = DebugJoystickManager::DescribePorts(state);
         t["state"] = static_cast<int>(state.state);
         t["port_value"] = static_cast<int>(state.portValue);
         t["buttons"] = buttons;
@@ -1229,6 +1236,38 @@ public:
             mgr->StartEmulatorAsync(master->GetId());
             mgr->SetSelectedEmulatorId(master->GetId());
             results.push_back(sol::make_object(state, master->GetId()));
+            return results;
+        });
+
+        // A preset machine in one call (MachinePreset, core/src/emulator/preset/machinepreset.h):
+        // machine_preset{model = "48K", cards = {"edge.1=kempston"}, features = {kempstonmouse = false}} -> the answer
+        // table (id, model, ram, cards, features, muted, paused, fast_tape, control, position, text), or nil + the
+        // refusal. Defaults: ram zero, muted, paused at power-on, fast_tape off, take_control (this
+        // script's session, as take_control()), replace off. The new machine becomes the selected one
+        lua.set_function("machine_preset", [](sol::table argsTable, sol::this_state state) -> sol::variadic_results {
+            MachinePresetCaller caller;
+            caller.surface = "lua";
+            caller.takeControl = [](Emulator& emulator, const std::string& client, uint32_t, std::string&,
+                                    std::string& reason) {
+                return execution::script::TakeControl(emulator, execution::Origin::Lua, client.empty() ? "lua" : client,
+                                                      reason);
+            };
+            caller.holdsControl = [](Emulator& emulator) {
+                const unreal::UUID owner = execution::script::detail::Owner(emulator, execution::Origin::Lua);
+                return !owner.isNil() && emulator.GetContext() && emulator.GetContext()->HasRunControl(owner);
+            };
+            StateNode args = LuaToStateNode(argsTable);
+            if (!args.isObject())
+                args = StateNode::Object();   // an empty table reads as neither: the verb answers "model: required"
+            const MachinePresetReply reply = MachinePreset::Execute(args, caller);
+            sol::variadic_results results;
+            if (!reply.Ok())
+            {
+                results.push_back(sol::make_object(state, sol::lua_nil));
+                results.push_back(sol::make_object(state, reply.message));
+                return results;
+            }
+            results.push_back(StateNodeToLua(state, reply.ToValue()));
             return results;
         });
 
@@ -1497,6 +1536,38 @@ public:
             if (!error.empty())
                 return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
             return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // The GS debugger's twin timeline (gs-debugger design §5.4): timeline([{cpu=, span=, recent=, lease_ms=}]) ->
+        // {state, armed, cpu, lanes, now, position, window, recent, next, markers, density, text} | nil, error (takes
+        // or renews the script's lease, 0 = until timeline_arm(false)); timeline_arm(on[, lease_ms]) -> {armed, ...}
+        lua.set_function("timeline", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            timeline::Query query;
+            query.client = "lua";
+            query.leaseMs = 0;
+            if (opts)
+            {
+                query.cpu = opts->get_or("cpu", std::string());
+                query.spanT = opts->get_or("span", timeline::kDefaultSpanT);
+                query.recent = opts->get_or("recent", 64u);
+                query.leaseMs = opts->get_or("lease_ms", 0u);
+            }
+            const timeline::Reply reply = timeline::Read(emulator, query);
+            if (reply.status != 200)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, reply.error)};
+            return {StateNodeToLua(s, reply.body), sol::make_object(s, sol::lua_nil)};
+        });
+        lua.set_function("timeline_arm", [this](sol::this_state s, bool on, sol::optional<unsigned> leaseMs) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const timeline::Reply reply = timeline::SetArmed(emulator, "lua", on, leaseMs.value_or(0));
+            if (reply.status != 200)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, reply.error)};
+            return {StateNodeToLua(s, reply.body), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
@@ -3288,7 +3359,22 @@ public:
             return true;
         });
 
-        lua.set_function("key_combo", [this](const std::vector<std::string>& keyNames, sol::optional<uint16_t> holdFrames) -> bool {
+        // key_set({"w", "o"}): the complete held-key state in one call - these keys held, every other injected key
+        // released; key_set({}) releases all. An item may be a chord ("caps+1"). False (nothing changed) for an
+        // unknown name or while a replay drives the input
+        // The list by value: sol reads a Lua table into a container taken by value (a reference wants a userdata)
+        lua.set_function("key_set", [this](std::vector<std::string> keyNames) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
+                return false;
+            std::string error;
+            return ctx->pDebugManager->GetKeyboardManager()->SetHeldKeys(keyNames, error) ==
+                   DebugKeyboardManager::SetHeldKeysStatus::Ok;
+        });
+
+        // The list by value: sol fills a container from a table only when the lambda takes it by value
+        lua.set_function("key_combo", [this](std::vector<std::string> keyNames, sol::optional<uint16_t> holdFrames) -> bool {
             Emulator* emulator = effectiveEmulator();
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())

@@ -18,6 +18,7 @@
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/watch/framewatch.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
@@ -581,6 +582,10 @@ void MainLoop::CompleteFrame()
         framewatch::Manager* watches = _context->pDebugManager->GetFrameWatches();
         if (watches && watches->Armed())
             watches->OnFrameEnd(_state->frame_counter);
+        // The twin timeline's density (debugger/timeline/twintimeline.h): each card's frame, while a client holds it
+        timeline::Timeline* twin = _context->pDebugManager->GetTimeline();
+        if (twin && twin->Armed()) [[unlikely]]
+            twin->OnFrameEnd(_state->frame_counter);
     }
 }
 

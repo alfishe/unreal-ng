@@ -189,6 +189,24 @@ public:
     
     /// Release all currently pressed keys
     void ReleaseAllKeys();
+
+    /// Sets the complete held-key state in one call: the keys given are held, every other injected key is
+    /// released (the keys of PressKey / PressCombo and of a tap in progress; a pending sequence - taps, typed
+    /// text - is dropped, it would press keys of its own afterwards). A key that is already held stays down
+    /// with no release in between. An empty list releases every injected key; the host's own keys are not
+    /// touched (ReleaseAllKeys resets the whole matrix).
+    /// @param keyNames One name per item, or chords ("w+o", ParseKeyChord); ZX names and PC names ("f1")
+    /// @param error Why it was refused: DescribeUnknownKey of the first unknown name, or the journal owns input
+    /// @param heldNames When given: the names now held, as parsed, in order, without repeats
+    /// @return Ok, or the refusal; nothing has changed then
+    enum class SetHeldKeysStatus : uint8_t
+    {
+        Ok,
+        UnknownKey,   ///< a name no key has (a caller's mistake: WebAPI 400)
+        InputOwned    ///< a TTD replay or an RZX playback drives the input (WebAPI 409)
+    };
+    SetHeldKeysStatus SetHeldKeys(const std::vector<std::string>& keyNames, std::string& error,
+                                  std::vector<std::string>* heldNames = nullptr);
     
     /// endregion </Single Key Operations>
     

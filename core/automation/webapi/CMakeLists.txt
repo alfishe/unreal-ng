@@ -250,6 +250,13 @@ set(COMMON_SOURCES
     src/automation-webapi.h
 )
 
+# The OpenAPI builders are thousands of straight-line JSON assignments, run once per GET /openapi.json. gcc -O3 -g
+# takes 80 minutes over them (measured outside LTO; inside, in the link of every binary) and notes that variable
+# tracking ran over its size limit; -O0 outside LTO builds the file in under half a minute
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(src/openapi_spec.cpp PROPERTIES COMPILE_OPTIONS "-fno-lto;-O0")
+endif ()
+
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # Standalone build
     add_executable(${PROJECT_NAME}

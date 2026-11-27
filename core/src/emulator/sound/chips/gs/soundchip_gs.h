@@ -244,6 +244,7 @@ public:
     void setIdleSleep(bool on) { _runner.setSleepOn(on); }
     /// Card CPU steps the sleeps stood for (tests, diagnosis)
     uint64_t stepsSlept() const { return _runner.stepsSlept(); }
+    uint64_t cardStepsSlept() const override { return stepsSlept(); }
     /// Card time in profile units, and a run of the card by itself (tests)
     int64_t cardUnits() const { return totalGsCycles(); }
     void runFor(int64_t units) { runTo(totalGsCycles() + units); }
@@ -381,7 +382,7 @@ private:
     {
         if (_portTrace.isCapturing()) [[unlikely]]
             traceIdle(head, start, iterations);
-        recordExecIdle(head, iterations);
+        recordExecIdle(head, iterations, start);
         if (_runProfile) [[unlikely]]
             _profiler.Idle(start, _runner.now());
         if (_analysis) [[unlikely]]

@@ -397,6 +397,43 @@ what an agent reads):
   4967cd423), then the Send console (built 2026-11-25, below), then the log row actions (A5.4, built 2026-11-25, below), then the twin timeline. With them
   (4967cd423): the side tab bars of both debuggers scroll instead of widening the window, an arrow at each end, the
   wheel switches tabs (`unreal-qt/src/widgets/tabscrollarrows.h`, `TabScrollArrows.*`).
+  - [x] **Twin timeline phase 1: data on every plane (2026-11-25, uncommitted on `gs-timeline`).** Design §5.4 / §7.2
+    as built, `core/src/debugger/timeline/twintimeline.h`. `ExecRecord` 16 bytes with `t`, INT / NMI / NeoGS clock
+    change records; leases (zero cost off); the density ring per frame; REST `GET /debug/timeline` + `POST
+    /debug/timeline/arm`, snapshot `pause.timeline` + `pause.positions`, WS paused `positions[]` + state topic
+    `debug.timeline` (≤ 10 Hz), CLI `timeline`, Lua / Python `timeline()` / `timeline_arm()`, MCP `inspect_state`
+    aspect `timeline`. Tests: `TwinTimeline_Test`, `OpenApiTimelineRoutes_Test`, the hub's positions, the MCP aspect,
+    `tools/verification/mcp/test_timeline.py`.
+  - [x] **Twin timeline phase 2, embedded debugger (2026-11-26, uncommitted on `gs-timeline`).** The Qt canvas
+    (gui-card-debugger §A5.1, C03) on the phase 1 data: `TwinTimelineView` (`unreal-qt/src/debugger/twintimelineview.h`),
+    a full-width strip under the card line (S1, kept, as the S3 line), shown only while a card CPU is fitted. MAIN lane
+    on top, the card below, NOW through both, blocks of width ∝ measured T, main's instruction at a card's stop in its
+    bus cycles (the part before NOW shaded), the next instruction outlined, markers (breakpoint dot, host port arrows
+    with the access in the tooltip, INT / NMI, the NeoGS clock diamond), readouts at the right (main progress · T ·
+    frame · gap when not zero · card cycle and clock). Wheel zoom around the pointer (default ± 60 T; below 0.4 px per
+    T the blocks merge into a bar), drag pan, double-click back to NOW, a click on a block (or the next instruction)
+    selects that CPU's tab and shows its disassembly there. Running: per-frame density bars (main: GS port accesses,
+    commands darker; card: busy over idle steps, INT ticks) read at 10 Hz on the `CardPanes::LiveLine` pattern, never
+    parking the emulation. Armed (a lease of the view, until released) only while shown; hidden, destroyed or another
+    machine: released. Test `TwinTimelineView_Test` (unreal-qt-tests); `UNREAL_TIMELINE_PNG_DIR` saves the C03
+    pictures (paused, after a step, a card stop, running; light and dark).
+  - [x] Twin timeline phase 3, eCat debugger (2026-11-26): `debuggers/qt/ecat/dialogs/debugger/twintimeline.{h,cpp}`, a
+    full-width strip between the toolbar and the main split, shown only with a card CPU; the same lanes, blocks,
+    segments, markers, readouts, zoom / pan / recenter, a block click selects that CPU's listing, running density.
+    Shim `read_timeline` / `timeline_arm` / `timeline_client`: in process `timeline::Read` / `SetArmed`, remote
+    `GET debug/timeline` and `POST debug/timeline/arm` (a 15 s lease renewed every 5 s, no WebAPI session); armed only
+    while shown. Self-check `timeline:` (14 checks with a card, 2 without), in process and `--connect`;
+    `--timeline-shots DIR` saves the pictures.
+  - [x] Twin timeline opt-in + GUI stall fix (2026-11-26, owner report): Debug > Show GS Timeline (eCat: the
+    toolbar's "GS timeline"), off by default and kept in the settings; off = hidden, not armed, nothing read. A paused
+    read on a GUI thread no longer waits up to 500 ms for a coherent moment (`timeline::Query::waitMs` 0, REST
+    `wait_ms=0`): busy, the last picture stays and the read is retried on a timer. Design §7.3. Tests
+    `TwinTimelineView_Test.StepOverAndOutNeverBlockTheGuiThread` (another client reading at each stop, 12 step overs /
+    outs: the longest GUI block < 50 ms, the longest refresh < 20 ms; 45-57 ms before the fix, about 2 ms after), `.OffByDefaultHiddenNotArmedNoReads`; eCat self-check `timeline:` off / on checks.
+    The stall without the timeline: stop notices coalesced into one pane refresh per event-loop turn
+    (`DebuggerWindow::requestUpdateState`), the PC history pane never waits (`PcHistory::Report` `waitMs` 0, retried),
+    fixed column widths, only new rows made; longest event-loop gap 724-978 ms -> 80-103 ms (host at load 95-115).
+    Tests `PcHistoryPane_Test.AStopMakesOnlyItsNewRows`, `.ARefreshNeverWaitsForABusyMachine`.
   - Protocol monitor prototype, embedded debugger (2026-11-23; owner decision: a card side tab "GS monitor", not a
     floating window): `unreal-qt/src/debugger/gsmonitorpane.h`, after "GS protocol" in `CardPanes::Create`, every card
     (`Card::Any`, the MultiSound's GS through the follow). The strip (the `gs` report's protocol, status, mailbox, last

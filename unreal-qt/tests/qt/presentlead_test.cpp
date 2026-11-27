@@ -116,3 +116,20 @@ TEST(PresentLead_Test, WithoutAnOffsetARefreshLateIsARefreshAndAMillisecond)
     lead.Shown(kPeriod + lead.OffsetNs() + PresentLead::kJitterNs + 1, 201, 0);
     EXPECT_EQ(lead.Late(), 1u);
 }
+
+TEST(PresentLead_Test, APresentHeldBySleepIsCountedButNeitherWidensNorEndsTheRunOnTime)
+{
+    // Before: a present shown 30 s late after a wake widened the margin a step, two or three queued ones two or three,
+    // and each step took 600 presents on time to give back
+    PresentLead lead(8'000'000);
+    lead.Margin(kPeriod);
+    for (uint64_t i = 1; i < PresentLead::kOnTimeRun; i++)
+        lead.Shown(0, i, 5'000'000);
+    lead.Shown(30'000'000'000, PresentLead::kOnTimeRun, 5'000'000);
+    lead.Shown(PresentLead::kGapNs + 1, PresentLead::kOnTimeRun + 1, 5'000'000);
+    EXPECT_EQ(lead.Late(), 2u);
+    EXPECT_EQ(lead.LastLate(), 0u);
+    EXPECT_EQ(lead.MarginNs(), 8'000'000);
+    lead.Shown(0, PresentLead::kOnTimeRun + 2, 5'000'000);  // the run on time goes on: the 600th narrows
+    EXPECT_EQ(lead.MarginNs(), 8'000'000 - PresentLead::kStepNs);
+}

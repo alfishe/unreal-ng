@@ -84,6 +84,18 @@ as WebAPI `GET /api/v1/emulator/machines` (with `id`, `current` places that inst
 
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**Preset machine** (a ready machine for a reproducible run in one call, `MachinePreset`;
+[command-interface.md, Preset machine](command-interface.md#preset-machine)):
+```python
+preset = machine_preset("48K", cards=["edge.1=kempston"], features={"kempstonmouse": False})
+print(preset["text"])                    # the effective settings, line by line
+emu = emu_get(preset["id"])              # preset["paused"], preset["position"]["frame"], preset["cards"], preset["control"]["held"]
+```
+Defaults: `ram="zero"`, `muted=True`, `paused=True` (at power-on), `fast_tape=False`, `take_control=True`
+(this script's session, as `emu.take_control()`), `replace=False`. A bad argument raises `ValueError` naming the valid
+values, a refused slot plan / feature / session `RuntimeError`; no instance is left behind. The new machine becomes
+the selected one.
+
 **ZX-Poly** (four synchronized instances of one model, through the same
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```python
@@ -1243,6 +1255,13 @@ emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
 # A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
 # breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 emu.port_out(0x13AF, 0x20)                    # TS-Conf: RAM page 0x20 into window 3
+
+# The GS debugger's twin timeline: main CPU and card CPU on one clock; the call takes the script's lease (until
+# timeline_arm(False)) that arms the histories it reads, so blocks come once the machine ran armed
+tl = emu.timeline(cpu="gs", span=200, recent=32)  # dict {state, armed, cpu, lanes, now {frame, t, gap_t},
+                                                  #  recent {main, gs}, next, markers, density, text}
+print(tl["text"])                                 # NOW, the gap, each lane's blocks (at, width T, PC, instruction)
+emu.timeline_arm(False)                           # release (True, lease_ms=: take it without a read)
 
 # PC history: the newest instructions with their window's page; the first call starts recording
 h = emu.pc_history(depth=16)                  # dict {armed, started_now, total, capacity, entries [{address, kind, page}]}

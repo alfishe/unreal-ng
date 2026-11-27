@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace framewatch { class Manager; }
+namespace timeline { class Timeline; }
 namespace markup { class MemoryMarkup; }
 
 class DebugManager
@@ -52,6 +53,7 @@ protected:
     std::unique_ptr<class AsmSyncService> _asmSync;
     std::unique_ptr<class ScriptCallbackManager> _scriptCallbacks;
     std::unique_ptr<framewatch::Manager> _frameWatches;
+    std::unique_ptr<timeline::Timeline> _timeline;
     std::unique_ptr<markup::MemoryMarkup> _markup;
     // The card CPU in the General Sound slot (gs-debugger design §3.2): its breakpoints and hooks
     std::unique_ptr<class GSCardTarget> _gsTarget;
@@ -98,6 +100,9 @@ public:
     ScriptCallbackManager* GetScriptCallbacks() { return _scriptCallbacks.get(); }
     /// Armed frame watches (debugger/watch/framewatch.h): checked at every frame end while any is armed
     framewatch::Manager* GetFrameWatches() { return _frameWatches.get(); }
+    /// The twin timeline's leases and density (debugger/timeline/twintimeline.h): sampled at every frame end while
+    /// a client holds a lease
+    timeline::Timeline* GetTimeline() { return _timeline.get(); }
     /// What the main CPU's memory holds, layered (debugger/markup/memorymarkup.h): regions, entries, comments
     markup::MemoryMarkup* GetMemoryMarkup() { return _markup.get(); }
     /// The General Sound slot's card CPU (exists for the machine's lifetime; Available() while a card with a CPU is

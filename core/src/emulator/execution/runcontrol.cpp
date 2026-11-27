@@ -1,6 +1,7 @@
 #include "emulator/execution/runcontrol.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 
@@ -42,6 +43,50 @@ std::string MainPositionText(const MainPosition& main)
                   main.busCycle >= 0 ? Z80MCycleDecoder::Description(main.cycles.cycles[main.busCycle].kind) : "",
                   gap.c_str());
     return text;
+}
+
+StateNode PositionsNode(const StopPositions& positions, const MainPosition& main)
+{
+    StateNode list = StateNode::Array();
+    if (!positions.known)
+        return list;
+    StateNode lane = StateNode::Object();
+    lane["cpu"] = std::string("main");
+    lane["frame"] = positions.frame;
+    lane["t"] = static_cast<int64_t>(positions.mainT);
+    lane["pc"] = static_cast<int>(main.known ? main.pc : positions.mainPc);
+    if (main.known && main.timed)
+    {
+        lane["elapsed_t"] = static_cast<int>(main.elapsedT);
+        lane["total_t"] = static_cast<int>(main.totalT);
+        if (main.busCycle >= 0)
+            lane["bus_cycle"] = std::string(Z80MCycleDecoder::Description(main.cycles.cycles[main.busCycle].kind));
+    }
+    if (main.known)
+        lane["text"] = MainPositionText(main);
+    list.push(std::move(lane));
+    static const char* const kCards[2] = {"gs", "ms"};
+    for (size_t i = 0; i < 2; i++)
+    {
+        const CardLanePosition& card = positions.cards[i];
+        if (!card.known)
+            continue;
+        StateNode node = StateNode::Object();
+        node["cpu"] = std::string(kCards[i]);
+        node["frame"] = positions.frame - (card.frameEnd && positions.frame ? 1 : 0);
+        node["units"] = card.units;
+        node["cycle"] = card.cycle;
+        node["clock_hz"] = static_cast<int64_t>(card.clockHz);
+        node["units_per_t"] = std::round(card.unitsPerT * 1000.0) / 1000.0;
+        node["pc"] = static_cast<int>(card.pc);
+        node["gap_t"] = std::round(card.gapT * 1000.0) / 1000.0;
+        // NOW on main's clock: main's T in the card's frame (the frame before in the frame-end catch-up) minus the gap
+        const double mainT = static_cast<double>(positions.mainT) + (card.frameEnd ? positions.frameT : 0);
+        node["now_t"] = std::round((mainT - card.gapT) * 1000.0) / 1000.0;
+        node["frame_end"] = card.frameEnd;
+        list.push(std::move(node));
+    }
+    return list;
 }
 
 StateNode MainPositionNode(const MainPosition& main)

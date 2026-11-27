@@ -6,6 +6,7 @@
 
 #include <QDebug>
 #include <algorithm>
+#include <utility>
 #include <atomic>
 #include <chrono>
 #include <QPainter>
@@ -33,6 +34,7 @@
 #include <QOpenGLShaderProgram>
 
 #include "gpu/gldevice.h"
+#include "gpu/glwindowbuffer.h"
 #ifdef UNREAL_VULKAN
 #include "gpu/vulkandevice.h"
 #include "gpu/vulkanpresenter.h"
@@ -182,6 +184,13 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
         _presentTimer->setTimerType(Qt::PreciseTimer);
         connect(_presentTimer, &QTimer::timeout, this, [this]() { renderNative(false); });
     }
+    else
+    {
+        _glTimer = new QTimer(this);
+        _glTimer->setSingleShot(true);
+        _glTimer->setTimerType(Qt::PreciseTimer);
+        connect(_glTimer, &QTimer::timeout, this, [this]() { renderGL(); });
+    }
     _smoothTraced = smoothmotion::TraceWriter::FromEnvironment(_smoothTrace);
 #ifdef UNREAL_TEST_HOOKS
     // UNREAL_TEST_GPU_HANG=gl:<s>: the recovery test, the window's GL work never ends that long from now
@@ -287,20 +296,17 @@ bool DeviceScreenGLWindow::recreateLostContext()
     _glSize = QSize();
     _smoothShown = {};
     _uploadedSerial = 0;
-    _gradedSerial = ~0ull;
-    _modelTablesUploaded = false;
-    _modelSerial = ~0ull;
+    for (CrtTables& tables : _crtTables)
+        tables.Invalidate();
     return true;
 }
 
 void DeviceScreenGLWindow::releaseGLObjects()
 {
     _texture.reset();
-    _gradedTexture.reset();
-    _indexTexture.reset();
-    _factorTexture.reset();
+    for (CrtTables& tables : _crtTables)
+        tables.Release();
     _composeShader.reset();
-    _modelGpu.destroy();
     _smooth.SetDevice(nullptr);
     _smoothGpu.Destroy();
     _smoothGpuFailed = false;  // another context or device: the GPU passes are tried again
@@ -351,6 +357,7 @@ void DeviceScreenGLWindow::update()
             _presentTimer->start(0);
         return;
     }
+    _glPaintAsked = true;  // the HUD, an overlay, a setting: drawn even with no new frame
     requestUpdate();
 }
 
@@ -358,17 +365,69 @@ void DeviceScreenGLWindow::renderGL()
 {
     if (_isShuttingDown || !isExposed() || !prepareContext())
         return;
+    if (_glTimer)
+        _glTimer->stop();
     const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
     glBindFramebuffer(GL_FRAMEBUFFER, _context->defaultFramebufferObject());
+    gpu::RestoreWindowDrawBuffer(_context.get());  // NVIDIA EGL: GL_NONE, every draw dropped
+    bool asked = std::exchange(_glPaintAsked, false) || !_glDrawn;
     if (pixels != _glSize)
     {
         _glSize = pixels;
         resizeGL(pixels.width(), pixels.height());
+        asked = true;
     }
+    const uint64_t uploads = _frameSerial;
+    const uint64_t shownSerial = _uploadedSerial;
     updateTexture(refreshTargetNs());
+    _glNextTargetNs = _shownInfo.nextTargetNs;
+    // The window repaints on every refresh, paced by the swap that waits for the display. Where the swaps do not wait
+    // (headless mutter under NVIDIA EGL, a remote desktop: 2026-11-25, ~250 repaints a second for 49 Hz frames, each a
+    // buffer for the compositor and the encoder) it draws and swaps only for something new: another frame (the same
+    // one uploaded again after a latch is not), smooth motion's next picture, a repaint asked; the next look is timed
+    const bool newFrame = _smoothUsed ? _smoothChanged
+                                      : _frameSerial != uploads && (_uploadedSerial == 0 || _uploadedSerial != shownSerial);
+    if (_glSwapUnpaced && !newFrame && !asked)
+    {
+        scheduleGl();
+        return;
+    }
     paintGL();
     _context->swapBuffers(this);
+    // Swaps that wait for the display come at most at its rate: half again as many in a second is a swap that waits
+    // for nothing (what the window then does stays for its life)
+    const int64_t now = SteadyNowNs();
+    if (now - _glSwapSecondNs >= 1'000'000'000)
+    {
+        const QScreen* display = screen();
+        const double hz = display ? display->refreshRate() : 60.0;
+        if (!_glSwapUnpaced && _glSwapSecondNs != 0 && now - _glSwapSecondNs < 2'000'000'000 &&
+            _glSwapsInSecond > std::max(90.0, hz * 1.5))
+        {
+            _glSwapUnpaced = true;
+            qInfo().noquote() << "DeviceScreenGLWindow: GL swaps do not wait for the display (" << _glSwapsInSecond
+                              << "a second at" << hz << "Hz): the window repaints only what is new";
+        }
+        _glSwapSecondNs = now;
+        _glSwapsInSecond = 0;
+    }
+    _glSwapsInSecond++;
+    _glDrawn = true;
+    captureForRecording();  // after the swap: the frame shown, the GUI free until the next one
     onFrameSwapped();
+}
+
+void DeviceScreenGLWindow::scheduleGl()
+{
+    // While frames come: at the next frame's time less the refresh the look asks ahead for, else a refresh on; a latch
+    // asks at once anyway (refresh)
+    if (!_glTimer || _isShuttingDown || !isExposed() || _idleRefreshes > idleLimit())
+        return;
+    const int64_t period = refreshPeriodNs();
+    int64_t waitNs = period;
+    if (_glNextTargetNs > 0)
+        waitNs = std::clamp<int64_t>(_glNextTargetNs - period - SteadyNowNs(), 1'000'000, period);
+    _glTimer->start(static_cast<int>((waitNs + 999'999) / 1'000'000));
 }
 
 
@@ -469,6 +528,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
     {
         _presentPending = _presentPending || force;
         _presentHidden = true;
+        _recovery.Hidden();
         _smoothRefreshNs = 0;
         _idleRefreshes++;
         scheduleNative();
@@ -600,6 +660,8 @@ void DeviceScreenGLWindow::renderNative(bool force)
             }
             _presenter->PresentFrame(at, trace);
             _frameTarget = nullptr;
+            if (newFrame && !_presenter->PresentFailed())
+                captureForRecording();  // after the present: the frame shown, the GUI free until the next one
             // Drawn and not handed on (Vulkan: no image to present into): the same way as no framebuffer
             if (_presenter->PresentFailed())
             {
@@ -1632,8 +1694,9 @@ void DeviceScreenGLWindow::initializeGL()
     _composeShader = _gpu->CreateProgram(CRT_VERTEX_SHADER, CRTRenderer::kCompositionShader, log);
     if (!_composeShader)
         qWarning() << "CRT composition shader failed:" << QString::fromStdString(log);
-    if (!_modelGpu.create(_gpu.get()))
-        qWarning() << "CRT model shader failed:" << _modelGpu.log();
+    for (CrtTables& tables : _crtTables)
+        if (!tables.modelGpu.create(_gpu.get()))
+            qWarning() << "CRT model shader failed:" << tables.modelGpu.log();
 
     // A custom shader or preset chosen before the context existed
     if (!_customShaderSource.isEmpty())
@@ -1951,6 +2014,273 @@ QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
         _overlayPainter(painter, width(), height());
     }
     return image;
+}
+
+void DeviceScreenGLWindow::setRecordingCapture(bool enabled, int pictureHeight)
+{
+    _recordCapture = enabled;
+    _recordHeight = pictureHeight;
+    _recordSerial = 0;
+    if (!enabled)
+        _recordFrame = {};
+    const bool release = !enabled && (_recordTarget
+#ifdef __APPLE__
+                                      || _recordSurfaces
+#endif
+                                     );
+    if ((!_recordPending.empty() || release) && isValid() && makeCurrent())
+    {
+        for (PendingCapture& capture : _recordPending)
+            dropCapture(capture);
+        if (!enabled)
+        {
+            _recordTarget.reset();  // a GL texture goes with its context current
+            _recordSource.reset();
+#ifdef __APPLE__
+            if (_recordSurfaces)
+                _recordSurfaces->Release();
+            _recordSurfaces.reset();
+#endif
+        }
+        doneCurrent();
+    }
+    _recordPending.clear();
+}
+
+void DeviceScreenGLWindow::setRecordingFrame(const RecordingFrameLayout& layout)
+{
+    _recordFrame = layout;
+}
+
+void DeviceScreenGLWindow::dropCapture(PendingCapture& capture)
+{
+#ifdef __APPLE__
+    if (_recordSurfaces && capture.composed.slot >= 0)
+        _recordSurfaces->Drop(capture.composed);
+#endif
+    (void)capture;  // a read in a slot is simply started again over
+}
+
+bool DeviceScreenGLWindow::composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot)
+{
+#ifdef __APPLE__
+    static_assert(RecordingSurfaces::kSlots == gpu::Device::kReadSlots, "one capture per read slot");
+    if (_recordFrame.size.isEmpty() || !_gpu || _gpu->GetBackend() != gpu::Device::Backend::GL || !_recordTarget)
+        return false;
+    if (!_recordSurfaces)
+        _recordSurfaces = std::make_unique<RecordingSurfaces>();
+    if (!_recordSurfaces->Configure(_recordFrame.size.width(), _recordFrame.size.height()))
+        return false;
+    // The picture where the CPU way puts it (WindowRecorder::Writer::composeInto): a few pixels off its place,
+    // centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept
+    const QRect place = _recordFrame.screenRect;
+    QRect from(QPoint(0, 0), kept);  // rows from the top
+    QRect to;
+    bool linear = false;
+    if (std::abs(kept.width() - place.width()) <= 4 && std::abs(kept.height() - place.height()) <= 4)
+    {
+        const int left = place.x() + (place.width() - kept.width()) / 2;
+        const int top = place.y() + (place.height() - kept.height()) / 2;
+        to = QRect(left, top, kept.width(), kept.height()).intersected(QRect(QPoint(0, 0), _recordFrame.size));
+        from = QRect(to.x() - left, to.y() - top, to.width(), to.height());
+    }
+    else
+    {
+        to = QRect(place.topLeft(), kept.scaled(place.size(), Qt::KeepAspectRatio));
+        linear = true;
+    }
+    if (to.isEmpty() || from.isEmpty())
+        return false;
+    const int fromGl[4] = {rect.x + from.x(), rect.y + kept.height() - from.y() - from.height(), from.width(),
+                           from.height()};
+    const int toRows[4] = {to.x(), to.y(), to.width(), to.height()};
+    const QColor color = _recordFrame.background;
+    const float background[3] = {static_cast<float>(color.redF()), static_cast<float>(color.greenF()),
+                                 static_cast<float>(color.blueF())};
+    PendingCapture capture;
+    if (!_recordSurfaces->Compose(slot, static_cast<gpu::GlDevice&>(*_gpu).FramebufferId(*_recordTarget), fromGl,
+                                  toRows, linear, background, capture.composed))
+        return false;
+    capture.slot = slot;
+    capture.size = kept;
+    capture.frame = shownFrameNumber();
+    _recordPending.push_back(std::move(capture));
+    return true;
+#else
+    (void)rect;
+    (void)kept;
+    (void)slot;
+    return false;
+#endif
+}
+
+bool DeviceScreenGLWindow::drawRecordingPicture(gpu::Rect& rect, QSize& kept)
+{
+    const QSize window = (QSizeF(size()) * devicePixelRatio()).toSize();
+    if (_recordHeight > 0)
+        _renderPicture = QSize(static_cast<int>(_recordHeight * static_cast<double>(ratio)), _recordHeight);
+    const QSize pixels = _renderPicture.isEmpty() ? window : _renderPicture;
+    const QRect picture = pictureDeviceRect().intersected(QRect(QPoint(0, 0), pixels));
+    if (pixels.isEmpty() || picture.isEmpty())
+    {
+        _renderPicture = {};
+        return false;
+    }
+    if (!_recordTarget || _recordTarget->Width() != pixels.width() || _recordTarget->Height() != pixels.height())
+        _recordTarget = _gpu->CreateTexture(pixels.width(), pixels.height(), gpu::Format::RGBA8);
+    if (!_recordTarget)
+    {
+        _renderPicture = {};
+        return false;
+    }
+    // Smooth motion's picture is the display's, between two frames: the recording draws the frame due itself (the
+    // latched one, whose number the picture carries) in the texture's place, and as the CPU-side frame the CRT
+    // composition grades
+    const bool frameItself = _shownFrame == &_smoothFrame && !_latchedFrame.isNull() &&
+                             _latchedFrame.format() == QImage::Format_RGBA8888;
+    if (frameItself)
+    {
+        const int w = _latchedFrame.width();
+        const int h = _latchedFrame.height();
+        if (!_recordSource || _recordSource->Width() != w || _recordSource->Height() != h)
+            _recordSource = _gpu->CreateTexture(w, h, gpu::Format::RGBA8);
+        if (!_recordSource)
+        {
+            _renderPicture = {};
+            return false;
+        }
+        _gpu->Upload(*_recordSource, {0, 0, w, h}, _latchedFrame.constBits(),
+                     static_cast<int>(_latchedFrame.bytesPerLine() / 4));
+        std::swap(_texture, _recordSource);
+        _shownFrame = &_latchedFrame;  // the CRT composition reads its pixels on the CPU (grade, prepare)
+    }
+    _renderingImage = true;
+    const uint32_t windowCount = _slangRunner ? _slangRunner->frameCount() : 0;
+    if (_slangRunner)
+        _slangRunner->setFrameCount(_imageFrameCount++);  // the pictures count their own (interlace presets)
+    if (_gpu->GetBackend() == gpu::Device::Backend::Vulkan)
+    {
+        gpu::Texture* windowTarget = _frameTarget;
+        _frameTarget = _recordTarget.get();
+        paintGL();
+        _frameTarget = windowTarget;
+    }
+    else
+    {
+        GLint previous = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<gpu::GlDevice&>(*_gpu).FramebufferId(*_recordTarget));
+        paintGL();
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
+    }
+    if (_slangRunner)
+        _slangRunner->setFrameCount(windowCount);
+    _renderingImage = false;
+    if (frameItself)
+    {
+        std::swap(_texture, _recordSource);
+        _shownFrame = &_smoothFrame;
+    }
+    _renderPicture = {};
+    // GL rows: the picture's rectangle counted from the bottom
+    rect = {picture.x(), pixels.height() - picture.y() - picture.height(), picture.width(), picture.height()};
+    kept = picture.size();
+    return true;
+}
+
+void DeviceScreenGLWindow::captureForRecording()
+{
+    if (!_recordCapture || !_gpu || !_texture)
+        return;
+    // One picture per frame: smooth motion presents every refresh, a forced repaint the same frame again
+    const uint64_t serial = _shownInfo.serial != 0 ? _shownInfo.serial : _frameSerial;
+    if (serial == _recordSerial)
+        return;
+    _recordSerial = serial;
+    // The texture holds the frame just presented: drawn as it is (no updateTexture: that would take the next frame
+    // out of the window's queue and feed smooth motion a second time)
+    gpu::Rect rect;
+    QSize kept;
+    if (!drawRecordingPicture(rect, kept))
+        return;
+    if (_recordPending.size() >= static_cast<size_t>(gpu::Device::kReadSlots))
+    {
+        dropCapture(_recordPending.front());  // not taken (the GUI busy elsewhere): its slot is the one started now
+        _recordPending.pop_front();
+    }
+    if (composeRecordingFrame(rect, kept, _recordSlot))
+        _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
+    else if (_gpu->BeginRead(_recordSlot, *_recordTarget, rect, true))
+    {
+        PendingCapture capture;
+        capture.slot = _recordSlot;
+        capture.size = kept;
+        capture.frame = shownFrameNumber();
+        _recordPending.push_back(std::move(capture));
+        _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
+    }
+}
+
+uint64_t DeviceScreenGLWindow::shownFrameNumber() const
+{
+    return _shownInfo.serial != 0 ? _shownInfo.geometry.frameNumber : 0;
+}
+
+bool DeviceScreenGLWindow::grabRecordingPicture(QImage& out, uint64_t& frame)
+{
+    if (!_recordCapture || !_gpu || !isValid() || !makeCurrent())
+        return false;
+    // The window presents nothing (hidden, minimized): the frame due now, uploaded here, read at once
+    updateTexture(refreshTargetNs());
+    gpu::Rect rect;
+    QSize kept;
+    bool read = false;
+    if (_texture && drawRecordingPicture(rect, kept))
+    {
+        // A slot no capture waits in: the pending ones are taken before a grab
+        const int slot = _recordPending.empty() ? _recordSlot : -1;
+        QImage image(kept, QImage::Format_ARGB32);
+        read = slot >= 0 && !image.isNull() && _gpu->BeginRead(slot, *_recordTarget, rect, true) &&
+               _gpu->FinishRead(slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), true);
+        if (read)
+        {
+            out = std::move(image);
+            frame = shownFrameNumber();
+        }
+    }
+    doneCurrent();
+    return read;
+}
+
+void DeviceScreenGLWindow::takeRecordingPictures(std::vector<RecordingPicture>& out)
+{
+    if (_recordPending.empty() || !_gpu || !makeCurrent())
+        return;
+    for (PendingCapture& capture : _recordPending)
+    {
+#ifdef __APPLE__
+        if (_recordSurfaces && capture.composed.slot >= 0)
+        {
+            RecordingPicture picture;
+            picture.frame = _recordSurfaces->Finish(capture.composed);
+            picture.number = capture.frame;
+            if (picture.frame)
+                out.push_back(std::move(picture));
+            continue;
+        }
+#endif
+        QImage image(capture.size, QImage::Format_ARGB32);  // B,G,R,A bytes on a little-endian host
+        if (!image.isNull() &&
+            _gpu->FinishRead(capture.slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), true))
+        {
+            RecordingPicture picture;
+            picture.image = std::move(image);
+            picture.number = capture.frame;
+            out.push_back(std::move(picture));
+        }
+    }
+    _recordPending.clear();
+    doneCurrent();
 }
 
 void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
@@ -2296,7 +2626,7 @@ void DeviceScreenGLWindow::paintGL()
             drawSlangPreset(picture, *target, viewport);
         else if (_crtEnabled && _customShader)
             drawCustomCrt(picture, *target, viewport);
-        else if (_crtEnabled && CRTBeamModel::isModel(_crtParams.profile) && _modelGpu.isCreated() && _shownFrame)
+        else if (_crtEnabled && CRTBeamModel::isModel(_crtParams.profile) && crtTables().modelGpu.isCreated() && _shownFrame)
             drawModelCrt(picture, *target, viewport);
         else if (_composeShader && _shownFrame)
             drawComposedCrt(picture, *target, viewport);
@@ -2430,9 +2760,8 @@ void DeviceScreenGLWindow::dropVulkan(const std::string& why)
     _glSize = QSize();
     _smoothShown = {};
     _uploadedSerial = 0;
-    _gradedSerial = ~0ull;
-    _modelTablesUploaded = false;
-    _modelSerial = ~0ull;
+    for (CrtTables& tables : _crtTables)
+        tables.Invalidate();
     update();
 }
 
@@ -2457,33 +2786,35 @@ void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture, gpu::Texture& t
         return;
 
     // The tables again only for a new size or profile, the grading once per frame
+    CrtTables& t = crtTables();
     static const CRTProfileParams kPlain = CRTProfileParams::None();
     const CRTProfileParams& params = _crtEnabled ? _crtParams : kPlain;
-    const bool rebuilt = _crtRenderer.setLayout(layout, params);
-    if (rebuilt || !_indexTexture || !_factorTexture)
+    const bool rebuilt = t.renderer.setLayout(layout, params);
+    if (rebuilt || !t.indexTexture || !t.factorTexture)
     {
-        UploadRgba(*_gpu, _indexTexture, layout.outWidth, layout.outHeight, _crtRenderer.indexTable().data());
-        UploadRgba(*_gpu, _factorTexture, layout.outWidth, layout.outHeight, _crtRenderer.factorTable().data());
+        UploadRgba(*_gpu, t.indexTexture, layout.outWidth, layout.outHeight, t.renderer.indexTable().data());
+        UploadRgba(*_gpu, t.factorTexture, layout.outWidth, layout.outHeight, t.renderer.factorTable().data());
     }
-    if (rebuilt || !_gradedTexture || _gradedSerial != _frameSerial)
+    if (rebuilt || !t.gradedTexture || t.gradedSerial != _frameSerial)
     {
-        _crtRenderer.grade(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), params);
-        UploadRgba(*_gpu, _gradedTexture, layout.frameWidth, layout.frameHeight, _crtRenderer.graded().data());
-        _gradedSerial = _frameSerial;
+        t.renderer.grade(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), params);
+        UploadRgba(*_gpu, t.gradedTexture, layout.frameWidth, layout.frameHeight, t.renderer.graded().data());
+        t.gradedSerial = _frameSerial;
     }
 
-    if (!_gradedTexture || !_indexTexture || !_factorTexture)
+    if (!t.gradedTexture || !t.indexTexture || !t.factorTexture)
         return;
     gpu::Program& p = *_composeShader;
-    p.SetTexture("frame", _gradedTexture.get());
-    p.SetTexture("indexTable", _indexTexture.get());
-    p.SetTexture("factorTable", _factorTexture.get());
+    p.SetTexture("frame", t.gradedTexture.get());
+    p.SetTexture("indexTable", t.indexTexture.get());
+    p.SetTexture("factorTable", t.factorTexture.get());
     p.SetFloat2("frameSize", static_cast<float>(layout.frameWidth), static_cast<float>(layout.frameHeight));
     drawQuad(p, target, viewport, 0.0f, 0.0f, 1.0f, 1.0f);
 }
 
 void DeviceScreenGLWindow::drawModelCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport)
 {
+    CrtTables& t = crtTables();
     CRTBeamModel::Layout layout;
     layout.outWidth = picture.width();
     layout.outHeight = picture.height();
@@ -2494,20 +2825,20 @@ void DeviceScreenGLWindow::drawModelCrt(const QRect& picture, gpu::Texture& targ
         return;
 
     // The tables again only for a new size or profile, the frame once per upload
-    const bool rebuilt = _crtModel.setLayout(layout, _crtParams.profile);
-    if (rebuilt || !_modelTablesUploaded)
+    const bool rebuilt = t.model.setLayout(layout, _crtParams.profile);
+    if (rebuilt || !t.modelTablesUploaded)
     {
-        _modelGpu.uploadTables(_crtModel);
-        _modelTablesUploaded = true;
+        t.modelGpu.uploadTables(t.model);
+        t.modelTablesUploaded = true;
     }
-    if (rebuilt || _modelSerial != _frameSerial)
+    if (rebuilt || t.modelSerial != _frameSerial)
     {
         // Not the glow's columns: the shader sums them from the frame itself
-        _crtModel.prepare(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), false);
-        _modelGpu.uploadFrame(_crtModel);
-        _modelSerial = _frameSerial;
+        t.model.prepare(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), false);
+        t.modelGpu.uploadFrame(t.model);
+        t.modelSerial = _frameSerial;
     }
-    _modelGpu.draw(_crtModel, target, viewport);
+    t.modelGpu.draw(t.model, target, viewport);
 }
 
 void DeviceScreenGLWindow::drawCustomCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport)
@@ -2787,7 +3118,10 @@ bool DeviceScreenGLWindow::event(QEvent* event)
                 if (_native)
                     renderNative(true);
                 else
+                {
+                    _glPaintAsked = true;  // the system may have dropped what the window showed
                     renderGL();
+                }
             }
             break;
         case QEvent::Resize:

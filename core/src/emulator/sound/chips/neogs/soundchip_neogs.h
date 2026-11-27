@@ -306,6 +306,7 @@ public:
     void setIdleSleep(bool on) { _runner.setSleepOn(on); }
     /// Card CPU steps the sleeps stood for (tests, diagnosis)
     uint64_t stepsSlept() const { return _runner.stepsSlept(); }
+    uint64_t cardStepsSlept() const override { return stepsSlept(); }
     void poke(uint16_t addr, uint8_t value) { _mem.poke(addr, value); }
     /// Flash persistence ([NGS] FlashWrite, neogs-tdd.md §5.8). In persist
     /// mode a modified flash is saved as neogs-flash-<sha256 of the shipped
@@ -397,7 +398,7 @@ private:
     {
         if (_portTrace.isCapturing()) [[unlikely]]
             traceIdle(head, start, iterations);
-        recordExecIdle(head, iterations);
+        recordExecIdle(head, iterations, start);
         if (_runProfile) [[unlikely]]
             _profiler.Idle(start, _runner.now());
         if (_analysis) [[unlikely]]

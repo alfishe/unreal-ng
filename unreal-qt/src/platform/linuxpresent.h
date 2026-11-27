@@ -68,6 +68,10 @@ struct VrrInputs
     const char* vrrAllowed = nullptr;
     /// The window covers its whole screen: X11 drivers flip (and so vary the refresh) only for such a window
     bool coversScreen = false;
+    /// gamescope's word, its root window atoms on Steam's X display (-1: not under gamescope or not published):
+    /// GAMESCOPE_VRR_CAPABLE (the connector can) and GAMESCOPE_VRR_ENABLED (adaptive sync on in Steam's settings)
+    int gamescopeCapable = -1;
+    int gamescopeEnabled = -1;
 };
 
 struct VrrDecision
@@ -92,11 +96,28 @@ inline bool SwitchedOff(const char* value)
 
 /// The display's VRR for this window. X11: the output's RandR property says whether the display and driver can, and
 /// the driver varies the refresh only for a window it flips (fullscreen, unredirected); Mesa opts the window in with
-/// `_VARIABLE_REFRESH`. NVIDIA without the property: unknown unless the environment turns it off. Wayland / XWayland:
-/// no client query exists, the compositor decides (fullscreen on KDE, GNOME 46+, gamescope)
+/// `_VARIABLE_REFRESH`. NVIDIA without the property: unknown unless the environment turns it off. gamescope publishes
+/// its own (whatever Qt runs on there): the connector capable and adaptive sync on varies the refresh for the focused
+/// game. Wayland / XWayland otherwise: no client query exists, the compositor decides (fullscreen on KDE, GNOME 46+)
 inline VrrDecision DecideVrr(const VrrInputs& in)
 {
     VrrDecision d;
+    if (in.gamescopeCapable >= 0)
+    {
+        if (in.gamescopeCapable == 0)
+        {
+            d.support = VrrSupport::No;
+            d.reason = "gamescope: the display is not VRR capable (GAMESCOPE_VRR_CAPABLE 0)";
+        }
+        else if (in.gamescopeEnabled == 0)
+        {
+            d.support = VrrSupport::No;
+            d.reason = "gamescope: the display is VRR capable, adaptive sync is off in Steam's display settings";
+        }
+        else
+            d.support = VrrSupport::Yes;
+        return d;
+    }
     switch (in.system)
     {
         case WindowSystem::Wayland:

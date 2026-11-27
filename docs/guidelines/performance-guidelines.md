@@ -115,11 +115,20 @@ The project builds x86-64 without `-march`. gcc then has no POPCNT (`std::popcou
 
 The gain was in two routines, not in the flag, and the baseline build now has it without the flag:
 
-- CRC32C is chosen at run time (the pattern above): TTD recording rows −2 … −4 % on the Deck, the same CRCs.
+- CRC32C is chosen at run time (the pattern above): TTD recording rows −3 … −5 % on the Deck (8 rounds), the
+  same CRCs.
 - `smoothmotion::Mix` takes two channels to a 32-bit word (16-bit halves never carry), two multiplies a pair instead
-  of a 32-bit vector multiply per channel (SSE4.1 `pmulld`). Blend on an i7-11850H, share of one thread: ATE
-  3.4 → 2.9 % (v2 was 2.7 %), action 1.4 → 0.9 % (v2 1.0 %), the same pictures; exhaustively equal to the
-  per-channel formula.
+  of a 32-bit vector multiply per channel (SSE4.1 `pmulld`). Blend, share of one thread, the same pictures,
+  exhaustively equal to the per-channel formula:
+
+  | Clip | Steam Deck: before → after (v2) | i7-11850H: before → after (v2) |
+  |:--|:--|:--|
+  | ATE | 4.3 → 3.9 % (3.7 %) | 3.4 → 2.9 % (2.7 %) |
+  | action | 2.0 → 1.4 % (1.4 %) | 1.4 → 0.9 % (1.0 %) |
+  | aleste | 2.0 → 1.4 % (1.5 %) | |
+
+  The Deck's frame rows that record no TTD moved by −2 … +4 % with the CRC change (it is not called there):
+  code layout, within the Zen 2 noise.
 
 The flicker search already counts bits with SWAR where the build has no POPCNT (`Ones` in `smoothmotion.cpp`).
 Do not add `-march` / `-mpopcnt` for speed: measure the routine and give it its own path.

@@ -23,11 +23,13 @@ static_assert((2 * LayerFlow::kSupportRadius + 1) * (2 * LayerFlow::kSupportRadi
               "Top: a support in 12 bits");
 static_assert(LayerFlow::kMaxVectors < (1u << 19), "Top: a vector index above the support's 12 bits");
 
-/// The texel reads of a fragment of the picture pass at most: per allowed vector its checks, then the cover rule's
-/// rows (the masks of every candidate and the row's colours)
-constexpr int kLayersReads = static_cast<int>(LayerFlow::kMaxAllowed) * 16 +
+/// The texel reads of a fragment of the picture pass at most: per allowed vector its checks (the cover's slowest
+/// rule: every allowed vector and its fit at the sample), then the cover rule's rows (the masks of every candidate and
+/// the row's colours), then carryFirst's samples and their still checks
+constexpr int kLayersReads = static_cast<int>(LayerFlow::kMaxAllowed) * (19 + 3 * static_cast<int>(LayerFlow::kMaxAllowed)) +
                              (2 * LayerFlow::kSupportRadius + 1) *
-                                 (2 * static_cast<int>(LayerFlow::kMaxAllowed) + 2 * LayerFlow::kSupportRadius + 1);
+                                 (2 * static_cast<int>(LayerFlow::kMaxAllowed) + 2 * LayerFlow::kSupportRadius + 1) +
+                             8;
 
 /// The constants every fragment shader shares, from the C++ ones, after the version line
 QString ShaderHeader()
@@ -671,6 +673,11 @@ uniform usampler2D coverMasks;
 out uvec4 color;
 int Allowed(ivec2 blk, int k) { return texelFetch(allowed, ivec2(blk.x * kMaxAllowed + k, blk.y), 0).r; }
 int Balance(int c, ivec2 q) { return int((Bits(c, q) >> 3) & 3u) - 1; }
+// The block of a sample read clamped, as the frames are, decided still
+bool StillBlock(ivec2 q) {
+    int v = texelFetch(blockInfo, clamp(q, ivec2(0), size - 1) / kBlock, 0).x;
+    return v >= 0 && Vec(v) == ivec2(0);
+}
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
     ivec2 blk = p / kBlock;
@@ -696,9 +703,23 @@ void main() {
                 continue;
             ivec2 sa = p - Shifted(v);
             uvec4 va = At(frameA, sa);
-            if (!Same(va, At(frameB, sa + v)) || Same(va, At(frameB, sa)) || Same(va, here))
+            if (!Same(va, At(frameB, sa + v)) || Same(va, At(frameB, sa)) || Same(va, At(frameA, sa + v)) ||
+                Same(va, here))
                 continue;
             if (!Same(At(frameP, sa - v), va))
+                continue;
+            // behind: the layer's pixel a would show here is seen in p and b at its places
+            uvec4 hidden = At(frameP, p - v);
+            if (Same(hidden, At(frameB, p + v)) && !Same(hidden, here))
+                continue;
+            // slowest: a slower vector fitting the sample (read clamped) is the layer's motion there
+            ivec2 sq = clamp(sa, ivec2(0), size - 1);
+            bool slower = false;
+            for (int j = 0; j < count; j++) {
+                int u = Allowed(blk, j);
+                slower = slower || (Slower(Vec(u), v) && Fits(u, sq));
+            }
+            if (slower)
                 continue;
             cands[m] = c;
             supports[m] = support;
@@ -756,7 +777,12 @@ void main() {
         if (!other) {
             ivec2 v = Vec(bv);
             ivec2 sa = p - Shifted(v);
-            color = weight < kHalfOne ? At(frameA, sa) : At(frameB, sa + v);
+            uvec4 fromA = At(frameA, sa), fromB = At(frameB, sa + v);
+            bool stillA = Same(At(frameP, sa), fromA) && Same(fromA, At(frameB, sa));
+            bool stillB = Same(At(frameP, sa + v), fromB) && Same(fromB, At(frameA, sa + v));
+            bool nearA = weight < kHalfOne;
+            bool swap = nearA ? stillA && !stillB && StillBlock(sa) : stillB && !stillA && StillBlock(sa + v);
+            color = nearA != swap ? fromA : fromB;
             return;
         }
     }
@@ -1326,7 +1352,7 @@ bool SmoothMotionGPU::ComposeLayers(const Picture& p, const Picture& a, const Pi
 bool SmoothMotionGPU::ComposeLayersHere(const Picture& p, const Picture& a, const Picture& b, const MotionField& prev,
                                         const MotionField& next, int w, uint32_t* out)
 {
-    LayerFlow::Prepare(prev, next, a.width, a.height, _layerSet);
+    LayerFlow::Prepare(prev, next, p, a, b, _layerSet);
     const int width = a.width, height = a.height;
     const int n = static_cast<int>(_layerSet.all.size());
     const int bw = _layerSet.blocksWide, bh = _layerSet.blocksHigh;

@@ -7,12 +7,14 @@
 #include "emulator/execution/runcontrol.h"
 #include "debugger/watch/framewatch.h"
 #include "emulator/execution/scriptsession.h"
+#include "emulator/preset/machinepreset.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memorycounters.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -1325,6 +1327,11 @@ namespace PythonBindings
         d["present"] = state.present;
         d["wired"] = state.wired;
         d["fit"] = state.fit;
+        d["port_decoded"] = state.portDecoded;
+        d["port_source"] = state.portSource;
+        d["kempston_mouse_feature"] = state.mouseFeatureOn;
+        d["kempston_mouse_fitted"] = state.mouseFitted;
+        d["ports_text"] = DebugJoystickManager::DescribePorts(state);
         d["state"] = static_cast<int>(state.state);
         d["port_value"] = static_cast<int>(state.portValue);
         d["buttons"] = buttons;
@@ -1701,6 +1708,44 @@ namespace PythonBindings
         }, py::arg("model") = "PENTAGON", py::arg("file") = "", py::arg("ram_power_on") = "",
            "Start a ZX-Poly machine (file: .zxp, .prom or multiloader disk); returns the master's id. "
            "ram_power_on: 'random' or 'zero' (RAM contents of all four modules; default: the model's unreal.ini)");
+
+        // A preset machine in one call (MachinePreset, core/src/emulator/preset/machinepreset.h)
+        m.def("machine_preset", [](const std::string& model, py::kwargs kwargs) -> py::object {
+            MachinePresetCaller caller;
+            caller.surface = "python";
+            caller.takeControl = [](Emulator& emulator, const std::string& client, uint32_t, std::string&,
+                                    std::string& reason) {
+                return execution::script::TakeControl(emulator, execution::Origin::Python,
+                                                      client.empty() ? "python" : client, reason);
+            };
+            caller.holdsControl = [](Emulator& emulator) {
+                const unreal::UUID owner = execution::script::detail::Owner(emulator, execution::Origin::Python);
+                return !owner.isNil() && emulator.GetContext() && emulator.GetContext()->HasRunControl(owner);
+            };
+            StateNode args = StateNode::Object();
+            args["model"] = model;
+            for (const auto& item : kwargs)
+                args[py::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+            MachinePresetReply reply;
+            {
+                // The verb waits for the machine to park: other Python threads run meanwhile
+                py::gil_scoped_release release;
+                reply = MachinePreset::Execute(args, caller);
+            }
+            if (!reply.Ok())
+            {
+                if (reply.httpStatus == 400)
+                    throw std::invalid_argument(reply.message);
+                throw std::runtime_error(reply.message);
+            }
+            return StateNodeToPy(reply.ToValue());
+        }, py::arg("model"),
+           "A preset machine in one call: machine_preset('48K', cards=['edge.1=kempston'], features={'kempstonmouse': False}) "
+           "-> dict (id, model, ram, cards, features, muted, paused, fast_tape, control, position, text). Defaults: "
+           "ram='zero', muted=True, paused=True (at power-on), fast_tape=False, take_control=True (this "
+           "script's session), replace=False, select=False (True: the new machine becomes the selected one). A bad "
+           "argument raises ValueError naming the valid values, a refused slot plan / feature / session "
+           "RuntimeError; nothing is left behind");
 
         m.def("zxpoly_status", [](const std::string& id) -> py::object {
             ZXPolyGroup* group = EmulatorManager::GetInstance()->GetZXPolyGroup(id);
@@ -2452,6 +2497,38 @@ namespace PythonBindings
                 if (!error.empty())
                     throw std::runtime_error(error);
             }, "Start (empty) or stop the PC history", py::arg("on"))
+            .def("timeline", [](Emulator& self, const std::string& cpu, double span, unsigned recent,
+                                unsigned leaseMs) -> py::object {
+                timeline::Query query;
+                query.cpu = cpu;
+                query.spanT = span;
+                query.recent = recent;
+                query.client = "python";
+                query.leaseMs = leaseMs;
+                timeline::Reply reply;
+                {
+                    py::gil_scoped_release release;  // a paused read waits for a coherent moment
+                    reply = timeline::Read(&self, query);
+                }
+                if (reply.status == 503)
+                    throw std::runtime_error(reply.error);
+                if (reply.status != 200)
+                    throw py::value_error(reply.error);
+                return StateNodeToPy(reply.body);
+            }, "The GS debugger's twin timeline (gs-debugger design §5.4): the main CPU and a sound card's CPU on one "
+               "clock -> dict {state, armed, cpu, lanes, now {frame, t, gap_t}, position, window, recent {main, gs}, "
+               "next, markers, density, text}; paused: the blocks (pc, at, duration_t, kind, text) around NOW; running: "
+               "the density per frame. A call takes or renews the script's lease (lease_ms; 0: until "
+               "timeline_arm(False)), arming the histories it reads",
+               py::arg("cpu") = "", py::arg("span") = timeline::kDefaultSpanT, py::arg("recent") = 64,
+               py::arg("lease_ms") = 0)
+            .def("timeline_arm", [](Emulator& self, bool on, unsigned leaseMs) -> py::object {
+                const timeline::Reply reply = timeline::SetArmed(&self, "python", on, leaseMs);
+                if (reply.status != 200)
+                    throw std::runtime_error(reply.error);
+                return StateNodeToPy(reply.body);
+            }, "Take (lease_ms; 0: until released) or end the script's twin timeline lease -> dict {armed, started_now, "
+               "leases}", py::arg("on"), py::arg("lease_ms") = 0)
             .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory,
                                       unsigned pchist) -> py::object {
                 DebugSnapshot::Options options;
@@ -6644,6 +6721,15 @@ namespace PythonBindings
                     ctx->pDebugManager->GetKeyboardManager()->ReleaseCombo(chord);
                 return true;
             }, "Release a held key or chord ('w+o')", py::arg("key"))
+            .def("key_set", [](Emulator& self, const std::vector<std::string>& keyNames) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                std::string error;
+                return ctx->pDebugManager->GetKeyboardManager()->SetHeldKeys(keyNames, error) ==
+                       DebugKeyboardManager::SetHeldKeysStatus::Ok;
+            }, "Set the complete held-key state in one call: these keys held (an item may be a chord 'caps+1'), every "
+               "other injected key released; [] releases all. False (nothing changed) for an unknown name or while a "
+               "replay drives the input", py::arg("keys"))
             .def("key_combo", [](Emulator& self, const std::vector<std::string>& keyNames, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;

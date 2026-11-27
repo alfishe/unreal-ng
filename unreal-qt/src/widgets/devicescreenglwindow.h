@@ -13,6 +13,7 @@
 #include <QSurfaceFormat>
 #include <functional>
 #include <map>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -35,6 +36,10 @@
 #include <vulkan/vulkan.h>
 #endif
 #include "platform/presenterrecovery.h"
+#include "recordingpicture.h"
+#ifdef __APPLE__
+#include "platform/macos/recordingsurfaces.h"
+#endif
 #include "slangpresetrunner.h"
 #include "smoothmotiongpu.h"
 
@@ -156,6 +161,23 @@ public:
     /// @p pictureHeight > 0: the picture alone, drawn that many device pixels high (the window recording's own
     /// resolution); else the window as it is
     QImage renderWindowImage(bool hud = true, int pictureHeight = 0);
+    /// The window recording's pictures: on, right after each new frame the window presented (the GUI thread is free
+    /// then until the next one), that frame is drawn once more for the recording at `pictureHeight` (<= 0: the
+    /// window's own size, only the picture's rectangle kept) and read back without waiting (gpu::Device::BeginRead).
+    /// takeRecordingPictures gives them, about a frame later. Off: the pending reads and the target go
+    void setRecordingCapture(bool enabled, int pictureHeight = 0);
+    /// The file's frame for the GPU to compose (before setRecordingCapture; off with it): on macOS under GL each
+    /// capture is the whole frame drawn into the hardware encoder's own buffer, no copy through the CPU. Elsewhere
+    /// (Vulkan, Linux, Windows) the captures stay pictures read back
+    void setRecordingFrame(const RecordingFrameLayout& layout);
+    /// The recording pictures captured and not taken yet, oldest first, appended to `out`: a picture read back
+    /// (B,G,R,A bytes: Format_ARGB32, top row first) or a frame the GPU composed, with its emulated frame number (0:
+    /// not known); none when the window presented no new frame (hidden, minimized) or the capture is off
+    void takeRecordingPictures(std::vector<RecordingPicture>& out);
+    /// A recording picture drawn now and read at once, the frame due (the window presents nothing: hidden,
+    /// minimized); the capture must be on. False: no GPU picture
+    bool grabRecordingPicture(QImage& out, uint64_t& frame);
+    bool recordingCaptureOn() const { return _recordCapture; }
 
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
@@ -263,6 +285,8 @@ private:
     int idleLimit() const;
     /// After a swap: the next refresh, while frames are pending
     void onFrameSwapped();
+    /// GL way, nothing new drawn at a refresh: the next look at the frame due, by time (no swap paced this one)
+    void scheduleGl();
     /// Native way, the presenter pacing (NativePresenter::SetRefreshHandler): a refresh of the display to draw for
     static void onDisplayRefresh(void* context, int64_t refreshNs, int64_t periodNs);
     /// The display link draws: the presenter paces and a tick came within kLinkWatchdogMs (or is being drawn)
@@ -340,6 +364,13 @@ private:
     std::string _syncReason;                              ///< WindowPresentStats::syncReason
     QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
+    QTimer* _glTimer = nullptr;                   ///< GL way: the next look at the frame due when a refresh drew nothing
+    bool _glPaintAsked = true;                    ///< GL way: a repaint asked (update, Expose, a resize): drawn anyway
+    bool _glDrawn = false;                        ///< GL way: the window holds a picture
+    int64_t _glNextTargetNs = 0;                  ///< GL way: the next frame's target as the last look saw it
+    int64_t _glSwapSecondNs = 0;                  ///< GL way: the start of the second the swaps are counted in
+    int _glSwapsInSecond = 0;
+    bool _glSwapUnpaced = false;                  ///< GL way: more swaps than the display has refreshes (sticky)
     bool _presentPending = false;                 ///< native way: a forced present asked for
     bool _presentHidden = false;                  ///< native way: occluded or minimized, nothing drawn (a slow poll)
     bool _toldWaiting = false;                    ///< native way: "waits for its surface" told for this stall
@@ -362,20 +393,41 @@ private:
     const QImage* _shownFrame = nullptr;  ///< the frame in _texture: _latchedFrame, _blendedFrame or _legacyFrame
     QImage _legacyFrame;
     uint64_t _frameSerial = 0;           ///< counts uploads into _texture
-    uint64_t _gradedSerial = ~0ull;      ///< the upload _gradedTexture was graded from
 
     // CRT: the composition of CRTRenderer (the software screen's picture, bit for bit), or a custom shader
     std::unique_ptr<gpu::Program> _composeShader;
     std::unique_ptr<gpu::Program> _customShader;
-    std::unique_ptr<gpu::Texture> _gradedTexture;
-    std::unique_ptr<gpu::Texture> _indexTexture;
-    std::unique_ptr<gpu::Texture> _factorTexture;
-    CRTRenderer _crtRenderer;
-    // The shader models (crt-lottes, ...): CRTBeamModel's tables as integer textures, its kShader
-    CRTBeamModel _crtModel;
-    CRTBeamModelGPU _modelGpu;
-    bool _modelTablesUploaded = false;
-    uint64_t _modelSerial = ~0ull;  ///< the upload the model's frame was prepared from
+    /// The tables of one output size. Two sets: the window's and the pictures' (recording, screenshots), which have
+    /// another size; one set rebuilt its tables twice a frame while recording
+    struct CrtTables
+    {
+        std::unique_ptr<gpu::Texture> gradedTexture;
+        std::unique_ptr<gpu::Texture> indexTexture;
+        std::unique_ptr<gpu::Texture> factorTexture;
+        uint64_t gradedSerial = ~0ull;  ///< the upload gradedTexture was graded from
+        CRTRenderer renderer;
+        // The shader models (crt-lottes, ...): CRTBeamModel's tables as integer textures, its kShader
+        CRTBeamModel model;
+        CRTBeamModelGPU modelGpu;
+        bool modelTablesUploaded = false;
+        uint64_t modelSerial = ~0ull;  ///< the upload the model's frame was prepared from
+
+        void Invalidate()
+        {
+            gradedSerial = ~0ull;
+            modelTablesUploaded = false;
+            modelSerial = ~0ull;
+        }
+        void Release()
+        {
+            gradedTexture.reset();
+            indexTexture.reset();
+            factorTexture.reset();
+            modelGpu.destroy();
+        }
+    };
+    CrtTables _crtTables[2];
+    CrtTables& crtTables() { return _crtTables[_renderingImage ? 1 : 0]; }
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
     QString _customShaderName;
@@ -448,6 +500,42 @@ private:
     QSize _renderPicture;  ///< renderWindowImage's picture size in device pixels, while it draws (empty: the window's)
     uint32_t _imageFrameCount = 0;  ///< the shaders' FrameCount for renderWindowImage: one more per picture it renders
     bool _renderingImage = false;  ///< paintGL draws for renderWindowImage(): no HUD into the window
+    /// The frame just presented, drawn into the recording's target and its read started (setRecordingCapture)
+    void captureForRecording();
+    /// The emulated frame number of the frame in _texture (0: not known: the legacy buffer)
+    uint64_t shownFrameNumber() const;
+    /// The texture's picture into _recordTarget as the recording wants it; `rect`: the part to read (GL rows),
+    /// `kept`: its size. False: nothing to draw
+    bool drawRecordingPicture(gpu::Rect& rect, QSize& kept);
+    /// The drawn picture (`rect` of _recordTarget, GL rows) composed by the GPU into a frame of the file
+    /// (setRecordingFrame) in `slot`. False: not this way (no layout, not GL, not macOS)
+    bool composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot);
+    RecordingFrameLayout _recordFrame;
+#ifdef __APPLE__
+    std::unique_ptr<RecordingSurfaces> _recordSurfaces;
+#endif
+    bool _recordCapture = false;
+    int _recordHeight = 0;
+    std::unique_ptr<gpu::Texture> _recordTarget;  ///< kept from picture to picture (a new one each time cost 0.1 ms)
+    /// The frame itself while smooth motion shows a picture between two frames: the recording has one picture per
+    /// emulated frame, labelled with its number (a picture between N and N+1 put the border's change a frame early)
+    std::unique_ptr<gpu::Texture> _recordSource;
+    int _recordSlot = 0;          ///< the read slot the next capture starts in
+    /// The captures not taken, oldest first: their read slot and size. Two may come between two latches (a present
+    /// late across one), so each is kept until taken; a full queue drops the oldest
+    struct PendingCapture
+    {
+        int slot = 0;
+        QSize size;
+        uint64_t frame = 0;  ///< the emulated frame shown (0: not known)
+#ifdef __APPLE__
+        RecordingSurfaces::Pending composed;  ///< a frame the GPU composes (else a read in the slot)
+#endif
+    };
+    std::deque<PendingCapture> _recordPending;
+    /// A capture not taken: its read or composed frame let go (the context current)
+    void dropCapture(PendingCapture& capture);
+    uint64_t _recordSerial = 0;   ///< the frame captured last: one picture per frame (smooth motion presents more)
 public:
     void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }
     class HudOverlay* hudOverlay() const { return _hudOverlay; }

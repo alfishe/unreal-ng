@@ -13,6 +13,21 @@
     schemas["JoystickState"]["properties"]["fit"]["description"] =
         "When not wired: how to fit the Kempston interface here (the slot plug of the card `kempston`, with the "
         "override when the fit needs it); empty when wired or when it cannot be fitted";
+    schemas["JoystickState"]["properties"]["port_decoded"]["type"] = "boolean";
+    schemas["JoystickState"]["properties"]["port_decoded"]["description"] =
+        "IN #1F reads the stick on this machine right now: fitted and wired";
+    schemas["JoystickState"]["properties"]["port_source"]["type"] = "string";
+    schemas["JoystickState"]["properties"]["port_source"]["description"] =
+        "Who decodes the joystick port: board (the model's own), card (the plugged slot card `kempston`), empty when nobody";
+    schemas["JoystickState"]["properties"]["kempston_mouse_feature"]["type"] = "boolean";
+    schemas["JoystickState"]["properties"]["kempston_mouse_feature"]["description"] =
+        "Feature kempstonmouse is on (PUT /feature/kempstonmouse {\"enabled\": false} switches it off)";
+    schemas["JoystickState"]["properties"]["kempston_mouse_fitted"]["type"] = "boolean";
+    schemas["JoystickState"]["properties"]["kempston_mouse_fitted"]["description"] =
+        "The Kempston mouse is on the bus (the feature on and [INPUT] Mouse=KEMPSTON): it answers #FADF / #FBDF / "
+        "#FFDF, the address space a stick read at #DF falls into";
+    schemas["JoystickState"]["properties"]["ports_text"]["type"] = "string";
+    schemas["JoystickState"]["properties"]["ports_text"]["description"] = "The four fields above as one sentence";
     schemas["JoystickState"]["properties"]["state"]["type"] = "integer";
     schemas["JoystickState"]["properties"]["state"]["description"] =
         "Device byte, active high: right=1 left=2 down=4 up=8 fire=0x10, D5..D7 raw";

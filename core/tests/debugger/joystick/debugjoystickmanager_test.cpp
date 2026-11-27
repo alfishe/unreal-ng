@@ -301,6 +301,12 @@ TEST(DebugJoystickManagerUnwired_Test, MachineWithoutTheArmWarns)
     const JoystickStateSnapshot state = manager->GetState();
     EXPECT_FALSE(state.wired);
     EXPECT_NE(state.fit.find("slots_plug slot=edge.1 card=kempston"), std::string::npos) << state.fit;
+    // E2: the port facts of the status - nobody decodes #1F here, and the sentence names the card that would
+    EXPECT_FALSE(state.portDecoded);
+    EXPECT_TRUE(state.portSource.empty());
+    const std::string ports = DebugJoystickManager::DescribePorts(state);
+    EXPECT_NE(ports.find("Kempston joystick port #1F: not decoded on this machine"), std::string::npos) << ports;
+    EXPECT_NE(ports.find("card=kempston"), std::string::npos) << ports;
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
