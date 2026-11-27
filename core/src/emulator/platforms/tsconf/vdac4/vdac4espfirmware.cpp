@@ -1006,14 +1006,14 @@ void Vdac4EspFirmware::ReleaseResource(const char* name)
                      _resources.end());
 }
 
+// The ESP runtime's worker thread calls this (module_open inside a job): one locked step of the cache
 int Vdac4EspFirmware::ReadModule(const char* name, std::vector<uint8_t>& out)
 {
-    const EspModuleCacheEntry* entry = _cache.Find(name);
-    if (entry == nullptr)
+    if (!_cache.ReadModule(name, out))
+    {
+        out.clear();
         return kZmNotFound;
-    out.assign(entry->size, 0);
-    if (!_cache.Read(name, out.data(), static_cast<uint32_t>(out.size())))
-        return kZmNotFound;
+    }
     return vdac4::EspElfImageProblem(out.data(), out.size()) == nullptr ? kZmOk : kZmError;
 }
 

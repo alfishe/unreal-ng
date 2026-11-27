@@ -36,9 +36,10 @@
     schemas["EmulatorInfo"]["properties"]["video_mode"]["nullable"] = true;
     schemas["EmulatorInfo"]["properties"]["video_mode"]["description"] =
         "Active video mode name (null until the screen subsystem exists)";
-    schemas["EmulatorInfo"]["properties"]["speed_multiplier"]["type"] = "integer";
+    schemas["EmulatorInfo"]["properties"]["speed_multiplier"]["type"] = "number";
     schemas["EmulatorInfo"]["properties"]["speed_multiplier"]["description"] =
-        "Live Z80 frequency multiplier (reflects turbo)";
+        "Guest Z80 clock over the base 3.5 MHz (machine turbo: 4 = 14 MHz on TS-Conf / ZX-Evo, 1.43 = Profi "
+        "hi-res). Not the emulation speed: that is the host speed setting (GET /settings/speed)";
     schemas["EmulatorInfo"]["properties"]["config_folder"]["type"] = "string";
     schemas["EmulatorInfo"]["properties"]["config_folder"]["description"] = "Machine config folder under configs/";
     schemas["EmulatorInfo"]["properties"]["ram_power_on"]["type"] = "string";

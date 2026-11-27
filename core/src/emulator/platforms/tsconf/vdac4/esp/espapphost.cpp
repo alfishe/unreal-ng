@@ -26,6 +26,15 @@ constexpr int kZmTimeout = -5;
 
 constexpr uint32_t kZmMemInternal = 0x02;
 constexpr uint32_t kTaskStackPsram = 0x80000000u;
+/// ZM_TASK_STACK_PSRAM_FIRST (ABI 1.18): the stack straight in PSRAM
+constexpr uint32_t kTaskStackPsramFirst = 0x40000000u;
+/// ZM_MODULE_TEXT_INTERNAL (ABI 1.19)
+constexpr uint32_t kModuleTextInternal = 0x01u;
+/// sizeof(esp_elf_t) on the board: the loader's record per module, in PSRAM (0.1.160)
+constexpr uint32_t kElfRecordBytes = 116;
+/// Module handles: the firmware's static LoadedModule slots (DRAM outside the heaps), opaque to apps
+constexpr uint32_t kModuleHandleBase = 0x3FC80000u;
+constexpr uint32_t kModuleHandleStride = 32;
 constexpr uint32_t kAllocMagic = 0x5A4D414C;
 constexpr uint32_t kAllocHeader = 16;  // AllocHeader {next, prev, caps, magic}
 
@@ -167,7 +176,9 @@ EspAppHost::EspAppHost(std::unique_ptr<IEspCpu> cpu, EspAppHostPorts ports, uint
     _cpu->Map(EspMemory::kPsramDbus, EspMemory::kPsramSize, _memory.PsramBytes().data(), true);
     _cpu->Map(EspMemory::kPsramIbus, EspMemory::kPsramSize, _memory.PsramBytes().data(), true);
     _cpu->Map(EspMemory::kSramBase, EspMemory::kSramSize, _memory.SramBytes().data(), true);
+    _cpu->Map(EspMemory::kSramIbus, EspMemory::kSramSize, _memory.SramBytes().data(), true);
     _cpu->Map(kEspRomBase, kEspRomSize, _memory.RomBytes().data(), true);
+    _cpu->Map(EspMemory::kExtmemBase, EspMemory::kExtmemSize, _memory.ExtmemBytes().data(), false);
     _cpu->SetTrapRange(EspMemory::kTrapPage, EspMemory::kTrapPageSize);
     _romTrapBase = kEspTrapBase;
     Reset();
@@ -205,6 +216,9 @@ void EspAppHost::Reset()
     for (SyncObject& object : _sync)
         object = SyncObject{};
     _app = AppState{};
+    for (ModuleState& module : _modules)
+        module = ModuleState{};
+    _codeRam = CodeRamState{};
     _pcm = Pcm{};
     _nowUs = 0;
     _nextPollUs = 0;
@@ -220,6 +234,7 @@ void EspAppHost::Reset()
     _cpu->InvalidateCode(EspMemory::kPsramDbus, EspMemory::kPsramSize);
     _cpu->InvalidateCode(EspMemory::kPsramIbus, EspMemory::kPsramSize);
     _cpu->InvalidateCode(EspMemory::kSramBase, EspMemory::kSramSize);
+    _cpu->InvalidateCode(EspMemory::kSramIbus, EspMemory::kSramSize);
     _cpu->InvalidateCode(kEspRomBase, kEspRomSize);
     BuildCore();
 }
@@ -591,9 +606,28 @@ void EspAppHost::Fault(Task& task, const IEspCpu::Result& result)
 {
     static const char* const kReasons[] = {"budget", "trap", "break", "illegal instruction", "unimplemented instruction",
                                            "memory fault", "privileged instruction"};
-    char text[160];
-    std::snprintf(text, sizeof(text), "task %s: %s at PC %08X (address %08X)", task.name.c_str(),
-                  kReasons[static_cast<int>(result.reason)], result.pc, result.faultAddress);
+    char text[256];
+    int length = std::snprintf(text, sizeof(text), "task %s: %s at PC %08X (address %08X)", task.name.c_str(),
+                               kReasons[static_cast<int>(result.reason)], result.pc, result.faultAddress);
+    // Where: the ELF (app or module) and the address in its file, and the instruction's bytes
+    auto where = [&](const std::string& name, const EspElfImage& image) {
+        const EspElfSection& code = image.sections[EspElfImage::Text];
+        const uint32_t start = code.addr + image.textBusOffset;
+        if (code.size == 0 || result.pc - start >= code.size || length <= 0 || length >= static_cast<int>(sizeof(text)))
+            return;
+        length += std::snprintf(text + length, sizeof(text) - static_cast<size_t>(length), " in %s at ELF %X",
+                                name.c_str(), result.pc - start + code.vaddr);
+    };
+    where(_app.name, _app.image);
+    for (const ModuleState& module : _modules)
+    {
+        if (module.used)
+            where(module.name, module.image);
+    }
+    if (const uint8_t* bytes = _memory.Bytes(result.pc, 3);
+        bytes != nullptr && length > 0 && length < static_cast<int>(sizeof(text)))
+        std::snprintf(text + length, sizeof(text) - static_cast<size_t>(length), ", bytes %02X %02X %02X", bytes[0],
+                      bytes[1], bytes[2]);
     _lastError = text;
     Log(text);
     // The board would panic and reboot; the HLE stops the app and keeps the firmware running. A host task fails
@@ -632,6 +666,8 @@ bool EspAppHost::HandleTrap(Task& task, uint32_t pc)
         const uint32_t slot = (pc - EspMemory::kZmTrapBase) / 4;
         if (slot < ZmSlotCount)
             return HandleZm(task, slot);
+        if (pc == kModuleReturnTrap)
+            return ModuleEntryReturned(task);
     }
     else if (pc >= _romTrapBase)
     {
@@ -1031,10 +1067,17 @@ bool EspAppHost::HandleZm(Task& task, uint32_t slot)
         case ZmPcmFaults:
             return ret(_pcm.faults);
         case ZmModuleOpen:
+            return ModuleOpen(task, false);
+        case ZmModuleOpenEx:
+            return ModuleOpen(task, true);
+        case ZmCodeRam:
+            return retInt(CodeRam(cpu.Arg(0), cpu.Arg(1)));
+        case ZmModuleClose:
+            ModuleClose(cpu.Arg(0));
+            return ret(0);
         case ZmResource:
         case ZmCoreLoad:
             return retInt(kZmNotFound);
-        case ZmModuleClose:
         case ZmResourceRelease:
         case ZmNetClose:
         case ZmSockClose:
@@ -1220,8 +1263,8 @@ int EspAppHost::TaskStart(uint32_t fn, uint32_t arg, uint32_t stackBytes, uint8_
     // The caller sits at its trap: creating the task must not disturb the loaded CPU state
     std::vector<uint8_t> caller;
     _cpu->SaveState(caller);
-    const bool psram = (stackBytes & kTaskStackPsram) != 0;
-    uint32_t size = std::max<uint32_t>(stackBytes & ~kTaskStackPsram, 2048);
+    const bool psram = (stackBytes & (kTaskStackPsram | kTaskStackPsramFirst)) != 0;
+    uint32_t size = std::max<uint32_t>(stackBytes & ~(kTaskStackPsram | kTaskStackPsramFirst), 2048);
     size = (size + 15u) & ~15u;
     Task* task = NewTask("zm-app", std::min<uint8_t>(priority, 20), false, size, psram);
     if (task == nullptr)
@@ -1641,6 +1684,9 @@ void EspAppHost::ForceCleanup()
     _pcm.queued = 0;
     for (uint32_t header : _app.allocations)
         _memory.HeapCapsFree(header);
+    for (auto& task : _tasks)
+        task->opening.clear();
+    CloseAllModules();
     ElfHost host(_memory);
     EspElfUnload(host, _app.image);
     _app = AppState{};
@@ -1661,12 +1707,254 @@ bool EspAppHost::PeekAppByte(uint32_t elfAddress, uint8_t& value) const
     return true;
 }
 
+/// region <Modules (module_open, ABI 1.19 code_ram)>
+
+bool EspAppHost::UsesModule(const std::string& name) const
+{
+    if (_app.address != 0 && _app.name == name)
+        return true;
+    for (const ModuleState& module : _modules)
+    {
+        if (module.used && module.name == name)
+            return true;
+    }
+    return false;
+}
+
+// ModuleApp::coreModuleOpen(Ex) -> openModule -> loadElf: the ELF from the cache into PSRAM, the loader's record,
+// relocation (.text into the code_ram piece when asked and it fits), then entry(3, {name, arg1, arg2, NULL}) on the
+// caller's task. The entry may block (it is guest code like any other): it runs nested in the caller's trap and
+// returns to kModuleReturnTrap, where ModuleEntryReturned finishes the call.
+bool EspAppHost::ModuleOpen(Task& task, bool ex)
+{
+    IEspCpu& cpu = *_cpu;
+    const uint32_t namePointer = cpu.Arg(0);
+    const uint32_t flags = ex ? cpu.Arg(1) : 0;
+    const int first = ex ? 2 : 1;
+    const uint32_t arg1 = cpu.Arg(first);
+    const uint32_t arg2 = cpu.Arg(first + 1);
+    const uint32_t handle = cpu.Arg(first + 2);
+    const uint32_t result = cpu.Arg(first + 3);
+    const uint32_t placed = ex ? cpu.Arg(6) : 0;
+    auto finish = [&](int zm) {
+        cpu.ReturnFromTrap(static_cast<uint32_t>(zm));
+        return true;
+    };
+    if (placed != 0 && _memory.Bytes(placed, 4) != nullptr)
+        _memory.Write32(placed, 0);
+    if (namePointer == 0 || handle == 0 || _memory.Bytes(handle, 4) == nullptr)
+        return finish(kZmError);
+    _memory.Write32(handle, 0);
+    int slot = -1;
+    for (int i = 0; i < kMaxModules && slot < 0; ++i)
+        slot = _modules[i].used ? -1 : i;
+    const std::string name = _memory.ReadString(namePointer, 12);
+    if (slot < 0)
+    {
+        Log("module " + name + ": all " + std::to_string(kMaxModules) + " module slots are open");
+        return finish(kZmBusy);
+    }
+    std::vector<uint8_t> file;
+    const int found = JournalModule(name, file);
+    if (found != kZmOk)
+        return finish(found);
+
+    // The board's memory while loading: the file in PSRAM until relocated, the loader's record for good
+    const uint32_t fileBlock = _memory.HeapCapsMalloc(static_cast<uint32_t>(file.size()), EspMemory::kCapSpiram);
+    if (fileBlock == 0)
+        return finish(kZmNoMemory);
+    const uint32_t record = _memory.HeapCapsMalloc(kElfRecordBytes, EspMemory::kCapSpiram);
+    if (record == 0)
+    {
+        _memory.HeapCapsFree(fileBlock);
+        return finish(kZmNoMemory);
+    }
+    const bool internal = (flags & kModuleTextInternal) != 0;
+    EspElfTextRoom room;
+    if (internal && _codeRam.address != 0 && _codeRam.used < _codeRam.size)
+    {
+        room.address = _codeRam.address + _codeRam.used;
+        room.size = _codeRam.size - _codeRam.used;
+        room.busOffset = EspMemory::kSramIbus - EspMemory::kSramBase;
+    }
+    ModuleState& module = _modules[slot];
+    ElfHost host(_memory);
+    std::string error;
+    const bool loaded = EspElfLoad(file.data(), file.size(), host, module.image, error, &room);
+    _memory.HeapCapsFree(fileBlock);
+    if (!loaded)
+    {
+        Log(name + ": relocate failed (" + error + ")");
+        _memory.HeapCapsFree(record);
+        module = ModuleState{};
+        return finish(kZmError);
+    }
+    const EspElfSection& text = module.image.sections[EspElfImage::Text];
+    _cpu->InvalidateCode(text.addr, text.size);
+    _cpu->InvalidateCode(text.addr + module.image.textBusOffset, text.size);
+    module.used = true;
+    module.name = name;
+    module.record = record;
+    module.inCodeRam = module.image.textBorrowed;
+    char line[160];
+    if (module.inCodeRam)
+    {
+        _codeRam.used += (text.size + 3u) & ~3u;
+        ++_codeRam.modules;
+        std::snprintf(line, sizeof(line), "%s: code at %08X (bus %08X), %u bytes, ELF %X, internal RAM", name.c_str(),
+                      text.addr, text.addr + module.image.textBusOffset, text.size, text.vaddr);
+    }
+    else
+    {
+        std::snprintf(line, sizeof(line), "%s: code at %08X, %u bytes, ELF %X%s", name.c_str(), text.addr, text.size,
+                      text.vaddr, internal ? ", in PSRAM: no room in code RAM" : "");
+    }
+    Log(line);
+
+    // argv {program, arg1, arg2, NULL} and the name on the caller's stack, below a gap its window spills may use
+    const uint32_t block = (cpu.StackPointer() - 64 - 32) & ~15u;
+    if (_memory.Bytes(block, 32) == nullptr)
+    {
+        ModuleClose(kModuleHandleBase + kModuleHandleStride * static_cast<uint32_t>(slot));
+        return finish(kZmError);
+    }
+    _memory.WriteString(block + 16, name);
+    _memory.Write32(block, block + 16);
+    _memory.Write32(block + 4, arg1);
+    _memory.Write32(block + 8, arg2);
+    _memory.Write32(block + 12, 0);
+    task.opening.push_back(ModuleOpening{static_cast<uint32_t>(slot), handle, result, placed});
+    const uint32_t args[2] = {3, block};
+    cpu.BeginCall(module.image.entry, args, 2, block & ~15u, kModuleReturnTrap);
+    return true;
+}
+
+bool EspAppHost::ModuleEntryReturned(Task& task)
+{
+    IEspCpu& cpu = *_cpu;
+    const uint32_t entryResult = cpu.CallResult();
+    if (task.opening.empty())
+    {
+        IEspCpu::Result fault;
+        fault.reason = IEspCpu::Stop::MemoryFault;
+        fault.pc = fault.faultAddress = kModuleReturnTrap;
+        Fault(task, fault);
+        return false;
+    }
+    const ModuleOpening opening = task.opening.back();
+    task.opening.pop_back();
+    const ModuleState& module = _modules[opening.slot];
+    if (_memory.Bytes(opening.handle, 4) != nullptr)
+        _memory.Write32(opening.handle, kModuleHandleBase + kModuleHandleStride * opening.slot);
+    if (opening.result != 0 && _memory.Bytes(opening.result, 4) != nullptr)
+        _memory.Write32(opening.result, entryResult);
+    if (opening.placed != 0 && module.inCodeRam && _memory.Bytes(opening.placed, 4) != nullptr)
+        _memory.Write32(opening.placed, kModuleTextInternal);
+    cpu.ReturnFromTrap(static_cast<uint32_t>(kZmOk));
+    return true;
+}
+
+void EspAppHost::ModuleClose(uint32_t handle)
+{
+    if (handle < kModuleHandleBase || (handle - kModuleHandleBase) % kModuleHandleStride != 0)
+        return;
+    const uint32_t slot = (handle - kModuleHandleBase) / kModuleHandleStride;
+    if (slot >= static_cast<uint32_t>(kMaxModules) || !_modules[slot].used)
+        return;
+    ModuleState& module = _modules[slot];
+    const bool inCodeRam = module.inCodeRam;
+    ElfHost host(_memory);
+    EspElfUnload(host, module.image);
+    _memory.HeapCapsFree(module.record);
+    module = ModuleState{};
+    // The last module in the code_ram piece closed: its room starts over
+    if (inCodeRam && _codeRam.modules != 0 && --_codeRam.modules == 0)
+        _codeRam.used = 0;
+}
+
+void EspAppHost::CloseAllModules()
+{
+    for (uint32_t slot = 0; slot < static_cast<uint32_t>(kMaxModules); ++slot)
+        ModuleClose(kModuleHandleBase + kModuleHandleStride * slot);
+    // The piece goes back to the heap with the app (and execution there is forbidden again on the board)
+    if (_codeRam.address != 0)
+        _memory.Sram().Free(_codeRam.address);
+    _codeRam = CodeRamState{};
+}
+
+// ModuleApp::coreCodeRam: executable internal RAM, once per app; at least kCodeRamKeep must stay free after it
+int EspAppHost::CodeRam(uint32_t bytes, uint32_t granted)
+{
+    const bool out = granted != 0 && _memory.Bytes(granted, 4) != nullptr;
+    if (out)
+        _memory.Write32(granted, 0);
+    if (bytes == 0 || bytes > kCodeRamMax)
+        return kZmError;
+    if (_codeRam.address != 0)
+        return kZmBusy;
+    const uint32_t size = (bytes + 3u) & ~3u;
+    const uint32_t freeBefore = _memory.Sram().FreeBytes();
+    const uint32_t address = freeBefore >= size + kCodeRamKeep ? _memory.Sram().Alloc(size) : 0;
+    char line[160];
+    if (address == 0)
+    {
+        std::snprintf(line, sizeof(line), "app %s: code RAM %u bytes refused; internal %u free", _app.name.c_str(),
+                      size, freeBefore);
+        Log(line);
+        return kZmNoMemory;
+    }
+    _codeRam = CodeRamState{address, size, 0, 0};
+    std::snprintf(line, sizeof(line), "app %s: code RAM %u bytes at %08X (bus %08X), SRAM1; internal %u free",
+                  _app.name.c_str(), size, address, address + (EspMemory::kSramIbus - EspMemory::kSramBase),
+                  _memory.Sram().FreeBytes());
+    Log(line);
+    if (out)
+        _memory.Write32(granted, size);
+    return kZmOk;
+}
+
+int EspAppHost::JournalModule(const std::string& name, std::vector<uint8_t>& bytes)
+{
+    bytes.clear();
+    JournalState& j = _journal;
+    if (j.mode == JournalMode::Replay)
+    {
+        if (!JournalTakeToken(TokModule))
+            return kZmError;
+        const uint64_t z = JournalTakeVarint();
+        const uint64_t size = JournalTakeVarint();
+        if (j.diverged || size > j.bytes.size() - j.position)
+        {
+            JournalDiverged("bad module");
+            return kZmError;
+        }
+        bytes.assign(j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position),
+                     j.bytes.begin() + static_cast<std::ptrdiff_t>(j.position + size));
+        j.position += size;
+        return static_cast<int>(static_cast<int64_t>(z >> 1) ^ -static_cast<int64_t>(z & 1));
+    }
+    const int result = _outer.moduleBytes ? _outer.moduleBytes(name, bytes) : kZmNotFound;
+    if (result != kZmOk)
+        bytes.clear();
+    if (j.mode == JournalMode::Record)
+    {
+        JournalPutToken(TokModule);
+        const int64_t v = result;
+        JournalPutVarint(static_cast<uint64_t>((v << 1) ^ (v >> 63)));
+        JournalPutVarint(bytes.size());
+        JournalPutBytes(bytes.data(), bytes.size());
+    }
+    return result;
+}
+
+/// endregion
+
 
 /// region <State (TTD)>
 
 namespace
 {
-constexpr uint32_t kStateMagic = 0x31484145;  // "EAH1"
+constexpr uint32_t kStateMagic = 0x32484145;  // "EAH2": modules, code_ram, module_open in progress
 constexpr size_t kMaxTasks = 64;
 constexpr size_t kMaxCalls = 1024;
 constexpr size_t kMaxBlocks = 1u << 20;
@@ -1680,6 +1968,42 @@ void PutBlocks(Vdac4EspStateWriter& w, const std::map<uint32_t, uint32_t>& block
         w.U32(start);
         w.U32(size);
     }
+}
+
+void PutImage(Vdac4EspStateWriter& w, const EspElfImage& image)
+{
+    for (const EspElfSection& section : image.sections)
+    {
+        w.U32(section.vaddr);
+        w.U32(section.size);
+        w.U32(section.offset);
+        w.U32(section.addr);
+    }
+    w.U32(image.textBlock);
+    w.U32(image.dataBlock);
+    w.U32(image.entry);
+    w.U32(image.relocations);
+    w.U32(image.imports);
+    w.Bool(image.textBorrowed);
+    w.U32(image.textBusOffset);
+}
+
+void GetImage(Vdac4EspStateReader& r, EspElfImage& image)
+{
+    for (EspElfSection& section : image.sections)
+    {
+        section.vaddr = r.U32();
+        section.size = r.U32();
+        section.offset = r.U32();
+        section.addr = r.U32();
+    }
+    image.textBlock = r.U32();
+    image.dataBlock = r.U32();
+    image.entry = r.U32();
+    image.relocations = r.U32();
+    image.imports = r.U32();
+    image.textBorrowed = r.Bool();
+    image.textBusOffset = r.U32();
 }
 
 bool GetBlocks(Vdac4EspStateReader& r, std::map<uint32_t, uint32_t>& blocks)
@@ -1747,6 +2071,14 @@ void EspAppHost::SaveState(std::vector<uint8_t>& out) const
             if (c.payload)
                 w.Blob(*c.payload);
         }
+        w.U32(static_cast<uint32_t>(t.opening.size()));
+        for (const ModuleOpening& o : t.opening)
+        {
+            w.U32(o.slot);
+            w.U32(o.handle);
+            w.U32(o.result);
+            w.U32(o.placed);
+        }
     }
     w.U32(static_cast<uint32_t>(loop));
     w.U32(static_cast<uint32_t>(net));
@@ -1769,24 +2101,25 @@ void EspAppHost::SaveState(std::vector<uint8_t>& out) const
     w.U32(_app.stop);
     w.U32(_app.command);
     w.U32(_app.poll);
-    for (const EspElfSection& section : _app.image.sections)
-    {
-        w.U32(section.vaddr);
-        w.U32(section.size);
-        w.U32(section.offset);
-        w.U32(section.addr);
-    }
-    w.U32(_app.image.textBlock);
-    w.U32(_app.image.dataBlock);
-    w.U32(_app.image.entry);
-    w.U32(_app.image.relocations);
-    w.U32(_app.image.imports);
+    PutImage(w, _app.image);
     w.U32(static_cast<uint32_t>(_app.allocations.size()));
     for (uint32_t a : _app.allocations)
         w.U32(a);
     w.Bool(_app.done);
     w.Bool(_app.ftOpened);
     w.U64(_app.lastCommandUs);
+    for (const ModuleState& module : _modules)
+    {
+        w.Bool(module.used);
+        w.String(module.name);
+        PutImage(w, module.image);
+        w.Bool(module.inCodeRam);
+        w.U32(module.record);
+    }
+    w.U32(_codeRam.address);
+    w.U32(_codeRam.size);
+    w.U32(_codeRam.used);
+    w.U32(_codeRam.modules);
 
     w.U32(_core);
     w.U32(_commandBuffer);
@@ -1886,6 +2219,20 @@ bool EspAppHost::LoadState(const uint8_t* data, size_t size)
             }
             t->calls.push_back(std::move(c));
         }
+        const uint32_t opening = r.U32();
+        if (!r.Ok() || opening > kMaxBlocks)
+            return fail();
+        for (uint32_t k = 0; k < opening && r.Ok(); ++k)
+        {
+            ModuleOpening o;
+            o.slot = r.U32();
+            o.handle = r.U32();
+            o.result = r.U32();
+            o.placed = r.U32();
+            if (o.slot >= static_cast<uint32_t>(kMaxModules))
+                return fail();
+            t->opening.push_back(o);
+        }
         _tasks.push_back(std::move(t));
     }
     const uint32_t loop = r.U32();
@@ -1914,18 +2261,7 @@ bool EspAppHost::LoadState(const uint8_t* data, size_t size)
     _app.stop = r.U32();
     _app.command = r.U32();
     _app.poll = r.U32();
-    for (EspElfSection& section : _app.image.sections)
-    {
-        section.vaddr = r.U32();
-        section.size = r.U32();
-        section.offset = r.U32();
-        section.addr = r.U32();
-    }
-    _app.image.textBlock = r.U32();
-    _app.image.dataBlock = r.U32();
-    _app.image.entry = r.U32();
-    _app.image.relocations = r.U32();
-    _app.image.imports = r.U32();
+    GetImage(r, _app.image);
     const uint32_t allocations = r.U32();
     if (!r.Ok() || allocations > kMaxBlocks)
         return fail();
@@ -1935,6 +2271,19 @@ bool EspAppHost::LoadState(const uint8_t* data, size_t size)
     _app.done = r.Bool();
     _app.ftOpened = r.Bool();
     _app.lastCommandUs = r.U64();
+    for (ModuleState& module : _modules)
+    {
+        module = ModuleState{};
+        module.used = r.Bool();
+        r.String(module.name, 64);
+        GetImage(r, module.image);
+        module.inCodeRam = r.Bool();
+        module.record = r.U32();
+    }
+    _codeRam.address = r.U32();
+    _codeRam.size = r.U32();
+    _codeRam.used = r.U32();
+    _codeRam.modules = r.U32();
 
     _core = r.U32();
     _commandBuffer = r.U32();
@@ -1989,6 +2338,7 @@ void EspAppHost::InvalidateAllCode()
     _cpu->InvalidateCode(EspMemory::kPsramDbus, EspMemory::kPsramSize);
     _cpu->InvalidateCode(EspMemory::kPsramIbus, EspMemory::kPsramSize);
     _cpu->InvalidateCode(EspMemory::kSramBase, EspMemory::kSramSize);
+    _cpu->InvalidateCode(EspMemory::kSramIbus, EspMemory::kSramSize);
     _cpu->InvalidateCode(kEspRomBase, kEspRomSize);
 }
 

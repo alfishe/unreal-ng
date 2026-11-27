@@ -129,6 +129,7 @@ void EmulatorAPI::vdac4State(const HttpRequestPtr& req, std::function<void(const
     threads["esp_thread"] = state.espThread;
     threads["ft_thread"] = state.ftThread;
     threads["ft_draw_thread"] = state.ftDrawThread;
+    threads["ft_draw_threads"] = state.ftDrawThreads;
     threads["esp_latency_ms"] = state.espLatencyMs;
     threads["esp_jobs"] = static_cast<Json::UInt64>(state.espJobs);
     threads["esp_threaded_jobs"] = static_cast<Json::UInt64>(state.espThreadedJobs);

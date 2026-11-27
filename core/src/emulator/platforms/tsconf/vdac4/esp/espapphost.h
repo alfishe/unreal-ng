@@ -58,6 +58,8 @@ struct EspAppHostPorts
     std::function<void(const int16_t* frames, size_t count, uint32_t rate)> audio;
     /// zm_core_t::log lines and runtime diagnostics
     std::function<void(const std::string& line)> log;
+    /// A module's ELF from the firmware's cache (module_open); a zm result. Unset: no module is found
+    std::function<int(const std::string& name, std::vector<uint8_t>& bytes)> moduleBytes;
 };
 
 class EspAppHost
@@ -79,12 +81,19 @@ public:
         ZmLinkWrite, ZmSockOpen, ZmSockSend, ZmSockRecv, ZmSockClose, ZmNetResolve, ZmWifiInfo, ZmUiAvailable,
         ZmAppDone, ZmSdList, ZmSdRead, ZmSdWrite, ZmSdOpen, ZmSdPread, ZmSdPwrite, ZmSdClose, ZmSdCreate,
         ZmWifiRssi, ZmSockOpenTls, ZmLinkMedia, ZmHandoffPut, ZmHandoffTake, ZmSd2Open, ZmSd2Read, ZmSd2Stream,
-        ZmSd2Close, ZmLinkBurst, ZmPcmLowLatency,
+        ZmSd2Close, ZmLinkBurst, ZmPcmLowLatency, ZmCodeRam, ZmModuleOpenEx,
         ZmSlotCount
     };
     /// sizeof(zm_core_t) on the board: three u16, pad, firmware pointer, then the slots
     static constexpr uint32_t kZmCoreSize = 12 + 4 * ZmSlotCount;
-    static constexpr uint16_t kAbiMinor = 16;
+    static constexpr uint16_t kAbiMinor = 19;
+    /// The trap a module's entry returns to (module_open runs it nested in the caller's trap)
+    static constexpr uint32_t kModuleReturnTrap = EspMemory::kZmTrapBase + 4 * ZmSlotCount;
+    /// module_app.hpp kMaxModules (0.1.159)
+    static constexpr int kMaxModules = 8;
+    /// ZM_CODE_RAM_MAX, and what must stay free in internal RAM after the piece (module_app.cpp kCodeRamKeep)
+    static constexpr uint32_t kCodeRamMax = 48u << 10;
+    static constexpr uint32_t kCodeRamKeep = 12u << 10;
 
     EspAppHost(std::unique_ptr<IEspCpu> cpu, EspAppHostPorts ports, uint32_t mhz = kDefaultMhz);
     EspAppHost(const EspAppHost&) = delete;
@@ -113,6 +122,8 @@ public:
     /// A Z80 command in the app's range (handleCommand); replies come through ports.reply
     bool OwnsCommand(uint8_t command) const;
     void Command(uint8_t command, const uint8_t* data, size_t size);
+    /// The app or a module it opened is `name` (a new copy of it makes the next APP_START restart the app)
+    bool UsesModule(const std::string& name) const;
     /// app->command's result of the last finished command
     int LastCommandResult() const { return _lastCommandResult; }
     /// Run the ESP in small steps until the loop task has nothing to do (main / start / commands finished), at
@@ -220,6 +231,15 @@ private:
         Done,
     };
 
+    /// A module_open waiting for the module's entry to return: where its outputs go
+    struct ModuleOpening
+    {
+        uint32_t slot = 0;
+        uint32_t handle = 0;  ///< void** handle
+        uint32_t result = 0;  ///< int* entry_result
+        uint32_t placed = 0;  ///< uint32_t* placed (module_open_ex), 0 if none
+    };
+
     struct Task
     {
         uint32_t id = 0;
@@ -242,6 +262,27 @@ private:
         uint32_t pcmAddress = 0;
         uint32_t pcmAccepted = 0;
         uint64_t pcmDeadlineUs = 0;
+        /// module_open calls whose entry runs now (nested in the caller's trap), innermost last
+        std::vector<ModuleOpening> opening;
+    };
+
+    /// A module the app opened (ModuleApp::LoadedModule)
+    struct ModuleState
+    {
+        bool used = false;
+        std::string name;
+        EspElfImage image;
+        bool inCodeRam = false;
+        uint32_t record = 0;  ///< the loader's esp_elf_t (116 bytes of PSRAM, 0.1.160)
+    };
+
+    /// The app's code_ram piece (ModuleApp::CodeRam): internal SRAM, code runs from its I-bus mirror
+    struct CodeRamState
+    {
+        uint32_t address = 0;  ///< D-bus; 0 = none
+        uint32_t size = 0;
+        uint32_t used = 0;     ///< module code placed so far
+        uint32_t modules = 0;  ///< modules with code in it
     };
 
     struct SyncObject
@@ -308,6 +349,13 @@ private:
     void FtWrite(uint32_t address, uint32_t words, uint32_t count);
 
     void Log(const std::string& line);
+    /// module_open / module_open_ex at its trap: load, then run the entry nested (true: the task runs on)
+    bool ModuleOpen(Task& task, bool ex);
+    /// The entry returned to kModuleReturnTrap: the outputs, then module_open returns
+    bool ModuleEntryReturned(Task& task);
+    void ModuleClose(uint32_t handle);
+    void CloseAllModules();
+    int CodeRam(uint32_t bytes, uint32_t granted);
     void LoadApp(const std::string& name, const std::vector<uint8_t>& elf);
     void ForceCleanup();
     /// A host call returned `result`: what its kind does
@@ -327,6 +375,7 @@ private:
         TokRead,         ///< a LINK word unlike the last one read at its address
         TokReadSame,     ///< count of LINK reads giving the last word read at their address
         TokResult,       ///< a port's result, zigzag
+        TokModule,       ///< a module's bytes from the cache: result zigzag, size, bytes
     };
     struct JournalState
     {
@@ -365,6 +414,8 @@ private:
     uint32_t JournalLinkRead(uint32_t address);
     /// A port result: the live one recorded, or the recorded one replayed (`live` is not called then)
     int JournalResult(const std::function<int()>& live);
+    /// The moduleBytes port through the journal
+    int JournalModule(const std::string& name, std::vector<uint8_t>& bytes);
     bool Replaying() const { return _journal.mode == JournalMode::Replay; }
     void InstallPorts();
 
@@ -404,6 +455,8 @@ private:
     uint64_t _nextPollUs = 0;
     SyncObject _sync[kMaxSync];
     AppState _app;
+    ModuleState _modules[kMaxModules];
+    CodeRamState _codeRam;
     uint32_t _core = 0;          ///< zm_core_t in guest memory
     uint32_t _commandBuffer = 0; ///< command payload for app->command (8 KB + 16 bytes)
     uint32_t _argvBlock = 0;     ///< argv, name and app pointer for main

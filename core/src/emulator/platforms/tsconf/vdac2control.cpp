@@ -2,7 +2,10 @@
 
 #include "vdac2control.h"
 
+#include <eve/eve.h>
+
 #include <algorithm>
+#include <optional>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -57,7 +60,14 @@ bool StartCapture(EmulatorContext* context, const std::string& path, std::string
         return false;
     }
     EveHostCard* card = FindCard(context, error);
-    return card && card->StartCapture(path, error);
+    if (!card)
+        return false;
+    // The CPU held (Emulator::CpuHold): every plane calls this from its own thread while the machine, and on the
+    // VDAC4 an ESP job hosting the FT812, run on theirs; the chip is saved and its stream opened or closed meanwhile
+    std::optional<Emulator::CpuHold> hold;
+    if (context->pEmulator)
+        hold.emplace(*context->pEmulator, "vdac2 capture start");
+    return card->StartCapture(path, error);
 }
 
 bool StopCapture(EmulatorContext* context, std::string* error)
@@ -65,6 +75,11 @@ bool StopCapture(EmulatorContext* context, std::string* error)
     EveHostCard* card = FindCard(context, error);
     if (!card)
         return false;
+    // The CPU held (Emulator::CpuHold): every plane calls this from its own thread while the machine, and on the
+    // VDAC4 an ESP job hosting the FT812, run on theirs; the chip is saved and its stream opened or closed meanwhile
+    std::optional<Emulator::CpuHold> hold;
+    if (context->pEmulator)
+        hold.emplace(*context->pEmulator, "vdac2 capture stop");
     if (!card->StopCapture())
     {
         if (error)
@@ -101,6 +116,16 @@ bool GetFrameMetrics(EmulatorContext* context, FrameMetrics& metrics, bool withL
     Emulator* emulator = context->pEmulator;
     const bool stopped = !emulator || emulator->IsPaused() || !emulator->IsRunning();
     card->ReadFrameMetrics(metrics, withLines, inFlight && stopped);
+    return true;
+}
+
+bool ResetHostDrawStats(EmulatorContext* context, std::string* error)
+{
+    EveHostCard* card = FindCard(context, error);
+    if (!card)
+        return false;
+    if (card->Chip())
+        EveResetHostDrawStats(card->Chip());
     return true;
 }
 

@@ -322,8 +322,10 @@ private:
     std::function<void(const SdTraceEvent&)> _onTrace;
     std::unique_ptr<SdHistory> _history;
     const EmulatorContext* _historyContext = nullptr;
+    std::atomic<uint64_t>* _activity = nullptr;  ///< the context's sdCardActivity (status bar LED)
     /// Whether an event has a reader: the trace listener or the history
     bool Observed() const { return _onTrace || (_history && _history->On()); }
+    void CountActivity();  ///< one block moved: the status bar's storage LED
     void Emit(const SdTraceEvent& event);
     std::function<uint64_t()> _clockUs;
     BusTap* _tap = nullptr;

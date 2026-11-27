@@ -72,7 +72,7 @@ void EspHeap::Clear()
 /// region <EspMemory>
 
 EspMemory::EspMemory()
-    : _psram(kPsramSize), _sram(kSramSize), _rom(kEspRomSize), _psramHeap(kPsramDbus, kPsramSize),
+    : _psram(kPsramSize), _sram(kSramSize), _rom(kEspRomSize), _extmem(kExtmemSize), _psramHeap(kPsramDbus, kPsramSize),
       _sramHeap(kSramBase, kSramSize)
 {
     Reset();
@@ -84,6 +84,9 @@ void EspMemory::Reset()
     std::fill(_sram.begin(), _sram.end(), 0);
     std::fill(_rom.begin(), _rom.end(), 0);
     std::memcpy(_rom.data(), kEspRomImage, kEspRomImageSize);
+    std::fill(_extmem.begin(), _extmem.end(), 0);
+    Write32(kExtmemBase + 0x00, kDcacheCtrl);
+    Write32(kExtmemBase + 0x60, kIcacheCtrl);
     _psramHeap.Clear();
     _sramHeap.Clear();
 }
@@ -104,8 +107,12 @@ uint8_t* EspMemory::Bytes(uint32_t address, uint32_t size)
         return _psram.data() + (address - kPsramIbus);
     if (inside(kSramBase, kSramSize))
         return _sram.data() + (address - kSramBase);
+    if (inside(kSramIbus, kSramSize))
+        return _sram.data() + (address - kSramIbus);
     if (inside(kEspRomBase, kEspRomSize))
         return _rom.data() + (address - kEspRomBase);
+    if (inside(kExtmemBase, kExtmemSize))
+        return _extmem.data() + (address - kExtmemBase);
     return nullptr;
 }
 

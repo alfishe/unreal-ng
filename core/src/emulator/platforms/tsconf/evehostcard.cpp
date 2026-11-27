@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <type_traits>
 
 #include "common/filehelper.h"
@@ -69,12 +70,19 @@ EveHostCard::EveHostCard(EmulatorContext* context, std::function<uint32_t()> ras
         MLOGERROR("%s: the FT812 could not be created: %s", _params.name, EveLastError());
     else
     {
+        // Lines side by side: 0 = by the host's cores (half of them, at most 4: the emulation, the renderer and the
+        // host's own work keep theirs)
+        uint32_t threads = _params.drawThreads;
+        if (threads == 0)
+            threads = std::clamp<uint32_t>(std::thread::hardware_concurrency() / 2, 1, 4);
+        EveSetDrawThreads(_chip, threads);
+        _drawThreads = threads;
         _chipFrames = EveCompletedFrames(_chip);
         SetLineBudgetMargin(_params.lineBudgetMargin);
         EveSetLineBudgetMargin(_chip, _lineBudgetMargin.load());
         if (!_params.capturePath.empty())
         {
-            if (_capture.Open(_params.capturePath, _params.crystalHz, _rom))
+            if (_capture.Open(_params.capturePath, _params.crystalHz, _rom, nullptr, 0, CaptureChipModel()))
                 MLOGINFO("%s: capturing the FT812 bus to '%s'", _params.name, _params.capturePath.c_str());
             else
                 MLOGWARNING("%s: cannot write the capture file '%s'", _params.name, _params.capturePath.c_str());
@@ -95,6 +103,8 @@ EveHostCard::~EveHostCard()
         _context->pTtdDisplayParticipant = nullptr;
     // The Screen must not keep a pointer into _picture (at machine teardown
     // the Screen is gone first and pScreen is already null)
+    if (_context && _context->pScreen)
+        _context->pScreen->SetExternalSettle(nullptr, this);
     if (_showing && _context && _context->pScreen)
         _context->pScreen->ClearExternalPicture();
     if (_chip)
@@ -172,11 +182,24 @@ void EveHostCard::OnFrameEnd()
 {
     AdvanceTo(_time.frameBase + kFrameTacts);
     _time.frameBase += kFrameTacts;
-    // The FT812 frames finished by now are on the Screen at the machine's frame end, as with the drawing on
-    // this thread (a screenshot after a pause, a test's picture). The lines of the FT812 frame in flight are
-    // drawn on meanwhile: the next machine frame runs while the renderer finishes them
+    // The renderer may be one machine frame behind: here it must have finished the FT812 frames that ended by the
+    // previous machine frame end, and draws this frame's while the next one runs (waiting for all of them made the
+    // emulation and the drawing add up instead of overlapping: Metal Slug's 10+ ms frames on top of 6 ms of
+    // emulation dropped it to 30 fps). Where the picture must be the machine's own (a pause, a command, the end of
+    // run_frames) MainLoop::Park settles the rest (Screen::SettleExternalFrames -> SettleFrames)
     if (_async)
-        EveFramesBarrier(_chip);
+    {
+        const uint64_t queued = EveQueuedFrameEnds(_chip);
+        EveFramesBarrierTo(_chip, _frameEndsAtLastEnd);
+        _frameEndsAtLastEnd = queued;
+    }
+}
+
+void EveHostCard::SettleFrames(void* card)
+{
+    auto* self = static_cast<EveHostCard*>(card);
+    if (self->_async)
+        EveFramesBarrier(self->_chip);
 }
 
 void EveHostCard::Synchronize()
@@ -386,8 +409,14 @@ void EveHostCard::OnChipFrame()
     _chipFrames = EveCompletedFrames(_chip);
     EveSetLineBudgetMargin(_chip, _lineBudgetMargin.load());  // for the frame now starting
     if (_capture.IsOpen() && CaptureLive())
-        _capture.Frame(EveTotalClocks(_chip), _chipFrames, _drawing, _pictureWidth, _pictureHeight,
-                       _drawing ? Vdac2Capture::HashPicture(_chipFrame.data(), _chipFrame.size()) : 0);
+    {
+        // The frame a capture started in is recorded as not drawn: the lines above the start were drawn before the
+        // saved state (or not at all), so a replay from that state cannot draw them
+        const bool drawn = _drawing && !_captureInFlight;
+        _capture.Frame(EveTotalClocks(_chip), _chipFrames, drawn, _pictureWidth, _pictureHeight,
+                       drawn ? Vdac2Capture::HashPicture(_chipFrame.data(), _chipFrame.size()) : 0);
+    }
+    _captureInFlight = false;
     if (!_showing)
     {
         if (_capture.IsOpen())
@@ -450,6 +479,9 @@ void EveHostCard::ConfigureAsync()
         return;
     }
     _async = want;
+    _frameEndsAtLastEnd = 0;  // the renderer's counts start again
+    if (Screen* screen = _context ? _context->pScreen : nullptr)
+        screen->SetExternalSettle(want ? &EveHostCard::SettleFrames : nullptr, this);
 }
 
 void EveHostCard::OnRendererFrame(void* user, uint64_t frame, int drawn)
@@ -565,6 +597,33 @@ void EveHostCard::ReadFrameMetrics(Vdac2Control::FrameMetrics& out, bool withLin
     out.linesOverSoft = block.linesOverSoft;
     out.linesOverHard = block.linesOverHard;
     out.lineClocks = std::move(lines);
+    EveHostDrawStats last{};
+    EveHostDrawStats summary{};
+    std::vector<uint32_t> lineNs(withLines ? 4096 : 0);
+    const size_t drawn = EveGetHostDrawStats(_chip, &last, &summary, withLines ? lineNs.data() : nullptr, lineNs.size());
+    lineNs.resize(std::min(drawn, lineNs.size()));  // the chip fills at most the room given
+    out.host.frame = last.frame;
+    out.host.valid = last.valid != 0;
+    out.host.lines = last.lines;
+    out.host.totalNs = last.totalNs;
+    out.host.worstLine = last.worstLine;
+    out.host.worstLineNs = last.worstLineNs;
+    out.host.frames = summary.frames;
+    out.host.sumNs = summary.sumNs;
+    out.host.maxFrameNs = summary.maxFrameNs;
+    out.host.maxFrame = summary.maxFrame;
+    out.host.cpuNs = last.cpuNs;
+    out.host.sumCpuNs = summary.cpuNs;
+    out.host.maxCpuNs = summary.maxCpuNs;
+    out.host.maxCpuFrame = summary.maxCpuFrame;
+    out.host.maxWorstLine = summary.worstLine;
+    out.host.maxWorstLineNs = summary.worstLineNs;
+    if (withLines)
+    {
+        out.host.maxLineNs.resize(4096);
+        out.host.maxLineNs.resize(EveGetHostDrawMaxLines(_chip, out.host.maxLineNs.data(), out.host.maxLineNs.size()));
+    }
+    out.host.lineNs = std::move(lineNs);
     if (!inFlight)
         return;
     Synchronize();
@@ -606,6 +665,11 @@ bool EveHostCard::PresentedFrameMetrics(Vdac2Control::FrameMetrics& out) const
     return true;
 }
 
+uint32_t EveHostCard::CaptureChipModel() const
+{
+    return _params.model == EVE_MODEL_VDAC4 ? Vdac2Capture::kChipModelVdac4 : Vdac2Capture::kChipModel;
+}
+
 bool EveHostCard::StartCapture(const std::string& path, std::string* error)
 {
     if (!_chip)
@@ -614,6 +678,7 @@ bool EveHostCard::StartCapture(const std::string& path, std::string* error)
             *error = "the FT812 is not available";
         return false;
     }
+    WaitChipIdle();
     Synchronize();
     StopCapture();
 
@@ -627,12 +692,13 @@ bool EveHostCard::StartCapture(const std::string& path, std::string* error)
         EveGetRegion(_chip, i, &region);
         state.regions.push_back({region.name ? region.name : "", std::vector<uint8_t>(region.base, region.base + region.size)});
     }
-    if (!_capture.Open(path, _params.crystalHz, _rom, &state, EveTotalClocks(_chip)))
+    if (!_capture.Open(path, _params.crystalHz, _rom, &state, EveTotalClocks(_chip), CaptureChipModel()))
     {
         if (error)
             *error = "cannot write '" + path + "'";
         return false;
     }
+    _captureInFlight = true;  // the frame now in flight is not compared (OnChipFrame)
     ConfigureOutput();  // a capture draws every frame (Drawing)
     MLOGINFO("%s: capturing the FT812 bus to '%s'", _params.name, path.c_str());
     return true;
@@ -956,6 +1022,7 @@ bool EveHostCard::StopCapture()
 {
     if (!_capture.IsOpen())
         return false;
+    WaitChipIdle();
     Synchronize();
     _capture.Close(EveTotalClocks(_chip));
     ConfigureOutput();

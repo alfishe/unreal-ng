@@ -22,7 +22,7 @@ void PutLe(std::vector<uint8_t>& out, uint64_t value, int bytes)
 } // namespace
 
 bool Vdac2Capture::Open(const std::string& path, uint32_t externalClockHz, const std::vector<uint8_t>& rom,
-                        const ChipState* state, uint64_t clock)
+                        const ChipState* state, uint64_t clock, uint32_t chipModel)
 {
     Close(_lastClock);
     _file = FileHelper::OpenFile(path, "wb");
@@ -39,7 +39,7 @@ bool Vdac2Capture::Open(const std::string& path, uint32_t externalClockHz, const
     std::vector<uint8_t> header;
     header.insert(header.end(), {'E', 'V', 'R', '1'});
     PutLe(header, kHeaderSize, 4);
-    PutLe(header, kChipModel, 4);
+    PutLe(header, chipModel, 4);
     PutLe(header, externalClockHz, 4);
     uint8_t sha1[20] = {};
     if (!rom.empty())

@@ -294,6 +294,10 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
     // Observers of a parked machine read the device cores in step with the CPU
     if (_soundManager)
         _soundManager->catchUpDeferredCores();
+    // ... and the picture: a card that draws on a thread of its own finishes the frames it owes (the FT812 renderer
+    // runs a machine frame behind while the machine runs)
+    if (_context->pScreen)
+        _context->pScreen->SettleExternalFrames();
     if (emulator->IsPaused())
     {
         emulator->NoteDebugChange();  // a stop the debugger snapshot's seq counts

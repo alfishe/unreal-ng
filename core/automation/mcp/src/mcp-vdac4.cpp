@@ -47,7 +47,9 @@ std::string Vdac4StateText(const Json::Value& reply, size_t logLines)
     if (threads.isObject())
         out << "\nThreads: ESP jobs " << (threads["esp_thread"].asBool() ? "on a worker" : "inline") << ", FT work "
             << (threads["ft_thread"].asBool() ? "on its own thread" : "inline") << ", FT drawing "
-            << (threads["ft_draw_thread"].asBool() ? "on its renderer thread" : "inline") << ", latency "
+            << (threads["ft_draw_thread"].asBool() ? "on its renderer thread" : "inline")
+            << (threads.isMember("ft_draw_threads") ? " in " + std::to_string(threads["ft_draw_threads"].asUInt()) + " line threads" : "")
+            << ", latency "
             << threads["esp_latency_ms"].asUInt64() << " ms; " << threads["esp_jobs"].asUInt64() << " jobs ("
             << threads["esp_job_ms"].asDouble() << " ms), emulation waited " << threads["esp_waits"].asUInt64()
             << " times (" << threads["esp_wait_ms"].asDouble() << " ms); FT ops " << threads["ft_ops"].asUInt64()
