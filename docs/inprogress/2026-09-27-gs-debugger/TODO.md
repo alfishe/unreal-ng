@@ -599,6 +599,24 @@ what an agent reads):
     Left: a transfer command (#14 and the like) sends only its command bytes, not the block; the send addresses the
     GS slot's card only (no `cpu=ms` on the planes).
 
+### eCat remote mode without waits — branch `ecat-async` (2026-11-26)
+
+- [x] The GUI never waits on the network: `Net` in `debuggers/qt/adapter/remotemachine.cpp`. Three lanes; commands
+  in order; the snapshot never fetched while a command is pending; reads stale-while-revalidate; arrivals posted to
+  the GUI thread. Async shim calls `debug_card_run_to_async`, `gs_send_async` and `ttd_call_async`;
+  `debug_link_text` ("Waiting for the emulator: N s", refused commands); `debug_data_serial`. `TtdControls` chains
+  its moves. Synchronous mode for `--self-check`, `--screenshot`, `--measure` and `--list-memory`. Design:
+  [README, Remote mode](../../../debuggers/qt/README.md#remote-mode---connect).
+- [x] Measured with `--gui-gap-check` (`latencycheck.cpp`, `LatencyProxy`), longest GUI event-loop gap. Master:
+  505 ms with no delay, 184 s with answers 300 ms late, 20 s during a 6 s stall. Now: 11 ms, 19 ms and 9 ms.
+  Regression check: the `async connection` block of the connect self-check.
+- Left:
+  - Board actions, profiler and analysis commands answer "sent" before the emulator has answered; a refusal shows
+    only in the state line.
+  - The synchronous wrappers (`debug_card_run_to`, `gs_send`, `ttd_call`) answer "under way" in asynchronous mode.
+    Callers outside the window that need the result use the async calls.
+  - `--gui-gap-check` is not in CI (it needs a live unreal-qt).
+
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 
 Owner decision 2026-11-17: either CPU is stepped both ways; the other CPU is computed by replay from the nearest

@@ -16,6 +16,9 @@ struct RemoteOptions {
     std::string host = "127.0.0.1";
     uint16_t port = 8090;
     std::string emulator;   // an id or symbolic id; empty: the first one the WebAPI lists
+    // Every request waited for on the views' thread, as an in-process machine answers (the self-check reads back
+    // what it has just written). Off: the views' thread never waits for the network (remotemachine.cpp, Net)
+    bool synchronous = false;
 };
 
 // Connects, finds the emulator, takes a run-control session. Null with the reason in error
