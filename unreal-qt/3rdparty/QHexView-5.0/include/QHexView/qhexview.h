@@ -11,8 +11,12 @@
 #include <QRectF>
 #include <QRegion>
 #include <QTextCharFormat>
+#include <QHash>
+#include <QPixmap>
+#include <QTextLayout>
 #include <limits>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #if defined(QHEXVIEW_ENABLE_DIALOGS)
@@ -123,6 +127,15 @@ public Q_SLOTS:
     // highlight by a row or two); a change of the view itself (a scroll, the size, the options) repaints it all
     void beginChanges();
     void endChanges();
+    // unreal-ng: rows painted as kept QTextLayouts (default) or through a QTextDocument per paint, as upstream (tests
+    // compare the two)
+    qsizetype rowPixmapCount() const { return m_rowPixmaps.size(); }  // the rows kept as pixels (tests)
+    void setRowLayouts(bool on) {
+        m_rowLayoutsOn = on;
+        m_rowLayouts.clear();
+        m_rowPixmaps.clear();
+        this->viewport()->update();
+    }
 
 private:
     void paint(QPainter* painter, const QRegion& exposed) const;
@@ -136,12 +149,20 @@ private:
     void calcColumns();
     void ensureVisible();
     void drawSeparators(QPainter* p) const;
-    void drawHeader(QTextCursor& c) const;
-    void drawDocument(QTextCursor& c, qint64 first = 0,
+    // unreal-ng: `Sink` is a QTextCursor (the document path) or the row texts of paintRows (QHexRowSink)
+    template<typename Sink> void drawHeader(Sink& c) const;
+    template<typename Sink>
+    void drawDocument(Sink& c, qint64 first = 0,
                       qint64 last = std::numeric_limits<qint64>::max()) const;
-    QTextCharFormat drawFormat(QTextCursor& c, quint8 b, const QString& s,
+    template<typename Sink>
+    QTextCharFormat drawFormat(Sink& c, quint8 b, const QString& s,
                                QHexArea area, qint64 line, qint64 column,
                                bool applyformat) const;
+    // unreal-ng: paints the view rows of `runs` ([first, last], the header is row 0) as one QTextLayout per row, kept
+    // for the next paint while the row's key stays; false (nothing painted) when a row needs the document path (a
+    // block background: the styled header, line backgrounds)
+    bool paintRows(QPainter* painter, const std::vector<std::pair<qint64, qint64>>& runs, qint64 rows,
+                   int headerrows, const QByteArray& key) const;
     unsigned int calcAddressWidth() const;
     int visibleLines(bool absolute = false) const;
     qint64 getLastColumn(qint64 line) const;
@@ -207,6 +228,11 @@ private:
     mutable QByteArray m_paintedKey, m_paintedHeader;
     mutable quint64 m_paintedTop{0};  // the first document line painted
     mutable std::vector<QByteArray> m_paintedLines;  // per visible row, from the top one
+    // unreal-ng: the rows laid out (paintRows) by their key, for the view's paintKey m_rowLayoutsKey
+    mutable QHash<QByteArray, std::shared_ptr<QTextLayout>> m_rowLayouts;
+    mutable QByteArray m_rowLayoutsKey;
+    mutable QHash<QByteArray, QPixmap> m_rowPixmaps;  // unreal-ng: those rows' pixels, by their key
+    bool m_rowLayoutsOn{true};
 #if defined(QHEXVIEW_ENABLE_DIALOGS)
     HexFindDialog *m_hexdlgfind{nullptr}, *m_hexdlgreplace{nullptr};
 #endif

@@ -357,10 +357,13 @@ void SpeedControlWidget::syncFromPacer()
     _slider->setValue(static_cast<int>(state.preset));
     const bool adjustable = preset.fixedIntervalMs == 0;
     _intervalSpinBox->setEnabled(adjustable);
-    _intervalSpinBox->setReadOnly(!adjustable);
-    if (adjustable)
+    if (_intervalSpinBox->isReadOnly() == adjustable)  // QAbstractSpinBox repaints on every call: a stop's sync
+        _intervalSpinBox->setReadOnly(!adjustable);   // (the debugger's step stops the pacer) changes nothing
+    if (adjustable && _intervalSpinBox->singleStep() != preset.intervalStep)
         _intervalSpinBox->setSingleStep(preset.intervalStep);
-    _intervalSpinBox->setValue(preset.fixedIntervalMs > 0 ? preset.fixedIntervalMs : state.intervalMs);
+    const int interval = preset.fixedIntervalMs > 0 ? preset.fixedIntervalMs : state.intervalMs;
+    if (_intervalSpinBox->value() != interval)  // setValue repaints the box even with the same value
+        _intervalSpinBox->setValue(interval);
     _syncing = false;
 
     const bool fullSpeed = preset.unit == execution::PaceUnit::Full;
