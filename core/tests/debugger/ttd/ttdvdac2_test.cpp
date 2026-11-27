@@ -340,8 +340,7 @@ std::vector<uint8_t> RamGWriterProgram(const std::vector<std::pair<uint32_t, uin
 TEST_F(TTDVdac2_Test, SeekShowsTheLivePictureWhileRamGChanges)
 {
     // The program stops test6 (its own drawing would overwrite the display list); a frame first lets the
-    // coprocessor finish what test6 queued. Each program at its own address: the TS-Conf CPU cache keeps the
-    // words the CPU fetched, and a tool's write does not reach it
+    // coprocessor finish what test6 queued
     auto start = [this](uint16_t at, const std::vector<uint8_t>& code) {
         for (size_t i = 0; i < code.size(); ++i)
             _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(at + i), code[i]);
@@ -353,7 +352,7 @@ TEST_F(TTDVdac2_Test, SeekShowsTheLivePictureWhileRamGChanges)
     start(0x8000, {0xF3, 0x18, 0xFE});  // DI; JR $
     _emulator->RunNFrames(2, true);
     constexpr uint32_t kRamDl = 0x300000;
-    start(0x9000, RamGWriterProgram({
+    start(0x8000, RamGWriterProgram({
         {kRamDl + 0, 0x02000000},                                    // CLEAR_COLOR_RGB(0, 0, 0)
         {kRamDl + 4, 0x26000007},                                    // CLEAR(1, 1, 1)
         {kRamDl + 8, 0x04FFFFFF},                                    // COLOR_RGB(255, 255, 255)
