@@ -16,8 +16,14 @@ jobs on a worker thread), the board state on every automation plane and time tra
   (done, below), then the Xtensa JIT (regions chained across CALL / ENTRY / RETW: as many interpreter entries as
   native ones today), then the TS-Conf side (DramWait, the arbiter, DrawRange, the interrupt catch-up).
 
-- [ ] Quake II: time travel for the `q2` personality (the core's registers, 8 MB SDRAM and on-chip tables per
-  keyframe); today TTD is unavailable while it runs, with the reason ([quake2.md](quake2.md) §8).
+- [x] Quake II: time travel for the `q2` personality (2026-11-27): record, seek, step back, branch and session files
+  across `core_load` / `core_back`, exact in the live demo; the SDRAM as a dirty-page region ([quake2.md](quake2.md) §8.1).
+- [x] Quake II recording stream (2026-11-27): the SDRAM only at the ESP CPU's keyframes, the core between them
+  rebuilt from the LINK writes of the ESP journal replay; the demo 278 -> 58 MB/min (SDRAM 27), a session 132 ->
+  43 MB/min, all exact ([ttd-design.md](ttd-design.md) §11, [quake2.md](quake2.md) §8.1). The rest is the ESP's
+  own keyframes (K = 25).
+- [x] ESP firmware state in TTD (2026-11-27): the delivery's bytes go last, from a 4 KB boundary; old states load;
+  the loader run 205 -> 22 MB ([ttd-design.md](ttd-design.md) §10).
 - [ ] Quake II PSRAM: Qcommon_Init takes ~220 KB more PSRAM here than in the author's emulator, so the reserve
   stays at 1440 KB (4336 KB free before init, board 4192); at 1584 KB base2 runs out of memory ([quake2.md](quake2.md) §8).
 - [x] Quake II: the firmware's LINK watchdog (tang_link.cpp): the `0x5C564434` mark in SCRATCH, checked every 2 s; a

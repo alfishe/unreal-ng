@@ -49,9 +49,12 @@ point for both.
 | `vdac4-tang` | `Vdac4Tang` (78) | `Vdac4Tang::State`: personality, timers, FT_CFG, LINK FT_ADDR, scratch | - |
 | `vdac4-esp` | `Vdac4Esp` (79) | the board's ESP clock, `Vdac4Esp::Save` (SPI slave, link, frame transport, firmware) | - |
 | `vdac4-esp-cpu` | `Vdac4EspCpu` (80) | keyframe header, the host state at the keyframe, the journal since | PSRAM, SRAM, the HLE ROM's RW copy |
+| `vdac4-q2` | `Vdac4Q2` (81) | the Live part of the Tang's `q2` state (`SaveQ2(Live)`: running, picture, the core's Evo side, the core's hash) | `vdac4.q2.sdram` (8 MB, marked at the ESP's keyframes only, §11) |
 
 The FT812 reuses the VDAC2 types: it is the same `EveHostCard` code, the region sizes come from the chip.
 `vdac4-esp-cpu` restores after `vdac4-esp` (the firmware's load touches the runtime).
+`vdac4-q2` restores after `vdac4-esp-cpu`, which rebuilds the core (§11); the Tang keeps the model across
+`core_back`, so the region's pointer stays put for the whole session ([quake2.md](quake2.md) §8.1).
 
 ## 4. Keyframes
 
@@ -270,3 +273,47 @@ Tried before and dropped (patches kept outside the tree):
   the picture's live snapshot (`PutSparse`, about 8 %). On VDAC2: the FT812 drawing of the replay and of the
   picture itself (§9.4), about 45 % of a seek.
 - Resources of the firmware (`_resources`) stay in the `vdac4-esp` blob, stored per frame while held.
+- Fixed 2026-11-27: `Vdac4EspFirmware::Save` wrote the delivery in progress (`_delivery`, growing with every piece)
+  before `_resources` and the app state, so every later byte moved each frame (0.43 MB per frame of the Quake II
+  loader). The bytes now go last, from a 4 KB boundary of the state (`Vdac4EspStateWriter::AlignBlob`): a new piece
+  changes only the pieces it lands in, and the parts before may change size within the step. Older states (the
+  bytes in the delivery's header, no tail) still load. The Quake II loading run: 205 -> 22 MB stored.
+- Fixed 2026-11-27: `vdac4.q2.sdram` was stored at every capture while Quake II draws (278 MB/min in the demo); now
+  at the ESP's keyframes only (§11), 27 MB/min. The rest of the demo's stream is the ESP's own keyframes (PSRAM
+  17 MB/min, the ESP CPU state 9 MB/min): K (§9.1) trades those for the seek's replay.
+
+## 11. The Quake II core between keyframes (2026-11-27)
+
+The `q2` core takes every input from the ESP's app through LINK writes, apart from three: the firmware's own writes
+(the link watch's mark, a Z80 `TANG_WRITE`), `core_load` / `core_back`, and the Evo side (M_SEL, the Evo's FT
+transfers, which arm the reset rule). So the core between two ESP keyframes is the core at the keyframe plus the LINK
+writes of the journal's replay, which the replay used to drop.
+
+- **Keyframe.** At each ESP keyframe `vdac4-esp-cpu` stores the whole core (`SaveQ2(Whole)`, 26 KB) next to the
+  host state, before the journal (blob magic `VD4L`; the older `VD4K` without it still loads), and the SDRAM region
+  is marked whole for that capture (`TTDVdac4Q2::TTDBeforeCapture` asks `LastCaptureKeyed`): the engine stores the
+  pieces that changed since. Between keyframes the core marks nothing.
+- **What forces a keyframe.** A change of `Vdac4Tang::Q2Epoch` (`EnterQ2`, `LeaveQ2`, a load of `q2`) or of
+  `Q2OutsideInputs` (`FirmwareLinkWrite`, the firmware's path through `IVdac4TangLink`): the capture after it keys,
+  so the journal of a keyframe holds only the app's writes.
+- **Replay.** `EspAppHost::SetReplayLinkSink`: while it replays, the host hands the app's LINK writes (and FT
+  writes) to the sink instead of the port. `vdac4-esp-cpu` loads the keyframe's core (or a replay point's core and
+  SDRAM copy, §6.2) and feeds the sink into `Vdac4Tang::Q2ReplayLinkWrite` / `Q2ReplayLinkFtWrite`: the core alone,
+  no Tang register, no picture.
+- **Per capture.** `vdac4-q2` stores the Live part: running, picture size and counters, the Evo side
+  (`Vdac4BomzhCore::SaveEvoSide`), the core's hash (`StateHash`, FNV-1a over the state's 64-bit words) and the
+  picture's source. Its load takes the Evo side and compares the hash with the core the replay computed: a
+  difference (a write that was not the app's and was not counted) is a divergence (`TTDLoadDiverged`, the seek's
+  check reports `not_bit_exact` with "Quake II").
+- **Restore order.** `vdac4-tang` -> `vdac4-esp` -> `vdac4-esp-cpu` (the core) -> `vdac4-q2` (the Live part, the
+  picture). The SDRAM region is marked whole before a restore (`TTDBeforeRestore`): the live SDRAM moved on without
+  marks.
+- **TTD off.** Nothing per frame: no marks, no sink; `FirmwareLinkWrite` counts one integer while `q2` runs.
+
+Numbers (live, .20, 2026-11-27, [quake2.md](quake2.md) §8.1): the demo 278 -> 58 MB/min stored, `vdac4.q2.sdram`
+about 250 -> 27 MB/min; a whole session of 446 s 132 -> 43 MB/min; all seeks, steps, branches and session files
+exact.
+
+Tests: `Vdac4Tang_Test.Quake2ReplayFeedEpochAndLivePart`, `Vdac4BomzhState_Test.EvoSideGoesApartFromTheLinkSide`,
+`TTDEngineModels_Fixture.Vdac4Quake2CoreRestoresAtEveryCheckpoint` (the firmware's writes key every capture) and
+`Vdac4Quake2CoreOffTheJournalIsReportedNotExact`, `Vdac4EspFirmware_Test.DeliveryBytesGoLastOnAPieceBoundary`.

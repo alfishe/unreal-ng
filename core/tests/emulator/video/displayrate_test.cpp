@@ -217,7 +217,8 @@ TEST(DisplayRate_Test, SmoothGuardStepsDownOnLateOrSlowPictures)
     // One window of `lates` late presents, all at its start (a stall); the verdict is the window's, not a picture's
     uint64_t late = 100;
     SmoothGuard software;  // no presenter counts: late presents stay 0
-    auto window = [&](SmoothGuard& g, uint32_t lates, int64_t slowNs = QUICK, uint32_t slow = 0) {
+    // slowNs defaults to QUICK's value: gcc rejects a local variable in a default argument
+    auto window = [&](SmoothGuard& g, uint32_t lates, int64_t slowNs = 1'000'000, uint32_t slow = 0) {
         bool down = false;
         for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
         {

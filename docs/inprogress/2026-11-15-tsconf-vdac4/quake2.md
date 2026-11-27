@@ -333,7 +333,7 @@ acceptance check through WebAPI with the release folder on an SD image.
 
 The owner's answers to §7: Q1 vendor the model; Q2 the string `vdac4-0.1.174-unreal-ng-hle`; Q3 latch 424 x 240;
 Q4 match the board's free PSRAM with an env knob; Q5 the Z80 path only; Q6 no TTD for `q2`, refuse cleanly; Q7
-the reset rule only.
+the reset rule only. Q6 was revised later the same day: `q2` joins time travel (§8.1).
 
 | Plan step | Where |
 |-----------|-------|
@@ -342,10 +342,10 @@ the reset rule only.
 | 4 0x6E / 0x6F | `vdac4espframes.cpp`, `vdac4esplinkcore.cpp` (prefix 5), the firmware routes pieces to the runtime |
 | 7 realloc in place | `esp/espmemory.cpp` `EspHeap::Resize` |
 | 8 `core_load` / `core_back` | `vdac4espfirmware.cpp` `CoreLoad` -> `IVdac4TangLink::LoadCore` -> `Vdac4Tang::LoadCore` (only UserCode `0x56443451` is emulated); `core_back` clears the app's core only on success |
-| 9 bomzh-3D | `core/src/3rdparty/bomzh/` (MIT, `VENDORED.md`; one patch: `bz_shown_rgb` reads through `rd8`), `vdac4bomzh.h/.cpp` (`bz_top.sv` LINK map, queue parsed per command and run at once, WRITE streamed, RD window, boot rules) |
-| 10 picture | `Vdac4Tang::PresentQ2`: a new FRAME -> RGBA -> `Screen::LatchExternalFrame` at the frame end (not in a TTD replay); the Tang owns the external picture while `q2` runs, whatever M_SEL says |
+| 9 bomzh-3D | `core/src/3rdparty/bomzh/` (MIT, `VENDORED.md`; two local changes: `bz_shown_rgb` reads through `rd8`, and the state functions `bz_state_save` / `bz_state_load` / `bz_reset` / `bz_layout` for time travel), `vdac4bomzh.h/.cpp` (`bz_top.sv` LINK map, queue parsed per command and run at once, WRITE streamed, RD window, boot rules) |
+| 10 picture | `Vdac4Tang::PresentQ2` (`PresentFrame`, called by `Vdac4Board::OnFrameEnd` after the runtime's flush): a new FRAME -> RGBA -> `Screen::LatchExternalFrame` at the frame end (not in a TTD replay); the Tang owns the external picture while `q2` runs, whatever M_SEL says |
 | 11 PSRAM | `UNREAL_VDAC4_PSRAM_RESERVE_KB`, default 1440 KB (the author's board figure): Q2 logs `PSRAM free 4336 KB` before init (board 4192). With 1584 KB it logs exactly 4192 KB but runs out of PSRAM on base2 (`malloc: no memory for 58200 bytes`, level area 2240 KB): Qcommon_Init takes 1248 KB here against 1024 KB in the author's emulator (PROGRESS.md: 4192 -> 3168). Open: find those ~220 KB, then calibrate to 4192 |
-| 12 automation | `tang.q2`, `esp.psram_free`, `esp.cores`, `data` on WebAPI / WebSocket, CLI, Lua, Python, MCP; TTD is unavailable while `q2` runs (`SetUnavailableReason` at the frame end), a TTD state of `q2` starts the core afresh |
+| 12 automation | `tang.q2`, `esp.psram_free`, `esp.cores`, `data` on WebAPI / WebSocket, CLI, Lua, Python, MCP; time travel and TTD session files cover `q2` (§8.1) |
 
 Timing model: the core draws a command when its last word arrives, so FIFO_FREE is always 2048 and `rd_busy` is 0;
 a word that starts no command sets the sticky `bad_cmd` and is dropped. Back to slot 0 on BOOT, on the Evo's
@@ -362,3 +362,45 @@ reloaded (SCRATCH 00000000), core 51 version 0.3` and writes its mark back. On t
 Tests: `core/tests/emulator/machines/tsconf/vdac4quake2_test.cpp` (core / data queries, bad bitstreams, the 0x6F
 frame, bomzh registers, FILL / FRAME picture, WRITE + RD window, bad words, boot rules, heap resize) and two Tang
 tests in `vdac4tang_test.cpp`.
+
+### 8.1 Time travel and session files
+
+The `q2` personality records, seeks, steps back, branches and goes into TTD session files (`ttd/dump`,
+`ttd/load`) like the rest of the machine. TS-Conf has no machine snapshot format, so a session file is the
+snapshot of a `q2` run.
+
+| Part | Where |
+|------|-------|
+| bomzh model state | `bz_state_save` / `bz_state_load` (`BZ_STATE_BYTES` = 26856: registers, queue / stream state, on-chip tables; no pointers), `bz_layout` = the SDRAM pointer; `Vdac4BomzhCore::Save` / `Load` add the LINK side (window, Msel, boot rules, counters) |
+| Tang | `Vdac4Tang::SaveQ2` / `LoadQ2`: running flag, picture size, counters, the core, and the picture source: `Black`, `Core` (rebuilt from the core's shown buffer) or `Raw` (RGBA bytes, only when the shown buffer no longer holds the latched picture). `LeaveQ2` keeps the model, so a restore across `core_load` / `core_back` finds the same SDRAM pointer |
+| TTD device | `TTDVdac4Q2` (`ttdvdac4.h/.cpp`, model state type `Vdac4Q2` = 81, restored after `Vdac4EspCpu`): per capture the Live part (`SaveQ2(Live)`: running, picture, the core's Evo side and hash); the 8 MB SDRAM as engine region `vdac4.q2.sdram` (`TTDRegionId::Vdac4Q2Sdram` = 24) |
+| Between keyframes | the whole core goes into the ESP CPU's keyframes, the SDRAM is marked only then; between them the restore feeds the core the LINK writes of the ESP journal's replay (`EspAppHost::SetReplayLinkSink` -> `Vdac4Tang::Q2ReplayLinkWrite`) and checks the core's hash ([ttd-design.md](ttd-design.md) §11). TTD off: no marks, no cost |
+
+Live run (WebAPI, headless, muted, .20 M3 Ultra; the second figure is the first version of 2026-11-27, which stored
+the SDRAM pieces at every capture, under a load average of 35-80; this one ran under 5-24):
+
+| Measure | Value |
+|---------|-------|
+| ms/frame, TTD off | 8.7 mean (8.1-9.3), 48.83 fps (was 8.2) |
+| ms/frame in the demo, recording | 9.0 mean (7.6-9.9), 48.83 fps (was 10.4) |
+| Stream in the demo (the dump, frames 24700-28300, 72 s) | **58 MB/min** (was 278): `vdac4.q2.sdram` 27 (was ~250), ESP PSRAM 17, ESP CPU state 9, Evo RAM 2, the rest 3 |
+| Stream while a map loads (frames 18500-24300) | 32 MB/min stored (Evo RAM 6.6, ESP CPU state 6.1, SDRAM 6.0, PSRAM 5.5, ESP firmware state 5.2); 25 MB/min by the history counter |
+| The loader run (TS-Conf boot to `core_load` and SETUP, 86 s) | 22 MB in the history (was 205: the firmware's delivery shifted its state, [ttd-design.md](ttd-design.md) §10); session file 32 MB (was 213) |
+| One session of 446 s (two demo maps, two loads) | **43 MB/min** stored (was 132): SDRAM 14.9, PSRAM 9.4, ESP CPU state 6.9, Evo RAM 5.0, ESP firmware state 3.6, `vdac4q2` 0.07 |
+| SDRAM stores | at every ESP keyframe (25 captures): median 107 pieces, 218 KB; whole (5.3 MB) at the engine's keyframes |
+| Keyframes (one a minute) / delta checkpoints | 8.1-8.9 MB / median 3 KB, largest 0.58 MB |
+| Session file | 352 MB (was 1014), dump 1.5 s, load 1.0 s, 4/4 points exact |
+| Seeks | 27/27 in the demo and 14/14 across `core_load` exact (screen, `tang.q2` counters, PC); demo 15-151 ms, median 28; loader 11-19 ms |
+| Step back / forward | 15 ms, the same screen as a seek, forward exact |
+| Branch | made in the demo, ran 10 s, seeks to and from it exact |
+
+What remains of the demo's stream is the ESP's own keyframes (PSRAM, the CPU state, and the SDRAM pieces the
+frame and z buffers rewrite between two of them): K = 25 ([ttd-design.md](ttd-design.md) §9.1) trades them for the
+seek's replay.
+
+Tests: `vdac4quake2state_test.cpp` (`Vdac4BomzhState_Test`: fixed size, a state cut mid-command, mid-WRITE, after an RD copy and at the stream's other points of a stream with
+WRITE / RD / triangles / FRAME goes on as the uncut run, foreign state refused, reset, the Evo side apart from the LINK side,
+shown serial), `Vdac4Tang_Test.Quake2StateRestoresAcrossCoreLoadAndBack`, and
+`TTDEngineModels_Fixture.Vdac4Quake2CoreRestoresAtEveryCheckpoint` (20 frames across `core_load`, `core_back` and a
+reload: personality, `SaveQ2` bytes, SDRAM and screen equal at every checkpoint),
+`Vdac4Quake2CoreOffTheJournalIsReportedNotExact`, `Vdac4Tang_Test.Quake2ReplayFeedEpochAndLivePart`.

@@ -45,6 +45,7 @@ enum class TTDRegionId : uint16_t
     Vdac4EspPsram = 21,        ///< the VDAC4 ESP's 8 MB PSRAM, as of its last keyframe (ttdvdac4.h)
     Vdac4EspSram = 22,         ///< the VDAC4 ESP's 416 KB internal SRAM, as of its last keyframe
     Vdac4EspRom = 23,          ///< the VDAC4 ESP HLE ROM's RW copy (its .bss), as of its last keyframe
+    Vdac4Q2Sdram = 24,         ///< the VDAC4 Tang's Quake II core SDRAM (8 MB), written through WRITE and the drawing
     /// The engine's own regions holding device states (Phase 2, Step 2): one
     /// per device of the table, from this value on
     DeviceStateFirst = 0x8000,

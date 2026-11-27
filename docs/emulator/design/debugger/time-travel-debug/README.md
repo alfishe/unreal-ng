@@ -86,6 +86,8 @@ TTD files in other folders:
 | [model-what-if/reference-branched-ttd-ui.md](../../../../inprogress/2026-09-29-model-what-if/reference-branched-ttd-ui.md) | a branched TTD UI in another emulator | reference |
 | [zx-next/design-ttd.md](../../../../inprogress/2026-10-07-zx-next/design-ttd.md) | TTD on the ZX Next | done with the Next |
 | [controller-manager/debug-and-ttd.md](../../../../inprogress/2026-10-17-controller-manager/debug-and-ttd.md) | game controllers as debugger and TTD surfaces | design |
+| [tsconf-vdac4/ttd-design.md](../../../../inprogress/2026-11-15-tsconf-vdac4/ttd-design.md) | TTD on TSL-VDAC4: the ESP CPU's keyframes + journal, the FT812, replay points | built 2026-11-23, Quake II §11, open items §10 |
+| [tsconf-vdac4/quake2.md §8.1](../../../../inprogress/2026-11-15-tsconf-vdac4/quake2.md#81-time-travel-and-session-files) | TTD of the Quake II core (`q2`): bomzh state, 8 MB SDRAM region at the ESP's keyframes, the core rebuilt by the journal replay ([ttd-design.md §11](../../../../inprogress/2026-11-15-tsconf-vdac4/ttd-design.md#11-the-quake-ii-core-between-keyframes-2026-11-27)), live numbers | built 2026-11-27; demo 58 MB/min |
 
 ## Automation planes
 

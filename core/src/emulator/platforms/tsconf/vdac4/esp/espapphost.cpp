@@ -2977,11 +2977,15 @@ void EspAppHost::InstallPorts()
         _ports.linkWrite = [this](uint32_t address, uint32_t value) {
             if (!Replaying())
                 _outer.linkWrite(address, value);
+            else if (_replayLinkWrite)
+                _replayLinkWrite(address, value);
         };
     if (_outer.linkFtWrite)
         _ports.linkFtWrite = [this](uint32_t ftAddress, const uint8_t* words, size_t count) {
             if (!Replaying())
                 _outer.linkFtWrite(ftAddress, words, count);
+            else if (_replayLinkFtWrite)
+                _replayLinkFtWrite(ftAddress, words, count);
         };
     if (_outer.audio)
         _ports.audio = [this](const int16_t* frames, size_t count, uint32_t rate) {
