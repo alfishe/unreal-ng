@@ -36,6 +36,7 @@
 #include <vulkan/vulkan.h>
 #endif
 #include "platform/presenterrecovery.h"
+#include "platform/presentslot.h"
 #include "recordingpicture.h"
 #ifdef __APPLE__
 #include "platform/macos/recordingsurfaces.h"
@@ -384,6 +385,10 @@ private:
     std::string _presenterFallback;               ///< why GL presents in place of the native presenter (empty: not)
     int64_t _glHangAtNs = 0;                      ///< UNREAL_TEST_GPU_HANG=gl: when the window's GL work hangs
     int64_t _presentFailAtNs = 0;                 ///< UNREAL_TEST_PRESENT_FAIL: BeginFrame fails from then on
+    int64_t _testRatePeriodNs = 0;                ///< UNREAL_TEST_PRESENT_RATE: a new frame every period (0: off)
+    int64_t _testRateNextNs = 0;                  ///< ... the next one's time
+    uint64_t _testRateSerial = 0;                 ///< ... its serial
+    bool _testSlotOff = false;                    ///< UNREAL_TEST_PRESENT_SLOT=0: no back-pressure
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks
     int64_t _statusLogNs = 0;                     ///< native way: the last stats line in the log
     int64_t _presentPlannedNs = 0;                ///< native way: the wake the timer was set for (trace)
@@ -471,7 +476,8 @@ private:
     bool _smoothUsed = false;     ///< the last updateTexture's picture was smooth motion's
     bool _smoothChanged = false;  ///< and another one than before
     uint64_t _smoothDrained = 0;  ///< presents handed over before the last refresh left out (a late one: renderNative)
-    uint32_t _smoothLag = 0;      ///< the lag (refreshes) of the run of late presents the last drain answered
+    uint32_t _smoothLag = 0;
+    PresentSlot _presentSlot;  ///< back-pressure for a presenter that queues: one present per refresh      ///< the lag (refreshes) of the run of late presents the last drain answered
     /// feedSmooth after a Reset starts this many frames before the one due
     static constexpr uint64_t kSmoothLookBehind = 4;
     uint64_t _smoothBehind = 0;         ///< refreshes whose plan was behind the frame due: the frame shown as it is

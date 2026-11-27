@@ -260,6 +260,14 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     std::to_string(beat.get("frames", 0).asUInt64()) + " frames off the beat, screen to sound p50 " +
                     NumberText(std::round(sound.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
                     NumberText(std::round(sound.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
+            // Back-pressure (a presenter that queues): frames held for a refresh already taken or the pool full, given
+            // up for newer
+            const Json::Value& slot = present["back_pressure"];
+            if (slot.get("held", 0).asUInt64() > 0)
+                line += ", " + std::to_string(slot.get("held", 0).asUInt64()) +
+                        " frames held for a refresh taken or the presenter's pool full (" +
+                        std::to_string(slot.get("pool", 0).asUInt64()) + " for the pool, " +
+                        std::to_string(slot.get("gave_way", 0).asUInt64()) + " gave way to a newer one)";
         }
         line += ", clock " + present.get("clock", "none").asString();
         // How the frames are timed: a delay the screen cannot hold (the picture leads its sound), the clock's steps

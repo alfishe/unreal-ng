@@ -251,6 +251,9 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.present.clock = "audio";
     fake.settings.present.beatFrames = 500;
     fake.settings.present.offBeat = 4;
+    fake.settings.present.held = 12;
+    fake.settings.present.heldForPool = 5;
+    fake.settings.present.gaveWay = 9;
     fake.settings.present.soundOffsetP99Ms = 6.5;
     StateNode full = WindowDisplay::Report(fake.settings);
     const StateNode& present = full["present"];
@@ -269,6 +272,10 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     ASSERT_NE(present.find("beat"), nullptr);
     EXPECT_EQ(present.find("beat")->find("frames")->i, 500);
     EXPECT_EQ(present.find("beat")->find("off")->i, 4);
+    ASSERT_NE(present.find("back_pressure"), nullptr);
+    EXPECT_EQ(present.find("back_pressure")->find("held")->i, 12);
+    EXPECT_EQ(present.find("back_pressure")->find("pool")->i, 5);
+    EXPECT_EQ(present.find("back_pressure")->find("gave_way")->i, 9);
     ASSERT_NE(present.find("sound_offset_ms"), nullptr);
     EXPECT_DOUBLE_EQ(present.find("sound_offset_ms")->find("p99")->d, 6.5);
     EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");

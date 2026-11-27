@@ -84,6 +84,8 @@ CFTimeInterval SteadyToMedia(int64_t steadyNs)
 constexpr size_t kSlots = 3;
 /// The adaptive lead's first margin over a refresh (LeadNs: presentDrawable:atTime: wants the drawable a refresh ahead)
 constexpr int64_t kLeadStartNs = 6'000'000;
+/// The layer's drawables (maximumDrawableCount: 2 or 3)
+constexpr NSUInteger kDrawables = 3;
 /// The GL fence before the Metal pass: polled this long, then waited for (glClientWaitSync with a timeout sleeps in
 /// steps of about 10 ms on macOS's GL: the poll serves the usual short waits, p90 0.85 ms), up to the timeout
 constexpr int64_t kFencePollNs = 4'000'000;
@@ -439,7 +441,7 @@ std::unique_ptr<MetalPresenter> MetalPresenter::Create(void* nsView)
     p.layer.framebufferOnly = p.dumpPath.empty();  // the dump reads the drawable back
     p.layer.displaySyncEnabled = YES;
     p.layer.opaque = YES;
-    p.layer.maximumDrawableCount = 3;
+    p.layer.maximumDrawableCount = kDrawables;
     // The present timer wakes a few ms before each target: App Nap or timer coalescing would make it late
     p.activity = [[NSProcessInfo processInfo]
         beginActivityWithOptions:NSActivityLatencyCritical | NSActivityUserInitiatedAllowingIdleSystemSleep
@@ -659,9 +661,11 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
               fb->JudgeVrr(atNs, screenNs, refreshNs);
           }
           // The lead from the frame's own time: a window that handed it over late was late too. A present at once
-          // has no time of its own to be late against (PresentLead)
+          // has no time of its own to be late against (PresentLead). Handed over when the window asked for a
+          // drawable, before nextDrawable's wait: a wait for the pool (all drawables queued, presents at the
+          // display's rate with a wide lead) is no window late, and more lead would only queue more and wait longer
           if (atNs > 0)
-              fb->lead.Shown(screenNs - atNs, number, asked - now);
+              fb->lead.Shown(screenNs - atNs, number, atNs - drawable0);
           std::lock_guard<std::mutex> lock(fb->statsMutex);
           fb->errors.Add(static_cast<double>(screenNs - asked) / 1e6);
           fb->beat.Shown(traced.picture, traced.targetNs, screenNs, refreshNs);
@@ -706,6 +710,17 @@ uint32_t MetalPresenter::LastLateLag() const
 uint64_t MetalPresenter::LastOnTimePresent() const
 {
     return _impl->fb->lead.LastOnTime();
+}
+
+bool MetalPresenter::PoolFull() const
+{
+    // Presents handed over and not on screen (nor dropped) yet: as many as the drawables, and nextDrawable waits for
+    // the screen (the owner's Mac, 2026-11-27: 95 to 100 % of such presents waited 12-16 ms, a present with one or two
+    // in flight almost never). Shown and dropped are counted by the presented handlers, the presents after commit
+    const Feedback& fb = *_impl->fb;
+    const uint64_t presented = fb.presented.load(std::memory_order_relaxed);
+    const uint64_t back = fb.shown.load(std::memory_order_relaxed) + fb.dropped.load(std::memory_order_relaxed);
+    return presented > back && presented - back >= kDrawables;
 }
 
 int64_t MetalPresenter::LeadNs(int64_t refreshPeriodNs) const

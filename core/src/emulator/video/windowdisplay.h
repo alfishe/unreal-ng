@@ -523,6 +523,11 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     node["shown"] = p.shown;
     node["dropped"] = p.dropped;
     node["late"] = p.late;
+    StateNode slot = StateNode::Object();
+    slot["held"] = p.held;
+    slot["pool"] = p.heldForPool;
+    slot["gave_way"] = p.gaveWay;
+    node["back_pressure"] = slot;
     StateNode beat = StateNode::Object();
     beat["frames"] = p.beatFrames;
     beat["off"] = p.offBeat;
