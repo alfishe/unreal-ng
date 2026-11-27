@@ -775,6 +775,13 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tabscrollarrows.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.h"
+        # The HUD drawn once per change: a session's indicator is not laid out again on every frame
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/hudoverlay_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/qt/hudoverlay.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/qt/hudoverlay.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/hudmodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/hudtheme.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/hudanimator.cpp"
         # Companion clients in the GUI: the pairing prompt, the Companions dialog (companion client design)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/companioncontroller_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.cpp"
@@ -1073,6 +1080,8 @@ if (TESTS)
     )
     target_include_directories(unreal-qt-tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/qt"
         "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/QHexView-5.0/include"
         "${ROOT_DIR}/core/src"
         "${ROOT_DIR}/core/src/common"

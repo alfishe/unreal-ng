@@ -306,7 +306,9 @@ Owner decisions, 2026-10-09:
   **Take back control**.
 - **Visible.** An indicator on the unreal-qt toolbar ("under remote control: MCP, client …, since 14:02"). The HUD
   shows a status / nudge while the session is open and removes it when the session ends. A message tells the user
-  when control was taken back.
+  when control was taken back. The HUD's indicator is drawn once per change and blitted with each frame, so a held
+  session costs the screen nothing per frame
+  ([HUD paint cost](../../../unreal-qt/src/hud/README.md#paint-cost-drawn-once-per-change)).
 - **After a take-back.** The interrupted call and every later call of that session get an explicit error,
   `revoked_by_user` (HTTP 409 on the WebAPI), never a timeout. The client may open a new session; the indicator
   lights again.

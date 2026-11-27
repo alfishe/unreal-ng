@@ -343,6 +343,7 @@ private:
     std::unique_ptr<gpu::Program> _recordCopyProgram;  ///< the recording's picture into the encoder's frame (macOS)
     std::unique_ptr<gpu::Program> _recordNv12Program;  ///< the recording's picture as NV12 (packRecordingNv12)
     QImage _hudImage;
+    quint64 _hudTextureSerial = 0;  ///< Vulkan: the HUD layer (HudOverlay::layerSerial) in _hudTexture; 0: none
     std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
     bool _glInitialized = false;
     QSize _glSize;                                ///< the surface size resizeGL saw, device pixels
