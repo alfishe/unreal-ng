@@ -15,6 +15,9 @@
 using namespace drogon;
 using namespace api::v1;
 
+// The one instantiation of the controller (emulator_api.h): its route table, and the registrator that runs it
+template class drogon::HttpController<api::v1::EmulatorAPI, true>;
+
 namespace api
 {
 namespace v1
