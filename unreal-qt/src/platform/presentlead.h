@@ -54,7 +54,10 @@ public:
         if (period <= 0)
             return;
         const int64_t margin = _marginNs.load(std::memory_order_relaxed);
-        if (errorNs > period + OffsetNs() + kJitterNs)
+        const bool late = errorNs > period + OffsetNs() + kJitterNs;
+        NoteLag(present, late && errorNs <= kGapNs ? static_cast<uint32_t>(errorNs / period) : 0, late,
+                errorNs > kGapNs);
+        if (late)
         {
             _late.fetch_add(1, std::memory_order_relaxed);
             // Shown seconds after its time: the display was asleep or off, the system held the presents (a gap in
@@ -82,6 +85,13 @@ public:
     }
 
     uint64_t Late() const { return _late.load(std::memory_order_relaxed); }
+    /// Presents shown at another lag (in refreshes after their own) than the present before them: the screen held a
+    /// picture a refresh more, or skipped one. A run all a refresh late, one every refresh, is no step: the compositor
+    /// a refresh behind for a while shows every picture evenly, a refresh later (the owner's Mac, 2026-11-27: whole
+    /// runs of 40 s with every present 25 ms after its time, at 8.5 ms in the next run of the same build), and smooth
+    /// motion's pictures move as evenly as on time. Its first present late and the one back on time are a step each.
+    /// A present without a number, one not after the present before it or one held by a gap: a step when late
+    uint64_t Steps() const { return _steps.load(std::memory_order_relaxed); }
     /// The number of the newest present shown a refresh late (0: none)
     uint64_t LastLate() const { return _lastLate.load(std::memory_order_relaxed); }
     /// LastLate's lag in refreshes (1: shown at the refresh after its own)
@@ -95,6 +105,15 @@ public:
     int64_t PeriodNs() const { return _periodNs.load(std::memory_order_relaxed); }
 
 private:
+    /// Shown's thread: a present's lag (0: on time) against the one before it
+    void NoteLag(uint64_t present, uint32_t lag, bool late, bool gap)
+    {
+        const bool follows = present != 0 && !gap && _lagPresent != 0 && present == _lagPresent + 1;
+        if (follows ? lag != _lag : late)
+            _steps.fetch_add(1, std::memory_order_relaxed);
+        _lagPresent = gap ? 0 : present;
+        _lag = lag;
+    }
     /// Shown's thread: a present on time, its error into the window the offset is taken from
     void NoteOnTime(int64_t errorNs)
     {
@@ -119,6 +138,9 @@ private:
     std::atomic<int64_t> _marginNs;
     std::atomic<int64_t> _periodNs{0};
     std::atomic<uint64_t> _late{0};
+    std::atomic<uint64_t> _steps{0};
+    uint64_t _lagPresent = 0;  ///< Shown's thread: the present the lag is of (0: none to follow)
+    uint32_t _lag = 0;
     std::atomic<uint64_t> _lastLate{0};
     std::atomic<uint32_t> _lastLateLag{0};
     std::atomic<uint64_t> _lastOnTime{0};

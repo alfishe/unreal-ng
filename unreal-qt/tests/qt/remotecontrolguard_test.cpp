@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "_helpers/testwaithelper.h"
 #include "common/uuid.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -218,4 +219,82 @@ TEST_F(RemoteControlGuard_Test, TheLockCascadesToEditorsViewsInputAndNewWindows)
     EXPECT_TRUE(apply->isEnabled());
     QApplication::sendEvent(acting, &typing);
     EXPECT_EQ(acting->keys, 2);
+}
+
+/// A control a window enables again during the session (its state refresh after a step or a stop) is locked again
+/// as soon as the event loop runs: no periodic pass over the windows is needed for it, and none waits 250 ms
+TEST_F(RemoteControlGuard_Test, AControlEnabledAgainDuringTheSessionIsLockedAtOnce)
+{
+    _guard.setEmulator(_emulator);
+    const unreal::UUID owner = unreal::UUID::Generate();
+    ASSERT_TRUE(Context()->TakeRunControl(owner, "mcp", nullptr, "agent", std::chrono::milliseconds(0)));
+    _guard.refresh();
+    ASSERT_FALSE(_button->isEnabled());
+    ASSERT_FALSE(_action->isEnabled());
+
+    _button->setEnabled(true);
+    _action->setEnabled(true);
+    auto* added = new QPushButton(QStringLiteral("Added"), &_window);  // a control created during the session
+    auto* addedAction = new QAction(QStringLiteral("Added action"), &_window);
+    QApplication::processEvents();
+    EXPECT_FALSE(_button->isEnabled());
+    EXPECT_FALSE(_action->isEnabled());
+    EXPECT_FALSE(added->isEnabled());
+    EXPECT_FALSE(addedAction->isEnabled());
+    addedAction->setEnabled(true);  // an action in no widget tells only itself
+    QApplication::processEvents();
+    EXPECT_FALSE(addedAction->isEnabled());
+
+    Context()->ReleaseRunControl(owner);
+    _guard.refresh();
+    EXPECT_TRUE(_button->isEnabled());
+    EXPECT_TRUE(_action->isEnabled());
+    EXPECT_TRUE(added->isEnabled());
+    EXPECT_TRUE(addedAction->isEnabled());
+}
+
+/// The session's walk over the windows runs once: a refresh with nothing changed (the queued one after a step, a stop,
+/// the lease's timer) and a quiet event loop look at no object
+TEST_F(RemoteControlGuard_Test, NothingIsWalkedWhileTheSessionStaysTheSame)
+{
+    _guard.setEmulator(_emulator);
+    EXPECT_EQ(_guard.visited(), 0u) << "no session: nothing to lock";
+    const unreal::UUID owner = unreal::UUID::Generate();
+    ASSERT_TRUE(Context()->TakeRunControl(owner, "mcp", nullptr, "agent", std::chrono::milliseconds(0)));
+    _guard.refresh();
+    const quint64 walk = _guard.visited();
+    EXPECT_GT(walk, 0u);
+
+    for (int i = 0; i < 10; ++i)
+        _guard.refresh();
+    QApplication::processEvents();
+    EXPECT_EQ(_guard.visited(), walk) << "the session did not change: no walk";
+
+    // One control enabled again: that one is looked at, not the windows
+    _button->setEnabled(true);
+    QApplication::processEvents();
+    EXPECT_FALSE(_button->isEnabled());
+    EXPECT_LE(_guard.visited(), walk + 2) << "only what changed";
+
+    Context()->ReleaseRunControl(owner);
+    _guard.refresh();
+    EXPECT_TRUE(_button->isEnabled());
+}
+
+/// An idle lease running out posts nothing by itself: the guard's one-shot timer at RunControlTimeToChange asks then,
+/// and the controls come back without a periodic pass
+TEST_F(RemoteControlGuard_Test, AnIdleLeaseRunningOutUnlocksWithoutAPoll)
+{
+    _guard.setEmulator(_emulator);
+    const unreal::UUID owner = unreal::UUID::Generate();
+    ASSERT_TRUE(Context()->TakeRunControl(owner, "webapi", nullptr, "bot", std::chrono::milliseconds(30)));
+    _guard.refresh();
+    ASSERT_TRUE(_guard.active());
+    ASSERT_FALSE(_button->isEnabled());
+    EXPECT_TRUE(TestWait::For([&] {
+        QApplication::processEvents();
+        return !_guard.active();
+    }));
+    EXPECT_TRUE(_button->isEnabled());
+    EXPECT_FALSE(RemoteControlGuard::Locked());
 }

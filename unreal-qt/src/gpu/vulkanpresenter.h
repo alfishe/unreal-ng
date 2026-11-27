@@ -37,6 +37,7 @@ public:
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override;
     uint64_t Presented() const override;
     uint64_t LatePresents() const override;
+    uint64_t SteppedPresents() const override;
     bool PresentFailed() const override;
     uint64_t LastLatePresent() const override;
     uint32_t LastLateLag() const override;

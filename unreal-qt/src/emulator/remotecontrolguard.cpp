@@ -4,6 +4,8 @@
 #include <QAbstractSlider>
 #include <QAbstractSpinBox>
 #include <QAction>
+#include <QActionEvent>
+#include <QChildEvent>
 #include <QApplication>
 #include <QComboBox>
 #include <QCursor>
@@ -15,10 +17,13 @@
 #include <QToolTip>
 #include <QHexView/qhexview.h>
 #include <QMenu>
+#include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QShortcut>
 #include <QToolButton>
 #include <QWidget>
+#include <algorithm>
+#include <climits>
 #include <utility>
 
 #include "emulator/emulator.h"
@@ -26,9 +31,6 @@
 
 namespace
 {
-
-/// The relock / lease poll while a session holds the machine (or a cooldown runs)
-constexpr int kRelockIntervalMs = 250;
 
 /// A control the user acts with (the views - scroll bars, tabs, item views, text - stay: looking is not acting)
 bool IsControl(QObject* object)
@@ -122,8 +124,8 @@ bool RemoteControlGuard::Refuse(QWidget* where)
 
 RemoteControlGuard::RemoteControlGuard(QObject* parent) : QObject(parent)
 {
-    _relock.setInterval(kRelockIntervalMs);
-    connect(&_relock, &QTimer::timeout, this, &RemoteControlGuard::refresh);
+    _clock.setSingleShot(true);
+    connect(&_clock, &QTimer::timeout, this, &RemoteControlGuard::refresh);
 }
 
 RemoteControlGuard::~RemoteControlGuard()
@@ -229,18 +231,13 @@ void RemoteControlGuard::refresh()
     _implicit = active && state.implicit;
     _hasCooldowns = !state.cooldowns.empty();
 
-    if (_active)
-        lock();  // also locks what was enabled since the last pass
-    else
+    if (!_active)
         unlock();
-
-    if (_active || _hasCooldowns)
-    {
-        if (!_relock.isActive())
-            _relock.start();
-    }
+    else if (!_locked)
+        lock();  // the session started: the one walk over every window
     else
-        _relock.stop();
+        flushQueued();  // what changed since is queued by the filter; nothing walks the windows again
+    armClock(context);
 
     if (changed)
         emit sessionChanged(_active);
@@ -269,6 +266,17 @@ void RemoteControlGuard::allowAgain()
     refresh();
 }
 
+void RemoteControlGuard::armClock(const EmulatorContext* context)
+{
+    // An idle lease running out and a cooldown ending post nothing by themselves: the query at that moment does
+    const std::optional<std::chrono::milliseconds> next =
+        context != nullptr && (_active || _hasCooldowns) ? context->RunControlTimeToChange() : std::nullopt;
+    if (next)
+        _clock.start(static_cast<int>(std::min<long long>(next->count(), INT_MAX)));
+    else
+        _clock.stop();
+}
+
 void RemoteControlGuard::lock()
 {
     s_locked.store(true, std::memory_order_relaxed);
@@ -277,9 +285,48 @@ void RemoteControlGuard::lock()
         qApp->installEventFilter(this);
         _filtering = true;
     }
+    _locked = true;
+    _queued.clear();  // all of it is looked at now
+    const QScopedValueRollback<bool> pass(_inPass, true);
     // Every window: the main one, the debugger, its dialogs, the floating panels
     for (QWidget* window : QApplication::topLevelWidgets())
         lockTree(window);
+}
+
+void RemoteControlGuard::queue(QObject* object, bool tree)
+{
+    if (object == nullptr || object == this || _inPass)
+        return;  // the guard's own changes are no news to it
+    _queued.append({QPointer<QObject>(object), tree});
+    if (_flushPosted)
+        return;
+    _flushPosted = true;
+    QMetaObject::invokeMethod(this, &RemoteControlGuard::flushQueued, Qt::QueuedConnection);
+}
+
+void RemoteControlGuard::flushQueued()
+{
+    _flushPosted = false;
+    const QList<std::pair<QPointer<QObject>, bool>> queued = std::exchange(_queued, {});
+    if (!_active || !_locked)
+        return;
+    const QScopedValueRollback<bool> pass(_inPass, true);
+    QSet<QObject*> done;
+    for (const auto& [object, tree] : queued)
+    {
+        // Created, then already gone; or looked at here already (a child of an object added with its children)
+        if (!object || done.contains(object.data()))
+            continue;
+        done.insert(object.data());
+        lockObject(object.data());
+        if (tree)
+            for (QObject* child : object->findChildren<QObject*>())
+                if (!done.contains(child))
+                {
+                    done.insert(child);
+                    lockObject(child);
+                }
+    }
 }
 
 bool RemoteControlGuard::IsExempt(QObject* object) const
@@ -298,50 +345,76 @@ bool RemoteControlGuard::IsExempt(QObject* object) const
 
 void RemoteControlGuard::lockTree(QWidget* root)
 {
-    QList<QObject*> candidates;
-    candidates.append(root);
+    lockObject(root);
     for (QObject* child : root->findChildren<QObject*>())
-        candidates.append(child);
-    for (QObject* object : candidates)
+        lockObject(child);
+}
+
+void RemoteControlGuard::lockObject(QObject* object)
+{
+    ++_visited;
+    if (IsExempt(object))
+        return;
+    bool readOnly = false;
+    if (ReadOnlyOf(object, readOnly))
     {
-        if (IsExempt(object))
-            continue;
-        bool readOnly = false;
-        if (ReadOnlyOf(object, readOnly))
+        if (!readOnly)
         {
-            if (!readOnly)
-            {
-                SetReadOnly(object, true);
-                _readOnlyByUs.append(QPointer<QObject>(object));
-            }
-            continue;
+            SetReadOnly(object, true);
+            _readOnlyByUs.insert(object, QPointer<QObject>(object));
         }
-        if (auto* view = qobject_cast<QAbstractItemView*>(object))
-        {
-            if (view->editTriggers() != QAbstractItemView::NoEditTriggers)
-            {
-                _editTriggersByUs.append({QPointer<QAbstractItemView>(view), view->editTriggers()});
-                view->setEditTriggers(QAbstractItemView::NoEditTriggers);
-            }
-            continue;
-        }
-        if (!IsControl(object) || !IsEnabled(object))
-            continue;
-        SetEnabled(object, false);
-        _lockedByUs.append(QPointer<QObject>(object));
+        return;
     }
+    if (auto* view = qobject_cast<QAbstractItemView*>(object))
+    {
+        if (view->editTriggers() != QAbstractItemView::NoEditTriggers)
+        {
+            // The window's latest triggers come back (it set them again during the session)
+            _editTriggersByUs.insert(view, {QPointer<QAbstractItemView>(view), view->editTriggers()});
+            view->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        }
+        return;
+    }
+    if (!IsControl(object) || !IsEnabled(object))
+        return;
+    SetEnabled(object, false);
+    _lockedByUs.insert(object, QPointer<QObject>(object));
 }
 
 bool RemoteControlGuard::eventFilter(QObject* watched, QEvent* event)
 {
-    if (!_active || !watched->isWidgetType())
+    if (!_active)
+        return false;
+    // What may undo the lock or bring a new control: queued, locked at the next turn of the event loop (changing a
+    // control inside its own notification is not done)
+    switch (event->type())
+    {
+        case QEvent::EnabledChange:   // a window enabled a control again (its state refresh after a step or a stop)
+        case QEvent::ReadOnlyChange:  // ... or an editor
+            if (watched->isWidgetType())
+                queue(watched, false);
+            return false;
+        case QEvent::ActionChanged:  // an action enabled again (sent to the action and to the widgets showing it)
+        case QEvent::ActionAdded:    // an action put in a menu, a toolbar, a widget
+            queue(static_cast<QActionEvent*>(event)->action(), false);
+            return false;
+        case QEvent::ChildAdded:  // an object created or re-parented: looked at once it is whole
+            queue(static_cast<QChildEvent*>(event)->child(), true);
+            return false;
+        default:
+            break;
+    }
+    if (!watched->isWidgetType())
         return false;
     switch (event->type())
     {
         case QEvent::Show:
             // A dialog or a context menu shown during the session is locked before the user can act in it
             if (static_cast<QWidget*>(watched)->isWindow())
+            {
+                const QScopedValueRollback<bool> pass(_inPass, true);
                 lockTree(static_cast<QWidget*>(watched));
+            }
             return false;
         case QEvent::MouseButtonDblClick:
         case QEvent::DragEnter:
@@ -375,11 +448,13 @@ void RemoteControlGuard::unlock()
         qApp->removeEventFilter(this);
         _filtering = false;
     }
-    const QList<QPointer<QObject>> locked = std::exchange(_lockedByUs, {});
+    _locked = false;
+    _queued.clear();
+    const auto locked = std::exchange(_lockedByUs, {});
     for (const QPointer<QObject>& object : locked)
         if (object)
             SetEnabled(object, true);
-    const QList<QPointer<QObject>> readOnly = std::exchange(_readOnlyByUs, {});
+    const auto readOnly = std::exchange(_readOnlyByUs, {});
     for (const QPointer<QObject>& object : readOnly)
         if (object)
             SetReadOnly(object, false);

@@ -133,3 +133,59 @@ TEST(PresentLead_Test, APresentHeldBySleepIsCountedButNeitherWidensNorEndsTheRun
     lead.Shown(0, PresentLead::kOnTimeRun + 2, 5'000'000);  // the run on time goes on: the 600th narrows
     EXPECT_EQ(lead.MarginNs(), 8'000'000 - PresentLead::kStepNs);
 }
+
+/// The compositor a refresh behind for a while shows every present a refresh late, one every refresh: no picture held
+/// or skipped, no step (the owner's Mac: 40 s of presents all 25 ms after their time). Its start and its end are one
+/// step each; smooth motion's guard counts steps, not lates
+TEST(PresentLead_Test, ARunEvenlyARefreshLateIsTwoStepsNotARunOfThem)
+{
+    PresentLead lead(8'000'000);
+    lead.Margin(kPeriod);
+    uint64_t n = 0;
+    for (int k = 0; k < 10; k++)
+        lead.Shown(kPeriod / 2, ++n, kPeriod + kPeriod / 2);
+    EXPECT_EQ(lead.Steps(), 0u);
+    for (int k = 0; k < 100; k++)
+        lead.Shown(kPeriod + kPeriod / 2, ++n, kPeriod + kPeriod / 2);
+    EXPECT_EQ(lead.Late(), 100u);
+    EXPECT_EQ(lead.Steps(), 1u) << "the first one late: the picture before held a refresh";
+    lead.Shown(kPeriod / 2, ++n, kPeriod + kPeriod / 2);
+    EXPECT_EQ(lead.Steps(), 2u) << "back on time: a picture skipped";
+}
+
+/// A machine too slow for the interpolation (the Steam Deck's GPU: 18.9 ms a picture at 16.7 ms a refresh) falls
+/// behind a little more with every present until the window leaves a refresh out: its lag never stays, every late one
+/// is a step
+TEST(PresentLead_Test, AGrowingLagStepsWithEveryPresent)
+{
+    PresentLead lead(8'000'000);
+    lead.Margin(kPeriod);
+    uint64_t n = 0;
+    for (int run = 0; run < 5; run++)
+    {
+        lead.Shown(kPeriod / 2, ++n, kPeriod);
+        for (int lag = 1; lag <= 3; lag++)
+            lead.Shown(lag * kPeriod + kPeriod / 2, ++n, kPeriod);
+    }
+    EXPECT_EQ(lead.Late(), 15u);
+    EXPECT_EQ(lead.Steps(), 19u) << "each lag another, the first on time of a run after the one before's";
+}
+
+/// Presents without a number, not after the one before (another present between that came back without a time) or
+/// held by a gap: no lag to follow, each late one is a step, as before
+TEST(PresentLead_Test, APresentWithoutOneBeforeItStepsWhenLate)
+{
+    PresentLead lead(8'000'000);
+    lead.Margin(kPeriod);
+    lead.Shown(kLate, 0, kPeriod);
+    lead.Shown(kLate, 0, kPeriod);
+    EXPECT_EQ(lead.Steps(), 2u);
+    lead.Shown(kLate, 5, kPeriod);
+    lead.Shown(kLate, 7, kPeriod);
+    EXPECT_EQ(lead.Steps(), 4u);
+    lead.Shown(kLate, 8, kPeriod);
+    EXPECT_EQ(lead.Steps(), 4u) << "after 7 at its lag";
+    lead.Shown(PresentLead::kGapNs + 1, 9, kPeriod);
+    lead.Shown(kLate, 10, kPeriod);
+    EXPECT_EQ(lead.Steps(), 6u) << "the gap's and the one after it";
+}
