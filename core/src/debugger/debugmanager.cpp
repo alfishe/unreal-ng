@@ -26,6 +26,7 @@
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/watch/framewatch.h"
 #include "debugger/markup/memorymarkup.h"
 
@@ -45,6 +46,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _asmSync = std::make_unique<AsmSyncService>(_context);
     _scriptCallbacks = std::make_unique<ScriptCallbackManager>(_context);
     _frameWatches = std::make_unique<framewatch::Manager>(_context);
+    _timeline = std::make_unique<timeline::Timeline>(_context);
     _markup = std::make_unique<markup::MemoryMarkup>(_context);
     _gsTarget = std::make_unique<GSCardTarget>(_context);
     _msTarget = std::make_unique<GSCardTarget>(_context, DebugCpuId::MultiSoundGS, [context]() -> GeneralSoundCard* {
@@ -247,6 +249,7 @@ DebugManager::~DebugManager()
     _asmSync.reset();   // its worker publishes into _labels: stopped first
     _scriptCallbacks.reset();  // its taps go before the breakpoints
     _frameWatches.reset();
+    _timeline.reset();
     _shuttingDown = true;      // the targets' breakpoints going away leave the features as they are
     _msTarget.reset();
     _gsTarget.reset();         // its hooks leave the card (the sound manager outlives this one)

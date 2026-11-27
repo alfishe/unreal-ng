@@ -16,6 +16,7 @@
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/preset/machinepreset.h>
 #include <emulator/execution/runcontrol.h>
 #include <emulator/zxpoly/zxpolygroup.h>
 #include <emulator/machinenames.h>
@@ -658,6 +659,80 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
         addCorsHeaders(resp);
         callback(resp);
     }
+}
+
+/// @brief POST /api/v1/emulator/preset - a preset machine in one call (MachinePreset, core/src/emulator/preset/machinepreset.h)
+/// @brief Body: {model, ram: "zero" | "random", cards: ["edge.1=kempston" | {slot, card, options}], features: {name:
+/// @brief bool}, muted, paused, fast_tape, take_control, replace, client, lease_seconds}; surface / peer as for
+/// @brief POST /control/session (the MCP server passes its client's). 201 with the effective settings and, with
+/// @brief take_control, control.session: the caller's session (the X-Unreal-Session header of its next requests).
+/// @brief 400 names the valid values, 409 a refused slot plan / feature / session; nothing is left behind
+void EmulatorAPI::createMachinePreset(const HttpRequestPtr& req,
+                                   std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    const auto json = req->getJsonObject();
+    StateNode args = json && json->isObject() ? JsonToStateNode(*json) : StateNode::Object();
+    // The session's surface and peer are the route's own (not MachinePreset arguments)
+    std::string surface = "webapi";
+    // The HTTP peer, or the socket's for a call the WebSocket forwarded
+    const std::string ownPeer = webapi_session::GateClientOf(req).peer;
+    std::string peer = ownPeer;
+    for (auto it = args.members.begin(); it != args.members.end();)
+    {
+        if (it->first == "surface")
+            surface = it->second.s == "mcp" ? "mcp" : "webapi";
+        else if (it->first == "peer" && !it->second.s.empty())
+            peer = it->second.s;
+        else
+        {
+            ++it;
+            continue;
+        }
+        it = args.members.erase(it);
+    }
+    if (surface != "mcp")
+        peer = ownPeer;   // only the MCP server (loopback) passes its own client's address
+
+    MachinePresetCaller caller;
+    caller.surface = surface;
+    // The caller's own machines (replace may destroy them): the session in its X-Unreal-Session header, and the
+    // sessions the same client opened before from the same host (an MCP server keeps one session id, so the session
+    // of an earlier preset machine is its client's all the same)
+    const std::string clientName = args.find("client") != nullptr ? args.find("client")->s : std::string();
+    const auto hostOf = [](const std::string& ipPort) { return ipPort.substr(0, ipPort.rfind(':')); };
+    caller.holdsControl = [&req, &surface, &peer, clientName, hostOf](Emulator& emulator) {
+        if (webapi_session::HoldsControl(req, emulator.GetContext()))
+            return true;
+        const EmulatorContext::RunControlState held = emulator.GetContext()->GetRunControlState();
+        return held.claimed && held.surfaceLabel == surface && !clientName.empty() && held.client == clientName &&
+               hostOf(held.peer) == hostOf(peer);
+    };
+    caller.takeControl = [&surface, &peer](Emulator& emulator, const std::string& client, uint32_t leaseSeconds,
+                                           std::string& session, std::string& reason) {
+        // As POST /control/session: a new session of this client on the new machine
+        const unreal::UUID owner = unreal::UUID::Generate();
+        if (!emulator.GetContext()->TakeRunControl(owner, surface, &reason, client,
+                                                   std::chrono::milliseconds(uint64_t(leaseSeconds) * 1000), peer))
+            return false;
+        session = owner.toString();
+        return true;
+    };
+
+    const MachinePresetReply reply = MachinePreset::Execute(args, caller);
+    Json::Value ret = StateNodeToJson(reply.ToValue());
+    if (reply.Ok())
+    {
+        ret["state"] = stateToString(reply.emulator->GetState());
+        AddIdentityFields(ret, *reply.emulator);
+        if (ret["control"].isMember("session"))
+            ret["control"]["header"] = webapi_session::kHeader;
+    }
+    else
+        ret["error"] = reply.httpStatus == 400 ? "Bad Request" : reply.httpStatus == 409 ? "Conflict" : "Internal Error";
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.httpStatus));
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief GET /api/v1/emulator/{id}

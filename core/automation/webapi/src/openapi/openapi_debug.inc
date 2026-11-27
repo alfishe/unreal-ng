@@ -267,7 +267,7 @@
         get["parameters"][1]["schema"]["type"] = "integer";
         get["responses"]["200"]["description"] = "The history";
         get["responses"]["400"]["description"] = "Bad depth";
-        get["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again";
+        get["responses"]["503"]["description"] = "No coherent moment within wait_ms (default 500); try again";
 
         Json::Value& post = paths[kPath]["post"];
         post["summary"] = "Start (empty) or stop the PC history";
@@ -279,6 +279,77 @@
         post["requestBody"]["content"]["application/json"]["schema"]["properties"]["enabled"]["type"] = "boolean";
         post["responses"]["200"]["description"] = "{armed}";
         post["responses"]["400"]["description"] = "Body without a boolean 'enabled'";
+    }
+
+    // GET /api/v1/emulator/{id}/debug/timeline, POST .../timeline/arm - the GS debugger's twin timeline
+    // (gs-debugger design §5.4, §7.2; gui-card-debugger §A5.1)
+    {
+        const char* kPath = "/api/v1/emulator/{id}/debug/timeline";
+        Json::Value& get = paths[kPath]["get"];
+        get["summary"] = "Twin timeline: the main CPU and a sound card's CPU on one clock";
+        get["tags"].append("Debug Commands");
+        get["description"] =
+            "Paused or stopped: {available, state, armed, started_now, cpu, lanes [{cpu, name, clock_hz, unit, "
+            "units_per_second, units_per_t, readout, recording}], now {frame, t, gap_t, main_t, main_frame, card_units, "
+            "card_cycle}, position {main?, main_text (\"6.6 / 11 T · 60% · port write next\"), card_text, gap_t}, "
+            "window {span_t, from_t, to_t, frame_t}, recent {main: [...], <cpu>: [...]} (oldest first: {pc, at, "
+            "duration_t, frame, t | units, duration_units, duration_cycles, clock_hz, kind instruction | int | nmi | "
+            "idle, text, label, idle_iterations, open}), next {main, <cpu>} ({pc, at, text, label}), markers [{lane, "
+            "kind breakpoint | host_port | int | nmi | clock_change, at, pc, id, port, dir, value, from_hz, to_hz, "
+            "text}], density [], leases [{owner, left_ms}], text}. `at` is main T relative to NOW (the card's moment: "
+            "main T minus the gap; negative = past); a card block's width is exact in its own units (duration_units) and "
+            "converts to main T through units_per_t. A block lasts until the next record of its lane starts "
+            "(contention, /WAIT, an interrupt acknowledge, the NeoGS clock are in it). Running: {state running, lanes, "
+            "density [{frame, main {commands, data_writes, data_reads, status_polls, accesses}, card {steps, "
+            "idle_steps, busy_steps, interrupts, nmis, commands_taken, profiled, cycles?, isr_cycles?, idle_cycles?, "
+            "halt_cycles?, busy_cycles?}}], revision}: the published density only, the machine never held. Nothing "
+            "records until a client holds a lease: a read takes or renews it (lease_ms, default 30000), arming the "
+            "execution histories `cpu`, `<slot>.cpu` and the GS command log that are off; the last lease's end switches "
+            "them back off. Example: a NeoGS clock change in the window is the marker \"12→24 MHz at cycle 118,400\".";
+        auto param = [&get](int index, const char* name, const char* in, bool required, const char* type,
+                            const char* description) {
+            Json::Value& p = get["parameters"][index];
+            p["name"] = name;
+            p["in"] = in;
+            p["required"] = required;
+            p["schema"]["type"] = type;
+            if (description)
+                p["description"] = description;
+        };
+        param(0, "id", "path", true, "string", nullptr);
+        param(1, "cpu", "query", false, "string", "The card lane: gs | ms (default: the first card CPU fitted)");
+        param(2, "span", "query", false, "number", "The window: ± main T around NOW (default 60, 1..100000)");
+        param(3, "recent", "query", false, "integer", "Blocks per lane at most, newest kept (default 64, at most 512)");
+        param(4, "density", "query", false, "integer", "Running: density ticks at most (default 50, at most 64 kept)");
+        param(5, "client", "query", false, "string", "The lease's owner (default rest)");
+        param(6, "lease_ms", "query", false, "integer", "The lease this read takes or renews (default 30000; 0: until released)");
+        param(7, "arm", "query", false, "boolean", "false: read without taking or renewing a lease");
+        param(8, "wait_ms", "query", false, "integer",
+              "Paused: how long to wait for a coherent moment (default 500, 0..500; 0: one try, 503 at once - a GUI "
+              "client that must not block)");
+        get["responses"]["200"]["description"] = "The timeline";
+        get["responses"]["400"]["description"] = "A bad parameter";
+        get["responses"]["404"]["description"] = "No such card CPU fitted";
+        get["responses"]["503"]["description"] = "No coherent moment within wait_ms (default 500); try again";
+
+        Json::Value& post = paths["/api/v1/emulator/{id}/debug/timeline/arm"]["post"];
+        post["summary"] = "Take, renew or end a client's twin timeline lease";
+        post["tags"].append("Debug Commands");
+        post["description"] =
+            "{on: true} takes or renews `client`'s lease for lease_ms (default 30000; 0 until released), arming the "
+            "histories the timeline reads; {on: false} ends it (the last lease switches them back off). Answer: {armed, "
+            "started_now, leases [{owner, left_ms}]}.";
+        post["parameters"] = Json::Value(Json::arrayValue);
+        post["parameters"].append(get["parameters"][0]);
+        post["requestBody"]["required"] = true;
+        Json::Value& body = post["requestBody"]["content"]["application/json"]["schema"];
+        body["type"] = "object";
+        body["properties"]["on"]["type"] = "boolean";
+        body["properties"]["client"]["type"] = "string";
+        body["properties"]["lease_ms"]["type"] = "integer";
+        body["required"].append("on");
+        post["responses"]["200"]["description"] = "{armed, started_now, leases}";
+        post["responses"]["400"]["description"] = "A body without a boolean 'on', or a bad lease_ms";
     }
 
     // GET / PUT /api/v1/emulator/{id}/debug/selected_cpu - the CPU the front-ends show (gs-debugger design §5.2)

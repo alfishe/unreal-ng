@@ -36,6 +36,12 @@ struct JoystickStateSnapshot
     bool present = false;    // fitted (config + feature); absent = the port reads 0x00
     bool wired = false;      // this machine answers a Kempston joystick (its board, or a fitted `kempston` card)
     std::string fit;         // not wired: how to fit the interface (SlotControl::PlugHint), "" when it cannot be fitted
+    // Is the Kempston joystick port read from the stick on this machine right now: fitted and wired
+    bool portDecoded = false;
+    std::string portSource;  // who decodes it: "board" (the model's own port), "card" (a plugged `kempston` slot card), "" nobody
+    // The Kempston mouse shares the #xxDF address space (a program that reads the stick at #DF gets the mouse)
+    bool mouseFeatureOn = false;  // feature `kempstonmouse`
+    bool mouseFitted = false;     // the mouse answers on the bus: [INPUT] Mouse=KEMPSTON and the feature on
     uint8_t state = 0;       // the device byte, active high
     uint8_t portValue = 0;   // what IN #1F returns from the device right now
     std::vector<std::string> buttons;  // names of the pressed bits (right, left, down, up, fire, b5, b6, b7)
@@ -96,6 +102,10 @@ public:
     /// The warning of an input call (and of the status) on a machine whose guest cannot see the stick: no Kempston
     /// interface, and how to fit one (the slot card `kempston`)
     static std::string UnwiredWarning(const std::string& fit);
+
+    /// The port facts of a state as one sentence: whether IN #1F reads the stick and through what, whether the
+    /// Kempston mouse answers on its ports and how to take it off them
+    static std::string DescribePorts(const JoystickStateSnapshot& state);
 
     /// region <Names>
     /// One name or a ',' / '+' list -> mask; 0 when empty or any name is unknown

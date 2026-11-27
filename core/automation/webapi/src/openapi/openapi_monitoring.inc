@@ -61,13 +61,16 @@
             "events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}; "
             "devices.access: {available, active, continuous, frames_observed, window, dropped_channels, channels "
             "[{device, channel, dir, port, input, frames, reads_per_frame, tested_bits, sites [{pc, count, "
-            "tested_bits}], other_sites}]}; breakpoint_groups: {groups "
+            "tested_bits}], other_sites}]}; debug.timeline: {available, armed, state, revision, cpu, frame, density "
+            "[the newest 10 frames: {frame, main {commands, data_writes, data_reads, status_polls, accesses}, card "
+            "{steps, idle_steps, busy_steps, interrupts, nmis, commands_taken, profiled, cycles?}}]} (at most 10 Hz; the "
+            "paused detail: GET /debug/timeline); breakpoint_groups: {groups "
             "[{name, total, active, ids}]}",
             "{ok, instance? (an instance's name), ...the value's fields}");
         param(name, "name", "path", true,
               "host.stats | host.clients | video.present | controllers.devices | emulator.stats | debug.breakpoints | media.slots | recording.state | "
               "debug.labels | ttd.status | debug.analyzers | debug.buffers | controllers.state | game.events | "
-              "devices.access | "
+              "devices.access | debug.timeline | "
               "breakpoint_groups");
         param(name, "instance", "query", false, instanceText);
 

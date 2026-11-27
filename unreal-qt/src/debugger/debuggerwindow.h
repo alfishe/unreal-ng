@@ -122,7 +122,11 @@ public:
 
     /// region <Helper methods>
 protected:
+    /// All panes read the machine now (a user action that needs them at once)
     void updateState();
+    /// One updateState in the event loop's next turn for any number of stop notices (the frame refreshes queued
+    /// while a step ran, the step's end, the pause): a burst refreshes the panes once, never once per notice
+    void requestUpdateState();
     /// The memory view at PC's page (a paused machine)
     void showMemoryAtPc();
     /// The memory view's colours: the memory markup's spans on the page shown (a colour per kind, the layer and
@@ -242,6 +246,7 @@ public:
     /// region <For the tests>
     QTabWidget* sideTabs() const { return _sideTabs; }
     QLabel* cardStrip() const { return _cardStrip; }
+    class TwinTimelineView* twinTimeline() const { return _twinTimeline; }
     QLabel* mainPositionStrip() const { return _mainPositionStrip; }
     QLabel* zxDmaMemoryBanner() const { return _zxDmaMemoryBanner; }
     QLabel* zxDmaDisasmBanner() const { return _zxDmaDisasmBanner; }
@@ -273,6 +278,7 @@ protected:
     // Step operation state tracking
     bool _inStepOutOperation = false;               // Flag indicating we're in a step-out operation
     bool _waitingForInterrupt = false;              // Flag indicating we're waiting for an interrupt
+    bool _updatePending = false;  ///< requestUpdateState posted its refresh, not run yet
     bool _isClosing = false;                         // Flag indicating window is being destroyed
     bool _speedControlActive = false;                // Speed widget is auto-stepping (set synchronously via signal)
     std::vector<uint16_t> _deactivatedBreakpoints;  // Stores IDs of temporarily deactivated breakpoints
@@ -365,6 +371,9 @@ private:
     QLabel* _zxDmaMemoryBanner = nullptr;
     QLabel* _zxDmaDisasmBanner = nullptr;
     CardPanes::Lines cardLines() const { return {_cardStrip, _mainPositionStrip, _zxDmaMemoryBanner, _zxDmaDisasmBanner}; }
+    // The twin timeline under the card line (A5.1): shown while a card CPU is fitted
+    class TwinTimelineView* _twinTimeline = nullptr;
+    void updateTwinTimeline(EmulatorContext* context);
     // The card line and the banner while the machine runs (4 Hz, while the window is shown)
     CardPanes::LiveLine* _liveLine = nullptr;
     uint16_t _stopBreakpointId = BRK_INVALID;

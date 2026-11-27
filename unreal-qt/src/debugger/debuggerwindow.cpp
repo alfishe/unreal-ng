@@ -47,6 +47,7 @@
 #include "debugger/gscpuanalysispane.h"
 #include "debugger/gsmonitorpane.h"
 #include "debugger/gssendpane.h"
+#include "debugger/twintimelineview.h"
 #include "debugger/nextpanes.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/reportpane.h"
@@ -415,6 +416,16 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _cardStrip->setStyleSheet("QLabel { border-left: 4px solid #E0A020; padding: 2px 6px; }");
     _cardStrip->setVisible(false);
     ui->verticalLayout_2->insertWidget(3, _cardStrip);
+    // The twin timeline (A5.1): both CPUs on one clock, full width under the card line, while a card is fitted and
+    // Debug > Show GS Timeline is on (off by default). Armed only while shown; a click on a block shows that CPU's
+    // disassembly there
+    _twinTimeline = new TwinTimelineView(this);
+    _twinTimeline->setVisible(false);
+    ui->verticalLayout_2->insertWidget(4, _twinTimeline);
+    connect(_twinTimeline, &TwinTimelineView::cpuTargetRequested, this, [this](DebugCpuId cpu, uint16_t pc) {
+        if (selectCpu(cpu))
+            ui->disassemblerWidget->goToAddress(pc);
+    });
     _liveLine = new CardPanes::LiveLine(
         this, [this]() { return _emulator; },
         // Running: the labels only (no stop to name); the disassembly's marks follow at the stop, as its rows do (a
@@ -703,7 +714,7 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
 
         // Connect CPU step complete signal for automation-triggered steps (WebAPI, Python, Lua, CLI)
         // Use updateState() instead of onBindingReady() to ensure setZ80State() is called on widgets
-        connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::updateState);
+        connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::requestUpdateState);
 
         // Connect frame refresh signal so TTD seek / step-back / step-forward
         // (which rebuild CPU + RAM + chipset state in-place via RestoreCheckpoint
@@ -712,8 +723,10 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         // emitting this signal, so we only get refreshes for OUR emulator —
         // no risk of cross-instance UI corruption when multiple emulators run.
         // Same handler as cpuStepComplete: updateState() rebuilds registers,
-        // disassembler (with new PC), memory pages, stack, and hex view.
-        connect(m_binding, &EmulatorBinding::frameRefresh, this, &DebuggerWindow::updateState);
+        // disassembler (with new PC), memory pages, stack, and hex view - once per
+        // burst (the frame refreshes queued while a step ran arrive together at its
+        // stop: one refresh each froze the window for hundreds of ms).
+        connect(m_binding, &EmulatorBinding::frameRefresh, this, &DebuggerWindow::requestUpdateState);
 
         qDebug() << "DebuggerWindow: Connected to EmulatorBinding";
 
@@ -756,6 +769,10 @@ void DebuggerWindow::propagateEmulator()
         _timeTravel->setEmulator(_emulator);
     if (_cardRun)
         _cardRun->setEmulator(_emulator);
+    {
+        const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
+        updateTwinTimeline(lease.get());
+    }
     // Port events holds the machine it searches: another machine (or none) closes it
     if (_portEventsDialog && _portEventsDialog->emulator() != _emulator)
         _portEventsDialog->close();
@@ -1213,8 +1230,23 @@ void DebuggerWindow::clearInterruptBreakpoints()
     _waitingForInterrupt = false;
 }
 
+void DebuggerWindow::requestUpdateState()
+{
+    if (_updatePending)
+        return;
+    _updatePending = true;
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            if (_updatePending)  // an updateState meanwhile did it
+                updateState();
+        },
+        Qt::QueuedConnection);
+}
+
 void DebuggerWindow::updateState()
 {
+    _updatePending = false;
     // Block refreshes during shutdown to prevent crash
     if (_isClosing)
     {
@@ -1495,7 +1527,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // When emulator is paused:
                 // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(true, false, true, true, true, true);
-                updateState();  // Safe to update when paused
+                requestUpdateState();  // Safe to update when paused
                 break;
         }
     });
@@ -1640,6 +1672,19 @@ void DebuggerWindow::updateCardStrip()
                                                 tr("ZX-DMA Divert: at run time the CPU reads card RAM here, not the host ROM shown"));
     else
         ui->disassemblerWidget->clearRunTimeRange();
+    updateTwinTimeline(context);
+}
+
+// Shown while the machine has a card CPU (hidden, it releases its lease); at a stop it reads the paused detail. The
+// caller holds a lease on `context` (null: none)
+void DebuggerWindow::updateTwinTimeline(EmulatorContext* context)
+{
+    if (!_twinTimeline)
+        return;
+    // Shown only with Debug > Show GS Timeline on as well (opt-in, off by default): off, hidden, nothing read or armed
+    const bool fitted = _emulator && context && CardPanes::Fitted(context);
+    const DebugCpuId cpu = currentCpu();
+    _twinTimeline->follow(fitted ? _emulator : nullptr, IsCardCpu(cpu) ? cpu : DebugCpuId::Main);
 }
 
 void DebuggerWindow::onStopBannerLink(const QString& link)
@@ -1669,7 +1714,7 @@ void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
     if (_emulator && _emulator->IsPaused())
     {
         // Update debugger state in the main thread
-        dispatchToMainThread([this]() { updateState(); });
+        dispatchToMainThread([this]() { requestUpdateState(); });
     }
 }
 

@@ -9,6 +9,7 @@
 #include <mutex>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/timeline/twintimeline.h"
 #include "common/processstats.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analyzermanager.h"
@@ -889,6 +890,13 @@ StateNode DevicesAccess(Emulator& emulator)
     });
 }
 
+/// The twin timeline's published state (twintimeline.h): the density per frame while a client holds its lease. At
+/// most 10 values a second (the cache holds one 100 ms, whatever the frames did meanwhile)
+StateNode TwinTimeline(Emulator& emulator)
+{
+    return CachedValue("debug.timeline", emulator.GetId(), 0, 0.1, [&emulator] { return timeline::MonitorNode(emulator); });
+}
+
 StateNode GameEvents(Emulator& emulator)
 {
     controllers::ControllerManager* manager = emulator.GetContext()->pControllerManager;
@@ -1026,7 +1034,8 @@ const std::vector<std::string>& InstanceNames()
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
                                                    "game.events",     "debug.watches",     "analysis.progress",
                                                    "analysis.ready",  "devices.access",    "debug.markup",
-                                                   "debug.cpuprofile", "jobs.progress",    "jobs.done"};
+                                                   "debug.cpuprofile", "jobs.progress",    "jobs.done",
+                                                   "debug.timeline"};
     return names;
 }
 
@@ -1088,6 +1097,8 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return Markup(emulator);
     if (name == "debug.cpuprofile")
         return CpuProfile(emulator);
+    if (name == "debug.timeline")
+        return TwinTimeline(emulator);
     if (name == "analysis.progress")
         return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
     if (name == "analysis.ready")

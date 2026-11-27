@@ -286,6 +286,7 @@ Commands to manage the connection and emulator instances. These commands are ess
 | `start <model>` | | `<model-name> [--ram-power-on random\|zero]` | Start a new emulator instance with specific Spectrum model short name (`--ram-power-on`: as for `create`) (e.g. `48K`, `128k`, `PLUS3`, `PENTAGON`, `SCORPION`, `PROFI`; see `models`). **Strict**: a model this build cannot create fails with a reason — there is no silent fallback to a default machine. | 🔮 Planned |
 | `start <config-file>` | | `<config-path>` | Start a new emulator instance using configuration from file. Returns the new instance ID. | 🔮 Planned |
 | `create [model]` | | `[model-name] [--ram-power-on random\|zero]` | Create a new emulator instance without starting it. `--ram-power-on zero` creates it with every RAM page reading 0 (reproducible runs); `random` fills the screen pages with noise like real DRAM; omitted = `[MISC] RAMPowerOn` of the model's `unreal.ini`. The output reports the mode as `Power-on RAM:`. If `model` is specified, creates an emulator of that model type (short name as in `models`). If no model is specified, creates a default 48K emulator. **Strict**: an unknown or non-creatable model fails with a reason (no fallback). The success output echoes the RESOLVED model and RAM, not the requested string. Instance remains in initialized state until explicitly started with `resume`. Returns the UUID of the created instance. Automatically selects if first instance. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. |
+| `preset <model>` | | `<model-name> [ram=zero\|random] [card=<slot>=<card>]... [feature=<name>=on\|off]... [muted=on\|off] [paused=on\|off] [fast_tape=on\|off] [take_control=on\|off] [select=on\|off] [replace=on\|off]` | A preset machine in one call ([Preset machine](#preset-machine)): created with its cards, the features set, the master muted, started and paused at power-on, run control taken; the answer lists the effective settings. A refusal names the valid values and leaves no instance behind. WebAPI `POST /api/v1/emulator/preset`, MCP `emulator_manage` `preset`, Lua `machine_preset{}`, Python `machine_preset()`. | ✅ Implemented |
 | `model <name>` | | `<model-name> [--ram <kb>] [--stranded save\|discard\|keep] [--ram-power-on random\|zero]` | Switch the selected emulator to another model (a new instance, new id; the machine state is lost). The new machine keeps the current machine's power-on RAM mode unless `--ram-power-on` names one. Disks, tapes and cards go into the slot with the same id on the new machine, unsaved writes included; media with unsaved writes the new model has no slot for need `--stranded` ([media.md → Model switch](../../../features/media.md#model-switch)). Same as `POST /api/v1/emulator/{id}/model`. |
 | `machines` | | `[all]` | The machines grouped family -> machine -> RAM size (`MachineCatalog`, design `docs/inprogress/2026-11-16-machine-families/design.md`): the creatable ones, `all` for every one. The same tree as WebAPI `GET /api/v1/emulator/machines`, MCP `emulator_manage` `list_machines`, Python and Lua `machines()`; the Qt Machine menu and the handheld Model picker are built from it. |
 | `models` | | | List all known machine models with full names and a `(not creatable on this build)` marker for machines whose port decoder or config folder is missing in this build. The WebAPI equivalent (`GET /api/v1/emulator/models`, `creatable` flags) is the runtime-authoritative source. |
@@ -335,6 +336,54 @@ Commands to manage the connection and emulator instances. These commands are ess
 - **Model-based**: `start 128k`, `start pentagon`, `start +3`
 - **Config file**: `start /path/to/config.json` (JSON configuration)
 - **Inline config**: Future support for `--option=value` parameters
+
+#### Preset machine
+
+One verb makes the machine a reverse-engineering or verification run starts from and answers when it is ready. One
+implementation for every plane: `MachinePreset::Execute` ([machinepreset.h](../../../../core/src/emulator/preset/machinepreset.h));
+the planes pass their arguments through and show the answer.
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `model` | required | The model's short name, as for `create` (a machine variant too). A ZX-Poly configuration is refused: a preset machine is one instance. |
+| `ram` | `zero` | `zero`: every RAM page reads 0 (a reproducible run); `random`: noise in the screen pages. Alias `ram_power_on`. |
+| `cards` | none | Cards to fit: `"<slot>=<card>"` strings (`"edge.1=kempston"`; slot `auto`: the planner's choice) or `{slot, card, options, adapter, replace}`. Planned as a slot plug is (`SlotManager::PlanChanges`) against the model's own slot set; the machine is created with the planned set, so there is no restart and nothing to poll. `replace` allows the removals the plan lists. |
+| `features` | none | `{name: bool}` by feature id or alias (`{"kempstonmouse": false}`), applied through `FeatureManager`. |
+| `muted` | `true` | The mixer's master is muted. |
+| `paused` | `true` | The machine is started and left paused at power-on, before its first instruction (frame 0, t 3: the reset's three T-states); `false`: running. |
+| `fast_tape` | `false` | The tape accelerators: `false` switches the features `fasttape` (the ROM LD-BYTES trap) and `turbotape` (turbo while the tape plays) off, so a tape loads in real machine time; `true` switches both on (the product default). A name in `features` wins. `fastdisk` is not touched. |
+| `take_control` | `true` | The caller holds the new machine's run control: the plane's own session (WebAPI: `control.session`, sent as `X-Unreal-Session`; MCP: the agent's session, as after `control_execution take_control`; CLI: the connection's, as `session take`; Lua / Python: the script's, as `take_control()`). |
+| `replace` | `false` | `false`: the machine is created next to the existing ones, as `create` does. `true`: every other instance is destroyed once the new one is built; refused while another client's explicit session holds one of them. |
+| `select` | `false` | `false`: the selection is left alone; several machines run side by side and which one is active is the caller's choice. `true`: the new machine becomes the selected one (the one a GUI shows, the default of calls with no target). |
+| `client`, `lease_seconds` | plane's, 60 | The session's name and idle lease (WebAPI / MCP), as for a take of control. |
+
+Order: everything that needs no machine is checked first (argument names and types, `ram`, feature names, card ids
+and options, the model's name): a refusal (400) names the valid values and nothing is created. The slot plan needs
+the model's configuration, so it is made while the machine is created; a refused plan (409, with the plan and the
+machine's buses), a feature that cannot be switched or a session that cannot be taken removes the never-started
+machine. No refusal leaves an instance behind or touches an existing one. The new machine becomes the selected one only with `select`.
+
+The answer (fields, and `text` for a reader): `id`, `model`, `ram_kb`, `ram`, `cards` (every card in its slot:
+`slot`, `card`, `options`, `asked`), `features` (`asked`: the ones named, as they are now; `not_default`: every
+feature that differs from its default on this machine), `muted`, `paused`, `fast_tape`, `control` (`held`,
+`session`, `surface`, `client`, `lease_seconds`), `position` (`frame`, `t`, `pc`), `replaced` (the ids destroyed), `selected`,
+`instances`. All read back from the machine.
+
+```text
+Preset machine 6f2c... ready: 48K (48 KB), RAM zero, paused at frame 0 t 3.
+Cards: edge.1 = kempston.
+Features not at their default: fasttape off, kempstonmouse off (asked), turbotape off.
+Sound: master muted. Fast tape: off (fasttape and turbotape off: a tape loads in real machine time).
+Run control: held by you (mcp, session 0d3e...).
+```
+
+| Plane | Form |
+|-------|------|
+| CLI | `preset 48K card=edge.1=kempston feature=kempstonmouse=off` (`name=value` words; `card=` and `feature=` repeat) |
+| WebAPI / WebSocket call | `POST /api/v1/emulator/preset {"model": "48K", "cards": ["edge.1=kempston"], "features": {"kempstonmouse": false}}` -> 201 |
+| MCP | `emulator_manage {action: "preset", model: "48K", cards: ["edge.1=kempston"], features: {kempstonmouse: false}}` |
+| Lua | `machine_preset{model = "48K", cards = {"edge.1=kempston"}, features = {kempstonmouse = false}}` -> table, or `nil, reason` |
+| Python | `machine_preset("48K", cards=["edge.1=kempston"], features={"kempstonmouse": False})` -> dict; `ValueError` / `RuntimeError` |
 
 **Machine Identity and Model Creatability** (P0 fixes from `docs/inprogress/2026-09-14-automation-triage-gaps/`):
 - **Parity rule — one source, equal consumers**: machine identity is computed in exactly one place (`EmulatorManager::GetMachineIdentity` in core). WebAPI and CLI serialize that struct directly; MCP forwards the WebAPI payloads verbatim. WebAPI and MCP are equally important automation surfaces — they must always report the same information, and a field added for one is a field added for all.
@@ -824,6 +873,7 @@ The `memory` command provides unified access to emulator memory with two address
 | `find <pattern>` | Z80 pattern search | Search the Z80 address space for a byte pattern (see below) |
 | `out <port> <value>` | port write | A debugger's port write through the machine's decoder, like a CPU OUT (the WebAPI `POST /ports/out`): `out #13AF #20` maps RAM page #20 into window 3 on TS-Conf; no breakpoints, no device waits, a TTD tool edit; prints `Port #13AF <- #20 (paused)` |
 | `pchist [depth]`, `pchist on\|off` | PC history | The newest instructions with their window's page, newest first (the WebAPI `GET /debug/pchist`); the first read starts recording; `debug-snapshot --pchist N` |
+| `timeline [gs\|ms] [span=T] [recent=N] [json]`, `timeline on [lease_ms]\|off` | twin timeline | The GS debugger's twin timeline ([gs-debugger design §5.4](../../../inprogress/2026-09-27-gs-debugger/design.md#54-instruction-progress-for-the-main-cpu)): the main CPU and a sound card's CPU on one clock. Paused: NOW (main T minus the gap to the card), each lane's recent blocks with their measured widths (`at` and `duration_t` in main T, a card's `duration_units` in its own units), the next instruction of each lane, markers (breakpoints, host port accesses, INT / NMI, the NeoGS clock change); running: the density per frame (the main lane's GS port accesses, the card's steps / idle / interrupts). The WebAPI `GET /debug/timeline` (`POST /debug/timeline/arm`), Lua / Python `timeline()` / `timeline_arm()`, MCP `inspect_state` aspect `timeline`, snapshot `pause.timeline`, WebSocket topic `debug.timeline`. Zero cost off: the first read takes a lease (CLI / scripts until `off`, REST / MCP 30 s renewed by each read) that arms the histories it reads |
 | `debug-wait [since] [--timeout ms]` | long-poll | Block until the debugger snapshot's `seq` moves past `since` (default: the current one) or the timeout passes (the WebAPI `GET /debug/wait`) |
 | `debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]...` | debugger snapshot | Registers, pages, time, code from PC, stack and memory windows read at one moment (the WebAPI `GET /debug/snapshot`) |
 
@@ -1604,6 +1654,19 @@ Commands to view and control emulator runtime features for the selected emulator
 | `fasttape`, `turbotape` | a stopped or loaded session is being replayed (seek, step), or the machine sits in history (`detached`). A recording keeps them: the tape trap is a recorded edit |
 
 While a feature is held off, `feature` (and the WebAPI features endpoint, and Lua/Python `feature_list`) shows it as `off`: the list always shows the state in effect, not the stored choice. Switching a held feature on is refused: the CLI prints `Error: cannot enable 'turbomode' while TTD recording is active or history is being replayed.` and the WebAPI answers HTTP 409. The stored choice comes back when the session returns to `idle`. See "Acceleration lock" in the TTD section below.
+
+**On the planes.** CLI `feature` / `feature <name> on|off`; WebAPI `GET /features`, `GET|PUT /feature/{name}`
+(`{"enabled": false}`); MCP `emulator_manage` `features` (the list as text: id, alias, on / off, description) and
+`feature` (`name`: id or alias, `enabled`; an unknown name is refused with the valid ones and the nearest); Lua /
+Python `feature_list` and `feature_set(name, enabled)`.
+
+**The Kempston mouse and a game's own `#DF` port.** `kempstonmouse` is on by default and every shipped machine
+config has `[INPUT] Mouse=KEMPSTON`, so the mouse answers `#FADF` (buttons) / `#FBDF` (X) / `#FFDF` (Y) outside
+TR-DOS. The standard decode is A9 = 1 with A5-A0 = `#1F`: any such port reads the mouse unless a higher-priority
+device has it (the Kempston joystick at low byte `#1F`). A program that reads its stick or keys at `#DF` (high byte
+with A9 set) gets the mouse counters. `feature kempstonmouse off` (MCP `emulator_manage action=feature
+name=kempstonmouse enabled=false`) takes the mouse off the bus at once and frees those ports. `joystick status`
+(every plane) reports both sides: whether `#1F` is decoded right now and whether the mouse is on.
 
 **Feature Dependencies**:
 
@@ -4247,7 +4310,7 @@ N-th emulated frame. (The Kempston mouse queues the same way.)
 | `joystick set` | | `<state\|buttons\|none>` | Exactly these buttons are held: a byte (`0x18`, `24`), a list, or `none`. Cancels a pending tap. | ✅ Implemented |
 | `joystick tap` | | `<buttons> [frames]` | Press, hold `frames` (default 2), release on its own. A new tap replaces a pending one. | ✅ Implemented |
 | `joystick clear` | `joystick release_all` | — | Release everything, cancel a pending tap. | ✅ Implemented |
-| `joystick status` | `joystick info` | — | State byte, held buttons, the `IN #1F` value, whether this machine decodes the port (and, when not, how to fit the `kempston` card), host key bindings, pending tap. | ✅ Implemented |
+| `joystick status` | `joystick info` | — | State byte, held buttons, the `IN #1F` value, whether this machine decodes the port (and, when not, how to fit the `kempston` card), host key bindings, pending tap. The `Ports:` line (fields `port_decoded`, `port_source` `board` / `card`, `kempston_mouse_feature`, `kempston_mouse_fitted`, `ports_text` on WebAPI / MCP / Lua / Python) says whether `#1F` reads the stick right now, through the board or a plugged `kempston` card, and whether the Kempston mouse is on its ports `#FADF` / `#FBDF` / `#FFDF` (feature `kempstonmouse` off frees them). | ✅ Implemented |
 | `joystick list` | | — | The button names and their bits. | ✅ Implemented |
 | `joystick help` | | — | Subcommand help. | ✅ Implemented |
 
@@ -4824,6 +4887,7 @@ by its manager's revision.
 | `monitor ttd.status` | `[instance=]` | From the published cursor: `state`, `recording`, `history`, `frame`, `first`, `end`, `frames`; from the published session summary (refreshed every 2 s at most, never the live session): `checkpoints`, `memory_bytes`, `history_bytes`, `page_store_bytes`, `bookmarks`, `write_journal_records`, `input_events`, `evicted_checkpoints`, `evicted_to_disk_segments`, `evicted_to_disk_checkpoints`, `read_back_segments`, `read_back_bytes`, `read_back_loads`, `read_back_hits` | ✅ Implemented |
 | `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `cpuprofile` (`running` / `off` / `unavailable`), `pchist` (`armed` / `off`) | ✅ Implemented |
 | `monitor debug.cpuprofile` | `[instance=]` | The CPU time profile's totals ([CPU time profile](../../analysis/cpu-profile.md)): `available`, `active`, `frames`, `tstates`, `instructions`, `acknowledges`, `routines`, `pages`, `depth`, `discontinuities`, `frames_kept` (relaxed reads: no hold, no copy) | ✅ Implemented |
+| `monitor debug.timeline` | `[instance=]` | The twin timeline's published state (at most 10 Hz): `available` (a card CPU fitted), `armed` (a client holds a lease), `state`, `revision`, `cpu`, `frame`, `density` [the newest 10 frames: {`frame`, `main` {`commands`, `data_writes`, `data_reads`, `status_polls`, `accesses`}, `card` {`steps`, `idle_steps`, `busy_steps`, `interrupts`, `nmis`, `commands_taken`, `profiled`, `cycles`?}}]; the paused detail is `GET /debug/timeline` | ✅ Implemented |
 | `monitor debug.buffers` | `[instance=]` | How full each trace buffer is (read at most once a second): `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {`used`, `capacity`, `slot_bytes`, `used_bytes`, `capacity_bytes`, `percent`}, a buffer not allocated absent; `ttd` {`history_bytes`, `limit_bytes`, `limit_frames`, `memory_bytes`, `checkpoints`, `write_journal_records`, `write_journal_bytes`, `evicted_to_disk_segments`, `read_back_segments`, `read_back_bytes`} | ✅ Implemented |
 | `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
 | `monitor game.events` | `[instance=]` | The game's events: the play profile's `events:` (and `haptics.sources`) as the haptic feed found them in live frames, with or without a haptic device ([breakpoint taps §7](../../../inprogress/2026-10-26-breakpoint-taps/README.md#7-game-events-the-profile-names-events-consumers-subscribe)): `available`, `profile`, `frame`, `seq`, `events` {`<name>`: {`kind` (`event` / `level`), `fires`, `last_frame`, `level`, `value` (the watched byte or word, else null)}}, `recent` [{`seq`, `frame`, `name`}] (the last 64 fired; a poller keeps the last `seq` it saw) | ✅ Implemented |
@@ -5038,6 +5102,7 @@ Programmatic control of emulator input devices for automation and testing.
 | :--- | :--- | :--- | :--- |
 | `key press <key>` | `<key-name>` | Press and hold a key. Key names: `a-z`, `0-9`, `space`, `enter`, `caps`, `symbol`, etc. (`key list`). Keys held together are joined with `+` (`w+o`) on every plane: CLI `key`, Lua / Python `key_press`, WebAPI and MCP `key`. | ✅ Implemented |
 | `key release <key>` | `<key-name>` | Release a held key or chord (`w+o`). | ✅ Implemented |
+| `key set <keys>` \| `key set none` | `<key1+key2>` or `<key1> <key2> ...`, or `none` | The complete held-key state in one call: exactly these keys are held, every other injected key is released (the keys of `key press`, of a chord and of a tap in progress; a pending tap / type sequence is dropped). A key that is already held stays down with no release in between. `none` (an empty list on the other planes) releases every injected key; the host's own keys are not touched (`key clear` resets the whole matrix). Every name is checked first: an unknown name is refused and nothing changes. Planes: CLI `key set`, WebAPI `POST /keyboard/set` `{"keys": ["w", "o"]}` (or `"w+o"`), MCP `type_input` `set` with `keys`, Lua `key_set({"w", "o"})`, Python `emu.key_set(["w", "o"])` (Lua / Python answer `true` / `false`). | ✅ Implemented |
 | `key tap <key> [frames] [count] [gap_frames]` | `<key-name> [n] [n] [n]` | Press, hold for `frames` (default 2) and release a key or a chord (`caps+5`); `count` taps in a row, `gap_frames` after each release. | ✅ Implemented |
 | `type <text>` | `<string>` | Automatically type a string of text. Handles shift/symbol modifiers automatically. Rate-limited to realistic typing speed. | 🔮 Planned |
 | `key combo <key1> <key2> ...` | `<key-name> ...` | Tap several keys together, the keys as separate words (the same as `key tap key1+key2`). | ✅ Implemented |

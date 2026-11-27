@@ -108,7 +108,25 @@
   /ttd/screen-at`, MCP `screen_at` (an image block), CLI `ttd screen-at` (`--save`), Lua, Python. Oracle: the PNG equals
   the live picture captured when the frame ended, the bytes equal the live RAM pages (a guest flipping the shown screen
   every 64 loops).
-- [ ] V3: lab machine preset in one call; `keys set` (M).
+- [x] V3: machine preset in one call; `keys set` (M). As built (2026-11-25): one verb, `MachinePreset::Execute`
+  (`core/src/emulator/preset/machinepreset.h`), on every plane - `POST /api/v1/emulator/preset` (+ socket call, OpenAPI), MCP
+  `emulator_manage` `preset`, CLI `preset <model> [name=value ...]`, Lua `machine_preset{}`, Python `machine_preset()`. Arguments
+  `model`, `ram` (zero), `cards` (`"edge.1=kempston"` or `{slot, card, options, adapter, replace}`), `features`
+  (`{kempstonmouse: false}`), `muted` (true), `paused` (true), `fast_tape` (false: features `fasttape` and `turbotape`
+  off), `take_control` (true), `select` (false: the selection is left alone, the owner's decision 2026-11-26), `replace` (false: created beside the others, as a create; true destroys them once the
+  new machine is built). The cards are planned with the slot plug's planner (`SlotManager::PlanChanges`) inside the
+  creation and the machine is built once with the planned set: no restart, nothing to poll. The machine is started and
+  paused at power-on (frame 0, t 3: the reset's T-states, nothing executed); the caller holds the plane's own session (MCP: the agent's, set from the answer). What needs
+  no machine is checked first (400 with the valid values); a refused plan, feature or session (409) removes the
+  never-started machine: no refusal leaves an instance. The answer (fields and text) is read back from the machine:
+  cards in their slots, features not at their default, muted, paused, fast_tape, the session, frame / t.
+  `re_session.py` `capture` / `open` use it (`NEEDED_TOOLS` checks `emulator_manage:preset`). Docs: command-interface.md
+  "Preset machine" and the plane docs. Tests `MachinePreset_Test`, `McpPreset_Test`, live
+  `tools/verification/mcp/test_preset.py`.
+  - `keys set` is built (2026-11-25): `DebugKeyboardManager::SetHeldKeys` (the given keys held, every other injected
+    key released, a pending sequence dropped; an unknown name changes nothing) on every plane - `POST /keyboard/set`
+    `{"keys": [...]}`, MCP `type_input` `set`, CLI `key set <k1+k2 | k1 k2 ...> | none`, Lua `key_set({...})`, Python
+    `key_set([...])`.
 - [x] E1: unknown action / value lists the valid ones, "did you mean" (S). As built (2026-11-25): one helper,
   `UnknownValueText` (`mcp-tool-utils.h`, with `EditDistance` / `NearestMatch` / `SetSchemaEnum`): "Unknown action
   'slots_plugg'. Did you mean 'slots_plug'? Valid actions: ..."; the nearest by Levenshtein distance within max(2,
@@ -121,7 +139,23 @@
   `McpToolUtils_Test.EditDistanceIsLevenshteinWithoutCase`, `.NearestMatchSuggestsOnlyACloseValue`,
   `.UnknownValueTextListsTheValidOnes`, `McpTools_Test.EmulatorManage_UnknownAction_ListsValidOnesAndSuggestsTheNearest`,
   `.EmulatorManage_SlotsUnplug_IsAnAliasOfSlotsRemove`, `.TimeTravel_UnknownAction_Errors`.
-- [ ] E2: features in MCP (`kempstonmouse` off), mouse / Kempston notes in tool descriptions, Bumpy retry (S).
+- [x] E2: features in MCP (`kempstonmouse` off), mouse / Kempston notes in tool descriptions, Bumpy retry (S). As built
+  (2026-11-25): MCP `emulator_manage` `features` (the list as text: id, alias, on / off, mode, description) and
+  `feature` (`name`, `enabled`; forwards to `PUT /feature/{name}`, which takes no mode; an unknown name answers with
+  `UnknownValueText` over the route's `available_features`); `GET /features` now carries `alias`. The descriptions of
+  `mouse_input`, `joystick_input` and `emulator_manage` say that the Kempston mouse is on by default and answers
+  `#FADF` / `#FBDF` / `#FFDF` (standard decode A9 = 1, A5-A0 = `#1F`, outside TR-DOS), that `feature
+  name=kempstonmouse enabled=false` frees those ports, and that a machine without the built-in port reads the stick
+  at `#1F` only with the card (`slots_plug slot=edge.1 card=kempston`). The joystick status on every plane (`GET
+  /joystick`, MCP `joystick_input status`, CLI `joystick status`, Lua / Python state) reports `port_decoded`,
+  `port_source` (`board` / `card`), `kempston_mouse_feature`, `kempston_mouse_fitted` and `ports_text`
+  (`DebugJoystickManager::DescribePorts`). Tests: `McpTools_Test.EmulatorManage_Features_ListsEveryFeatureAsText`,
+  `.EmulatorManage_Feature_PutsEnabledAndSaysTheNewState`, `.EmulatorManage_Feature_UnknownNameListsTheValidOnes`,
+  `.InputTools_DescriptionsSayHowToFreeTheKempstonMousePorts`,
+  `McpJoystick_Test.Status_TextNamesThePortDecodeAndTheKempstonMouse`,
+  `JoystickWeb_Test.Status_ReportsThePortDecodeAndTheKempstonMouse`; live `test_emulator_manage.py`, `test_input.py`.
+  The Bumpy retry (play through the stick with the mouse off) is left to the reverse-cases work: it is outside this
+  repository.
 
 ### P3
 - [ ] F7: GS COMRG value 0; NeoGS / GS in SZX (verify first) (M).

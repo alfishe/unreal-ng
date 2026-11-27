@@ -22,7 +22,12 @@ namespace smoothmotion
 ///   between the same vectors take the vote of the decided blocks round them;
 /// - a pixel's layer is picked by masks: its block's vector where it fits and carries the pixel's own colour, else
 ///   still where the frames agree, else a vector of the blocks round it, else the nearer frame moved as the block
-///   is, else the nearer frame. A moving vector takes pixels only where it explains changes near the block.
+///   is, else the nearer frame. A moving vector takes pixels only where it explains changes near the block, and
+///   outside the blocks of much detail only when confirmed, as in LayerFlow: a block matched to it is detailed or
+///   carried exactly from the frame before a through a to b (or held still into a, then carried). Lines new every
+///   frame match some vector within the field's tolerance by chance, never exactly over three frames. Where the
+///   nearer frame's carried sample is of a block matched still, still over the three frames, and the other frame's
+///   is not, the other frame's (a moving layer going under a still one).
 ///
 /// One instance per stream of frames, pairs in the order they are shown: the kept vectors and the search's place
 /// are state. A pair is estimated once, when first asked (by Picture::id); a picture with no id is taken as new at
@@ -43,6 +48,8 @@ public:
     static constexpr int kBudget = 144;     ///< row scores of the search a pair
     static constexpr int kDropAfter = 25;   ///< a kept vector no block took for this many pairs goes
     static constexpr int kTied = 6;         ///< a block tied between this many vectors or more says nothing
+    static constexpr int kDetail = 8;       ///< a block's pixels unlike their right and lower neighbours (each) that
+                                            ///< no vector matches by chance: no confirmation asked
 
     /// A picture of this size can be drawn: whole 8 x 8 blocks, no wider than kMaxWidth
     static bool Fits(int width, int height);

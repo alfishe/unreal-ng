@@ -141,6 +141,26 @@ TEST_F(McpJoystick_Test, ToolIsRegisteredWithTheFiveActions)
     EXPECT_EQ(actions[4].asString(), "status");
 }
 
+/// E2: the status text alone says whether #1F is decoded and whether the Kempston mouse is on
+TEST_F(McpJoystick_Test, Status_TextNamesThePortDecodeAndTheKempstonMouse)
+{
+    mcp::ToolResult result = Run("status");
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Kempston joystick port #1F: decoded (built into this machine)"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("Kempston mouse: "), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("port_decoded=true"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("kempston_mouse_feature=true"), std::string::npos) << result.text;
+    EXPECT_TRUE(result.structured["port_decoded"].asBool());
+    EXPECT_EQ(result.structured["port_source"].asString(), "board");
+
+    // The tool's description says how to free the mouse ports and how to fit the port
+    const mcp::ToolDefinition* tool = _registry->Find("joystick_input");
+    ASSERT_NE(tool, nullptr);
+    EXPECT_NE(tool->description.find("name=kempstonmouse enabled=false"), std::string::npos);
+    EXPECT_NE(tool->description.find("slot=edge.1 card=kempston"), std::string::npos);
+}
+
 TEST_F(McpJoystick_Test, Press_PostsButtonsAndHoldsThem)
 {
     mcp::ToolResult result = Run("press", R"({"buttons":"up+fire"})");

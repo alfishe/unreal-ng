@@ -51,6 +51,7 @@
 #include "tabscrollarrows.h"
 #include "sideviews.h"
 #include "ttdcontrols.h"
+#include "twintimeline.h"
 #include "dialogs/numfmt.h"
 
 DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
@@ -75,6 +76,11 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     layout->setContentsMargins(2, 2, 2, 2);
     layout->setSpacing(2);
     build_toolbar(this);
+    //Not in ecat: the twin timeline (gui-card-debugger A5.1), full width under the toolbar; shown below once the
+    //processors are known, only with a card CPU
+    m_timeline = new TwinTimeline(e, this);
+    m_timeline->setVisible(false);
+    layout->addWidget(m_timeline);
 
     m_split_main = new QSplitter(Qt::Vertical, this);
     layout->addWidget(m_split_main, 1);
@@ -208,6 +214,20 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
             m_side_tabs->setTabVisible(m_side_tabs->addTab(m_gs_analysis[i], titles[i]), false);
     }
     update_next_tabs();
+    //A click on a timeline block: that CPU's listing at the instruction
+    if (CPU * c = card_cpu()) m_timeline->set_card(c->name);
+    update_timeline_shown();
+    connect(m_timeline, &TwinTimeline::block_activated, this, [this](const QString &name, unsigned int address) {
+        CPU * target = name == "main" ? main_cpu() : nullptr;
+        for (CpuPane &p : m_panes)
+            if (target == nullptr && QString::fromStdString(p.cpu->name) == name) target = p.cpu;
+        if (target == nullptr) return;
+        select_cpu(target);
+        if (CpuPane * p = pane()) {
+            p->code->go_to(address);
+            p->code->setFocus();
+        }
+    });
     m_split_bottom->setStretchFactor(0, 2);
     m_split_bottom->setStretchFactor(1, 1);
     m_split_main->setStretchFactor(0, 2);
@@ -283,6 +303,11 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         refresh_side();
         update_cursor();
         show_state();  //the card tabs' card, its line, may have followed the tab
+        //The timeline's card lane follows the card in front (with two cards)
+        if (CPU * card = card_cpu(); card != nullptr && m_timeline != nullptr && m_timeline->isVisible()) {
+            m_timeline->set_card(card->name);
+            if (held()) m_timeline->refresh();
+        }
         //The time group follows the tab: a card's back steps are the card's, the moment names where it stands
         if (m_ttd != nullptr && this->e->loaded && m_ttd->shown()) m_ttd->poll(true);
     });
@@ -341,6 +366,8 @@ void DebuggerWindow::closeEvent(QCloseEvent *event)
 {
     save_layout();
     m_timer->stop();
+    //The timeline's lease goes with the window
+    if (m_timeline != nullptr) m_timeline->release();
     e->set_debug_listener(nullptr);
     Emulator * em = e;
     if (em->loaded) em->invoke([em]() { em->debug_detach(); });
@@ -524,6 +551,18 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     run_to_entry(tr("Next host command"), "run_to_host_command", "command", QString());
     m_run_to_menu_action = tb->addWidget(m_run_to_menu);
 
+    //Not in ecat: the twin timeline's switch, opt-in (off by default), kept in the setup; there with a card CPU
+    m_timeline_action = tb->addAction(tr("GS timeline"));
+    m_timeline_action->setObjectName("show_gs_timeline");
+    m_timeline_action->setCheckable(true);
+    m_timeline_action->setChecked(e->read_setup("Debugger", "show_gs_timeline", "0") == "1");
+    m_timeline_action->setToolTip(tr("Show the twin timeline: the main CPU and the card's CPU on one clock (off: "
+                                     "nothing is recorded or read)"));
+    connect(m_timeline_action, &QAction::toggled, this, [this](bool on) {
+        e->write_setup("Debugger", "show_gs_timeline", on ? "1" : "0");
+        update_timeline_shown();
+    });
+
     //The processor in front: the machine's own (Ctrl+1), the card's (Ctrl+2)
     m_select_main = new QAction(tr("Main CPU"), this);
     m_select_main->setObjectName("select_main_cpu");
@@ -662,6 +701,17 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     connect(close_action, &QAction::triggered, this, &QDialog::close);
     if (QToolButton * b = qobject_cast<QToolButton*>(tb->widgetForAction(close_action)))
         b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+}
+
+void DebuggerWindow::update_timeline_shown()
+{
+    if (m_timeline == nullptr || m_timeline_action == nullptr) return;
+    const bool on = m_panes.size() > 1 && m_timeline_action->isChecked();
+    if (on == !m_timeline->isHidden()) return;
+    if (on) {
+        if (CPU * c = card_cpu()) m_timeline->set_card(c->name);
+    }
+    m_timeline->setVisible(on);  //shown: it arms and reads; hidden: released
 }
 
 DisasmView * DebuggerWindow::current_code()
@@ -892,6 +942,7 @@ void DebuggerWindow::update_actions()
     m_run_to_menu->setEnabled(held && card);
     m_step_other->setVisible(card);
     m_step_other->setEnabled(held && card);
+    m_timeline_action->setVisible(card);
     if (card && p != nullptr) {
         const QString other = QString::fromStdString(p->cpu == main_cpu() ? m_panes[1].cpu->name : main_cpu()->name);
         m_step_other->setText(tr("Step %1").arg(other));
@@ -1034,6 +1085,11 @@ void DebuggerWindow::refresh_all(bool stopped)
     if (stopped) {
         refresh_side();
         follow_register();
+        //The twin timeline at the stop: both lanes' detail
+        if (m_timeline != nullptr && m_timeline->isVisible()) {
+            if (CPU * c = card_cpu()) m_timeline->set_card(c->name);
+            m_timeline->refresh();
+        }
     } else {
         m_stack->refresh();
     }
@@ -1146,6 +1202,8 @@ void DebuggerWindow::follow_card_live()
     m_card_live_ms = ms;
     m_card_strip = read_card_strip();
     refresh_banner();
+    //The timeline's density, at the same pace (never a pause: the running machine's published ticks)
+    if (m_timeline != nullptr && m_timeline->isVisible()) m_timeline->refresh();
 }
 
 QString DebuggerWindow::read_card_strip() const
@@ -1225,6 +1283,7 @@ bool DebuggerWindow::follow_online()
         if (!e->debug_online()) return true;
     }
     m_online = e->debug_online();
+    if (m_timeline != nullptr) m_timeline->set_online(m_online);
     set_read_only(!m_online);
     if (m_online) {
         m_serial = e->debug_serial();

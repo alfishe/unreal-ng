@@ -752,6 +752,7 @@ emu.mem_find(pattern)             # Pattern search (hex string or bytes)
 ### Action (Affecting) — implemented
 ```python
 emu.key_press(key) / emu.key_release(key)
+emu.key_set([keys])               # The whole held-key state: these held, the rest released ([] = none)
 emu.set_joystick(direction, fire)
 emu.poke(addr, value)
 emu.save_state(slot) / emu.load_state(slot)

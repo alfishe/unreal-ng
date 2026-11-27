@@ -683,6 +683,39 @@ difference is the **gap** in S2, and it is shown.
   };
   ```
 
+> **As built, the twin timeline phase 1 (2026-11-25, `core/src/debugger/timeline/twintimeline.h`; gui-card-debugger
+> §A5.1).** The data behind the twin timeline on every automation plane, no Qt canvas yet. One builder
+> (`timeline::BuildNow`) for every plane.
+>
+> - **Records with time.** `ExecRecord` is 16 bytes: `{frame, t, pc, kind, page, idle}`. Main `t` is `Z80::t` at the
+>   instruction start; a card's `t` is its units since its frame start (GS: 12 MHz cycles, NeoGS: 120 MHz ticks). New
+>   event records: `kind` 0xF0 INT and 0xF1 NMI (at the acknowledge's start, the interrupted PC), 0xF2 the NeoGS clock
+>   change (`page` = old MHz, `idle` = new Hz; takes no time). A block lasts until its lane's next record starts, so
+>   contention, /WAIT, an acknowledge and the NeoGS clock are in its width exactly; a card block's width is exact in
+>   its own units (`duration_units`) and converts to main T by `unitsPerZxTact`, the inverse of the catch-up.
+> - **NOW and the gap.** NOW = main T − gap. The gap is the card's lead over main: `hostLead / unitsPerZxTact`; in the
+>   frame-end catch-up (the card finishing the frame main already wrapped), `z80->t + frameLength − cardUnits /
+>   unitsPerZxTact`. `at` of a block is its start relative to NOW in main T (negative: past).
+> - **Zero cost off.** Nothing records until a client holds a lease (`Timeline::Arm(owner, leaseMs)`, REST and MCP 30
+>   s by default, renewed by every read; CLI / Lua / Python until released). Armed, the histories it reads that were
+>   off (`cpu`, `<slot>.cpu`, `<slot>.commands`) are switched to a ring and back off at the last release (only if still
+>   a ring: a user's change wins). Off: one relaxed load per frame end in `MainLoop`.
+> - **Density.** While armed, each frame end samples the card's always-on counters (steps, idle-slept steps, INT, NMI,
+>   commands taken, the host port accesses by kind; the profiler's cycles when it runs) into a 64-frame ring under a
+>   short lock. A running read never parks the machine: it answers the density only.
+> - **Node** (`GET /debug/timeline`, `pause.timeline`, Lua / Python `timeline()`, CLI `timeline json`): `available,
+>   state, armed, cpu, lanes [{cpu, name, unit, clock_hz, units_per_t?, recording, readout}], now {frame, t, gap_t,
+>   main_t, main_frame, card_units, card_cycle}, position {main?, main_text, card_text, gap_t}, window {span_t, from_t,
+>   to_t, frame_t}, recent {main, gs|ms: [{frame, t | units, pc, kind (instruction | int | nmi), at, duration_t,
+>   duration_units?, duration_cycles?, clock_hz?, open?, idle_iterations?, text, label?}]}, next {main, gs|ms: {pc,
+>   at, text, label?}}, markers [{lane, kind (breakpoint | host_port | int | nmi | clock_change), at, frame, t | units,
+>   pc, text, ...}], density [{frame, main {commands, data_writes, data_reads, status_polls, accesses}, card {steps,
+>   idle_steps, busy_steps, interrupts, nmis, commands_taken, profiled, cycles?, isr_cycles?, idle_cycles?,
+>   halt_cycles?, busy_cycles?}}], revision, text`, plus `started_now, leases` from a read that armed.
+> - **Not done in phase 1:** the Qt canvas (U-side of §A5.1; the embedded debugger's is phase 2, §7.3); the clock-change marker is in the card's history only
+>   while that history records; a block's width for the oldest record of a ring is open-ended on the left (it has no
+>   predecessor, not needed: a width runs to the next start).
+
 ### 5.5 Clock ratio changes (S9)
 
 - `flush` already reads `gsCyclesPerZxTact()` at each call, so a ratio change
@@ -1323,6 +1356,23 @@ the GS slot.
    "elapsedT":6.6,"totalT":11,"bus":"OD","gapT":0.4}]}
 ```
 
+> **As built (twin timeline phase 1, 2026-11-25).** No `NC_DEBUG_TIMELINE`: the positions ride on the stop itself.
+> `EmulatorStateChangePayload` carries `StopPositions` (main frame / T / PC and each card lane's PC, units, cycle,
+> clock, units per T, gap), taken at the stop by `Emulator::StopPositionsNow`. The WebSocket `paused` event of a
+> breakpoint or a step and the debugger snapshot's `pause.positions` carry them as one list
+> (`execution::PositionsNode`):
+>
+> ```json
+> "positions": [
+>   {"cpu": "main", "frame": 120, "t": 1000, "pc": 32779, "elapsed_t": 4, "total_t": 11, "bus_cycle": "...", "text": "..."},
+>   {"cpu": "gs", "frame": 120, "units": 11850, "cycle": 987654, "clock_hz": 12000000, "units_per_t": 3.429,
+>    "pc": 3122, "gap_t": 12.5, "now_t": 987.5, "frame_end": false}]
+> ```
+>
+> `elapsed_t / total_t / bus_cycle / text` come with a card's stop (main's instruction progress, §5.4). The running
+> picture is the coalesced state topic `debug.timeline` (at most 10 Hz, the monitoring cache's 100 ms), published
+> state only: `{available, armed, state, revision, cpu, frame, density [the newest 10 frames]}`.
+
 ### 7.3 Qt (U1, U1a, U2)
 
 - **Target binding.** `DebuggerWindow` gets a `DebugCpuId` at construction.
@@ -1365,6 +1415,47 @@ the GS slot.
   from the game's port writes (the debugger's own sends do
   not stop it); over --connect the history's units are not known, so on a turbo-clocked model the seek lands at the
   row's T taken as history units (earlier in the frame).
+
+- **The twin timeline (U2, gui-card-debugger.md A5.1, C03), embedded debugger, 2026-11-26.** `TwinTimelineView`
+  (`unreal-qt/src/debugger/twintimelineview.h`) under the card line, full width, while a card CPU is fitted: the §5.4
+  node drawn (`timeline::Read`, the card lane following the card tab in front). Paused or stopped: blocks per lane
+  (width ∝ duration), NOW, the gap as a dashed line to main's own time, main's instruction at NOW in its bus cycles
+  when the stop has them, the next instructions outlined, the markers, the readouts. Running: the density ring at 10
+  Hz (`CardPanes::LiveLine`), a read that never parks. The view holds a lease (owner `qt-debugger-<id>`, no timeout)
+  only while shown. A click on a block: `DebuggerWindow::selectCpu` + the disassembly at its PC. Test
+  `TwinTimelineView_Test`. Not done: zoomed out, the merged bar holds the newest 512 blocks per lane (the read's
+  `recent` limit), so far left of NOW it is empty; the strip has no TTD view of its own (it shows the machine as
+  sought).
+- **The twin timeline is opt-in (owner, 2026-11-26).** Debug > Show GS Timeline (`TwinTimelineSettings`, the
+  application's settings key `Debugger/ShowGsTimeline`), off by default; eCat the same as the toolbar's checkable
+  "GS timeline" (setup `Debugger/show_gs_timeline`). Off: the strip hidden, nothing read, the timeline not armed (the
+  histories stay off). `TwinTimelineView::follow(machine, card)` is the debugger's call; the view shows itself only
+  with the switch on.
+- **No GUI-thread wait for the timeline (owner report 2026-11-26: Step Over / Step Out froze the embedded debugger
+  with eCat connected over `--connect`).** Root cause: a paused `timeline::Read` ran `RunAtCoherentMoment(work, 500)`
+  on the GUI thread. While another client held the CPU for its own read (eCat's `GET debug/timeline` and its other
+  reads at the same stop, each a `RunWhileParked` command) or the stop was not parked yet, the GUI thread polled every
+  2 ms for a free moment, up to 500 ms per refresh, and a step does two or three refreshes (after the step, at the
+  stop, the card line). Measured in `TwinTimelineView_Test.StepOverAndOutNeverBlockTheGuiThread` (12 step overs /
+  outs, another client reading 30 times at each stop): the longest refresh 45-57 ms before, 1.7-2.1 ms after (the
+  longest GUI block of all, a step queued behind the other client's read, 1.7-4.7 ms). Fix: `timeline::Query::waitMs` (default 500 for the planes; REST
+  `wait_ms`, 0..500); the Qt view and eCat (in process and remote, `wait_ms=0`) make one try: a busy machine keeps
+  the last picture and the read is tried again on a timer (Qt 30 ms, eCat 40 ms, 25-30 tries), never blocked for.
+- **The stall without the timeline (same report, measured with the strip off as well).** Two more causes in the
+  embedded debugger, found with an event-loop gap meter and per-pane timings in an offscreen unreal-qt with eCat
+  `--connect` (120 WebAPI step overs / outs):
+  - every stop notice refreshed all panes: the frame refreshes queued while a step ran (`NC_VIDEO_FRAME_REFRESH`),
+    the step's end, the pause; 627-1121 `DebuggerWindow::updateState` calls for 120 steps, up to 10 in one event-loop
+    turn. Now `requestUpdateState()` coalesces them into one refresh in the next turn (120-128 calls);
+  - the PC history pane read `PcHistory::Report` with the same 500 ms wait (now `waitMs` 0, busy: the list stays and
+    is read again on a 30 ms timer), rebuilt all 1024 rows on every stop and sized two columns `ResizeToContents`
+    (all rows shaped on every refresh and window layout). Now the columns have fixed widths and a stop makes only its
+    new rows (the older ones move down).
+
+  The longest event-loop gap went from 724-978 ms to 80-103 ms, the GUI thread's CPU time over the run from 2.8-5.1 s
+  to 2.5 s; the host ran at load average 95-115 on 20 cores, so the wall times are several times the CPU time (the
+  longest single event, a window repaint, 15 ms of CPU). Tests `PcHistoryPane_Test.AStopMakesOnlyItsNewRows`,
+  `.ARefreshNeverWaitsForABusyMachine`.
 
 ### 7.4 External debuggers (A3)
 

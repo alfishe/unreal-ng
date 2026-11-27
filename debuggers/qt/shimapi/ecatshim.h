@@ -652,6 +652,7 @@ public:
         bool ok = false;               // answered; false: `message` why (no connection, a bad parameter)
         std::string json;              // the report, or the control's answer
         std::string message;           // the control's text, or why not
+        bool busy = false;             // not answered now: the machine was busy (a 503), try again a little later
     };
     virtual GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query)
     {
@@ -710,6 +711,34 @@ public:
         (void)id;
         return {false, std::string(), "This machine has no GS send"};
     }
+
+    // The twin timeline (not in ecat; gui-card-debugger A5.1, gs-debugger design §5.4, §7.2): both CPUs on one clock
+    // around the shared moment NOW. One read of the core's node (twintimeline.h) as JSON text: paused, the blocks of
+    // each lane, NOW, the next instructions, the markers; running, the density per frame (never a pause). `card` "gs"
+    // / "ms" ("" the first card CPU), `span_t` the window (± main T around NOW), `recent` the blocks per lane at most,
+    // `density` the frames at most; `arm` the read takes or renews this client's lease (the histories the timeline
+    // reads record only while one is held). In process timeline::Read under a lease of the context; over the WebAPI
+    // GET debug/timeline?cpu=&span=&recent=&density=&client=&lease_ms=&arm=. A machine without the card CPU answers
+    // ok with `available` false and the core's `message` (the WebAPI's 404 turned into that)
+    virtual GsJson read_timeline(const std::string &card, double span_t, unsigned int recent, unsigned int density, bool arm)
+    {
+        (void)card;
+        (void)span_t;
+        (void)recent;
+        (void)density;
+        (void)arm;
+        return {false, std::string(), "This machine has no twin timeline"};
+    }
+    // This client's lease on (renewed) or released. In process a lease until released; over the WebAPI a lease that
+    // runs out by itself when not renewed (the strip renews it while shown), POST debug/timeline/arm {on, client,
+    // lease_ms}. The body: {armed, started_now, leases}
+    virtual GsJson timeline_arm(bool on)
+    {
+        (void)on;
+        return {false, std::string(), "This machine has no twin timeline"};
+    }
+    // The owner name of this client's lease ("ecat-<pid>"): the leases list of a read names it
+    virtual std::string timeline_client() const { return std::string(); }
 
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)

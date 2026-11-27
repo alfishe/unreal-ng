@@ -523,6 +523,11 @@ void SoundChip_NeoGS::applyClockChange()
 {
     const int64_t now = _runner.now();
     _counters.clockSwitches++;
+    // The execution history's clock-change record (the twin timeline's marker): from the next instruction on
+    if (_runExec) [[unlikely]]
+        recordExecClockChange(Z80CpuRegisterFilePtr(_cpu)->pc, now,
+                              static_cast<uint32_t>(TICKS_PER_SECOND / static_cast<double>(_ticksPerCycle) + 0.5),
+                              static_cast<uint32_t>(TICKS_PER_SECOND / static_cast<double>(_nextTicksPerCycle) + 0.5));
     _spi.onClockChange(now, _ticksPerCycle, _nextTicksPerCycle);
     _dma.onClockChange(now, _ticksPerCycle, _nextTicksPerCycle);
     _ticksPerCycle = _nextTicksPerCycle;
