@@ -90,9 +90,29 @@ public:
     /// Power-on: PSRAM and SRAM zero (the firmware's heap after boot), ROM image fresh, heaps empty
     void Reset();
 
-    /// Host view of [address, address + size) when it lies inside one region; nullptr otherwise
+    /// Host view of [address, address + size) when it lies inside one region; nullptr otherwise. The writable
+    /// view counts as a write of the range while the write watch is on (WatchHostWrites); the const one does not
     uint8_t* Bytes(uint32_t address, uint32_t size);
     const uint8_t* Bytes(uint32_t address, uint32_t size) const;
+
+    /// Write watch of the host side (TTD hashes only the ESP memory written; the CPU's stores have their own,
+    /// IEspCpu::WatchWrites): while on, every writable Bytes() view and every Write32 / WriteString records its
+    /// host range, a Reset all of the memory. Off (the default): one test per Bytes() call
+    void WatchHostWrites(bool on)
+    {
+        _watchHost = on;
+        _hostWrites.clear();
+        _hostWroteAll = false;
+    }
+    /// The ranges recorded since the last call (appended to `out`), forgotten; true: all of the memory
+    bool TakeHostWrites(std::vector<std::pair<const uint8_t*, uint32_t>>& out)
+    {
+        out.insert(out.end(), _hostWrites.begin(), _hostWrites.end());
+        _hostWrites.clear();
+        const bool all = _hostWroteAll;
+        _hostWroteAll = false;
+        return all;
+    }
 
     uint32_t Read32(uint32_t address) const;
     void Write32(uint32_t address, uint32_t value);
@@ -122,6 +142,12 @@ public:
     bool IsTrap(uint32_t pc) const { return pc >= kTrapPage && pc - kTrapPage < kTrapPageSize; }
 
 private:
+    uint8_t* Locate(uint32_t address, uint32_t size) const;
+    static constexpr size_t kMaxHostWrites = 1u << 16;
+
+    bool _watchHost = false;
+    bool _hostWroteAll = false;
+    std::vector<std::pair<const uint8_t*, uint32_t>> _hostWrites;
     std::vector<uint8_t> _psram;
     std::vector<uint8_t> _sram;
     std::vector<uint8_t> _rom;

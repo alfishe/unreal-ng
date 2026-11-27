@@ -111,30 +111,45 @@ void EspMemory::Reset()
     Write32(kExtmemBase + 0x60, kIcacheCtrl);
     _psramHeap.Clear();
     _sramHeap.Clear();
+    _hostWroteAll = _watchHost;
 }
 
 const uint8_t* EspMemory::Bytes(uint32_t address, uint32_t size) const
 {
-    return const_cast<EspMemory*>(this)->Bytes(address, size);
+    return Locate(address, size);
 }
 
 uint8_t* EspMemory::Bytes(uint32_t address, uint32_t size)
+{
+    uint8_t* p = Locate(address, size);
+    if (_watchHost && p != nullptr && size != 0) [[unlikely]]
+    {
+        // Bounded: past this many views in one span the watcher takes all of the memory as written
+        if (_hostWrites.size() < kMaxHostWrites)
+            _hostWrites.emplace_back(p, size);
+        else
+            _hostWroteAll = true;
+    }
+    return p;
+}
+
+uint8_t* EspMemory::Locate(uint32_t address, uint32_t size) const
 {
     auto inside = [&](uint32_t base, uint32_t length) {
         return address >= base && address - base <= length && size <= length - (address - base);
     };
     if (inside(kPsramDbus, kPsramSize))
-        return _psram.data() + (address - kPsramDbus);
+        return const_cast<uint8_t*>(_psram.data()) + (address - kPsramDbus);
     if (inside(kPsramIbus, kPsramSize))
-        return _psram.data() + (address - kPsramIbus);
+        return const_cast<uint8_t*>(_psram.data()) + (address - kPsramIbus);
     if (inside(kSramBase, kSramSize))
-        return _sram.data() + (address - kSramBase);
+        return const_cast<uint8_t*>(_sram.data()) + (address - kSramBase);
     if (inside(kSramIbus, kSramSize))
-        return _sram.data() + (address - kSramIbus);
+        return const_cast<uint8_t*>(_sram.data()) + (address - kSramIbus);
     if (inside(kEspRomBase, kEspRomSize))
-        return _rom.data() + (address - kEspRomBase);
+        return const_cast<uint8_t*>(_rom.data()) + (address - kEspRomBase);
     if (inside(kExtmemBase, kExtmemSize))
-        return _extmem.data() + (address - kExtmemBase);
+        return const_cast<uint8_t*>(_extmem.data()) + (address - kExtmemBase);
     return nullptr;
 }
 

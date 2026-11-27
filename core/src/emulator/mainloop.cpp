@@ -308,6 +308,9 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
         // Nothing to keep the picture in step with: the frames latched are due at once
         if (_context->pScreen)
             _context->pScreen->SettlePresentTiming();
+        // A card's picture where the machine stopped: its frame in flight drawn up to here (the display rule)
+        if (_context->pScreen)
+            _context->pScreen->CatchUpExternalPicture();
     }
     return arbiter->LoopWait();
 }

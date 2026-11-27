@@ -162,11 +162,18 @@ VDAC4 board
 
 Recording works as on any machine ([analysis/ttd-recording.md](../analysis/ttd-recording.md)). The board adds:
 
-- The ESP memory is stored as a keyframe every 50 recorded frames (and on a rescan or a journal over 256 KB), the
+- The ESP memory is stored as a keyframe every 25 recorded frames (50 while the Quake II core runs; and on a rescan
+  or a journal over 256 KB), the
   traffic into the ESP as an input journal between them; a seek re-runs the app from the keyframe before the target.
   DOOM: about 19 KB per frame and 2.8 ms per frame recording (1.9 ms off), a seek 12-99 ms (median about 37 ms).
 - A seek whose re-run does not reach the recorded state answers `not_bit_exact` with an issue `replay_diverged`
   (device `vdac4-esp`) in `check` (`/ttd/position`, `time_travel` seek). Exact otherwise.
+- A seek whose FT812 picture shows lines drawn before the session (its first FT812 frames) answers `not_bit_exact`
+  with an issue `picture_incomplete`.
+- The picture of a position is the FT812 frame in flight drawn up to it over its previous frame; a machine stopped
+  there (pause, `run_frames`, `run_tstates`) holds the same: compare a seek with `capture/screen?source=live`. The
+  default capture (`presented`, the window's) keeps the last finished frame on a pause, and shows the composed
+  picture after a seek.
 - To check a seek from outside: hash `vdac4_esp_memory` reads at marks while recording, seek to each mark, compare.
 
 ## Pitfalls
