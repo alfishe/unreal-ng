@@ -55,6 +55,19 @@ unreal-qt/src/hud/
 └── README.md                     ◀ this file
 ```
 
+## Paint cost: drawn once per change
+
+The screen repaints the HUD with every frame (the software screen paints the translucent overlay over each new
+picture; the GPU screen draws it into each frame), and an automation session keeps its indicator on screen for as long
+as it lasts. `HudOverlay::renderHUD` therefore draws a HUD that does not move with time (indicators and picture
+elements: no toast, no blinking recording indicator) once per change into a layer, cut to the pixels drawn, and
+blits that layer 1:1 on every paint (`prepareLayer`; a new snapshot, size, device pixel ratio, theme, scale or
+position draws it again). Toasts and the recording indicator are drawn directly on each paint while they are shown.
+The Vulkan screen keeps the HUD texture it uploaded while the layer's serial (`layerSerial`) and the size stay, and
+draws nothing for an empty HUD. Measured 2026-11-27 (offscreen software screen, idle Pentagon, GUI thread CPU, 3
+interleaved runs): with a session held 81.1 ms/s before, 59.5 ms/s after; without one 59.0 / 58.5 ms/s. `unreal-qt-tests` `HudOverlay_Test` holds the layer to
+one draw per change.
+
 ## Dependency rules
 
 These are enforced **from the first commit** and verified by the build:

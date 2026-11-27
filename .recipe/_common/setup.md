@@ -45,7 +45,10 @@ ninja -C cmake-build-release
 
 Automation (WebAPI + MCP) rides along automatically; tests/benchmarks are
 opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) and not needed for driving the
-emulator.
+emulator. In an agent session prefer `tools/build/build.sh` (build slots); either
+way the compile goes through ccache by itself, with the checkout's own cache in
+`scratch/ccache` and the host's master cache read only (`AGENTS.md`, "Compiler
+cache").
 
 ### 2. Launch with a clean slate
 
