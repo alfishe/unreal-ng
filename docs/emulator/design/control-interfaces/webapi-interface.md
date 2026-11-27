@@ -1890,7 +1890,7 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 |:-------|:---------|:-----|:------------|
 | `POST` | `/tape/load` | `{"path": "..."}` | Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder into the tape slot; 400 names the reason |
 | `POST` | `/tape/eject` | — | The tape leaves the tape slot; while a TTD recording runs it is an event of the recording: it lands at the next frame boundary |
-| `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
+| `POST` | `/tape/play` | — | Play: resumes in place when frozen inside a block, leaves a playing tape as it is, else starts at the first block with a signal from the consumption cursor on. Answers the deck after the call (below) |
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
 | `POST` | `/tape/rewind` | — | Rewind to block 0, image kept |
@@ -1901,7 +1901,27 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 | `POST` | `/tape/render` | see below | Render a tape image to WAV/FLAC audio |
 | `POST` | `/tape/import` | see below | Import WAV/FLAC/MP3 as a .tzx/.tap image |
 
-Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python. `GET /tape` adds `reason` when the tape does not play (`end_of_tape`, `stopped`, or why it is paused: `user`, `loader_quiet`, `parked`, `stop_48k`), and a control entry of `blocks[]` carries `control` (`pause`, `stop`, `stop_48k`, `flow`).
+
+**`POST /tape/play` response**: the deck after the call, read under the same CPU hold as the play (nothing waits on the emulation thread). Fields and rules: [command-interface.md, The play answer](./command-interface.md#the-play-answer). `400` with `result` `no_blocks` when there is no tape with loadable blocks; every other result is `200`, also `end_of_tape` (`playing` false).
+
+```json
+{
+  "status": "success",
+  "message": "Tape playback started, passed block 4 (no signal). Tape: playing, block 5 of 6 (data, 36354 bytes), pulse 0, 0.0 of 198.7 s; with no loader listening it pauses again within 100 frames, and a loader that listens starts it by itself",
+  "result": "started",
+  "playing": true,
+  "state": "playing",
+  "mode_48k": true,
+  "block_count": 6,
+  "position": {"block": 5, "pulse": 0, "seconds_into_block": 0.0, "block_total_seconds": 198.66},
+  "block": {"index": 5, "kind": "data", "bytes": 36354},
+  "skipped_blocks": [4],
+  "text": "..."
+}
+```
+
+A tape stopped by a TZX `$2A` block on a 48K reads `"state": "paused", "reason": "stop_48k"` in `GET /tape`, with `position.block` on the block after the `$2A`.
 
 **`GET /tape` response shape** (trimmed):
 

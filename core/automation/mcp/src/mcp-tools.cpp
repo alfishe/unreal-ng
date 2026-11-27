@@ -1474,15 +1474,12 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                                 done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
                                 return;
                             }
-                            const std::string played = "Loaded tape " + loadedName + " and started playback on " + id;
-                            if (!autostart)
-                            {
-                                ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller, played, done);
-                                return;
-                            }
-                            // Autostart plays the tape as well: LOAD "" waits for it
+                            // The play answer says what the deck does after the call (Tape::PlayWithReport: playing
+                            // or not and why, the block, the position): it goes into the text, an agent may see
+                            // nothing else
+                            const std::string loaded = "Loaded tape " + loadedName + " into " + id;
                             caller.Call("POST", Endpoint(id, "/tape/play"), nullptr,
-                                        [&caller, id, played, done](int playStatus, Json::Value playBody) {
+                                        [&caller, id, loaded, autostart, done](int playStatus, Json::Value playBody) {
                                             if (playStatus < 200 || playStatus >= 300)
                                             {
                                                 done(ToolResult::Error("Tape loaded, playback failed (HTTP " +
@@ -1490,6 +1487,15 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                                                                        DescribeErrorBody(playBody)));
                                                 return;
                                             }
+                                            const std::string message = playBody.get("message", "").asString();
+                                            const std::string played =
+                                                loaded + ". " + (message.empty() ? "Tape playback started" : message);
+                                            if (!autostart)
+                                            {
+                                                done(ToolResult::Ok(played, std::move(playBody)));
+                                                return;
+                                            }
+                                            // Autostart plays the tape as well: LOAD "" waits for it
                                             AutostartTape(caller, id, played, done);
                                         });
                         };

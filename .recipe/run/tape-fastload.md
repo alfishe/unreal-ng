@@ -85,8 +85,14 @@ does not press ENTER. Never plain `type` for BASIC keywords: it types letters (`
 ### Step 3 — Start the tape
 
 ```bash
-curl -s -X POST "$BASE/emulator/$EMU_ID/tape/play" | jq '{state, position}'
+curl -s -X POST "$BASE/emulator/$EMU_ID/tape/play" | jq '{result, playing, state, reason, position, block}'
 ```
+
+The answer is the deck after the call: `result` (`started`, `resumed`, `already_playing`, `end_of_tape`...),
+`playing`, and `reason` when it does not play. The deck follows the loader: a loader that listens starts the tape by
+itself, and a tape with no loader listening is paused again by the watchdog (`GET /tape` then reads
+`"reason": "loader_quiet"` or `"parked"`). A play while the tape plays changes nothing. On a 48K a TZX `$2A` block
+stops the tape (`"reason": "stop_48k"`); the next play or the loader's next read goes on with the next block.
 
 Or let the MCP `load_software` tool do Steps 0–3 in one shot:
 

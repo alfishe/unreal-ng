@@ -8,6 +8,7 @@
 #include "emulator/io/tape/tapecatalog.h"
 #include "emulator/io/tape/tapeslot.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/io/tape/tapepulsegen.h"
 #include "emulator/sound/soundmanager.h"
 #include "loaders/tape/loader_tape.h"
@@ -47,6 +48,7 @@ void Tape::startTape()
             ttd::TTDExternalEventKind::TapeControl, "tape play");
 
     _playbackFrozen = false;
+    _pauseReason = TapePauseReason::None;
     _tapeStarted = true;
     _muteEAR = true;
     _lastTapeBit = false;
@@ -66,6 +68,7 @@ void Tape::stopTape()
 
     _tapeStarted = false;
     _playbackFrozen = false;
+    _pauseReason = TapePauseReason::None;
     _muteEAR = false;
 
     // Reset all tape-related fields and free up blocks memory.
@@ -108,6 +111,7 @@ void Tape::stopPlayback()
 
     _tapeStarted = false;
     _playbackFrozen = false;
+    _pauseReason = TapePauseReason::None;
     _muteEAR = false;
     _currentTapeBlock = nullptr;
     _currentPulseIdxInBlock = 0;
@@ -116,7 +120,7 @@ void Tape::stopPlayback()
     NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
-void Tape::pausePlayback()
+void Tape::pausePlayback(TapePauseReason reason)
 {
     // Freeze the head in place: everything positional survives (in-flight
     // block, pulse indices, last EAR level) so ResumePlaybackAfterPoll()
@@ -146,6 +150,7 @@ void Tape::pausePlayback()
     _tapeStarted = false;
     _muteEAR = false;
     _playbackFrozen = true;
+    _pauseReason = reason;
 
     // Re-seed the clock on resume: a delta spanning the pause would otherwise
     // be consumed as one giant pulse. 0 is the "re-seed on next read" marker
@@ -166,13 +171,7 @@ void Tape::ResumePlaybackAfterPoll()
     //    spurious edge into the stream a mid-block loader is decoding.
     // 2. No usable position (never started / trap consumed past the frozen
     //    block): position at the consumption cursor like a fresh signal start.
-    const size_t cursor = GetConsumptionCursor();
-    const bool frozenInFlight = _currentTapeBlock != nullptr &&
-                                _currentTapeBlockIndex != UINT64_MAX &&
-                                _currentTapeBlockIndex >= cursor &&
-                                _currentTapeBlockIndex < _tapeBlocks.size();
-
-    if (!frozenInFlight)
+    if (!HasFrozenBlockInFlight())
     {
         StartPlaybackAtCursor();
         return;
@@ -184,6 +183,7 @@ void Tape::ResumePlaybackAfterPoll()
 
     // Same flag set as startTape(), but position and last level survive
     _playbackFrozen = false;
+    _pauseReason = TapePauseReason::None;
     _tapeStarted = true;
     _muteEAR = true;
     _framesNotListened = 0;
@@ -250,24 +250,284 @@ void Tape::DetachImage()
     _context->coreState.tapeFilePath.clear();
 }
 
-TapePlayResult Tape::Play()
+TapePlayReport Tape::PlayWithReport()
 {
     if (!EnsureImageLoaded())
     {
+        TapePlayReport report = DescribeTransport();
         MediaManager* media = _context ? _context->pMediaManager : nullptr;
         if (media == nullptr || !media->HasIncoming(TapeSlot::kId))
-            return TapePlayResult::NoBlocks;
+        {
+            report.result = TapePlayResult::NoBlocks;
+            return report;
+        }
         _playWhenAttached = true;
-        return TapePlayResult::Queued;
+        report.result = TapePlayResult::Queued;
+        report.reason = "queued";
+        return report;
     }
-    if (GetPlaybackState() == TapePlaybackState::Paused)
+
+    const size_t cursorBefore = GetConsumptionCursor();
+    TapePlayResult result = TapePlayResult::Started;
+    switch (GetPlaybackState())
     {
-        ResumePlaybackFromPause();
-        return TapePlayResult::Resumed;
+        case TapePlaybackState::Playing:
+            // A deck that plays keeps playing. Starting at the cursor here restarted the block in flight
+            // from its pilot: a play sent while a loader was reading the block broke the load
+            result = TapePlayResult::AlreadyPlaying;
+            break;
+        case TapePlaybackState::Paused:
+            // In place only with a block in flight; a tape parked between blocks starts its next block
+            result = HasFrozenBlockInFlight() ? TapePlayResult::Resumed : TapePlayResult::Started;
+            ResumePlaybackFromPause();
+            break;
+        default:
+            StartPlaybackAtCursor();
+            break;
     }
-    StartPlaybackAtCursor();
-    return TapePlayResult::Started;
+    if (result == TapePlayResult::Started && !_tapeStarted)
+        result = TapePlayResult::EndOfTape;
+
+    TapePlayReport report = DescribeTransport();
+    report.result = result;
+    if (result == TapePlayResult::Started || result == TapePlayResult::EndOfTape)
+    {
+        // What the start passed: blocks without a signal between the old cursor and the new one
+        const size_t cursorAfter = std::min(GetConsumptionCursor(), _tapeBlocks.size());
+        for (size_t i = cursorBefore; i < cursorAfter; i++)
+            report.skippedBlocks.push_back(i);
+    }
+    return report;
 }
+
+TapePlayReport Tape::DescribeTransport() const
+{
+    TapePlayReport report;
+    report.mode48k = IsIn48kMode();
+    report.loaded = !_tapeBlocks.empty();
+    report.result = report.loaded ? TapePlayResult::Started : TapePlayResult::NoBlocks;
+    report.state = GetPlaybackState();
+    report.blockCount = _tapeBlocks.size();
+    if (!report.loaded)
+    {
+        report.reason = "no_tape";
+        return report;
+    }
+
+    switch (report.state)
+    {
+        case TapePlaybackState::Playing:
+            break;
+        case TapePlaybackState::Paused:
+            report.reason = getTapePauseReasonName(GetPauseReason());
+            break;
+        case TapePlaybackState::Ended:
+            report.reason = "end_of_tape";
+            break;
+        default:
+            report.reason = "stopped";
+            break;
+    }
+
+    if (const std::optional<TapePosition> position = GetPosition())
+        report.position = *position;
+    const size_t index = report.position.blockIndex;
+    report.hasBlock = index < _tapeBlocks.size();
+    if (report.hasBlock)
+    {
+        report.blockBytes = _tapeBlocks[index].data.size();
+        if (index < _catalog.size())
+        {
+            const TapeBlockDescriptor& descriptor = _catalog[index];
+            report.blockKind = getTapeBlockKindName(descriptor.kind);
+            report.blockControl = getTapeControlName(descriptor.control);
+            if (descriptor.headerValid)
+            {
+                report.blockType = getTapeBlockTypeName(descriptor.headerType);
+                report.blockName = descriptor.name;
+            }
+        }
+        else
+        {
+            // Blocks installed without a catalog (tests): what the block itself says
+            const TapeBlock& block = _tapeBlocks[index];
+            report.blockKind = !block.data.empty() ? "data" : block.edgePulseTimings.empty() ? "control" : "pulse_stream";
+            report.blockControl = block.stopIn48kMode ? getTapeControlName(TapeControlEnum::StopIn48kMode) : "";
+        }
+    }
+    return report;
+}
+
+bool Tape::IsIn48kMode() const
+{
+    if (_context == nullptr)
+        return false;
+    if (_context->config.mem_model == MM_SPECTRUM48)
+        return true;
+    // #7FFD bit 5 as the machine reads it: models whose extension frees the bit answer for themselves
+    if (_context->pPortDecoder != nullptr)
+        return _context->pPortDecoder->IsPagingLocked();
+    return (_context->emulatorState.p7FFD & PORT_7FFD_LOCK) != 0;
+}
+
+TapePauseReason Tape::GetPauseReason() const
+{
+    return GetPlaybackState() == TapePlaybackState::Paused ? _pauseReason : TapePauseReason::None;
+}
+
+bool Tape::HasFrozenBlockInFlight() const
+{
+    return _currentTapeBlock != nullptr && _currentTapeBlockIndex != UINT64_MAX &&
+           _currentTapeBlockIndex >= GetConsumptionCursor() && _currentTapeBlockIndex < _tapeBlocks.size();
+}
+
+/// region <Play report>
+
+namespace
+{
+/// "0.0" .. : one decimal, as the CLI position line
+std::string Seconds(double value)
+{
+    char text[32];
+    snprintf(text, sizeof(text), "%.1f", value);
+    return text;
+}
+
+const char* ReasonText(const std::string& reason)
+{
+    if (reason == "no_tape")
+        return "no tape with loadable blocks";
+    if (reason == "queued")
+        return "the tape is on its way to the deck";
+    if (reason == "end_of_tape")
+        return "end of tape: rewind or seek to play again";
+    if (reason == "stopped")
+        return "not started";
+    if (reason == "user")
+        return "paused by a pause request";
+    if (reason == "loader_quiet")
+        return "paused by the loader watchdog: no loader listened while the block played";
+    if (reason == "parked")
+        return "parked by the loader watchdog: no loader listened after the block before";
+    if (reason == "stop_48k")
+        return "stopped by a TZX $2A block, the machine is in 48K mode";
+    return "paused";
+}
+}  // namespace
+
+std::string TapePlayReport::ActionText() const
+{
+    std::string text;
+    switch (result)
+    {
+        case TapePlayResult::Started:
+            text = "Tape playback started";
+            break;
+        case TapePlayResult::Resumed:
+            text = "Tape playback resumed (in place)";
+            break;
+        case TapePlayResult::Queued:
+            text = "Tape playback starts when the tape is in";
+            break;
+        case TapePlayResult::AlreadyPlaying:
+            text = "Tape is already playing (left as it is)";
+            break;
+        case TapePlayResult::EndOfTape:
+            text = "Tape not started: no block with a signal from the cursor to the end of the tape";
+            break;
+        default:
+            text = "Tape image has no loadable blocks";
+            break;
+    }
+    if (!skippedBlocks.empty())
+    {
+        text += skippedBlocks.size() == 1 ? ", passed block " : ", passed blocks ";
+        for (size_t i = 0; i < skippedBlocks.size(); i++)
+            text += (i ? ", " : "") + std::to_string(skippedBlocks[i]);
+        text += " (no signal)";
+    }
+    return text;
+}
+
+std::string TapePlayReport::StateText() const
+{
+    if (!loaded)
+        return std::string("Tape: ") + getTapePlaybackStateName(state) + " (" + ReasonText(reason) + ")";
+
+    std::string text = std::string("Tape: ") + getTapePlaybackStateName(state);
+    if (!reason.empty())
+        text += std::string(" (") + ReasonText(reason) + ")";
+    if (!hasBlock)
+        return text + ", past the last of " + std::to_string(blockCount) + " block(s)";
+
+    text += ", block " + std::to_string(position.blockIndex) + " of " + std::to_string(blockCount) + " (" + blockKind;
+    if (!blockControl.empty())
+        text += " " + blockControl;
+    if (!blockType.empty())
+        text += " " + blockType;
+    if (!blockName.empty())
+        text += " \"" + blockName + "\"";
+    if (blockBytes != 0)
+        text += ", " + std::to_string(blockBytes) + " bytes";
+    text += "), pulse " + std::to_string(position.pulseIndex) + ", " + Seconds(position.secondsIntoBlock) + " of " +
+            Seconds(position.blockTotalSeconds) + " s";
+    if (Playing())
+    {
+        // The deck follows the loader: without one the watchdog pauses it again, which reads as "play did nothing"
+        text += "; with no loader listening it pauses again within " + std::to_string(TAPE_PILOT_HOLD_FRAMES) +
+                " frames, and a loader that listens starts it by itself";
+    }
+    return text;
+}
+
+std::string TapePlayReport::Text() const
+{
+    return ActionText() + ". " + StateText();
+}
+
+StateNode TapePlayReport::ToNode() const
+{
+    StateNode node = StateNode::Object();
+    node["result"] = getTapePlayResultName(result);
+    node["playing"] = Playing();
+    node["state"] = getTapePlaybackStateName(state);
+    if (!reason.empty())
+        node["reason"] = reason;
+    node["mode_48k"] = mode48k;
+    node["block_count"] = static_cast<uint64_t>(blockCount);
+    if (loaded)
+    {
+        StateNode& pos = node["position"];
+        pos = StateNode::Object();
+        pos["block"] = static_cast<uint64_t>(position.blockIndex);
+        pos["pulse"] = static_cast<uint64_t>(position.pulseIndex);
+        pos["seconds_into_block"] = position.secondsIntoBlock;
+        pos["block_total_seconds"] = position.blockTotalSeconds;
+    }
+    if (hasBlock)
+    {
+        StateNode& block = node["block"];
+        block = StateNode::Object();
+        block["index"] = static_cast<uint64_t>(position.blockIndex);
+        block["kind"] = blockKind;
+        if (!blockControl.empty())
+            block["control"] = blockControl;
+        if (!blockType.empty())
+            block["type"] = blockType;
+        if (!blockName.empty())
+            block["name"] = blockName;
+        if (blockBytes != 0)
+            block["bytes"] = static_cast<uint64_t>(blockBytes);
+    }
+    StateNode& skipped = node["skipped_blocks"];
+    skipped = StateNode::Array();
+    for (size_t index : skippedBlocks)
+        skipped.items.emplace_back(static_cast<uint64_t>(index));
+    node["text"] = Text();
+    return node;
+}
+
+/// endregion </Play report>
 
 bool Tape::EnsureImageLoaded()
 {
@@ -407,6 +667,20 @@ void Tape::StartPlaybackAtCursor()
     if (_currentTapeBlockIndex == UINT64_MAX)
         _currentTapeBlockIndex = 0;
 
+    // Never start on a block without a signal (a TZX $20 pause 0, a $2A, a flow leftover: the cursor gets there
+    // by a park, a trap that consumed the block before, or a seek): the head would sit on it until the first
+    // pulse step, and the position reads as a tape that did not move. A start is a request to play, so a $2A
+    // does not stop it here. Nothing with a signal left: this is the end of the tape
+    SkipSignalLessBlocks();
+    if (_currentTapeBlockIndex >= _tapeBlocks.size())
+    {
+        _currentTapeBlock = nullptr;
+        _currentOffsetWithinPulse = 0;
+        _currentPulseIdxInBlock = 0;
+        stopPlayback();
+        return;
+    }
+
     // Force (re)generation of the bitstream for the cursor block on the next
     // handleFrameStart() / getTapeStreamBit() pass, from its first pulse. The
     // pulse position must go too: handleFrameStart() rebuilds the block keeping
@@ -521,6 +795,7 @@ bool Tape::SeekToBlock(size_t index)
     _tapeStarted = false;
     _muteEAR = false;
     _playbackFrozen = false;
+    _pauseReason = TapePauseReason::None;
     _currentTapeBlock = nullptr;
     _currentPulseIdxInBlock = 0;
     _currentOffsetWithinPulse = 0;
@@ -553,13 +828,10 @@ void Tape::ResumePlaybackFromPause()
     if (!_playbackFrozen)
         return;
 
-    const size_t cursor = GetConsumptionCursor();
-    const bool frozenInFlight = _currentTapeBlock != nullptr &&
-                                _currentTapeBlockIndex != UINT64_MAX &&
-                                _currentTapeBlockIndex >= cursor &&
-                                _currentTapeBlockIndex < _tapeBlocks.size();
+    const bool frozenInFlight = HasFrozenBlockInFlight();
 
     _playbackFrozen = false;
+    _pauseReason = TapePauseReason::None;
 
     if (!frozenInFlight)
     {
@@ -596,6 +868,7 @@ void Tape::reset()
 
     _tapeStarted = false;
     _playbackFrozen = false;
+    _pauseReason = TapePauseReason::None;
     _tapePosition = 0LL;
 
     // Tape input bitstream related
@@ -879,7 +1152,7 @@ void Tape::handleFrameEnd()
             inPilotBody = tstatesLeft > TAPE_PILOT_TAIL_TSTATES;
         }
         if (_framesNotListened >= (inPilotBody ? TAPE_PILOT_HOLD_FRAMES : TAPE_BLOCK_HOLD_FRAMES))
-            pausePlayback();
+            pausePlayback(TapePauseReason::LoaderQuiet);
     }
 }
 
@@ -971,17 +1244,11 @@ void Tape::ParkAtNextBlock()
         _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape park");
 
-    _currentTapeBlockIndex++;
-    _currentTapeBlock = nullptr;
-    _currentOffsetWithinPulse = 0;
-    _currentPulseIdxInBlock = 0;
-
-    if (_currentTapeBlockIndex >= _tapeBlocks.size())
-    {
-        // The pause after the last block: this is the end of the tape
-        stopPlayback();
+    // On to the next block with a signal: control entries are passed here, so the parked position is the
+    // block the next start plays. Off already: the pause after the last block is the end of the tape, and a
+    // TZX $2A on the way stopped it on a machine in 48K mode
+    if (!AdvanceToNextBlock())
         return;
-    }
 
     MLOGINFO("Tape parked at block %zu (no loader listening)", _currentTapeBlockIndex);
 
@@ -990,7 +1257,63 @@ void Tape::ParkAtNextBlock()
     _tapeStarted = false;
     _muteEAR = false;
     _playbackFrozen = true;
+    _pauseReason = TapePauseReason::Parked;
     _currentClockCount = 0;
+}
+
+void Tape::SkipSignalLessBlocks(bool* stop48k)
+{
+    while (_currentTapeBlockIndex < _tapeBlocks.size())
+    {
+        const TapeBlock& block = _tapeBlocks[_currentTapeBlockIndex];
+        // A byte block keeps its bytes when its edges are freed after it played: it has a signal
+        if (!block.data.empty() || !block.edgePulseTimings.empty())
+            break;
+        if (stop48k != nullptr && block.stopIn48kMode && IsIn48kMode())
+            *stop48k = true;
+        _currentTapeBlockIndex++;
+    }
+}
+
+bool Tape::AdvanceToNextBlock()
+{
+    _currentTapeBlockIndex++;
+    _currentTapeBlock = nullptr;
+    _currentOffsetWithinPulse = 0;
+    _currentPulseIdxInBlock = 0;
+
+    bool stop48k = false;
+    SkipSignalLessBlocks(&stop48k);
+
+    if (_currentTapeBlockIndex >= _tapeBlocks.size())
+    {
+        // Natural end of tape: stop playback, keep the image (the cursor sits at end-of-tape; a rewind or a
+        // new insert restarts it)
+        stopPlayback();
+        return false;
+    }
+
+    if (stop48k)
+    {
+        // TZX $2A on a machine in 48K mode: the tape stops before the next block with a signal, the way a
+        // park does (no block in flight), so the next play, or the loader's next listening reads, start that
+        // block from its first pulse. Same replay fencing as a pause
+        if (_context && _context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->RecordExternalEvent(
+                ttd::TTDExternalEventKind::TapeControl, "tape stop 48k");
+
+        MLOGINFO("Tape stopped by a TZX $2A block (48K mode), next block %zu", _currentTapeBlockIndex);
+
+        _tapeStarted = false;
+        _muteEAR = false;
+        _playbackFrozen = true;
+        _pauseReason = TapePauseReason::Stop48k;
+        _currentClockCount = 0;
+        NotifyReadoutsChanged(_context, "tape");
+        return false;
+    }
+
+    return true;
 }
 
 bool Tape::getTapeStreamBit(uint64_t clockCount)
@@ -1028,18 +1351,9 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
         TapeBlock& block = *_currentTapeBlock;
         if (_currentOffsetWithinPulse >= block.edgePulseTimings.size())
         {
-            _currentTapeBlockIndex++;
-            _currentTapeBlock = nullptr;
-            _currentOffsetWithinPulse = 0;
-            _currentPulseIdxInBlock = 0;
-
-            if (_currentTapeBlockIndex >= _tapeBlocks.size())
-            {
-                // Natural end of tape: stop playback, keep the image (cursor
-                // sits at end-of-tape; a rewind or new insert restarts it).
-                stopPlayback();
+            // Off: the natural end of the tape, or a TZX $2A stop in 48K mode
+            if (!AdvanceToNextBlock())
                 break;
-            }
             continue;
         }
 
@@ -1062,17 +1376,10 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
             if (_currentOffsetWithinPulse >= block.edgePulseTimings.size())
             {
-                _currentTapeBlockIndex++;
-                _currentTapeBlock = nullptr;
-                _currentOffsetWithinPulse = 0;
-                _currentPulseIdxInBlock = 0;
-
-                if (_currentTapeBlockIndex >= _tapeBlocks.size())
-                {
-                    // Natural end of tape: stop playback, keep the image.
-                    stopPlayback();
+                // The block's last edge is out (the flip above). Off: the natural end of the tape (an ended
+                // tape holds the level of that edge, handlePortIn), or a TZX $2A stop in 48K mode
+                if (!AdvanceToNextBlock())
                     break;
-                }
             }
         }
     }
@@ -1225,8 +1532,8 @@ bool Tape::getPilotSample(size_t clockCount)
 //   34       8    _currentClockCount
 //   42       1    _tapeBitState (EAR level the CPU reads on port #FE bit 6)
 //   43       1    _lastTapeBit (edge detection of the band-limited EAR step)
-//   44       1    reserved, written as 0 and ignored on load (was the
-//                 ERR_NR baseline of the removed ERR_NR stop)
+//   44       1    _pauseReason (TapePauseReason; 0 in states saved before it was kept:
+//                 the byte was reserved, once the ERR_NR baseline of the removed ERR_NR stop)
 //   45       4    _framesNotListened (frames without a listening read)
 //   49       4    _listenReadsThisFrame (listening reads this frame)
 //   53       2    _patternRun (loader pattern run length)
@@ -1276,7 +1583,7 @@ void Tape::TTDSaveState(uint8_t* dst) const
     put_u64(cur, _currentClockCount);
     put_u8 (cur, _tapeBitState ? 1 : 0);
     put_u8 (cur, _lastTapeBit ? 1 : 0);
-    put_u8 (cur, 0);  // reserved
+    put_u8 (cur, static_cast<uint8_t>(_pauseReason));
     put_u32(cur, _framesNotListened);
     put_u32(cur, _listenReadsThisFrame);
     put_u16(cur, _patternRun);
@@ -1307,7 +1614,10 @@ void Tape::TTDLoadState(const uint8_t* src)
     _currentClockCount        = get_u64(cur);
     _tapeBitState             = (get_u8(cur) != 0);
     _lastTapeBit              = (get_u8(cur) != 0);
-    get_u8(cur);  // reserved
+    const uint8_t pauseReason = get_u8(cur);
+    _pauseReason = pauseReason <= static_cast<uint8_t>(TapePauseReason::Stop48k)
+                       ? static_cast<TapePauseReason>(pauseReason)
+                       : TapePauseReason::None;
     _framesNotListened        = get_u32(cur);
     _listenReadsThisFrame     = get_u32(cur);
     _patternRun               = get_u16(cur);

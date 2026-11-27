@@ -239,7 +239,8 @@ the loader has already read.
 **B5: TZX "stop the tape" blocks are inert.** `0x20` with a 0 ms pause and `0x2A` (stop if 48K)
 are parsed but do nothing (`loader_tzx.cpp:1303-1305`, `:1387`). Every emulator that handles them
 treats them as a stop that the next loader poll can resume, and only on 48K for `0x2A` (§7). Low
-impact today; recorded for completeness.
+impact today; recorded for completeness. *Update 2026-11-27:* `0x2A` now stops the tape on a machine in 48K mode
+(loader-follow design §10); `0x20` with a 0 ms pause is still passed.
 
 ### Corrections to the 2026-09-16 record
 

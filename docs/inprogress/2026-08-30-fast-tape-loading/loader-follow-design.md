@@ -369,6 +369,9 @@ Then the fixture sweep of investigation §9 step 5, extended with the key delays
 - **The OTHER + pattern path is the weakest part.** If the sweep finds a loader that is neither
   EAR by the tracker nor a pattern match, extend the tracker table rather than loosening the
   pattern.
-- **TZX `0x20`(0) and `0x2A` stops (B5)** fit this model as a forced park. Left for P5.
+- **TZX `0x2A` stop (B5)**: done (2026-11-27) as a forced park. When the head passes the block on a machine in
+  48K mode the tape stops before the next block with a signal (`Tape::AdvanceToNextBlock`, pause reason `stop_48k`);
+  a play request or the loader's next listening reads go on from there. In 128K mode it is passed. A park, a start
+  and a play never leave the cursor on a block without a signal. `0x20`(0) is still passed on every machine.
 - **Interrupt-driven loaders** that read EAR only in an interrupt handler are not covered: they
   make a few reads per frame. None is known among the fixtures.

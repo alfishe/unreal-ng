@@ -4081,7 +4081,7 @@ Full tape transport, inspection and the offline audio bridge. Playback subcomman
 | :--- | :--- | :--- | :--- | :--- |
 | `tape load <file>` | | `<filename>` | Load a tape into the tape slot: .tap, .tzx, .spc, .sta, .ltp, .zxt (the content decides the format), or a folder built into a tape ([media.md](../../../features/media.md#tapes)). | ✅ Implemented |
 | `tape eject` | | | Eject the tape: it leaves the tape slot, playback stops. While a TTD recording runs it is an event of the recording: it lands at the next frame boundary. | ✅ Implemented |
-| `tape play` | | | Start playback at the consumption cursor, or resume in place after `tape pause`. A tape loaded while TTD records lands at the next frame boundary: a play before that is queued (`Tape playback starts when the tape is in`) and starts with it; `tape stop` drops it. Same on every plane (`Tape::Play`). | ✅ Implemented |
+| `tape play` | | | Play. A tape frozen inside a block resumes in place; a tape that plays is left as it is (the block in flight is not restarted); else playback starts at the consumption cursor, at the first block with a signal from there on (control entries are passed and named). The answer is the deck after the call: see [The play answer](#the-play-answer). A tape loaded while TTD records lands at the next frame boundary: a play before that is queued (`Tape playback starts when the tape is in`) and starts with it; `tape stop` drops it. Same on every plane (`Tape::PlayWithReport`). | ✅ Implemented |
 | `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
 | `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
 | `tape rewind` | | | Rewind to block 0 keeping the image and block catalog loaded. | ✅ Implemented |
@@ -4093,6 +4093,50 @@ Full tape transport, inspection and the offline audio bridge. Playback subcomman
 | `tape import <audio> [opts] -o <out>` | | `--target auto\|tzx\|tap`, `--hysteresis X` | Import WAV/FLAC/MP3 as a .tzx/.tap image (decode + pulse extraction + recognition; `.tap` saves are gated to ROM-standard content). | ✅ Implemented |
 
 **Playback state machine**: `idle` → `playing` → (`paused` → `playing`) → `ended`. The lowercase state strings are identical across all four surfaces (`tape pos`, GET `/tape`, `tape_pos()` in Lua and Python).
+
+#### The play answer
+
+`tape play` answers with what the call did and with the deck as it is after the call. The report is built once in
+the core (`Tape::PlayWithReport`, `TapePlayReport`) and every plane renders it: the CLI prints the two sentences on two
+lines, the WebAPI answers the fields plus `message` (both sentences), the MCP tools put the message into their text
+(`load_software` with `play`, `actions run media.tape`, `invoke_api`), Lua returns `ok, report` and Python returns
+the dict with `tape_play(report=True)`.
+
+| Field | Values |
+| :--- | :--- |
+| `result` | `started` (from the first pulse of the block), `resumed` (in place, inside the block), `already_playing` (nothing changed), `queued` (the tape is on its way), `end_of_tape` (no block with a signal from the cursor on: nothing started), `no_blocks` (no tape: the error answer) |
+| `playing` | `true` when the tape plays after the call |
+| `state` | `idle`, `playing`, `paused`, `ended` |
+| `reason` | Only when it does not play: `end_of_tape`, `stopped` (in the deck, not started), `queued`, `no_tape`, or why it is paused: `user` (a pause request), `loader_quiet` (the loader watchdog froze it inside a block), `parked` (the loader watchdog parked it before the next block), `stop_48k` (a TZX `$2A` block on a machine in 48K mode), `paused` (not known: a state saved by an older build) |
+| `mode_48k` | Whether the machine is in 48K mode, the question a TZX `$2A` block asks |
+| `block_count`, `position` | `position`: `block`, `pulse`, `seconds_into_block`, `block_total_seconds`, as `tape pos` |
+| `block` | The block under the head: `index`, `kind` (`header`, `data`, `custom`, `tone`, `pulse_stream`, `control`), `control` for a control entry (`pause`, `stop`, `stop_48k`, `flow`), `type` and `name` of a header, `bytes` of a byte block. Absent past the last block |
+| `skipped_blocks` | Blocks without a signal the play passed to reach its block |
+| `text` | Both sentences |
+
+Example (the cursor was on a TZX `$2A` block):
+
+```
+Tape playback started, passed block 4 (no signal)
+Tape: playing, block 5 of 6 (data, 36354 bytes), pulse 0, 0.0 of 198.7 s; with no loader listening it pauses again within 100 frames, and a loader that listens starts it by itself
+```
+
+Rules behind the answer:
+
+- **The deck follows the loader.** A tape that plays while no loader listens is paused again by the loader
+  watchdog (inside a block after 50 frames, in a pilot after 100, in the silence after a block after 2), and a loader
+  that listens starts the tape by itself. A play request is rarely needed; when the state after it reads `paused`
+  again, `reason` says who paused it (`tape info`, `GET /tape`).
+- **Play never restarts a block that plays.** A second play in the middle of a load used to rewind the block to its
+  pilot and break the load.
+- **Play never stays on a block without a signal** (a TZX `$20` with pause 0, a `$2A`, a flow entry left in the
+  stream): it starts the next block that has one, and `skipped_blocks` lists what it passed.
+- **TZX `$2A`, "stop the tape if in 48K mode".** When the head passes the block on a machine in 48K mode the tape
+  stops before the next block (`paused`, reason `stop_48k`); the next play, or the loader's next listening reads, go
+  on with that block. In 128K mode the block is passed in no time. 48K mode is: a 48K model, or a machine whose
+  `#7FFD` paging is locked (bit 5: 48 BASIC chosen in the 128K menu, a 48K snapshot), which a program cannot tell
+  from a 48K. An unlocked 128K with the 48K ROM paged in (`USR 0`) is in 128K mode. A play request with the cursor
+  on the `$2A` is not stopped by it. A TZX `$20` with pause 0 ("stop the tape") is passed on every machine.
 
 **Feature cross-references** (see also §7 settings):
 - `setting fast_tape on|off` (feature `fasttape`): ROM loader trap — eligible header/data pairs load instantly.

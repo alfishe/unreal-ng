@@ -666,6 +666,36 @@ TEST_F(McpTools_Test, LoadSoftware_TapeWithPlay_LoadsThenPlays)
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/tape/play"));
 }
 
+// F5: an agent may see only the text: the play answer (the deck after the call) goes into it
+TEST_F(McpTools_Test, LoadSoftware_TapeWithPlay_TextCarriesThePlayAnswer)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/tape/load"] = {200, Json::Value(Json::objectValue)};
+    Json::Value played(Json::objectValue);
+    played["status"] = "success";
+    played["result"] = "end_of_tape";
+    played["playing"] = false;
+    played["message"] = "Tape not started: no block with a signal from the cursor to the end of the tape. Tape: ended "
+                        "(end of tape: rewind or seek to play again), past the last of 2 block(s)";
+    _caller->routes["POST /api/v1/emulator/emu-1/tape/play"] = {200, played};
+
+    Json::Value args;
+    args["path"] = "game.tzx";
+    args["play"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Loaded tape game.tzx into emu-1. Tape not started"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Tape: ended"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("started playback"), std::string::npos) << "the text must not claim what did not happen";
+    EXPECT_FALSE(result.structured["playing"].asBool());
+
+    // An answer without a message (an older build): the old wording
+    _caller->routes["POST /api/v1/emulator/emu-1/tape/play"] = {200, Json::Value(Json::objectValue)};
+    result = RunTool(*_registry, "load_software", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Tape playback started"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, LoadSoftware_TapeAutostart_PlaysTypesLoadAndKeepsAPausedMachinePaused)
 {
     Json::Value state(Json::objectValue);
