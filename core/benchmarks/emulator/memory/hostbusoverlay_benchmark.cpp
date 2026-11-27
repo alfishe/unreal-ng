@@ -8,6 +8,7 @@
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/timeline/twintimeline.h"
 #include "emulator/cpu/core.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
@@ -67,6 +68,16 @@ std::string SwitchHistories(EmulatorContext* context)
         });
     return " + histories " + std::string(value) + " (" + std::to_string(on) + " on)";
 }
+/// UNREAL_BENCH_TIMELINE=1: the GS debugger's twin timeline armed for the run (a lease without a timeout: the
+/// histories it reads in rings, the density sampled at each frame end); unset: off, its zero-cost path. The label says so
+std::string ArmTimeline(EmulatorContext* context)
+{
+    const char* value = std::getenv("UNREAL_BENCH_TIMELINE");
+    if (!value || std::string(value) != "1")
+        return "";
+    context->pDebugManager->GetTimeline()->Arm("bench", 0);
+    return " + timeline armed";
+}
 } // namespace
 
 static void RunHostFrame(benchmark::State& state, const char* model, bool debug, bool overlay = false,
@@ -92,7 +103,7 @@ static void RunHostFrame(benchmark::State& state, const char* model, bool debug,
 
     if (setup)
         setup(context);
-    const std::string histories = SwitchHistories(context);
+    const std::string histories = SwitchHistories(context) + ArmTimeline(context);
 
     PassThroughOverlay passThrough;
     if (overlay)
@@ -261,13 +272,14 @@ static void RunNeoGSFrame(benchmark::State& state, NeoGSBench scenario, bool deb
         context->pFeatureManager->setCardTightHold(cardDebug == CardDebug::Tight);
     }
 
+    const std::string armed = ArmTimeline(context);
     for (auto _ : state)
         mainLoop->RunFramePublic();
 
     const char* names[] = {"idle (Off)", "Watch always, BASIC", "Divert, LDIR read"};
     const char* cardNames[] = {"", " + card breakpoint, lazy", " + card breakpoint, tight"};
     state.SetLabel(std::string("NeoGS ") + names[static_cast<int>(scenario)] + (debug ? " debug" : " fast") +
-                   cardNames[static_cast<int>(cardDebug)] +
+                   cardNames[static_cast<int>(cardDebug)] + armed +
                    " bytes/frame=" + std::to_string((card->zxDma().bytesRead() - bytesBefore) / state.iterations()));
     state.SetItemsProcessed(state.iterations());
     manager->RemoveEmulator(emulator->GetUUID());

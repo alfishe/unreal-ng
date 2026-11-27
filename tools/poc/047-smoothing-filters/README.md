@@ -124,16 +124,25 @@ comment where its code lives.
   shift at time w). Its support is the window count (16 px) of the changes it explains. A moving vector is usable
   only with support beyond the changes no vector explains there (`credible`: flux takes no motion). Zero fits only
   a pixel that is the same in k - 1, k and k + 1, or one where nothing changes round it (`still3`, `stopped`).
+- **Confirmed vectors**: a moving vector is a candidate only when a block of k -> k + 1 matching it has detail both
+  ways (`kDetail`), or the vector carries its pixels exactly to k + 1 and they came exactly from k - 1, by the vector
+  or in place (the field matches within a tolerance: a tape loader's random lines match some vector by chance in
+  every pair, never exactly over three frames).
 - **Per 8 x 8 block** (`coherent`): the block takes the vector most of its pixels fit. Look-alikes that fit as many
   pixels tie (`fitTies`). A faster look-alike beats a slower one only with changes of its own (`aliases`).
 - **Tied regions** (`spread`, `majority`): 4-connected blocks with the same tie set take what most decided blocks
   round them say. A neighbour votes only where its layer continues into the region: the colours of its edge strip
   are the block's (`colours`, `own`) and its own vector carries its edge content (`vote`).
 - **Holes** (`cover`): a still pixel a moving layer passes over takes the layer's content when that layer covers
-  this colour round here more than it goes under it, and the sample moved the same way from k - 1 (`steady`).
+  this colour round here more than it goes under it, the sample moved the same way from k - 1 (`steady`), no
+  slower vector fits the sample (`slowest`: stripes fit every sideways shift, the slowest one is the motion), the
+  sample arrives where a had another color (`landing`), and the layer's pixel a would show here is not seen in
+  k - 1 and k + 1 at its places (`behind`: then the layer is opaque here and the still pixel in front of it).
 - **Shape changing on the move** (`first`): in a decided moving block whose vector explains at least half of its
   changes, a pixel the vector does not fit takes the nearer frame shifted by the block's vector. A pixel that
-  another vector explains better, a slower layer showing through, or a blink in place keeps its own path.
+  another vector explains better, a slower layer showing through, or a blink in place keeps its own path. Where the
+  nearer frame's sample stood still over the three frames in a block decided still and the other frame's did not,
+  the other frame's (a layer going under a still one: border stripes under the paper's edge).
 
 ### Results
 

@@ -111,7 +111,7 @@ TEST(GSIdleHistory_Test, ExecutionHistorySleepsAndRecordsTheSleep)
     EXPECT_LT(records.size(), 1000u) << "a frame of polling is not its instructions one by one";
     bool idle = false;
     for (const ExecRecord& r : records)
-        if (r.idle)
+        if (r.IdleIterations())
         {
             idle = true;
             EXPECT_EQ(r.pc, kIdleLoop);

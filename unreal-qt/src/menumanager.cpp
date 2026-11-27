@@ -11,6 +11,7 @@
 
 #include "debugger/externaldebuggers.h"
 #include "debugger/metadatasettings.h"
+#include "debugger/twintimelineview.h"
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
 #include "widgets/slangpresetrunner.h"
@@ -1268,6 +1269,10 @@ void MenuManager::createDebugMenu()
     _showMemoryAction = _debugMenu->addAction(tr("Show &Memory"));
     _showMemoryAction->setStatusTip(tr("Show the debugger with the memory view in focus"));
     connect(_showMemoryAction, &QAction::triggered, this, &MenuManager::showMemoryRequested);
+
+    // Show GS Timeline: the debugger's twin timeline strip (both CPUs on one clock) while a sound card with a CPU is
+    // fitted; opt-in, off by default, kept in the settings (TwinTimelineSettings). Off: nothing recorded or read
+    _debugMenu->addAction(TwinTimelineSettings::Instance().CreateAction(_debugMenu));
 
     // Metadata: what the debugger takes from the program's profile, the analysis and the user's marks, and the labels;
     // global switches, kept in the settings (MetadataSettings; the GUI plane's metadata.set)

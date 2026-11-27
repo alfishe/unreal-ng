@@ -43,6 +43,12 @@ inline Json::Value StateToJson(const JoystickStateSnapshot& state)
     json["present"] = state.present;
     json["wired"] = state.wired;
     json["fit"] = state.fit;
+    // Who answers what right now: the stick at #1F, the Kempston mouse in the #xxDF address space
+    json["port_decoded"] = state.portDecoded;
+    json["port_source"] = state.portSource;
+    json["kempston_mouse_feature"] = state.mouseFeatureOn;
+    json["kempston_mouse_fitted"] = state.mouseFitted;
+    json["ports_text"] = DebugJoystickManager::DescribePorts(state);
     json["state"] = state.state;
     json["port_value"] = state.portValue;
 

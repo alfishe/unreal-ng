@@ -177,6 +177,13 @@ inline uint64_t ByteOnes(uint64_t word)
     return (word + (word >> 4)) & 0x0F0F0F0F0F0F0F0Full;
 }
 
+/// The bytes of `word` that are zero, all ones; the others zero
+inline uint64_t ZeroBytes(uint64_t word)
+{
+    const uint64_t nonZero = (((word & ~kHighBits) + ~kHighBits) | word) & kHighBits;
+    return ((nonZero ^ kHighBits) >> 7) * 0xFF;
+}
+
 inline int Length2(V v)
 {
     return v.x * v.x + v.y * v.y;
@@ -544,9 +551,14 @@ struct LiteFlow::Impl
     // the pair the field and the masks are of
     bool hasPair = false;
     uint64_t pairA = 0, pairB = 0;
+    uint64_t pairBefore = 0;  ///< the id of the frame before the pair's a, 0: none
     int planes = 0;
     std::vector<V> vectors;            ///< the moving ones, most blocks first
     std::vector<uint64_t> own, nearby;   ///< per vector, block row and word: the pixels of the blocks it may take
+    /// per block row, words + 2 (a margin word each side, the edge block again): the pixels of the blocks the field
+    /// matched still
+    std::vector<uint64_t> stillBlocks;
+    std::vector<uint64_t> free, unlike;  ///< Confirm's own, a block row's words each
     std::vector<int> explains, unexplained, roundRow;
     std::vector<uint64_t> any;
     std::vector<uint8_t> candidate;
@@ -578,6 +590,17 @@ struct LiteFlow::Impl
         field.Reset();
     }
 
+    /// The planes of the frame before the pair's `a` when still kept, else nullptr
+    const Planes* Before(const Picture& a) const
+    {
+        if (!pairBefore)
+            return nullptr;
+        for (const Planes& kept : cached)
+            if (kept.id == pairBefore && kept.width == a.width && kept.height == a.height)
+                return &kept;
+        return nullptr;
+    }
+
     /// The planes of `picture`, packed now unless kept by its id. nullptr: the palette is full
     Planes* PlanesOf(const Picture& picture, const Planes* keep)
     {
@@ -598,11 +621,31 @@ struct LiteFlow::Impl
     }
 
     /// The pair's vectors and the masks of the blocks each may take
-    void Prepare(const Planes& a, const Planes& b)
+    void Prepare(const Planes* before, const Planes& a, const Planes& b)
     {
         field.Estimate(a, b, planes);
         stats.pairs++;
         const int bw = field.blocksWide, bh = field.blocksHigh, words = a.Words();
+        stillBlocks.assign(static_cast<size_t>(bh) * (words + 2), 0);
+        for (int j = 0; j < bh; j++)
+        {
+            uint64_t* row = stillBlocks.data() + static_cast<size_t>(j) * (words + 2);
+            const auto still = [&](int i) {
+                const MotionField::Block& block = field.blocks[static_cast<size_t>(j) * bw + i];
+                return block.matched && block.v == V{};
+            };
+            for (int i = 0; i < bw; i++)
+                if (still(i))
+                    row[1 + (i >> 3)] |= 0xFFull << (8 * (i & 7));
+            if (still(0))
+                row[0] = ~0ull;
+            if (still(bw - 1))
+            {
+                if (const int tail = (bw * kBlock) & 63)
+                    row[words] |= ~0ull << tail;
+                row[words + 1] = ~0ull;
+            }
+        }
         // the moving vectors by their blocks, most first (equals: the first met)
         int16_t indexOf[64][64];  // by the vector's low bits: a field's range is under 32
         std::memset(indexOf, -1, sizeof(indexOf));
@@ -682,6 +725,106 @@ struct LiteFlow::Impl
             }
         }
         Credible(a, b);
+        Confirm(before, a, b, words);
+    }
+
+    /// `own` and `nearby` of the moving vectors not confirmed cut to the detailed blocks, as LayerFlow's: a vector is
+    /// confirmed by a block the field matched to it that is detailed (its pixels unlike their right and lower
+    /// neighbours at least kDetail times each: too much to match by chance) or whose pixels it carries exactly to b
+    /// and that came exactly from `before`, the frame before a: by the same vector (the motion going on) or in place
+    /// (a held frame, a motion starting from rest). The field matches a block within MotionField::kAccept, and a line
+    /// of one color across the block holds 8 values, not 64: content new every frame (a tape loader's lines) matches
+    /// some vector by chance in every pair, never exactly over three frames. No frame before (the first pair, a
+    /// seek): detail alone confirms
+    void Confirm(const Planes* before, const Planes& a, const Planes& b, int words)
+    {
+        const int bw = field.blocksWide, bh = field.blocksHigh;
+        const size_t per = static_cast<size_t>(bh) * words;
+        // free: the detailed blocks; unlike: per block row and word, the pixels where a and `before` differ in place
+        free.assign(per, 0);
+        unlike.assign(per, 0);
+        for (int j = 0; j < bh; j++)
+        {
+            uint64_t across[kMaxWords], down[kMaxWords];
+            std::fill_n(across, words, 0);
+            std::fill_n(down, words, 0);
+            for (int r = 0; r < kBlock; r++)
+            {
+                const int y = j * kBlock + r;
+                for (int w = 0; w < words; w++)
+                {
+                    uint64_t right = 0, below = 0, changed = 0;
+                    for (int q = 0; q < planes; q++)
+                    {
+                        const uint64_t* row = a.Row(q, y);
+                        right |= row[w + 1] ^ Shifted(row, w + 1, 1);
+                        if (r + 1 < kBlock)
+                            below |= row[w + 1] ^ a.Row(q, y + 1)[w + 1];
+                        if (before)
+                            changed |= row[w + 1] ^ before->Row(q, y)[w + 1];
+                    }
+                    // within the block: a byte's last pixel is not compared with the next block's first
+                    across[w] += ByteOnes(right & ~kHighBits);
+                    down[w] += ByteOnes(below);
+                    unlike[static_cast<size_t>(j) * words + w] |= changed;
+                }
+            }
+            for (int i = 0; i < bw; i++)
+            {
+                const int shift = 8 * (i & 7);
+                if (static_cast<int>((across[i >> 3] >> shift) & 0xFF) >= LiteFlow::kDetail &&
+                    static_cast<int>((down[i >> 3] >> shift) & 0xFF) >= LiteFlow::kDetail)
+                    free[static_cast<size_t>(j) * words + (i >> 3)] |= 0xFFull << shift;
+            }
+        }
+        for (size_t c = 0; c < vectors.size(); c++)
+        {
+            const V v = vectors[c];
+            // confirmed: a block the field matched to the vector is detailed, or the vector carries its pixels
+            // exactly from `before` through a to b (or they stood in place into a, then carried)
+            bool confirmed = false;
+            for (int j = 0; j < bh && !confirmed; j++)
+                for (int w = 0; w < words && !confirmed; w++)
+                {
+                    uint64_t matched = 0;
+                    for (int i = w * 8; i < std::min(bw, w * 8 + 8); i++)
+                    {
+                        const MotionField::Block& block = field.blocks[static_cast<size_t>(j) * bw + i];
+                        if (block.matched && block.v == v)
+                            matched |= 0xFFull << (8 * (i & 7));
+                    }
+                    const size_t k = static_cast<size_t>(j) * words + w;
+                    if (!matched || (matched & free[k]))
+                    {
+                        confirmed = matched != 0;
+                        continue;
+                    }
+                    if (!before)
+                        continue;
+                    uint64_t carryBad = 0, goBad = 0;
+                    for (int r = 0; r < kBlock; r++)
+                    {
+                        const int y = j * kBlock + r;
+                        for (int q = 0; q < planes; q++)
+                        {
+                            const uint64_t here = a.Row(q, y)[w + 1];
+                            carryBad |= here ^ Shifted(b.Row(q, y + v.y), w + 1, v.x);
+                            goBad |= here ^ Shifted(before->Row(q, y - v.y), w + 1, -v.x);
+                        }
+                    }
+                    confirmed = (matched & ZeroBytes(carryBad) & (ZeroBytes(goBad) | ZeroBytes(unlike[k]))) != 0;
+                }
+            if (confirmed)
+                continue;
+            // not confirmed: the vector moves only the detailed blocks
+            uint64_t* ownOf = own.data() + c * per;
+            uint64_t* nearOf = nearby.data() + c * per;
+            for (size_t k = 0; k < per; k++)
+            {
+                ownOf[k] &= free[k];
+                nearOf[k] &= free[k];
+            }
+        }
     }
 
     /// `own` and `nearby` cut to the blocks where their vector is credible: in the 3 x 3 blocks round a block, the
@@ -798,7 +941,8 @@ struct LiteFlow::Impl
         }
     }
 
-    void Draw(const Planes& a, const Planes& b, int w, uint32_t* out) const
+    /// `before`: the frame before a (null: none kept), for the carried step's still samples
+    void Draw(const Planes* before, const Planes& a, const Planes& b, int w, uint32_t* out) const
     {
         const Planes& nearer = w < kOne / 2 ? a : b;
         const int width = a.width, height = a.height, words = a.Words(), bh = field.blocksHigh;
@@ -865,7 +1009,10 @@ struct LiteFlow::Impl
                 for (int c = 0; c < n; c++)
                     take(fit[c] & nearby[static_cast<size_t>(c) * per + blockRow + j] & ~taken, c);
                 // nothing fits in a block that moves: the nearer frame moved as the block is (content coming in at a
-                // layer's edge, a shape changing on the move), not the nearer frame where it stood
+                // layer's edge, a shape changing on the move), not the nearer frame where it stood. From the other
+                // frame where the nearer one's sample stood still over the three frames in a block the field matched
+                // still, and the other's did not (another layer, still, the moving one goes under: stripes going down
+                // under the paper's edge)
                 for (int c = 0; c < n; c++)
                 {
                     const uint64_t mask = own[static_cast<size_t>(c) * per + blockRow + j] & ~taken;
@@ -873,9 +1020,29 @@ struct LiteFlow::Impl
                         continue;
                     taken |= mask;
                     const V v = vectors[static_cast<size_t>(c)];
-                    for (int p = 0; p < planes; p++)
-                        res[p] |= mask & (w < kOne / 2 ? Shifted(a.Row(p, y - sy[c]), jj, -sx[c])
-                                                       : Shifted(b.Row(p, y - sy[c] + v.y), jj, -sx[c] + v.x));
+                    uint64_t fromA[kMaxPlanes], fromB[kMaxPlanes];
+                    // the still blocks' row of a sample's row, read clamped
+                    const auto stillRow = [&](int row) {
+                        return stillBlocks.data() +
+                               static_cast<size_t>(std::clamp(row, 0, height - 1) / kBlock) * (words + 2);
+                    };
+                    uint64_t stillA = before ? Shifted(stillRow(y - sy[c]), jj, -sx[c]) : 0;
+                    uint64_t stillB = before ? Shifted(stillRow(y - sy[c] + v.y), jj, -sx[c] + v.x) : 0;
+                    for (int q = 0; q < planes; q++)
+                    {
+                        fromA[q] = Shifted(a.Row(q, y - sy[c]), jj, -sx[c]);
+                        fromB[q] = Shifted(b.Row(q, y - sy[c] + v.y), jj, -sx[c] + v.x);
+                        if (before)
+                        {
+                            stillA &= ~(fromA[q] ^ Shifted(b.Row(q, y - sy[c]), jj, -sx[c])) &
+                                      ~(fromA[q] ^ Shifted(before->Row(q, y - sy[c]), jj, -sx[c]));
+                            stillB &= ~(fromB[q] ^ Shifted(a.Row(q, y - sy[c] + v.y), jj, -sx[c] + v.x)) &
+                                      ~(fromB[q] ^ Shifted(before->Row(q, y - sy[c] + v.y), jj, -sx[c] + v.x));
+                        }
+                    }
+                    const uint64_t useA = w < kOne / 2 ? ~(stillA & ~stillB) : stillB & ~stillA;
+                    for (int q = 0; q < planes; q++)
+                        res[q] |= mask & ((useA & fromA[q]) | (~useA & fromB[q]));
                 }
                 // nothing fits: the nearer frame
                 for (int p = 0; p < planes; p++)
@@ -958,13 +1125,15 @@ bool LiteFlow::Compose(const Picture& a, const Picture& b, int w, uint32_t* out)
     }
     if (!samePair || !impl.hasPair)
     {
+        // the frame before a: the pair before's first when that pair ended at a
+        impl.pairBefore = impl.hasPair && a.id && impl.pairB == a.id ? impl.pairA : 0;
         impl.planes = impl.palette.Planes();
-        impl.Prepare(*pa, *pb);
+        impl.Prepare(impl.Before(a), *pa, *pb);
         impl.hasPair = true;
         impl.pairA = a.id;
         impl.pairB = b.id;
     }
-    impl.Draw(*pa, *pb, std::clamp(w, 0, kOne), out);
+    impl.Draw(impl.Before(a), *pa, *pb, std::clamp(w, 0, kOne), out);
     return true;
 }
 

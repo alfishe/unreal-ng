@@ -5,7 +5,9 @@
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/emulatorcontext.h"
+#include "base/featuremanager.h"
 #include "emulator/io/joystick/joystick.h"
+#include "emulator/io/mouse/mouse.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/slots/slotmanager.h"
@@ -74,6 +76,28 @@ std::string DebugJoystickManager::UnwiredWarning(const std::string& fit)
     if (!fit.empty())
         warning += "; " + fit;
     return warning;
+}
+
+std::string DebugJoystickManager::DescribePorts(const JoystickStateSnapshot& state)
+{
+    std::string text;
+    if (state.portDecoded)
+        text = "Kempston joystick port #1F: decoded (" +
+               std::string(state.portSource == "card" ? "the plugged kempston card" : "built into this machine") + ")";
+    else if (state.wired)
+        text = "Kempston joystick port #1F: decoded but the joystick is not fitted, it reads 0x00 "
+               "([INPUT] Joystick= or feature kempstonjoystick off)";
+    else
+        text = "Kempston joystick port #1F: not decoded on this machine" + (state.fit.empty() ? std::string() : " (" + state.fit + ")");
+
+    if (state.mouseFitted)
+        text += ". Kempston mouse: on, it answers #FADF / #FBDF / #FFDF (a program that reads its stick at #DF may "
+                "get the mouse); feature kempstonmouse off frees those ports";
+    else if (state.mouseFeatureOn)
+        text += ". Kempston mouse: feature on, not fitted by this machine's config ([INPUT] Mouse=), its ports are free";
+    else
+        text += ". Kempston mouse: feature kempstonmouse off, its ports are free";
+    return text;
 }
 
 JoystickInjectResult DebugJoystickManager::Invalid(const std::string& message) const
@@ -475,6 +499,11 @@ JoystickStateSnapshot DebugJoystickManager::GetState() const
     snapshot.wired = !_context->pPortDecoder || _context->pPortDecoder->HasKempstonJoystick();
     if (!snapshot.wired)
         snapshot.fit = FitHint(_context);
+    snapshot.portDecoded = snapshot.present && snapshot.wired;
+    if (snapshot.wired && _context->pPortDecoder)
+        snapshot.portSource = _context->pPortDecoder->BoardHasKempstonJoystick() ? "board" : "card";
+    snapshot.mouseFeatureOn = !_context->pFeatureManager || _context->pFeatureManager->isEnabled(Features::kKempstonMouse);
+    snapshot.mouseFitted = _context->pMouse && _context->pMouse->IsPresent();
     snapshot.state = joystick->State();
     snapshot.portValue = joystick->Read();
     snapshot.keys = joystick->BindingsSpec();

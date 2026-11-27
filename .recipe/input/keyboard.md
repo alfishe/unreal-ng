@@ -91,6 +91,7 @@ curl -s -X POST $B/$ID/keyboard/type        -H "$J" -d '{"text":"10 PRINT 1","to
 curl -s -X POST $B/$ID/keyboard/tap         -H "$J" -d '{"key":"enter","frames":3}'
 curl -s -X POST $B/$ID/keyboard/press       -H "$J" -d '{"key":"caps"}'
 curl -s -X POST $B/$ID/keyboard/release     -H "$J" -d '{"key":"caps"}'
+curl -s -X POST $B/$ID/keyboard/set         -H "$J" -d '{"keys":["q","p"]}'   # the whole held state; [] releases all
 curl -s -X POST $B/$ID/keyboard/combo       -H "$J" -d '{"keys":["caps","symbol"],"frames":2}'
 curl -s -X POST $B/$ID/keyboard/macro       -H "$J" -d '{"name":"cat"}'
 curl -s -X POST $B/$ID/keyboard/release_all

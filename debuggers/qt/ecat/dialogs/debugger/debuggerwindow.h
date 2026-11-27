@@ -42,6 +42,7 @@ class GsProfilerView;
 class GsEventsView;
 class GsCoverageView;
 class GsHeatmapView;
+class TwinTimeline;
 
 //One window for the whole machine. Each processor has a tab with its listing,
 //registers and flags; below are the memory dumps (each processor's address
@@ -126,6 +127,10 @@ public:
     GsEventsView * gs_events() const { return m_gs_events; }
     GsCoverageView * gs_coverage() const { return m_gs_coverage; }
     GsHeatmapView * gs_heatmap() const { return m_gs_heatmap; }
+    //The twin timeline (gui-card-debugger A5.1): the strip under the toolbar, shown with a card CPU
+    TwinTimeline * timeline() const { return m_timeline; }
+    //Its switch (the toolbar's "GS timeline", off by default, kept as Debugger/show_gs_timeline)
+    QAction * timeline_action() const { return m_timeline_action; }
 
 signals:
     //The views were read again: after a stop, and while the machine runs
@@ -183,6 +188,11 @@ private:
     GsCoverageView * m_gs_coverage = nullptr;
     GsHeatmapView * m_gs_heatmap = nullptr;
     std::vector<GsCardTab *> m_gs_analysis;
+    //The twin timeline (A5.1): full width between the toolbar and the panes, only with a card CPU
+    TwinTimeline * m_timeline = nullptr;
+    QAction * m_timeline_action = nullptr;
+    //The strip shown: a card CPU and the switch on (off: hidden, nothing read or armed)
+    void update_timeline_shown();
     void update_next_tabs();
     NextReportView * next_view_in_sight() const;
     QLabel * m_state;

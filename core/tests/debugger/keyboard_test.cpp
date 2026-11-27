@@ -573,3 +573,100 @@ TEST_F(DebugKeyboardManager_test, ParseKeyChord_ChecksEveryName)
 }
 
 /// endregion </Key chords (E6)>
+
+/// region <SetHeldKeys: the complete held-key state in one call>
+
+namespace
+{
+/// The half-row of the matrix as the ULA returns it: a cleared bit is a closed key
+uint8_t HalfRow(EmulatorContext* context, uint16_t port)
+{
+    return static_cast<uint8_t>(context->pKeyboard->HandlePortIn(port) & 0x1F);
+}
+
+std::vector<ZXKeysEnum> Sorted(std::vector<ZXKeysEnum> keys)
+{
+    std::sort(keys.begin(), keys.end());
+    return keys;
+}
+}  // namespace
+
+TEST_F(DebugKeyboardManager_test, SetHeldKeys_HoldsExactlyTheGivenKeys)
+{
+    using Status = DebugKeyboardManager::SetHeldKeysStatus;
+    // Held before: a key by PressKey, a chord by PressCombo
+    _keyboardManager->PressKey("a");
+    _keyboardManager->PressCombo(std::vector<std::string>{"q", "p"});
+    ASSERT_EQ(Sorted(_keyboardManager->GetPressedKeys()), Sorted({ZXKEY_A, ZXKEY_Q, ZXKEY_P}));
+
+    std::string error;
+    std::vector<std::string> held;
+    ASSERT_EQ(_keyboardManager->SetHeldKeys({"q", "w+o", "Q"}, error, &held), Status::Ok) << error;
+    EXPECT_EQ(held, (std::vector<std::string>{"q", "w", "o"})) << "chords are split, a repeated key is named once";
+    EXPECT_EQ(Sorted(_keyboardManager->GetPressedKeys()), Sorted({ZXKEY_Q, ZXKEY_W, ZXKEY_O}));
+
+    // The matrix: Q and W down in #FBFE, O down and P up in #DFFE, A up in #FDFE
+    EXPECT_EQ(HalfRow(_context, 0xFBFE), 0x1F & ~0x03);
+    EXPECT_EQ(HalfRow(_context, 0xDFFE), 0x1F & ~0x02);
+    EXPECT_EQ(HalfRow(_context, 0xFDFE), 0x1F);
+
+    // An empty list releases every injected key
+    ASSERT_EQ(_keyboardManager->SetHeldKeys({}, error, &held), Status::Ok);
+    EXPECT_TRUE(held.empty());
+    EXPECT_TRUE(_keyboardManager->GetPressedKeys().empty());
+    EXPECT_EQ(HalfRow(_context, 0xFBFE), 0x1F);
+    EXPECT_EQ(HalfRow(_context, 0xDFFE), 0x1F);
+}
+
+TEST_F(DebugKeyboardManager_test, SetHeldKeys_UnknownNameChangesNothing)
+{
+    using Status = DebugKeyboardManager::SetHeldKeysStatus;
+    _keyboardManager->PressKey("a");
+
+    std::string error;
+    std::vector<std::string> held{"untouched"};
+    EXPECT_EQ(_keyboardManager->SetHeldKeys({"w", "nosuchkey"}, error, &held), Status::UnknownKey);
+    EXPECT_EQ(error, DebugKeyboardManager::DescribeUnknownKey("nosuchkey"));
+    EXPECT_EQ(held, (std::vector<std::string>{"untouched"}));
+    EXPECT_EQ(_keyboardManager->GetPressedKeys(), (std::vector<ZXKeysEnum>{ZXKEY_A})) << "A still held, W not pressed";
+    EXPECT_EQ(HalfRow(_context, 0xFDFE), 0x1F & ~0x01);
+    EXPECT_EQ(HalfRow(_context, 0xFBFE), 0x1F);
+
+    EXPECT_EQ(_keyboardManager->SetHeldKeys({"w o"}, error), Status::UnknownKey) << "a space does not separate keys";
+    EXPECT_EQ(_keyboardManager->GetPressedKeys(), (std::vector<ZXKeysEnum>{ZXKEY_A}));
+}
+
+TEST_F(DebugKeyboardManager_test, SetHeldKeys_DropsAPendingSequenceAndItsTap)
+{
+    // A tap in progress holds its key; text queued behind it would press more keys later
+    _keyboardManager->TapKey("z", 10);
+    _keyboardManager->TypeText("AB");
+    ASSERT_TRUE(_keyboardManager->IsSequenceRunning());
+    ASSERT_TRUE(_keyboardManager->IsKeyPressed(ZXKEY_Z));
+
+    std::string error;
+    ASSERT_EQ(_keyboardManager->SetHeldKeys({"m"}, error), DebugKeyboardManager::SetHeldKeysStatus::Ok) << error;
+    EXPECT_FALSE(_keyboardManager->IsSequenceRunning());
+    EXPECT_EQ(_keyboardManager->GetPressedKeys(), (std::vector<ZXKeysEnum>{ZXKEY_M}));
+    EXPECT_EQ(HalfRow(_context, 0xFEFE), 0x1F) << "Z released";
+
+    // The frames go by: nothing of the dropped sequence comes back
+    for (int frame = 0; frame < 20; ++frame)
+        _keyboardManager->OnFrame();
+    EXPECT_EQ(_keyboardManager->GetPressedKeys(), (std::vector<ZXKeysEnum>{ZXKEY_M}));
+    EXPECT_EQ(HalfRow(_context, 0x7FFE), 0x1F & ~0x04) << "M still down";
+}
+
+TEST_F(DebugKeyboardManager_test, SetHeldKeys_AShiftSharedWithAReleasedExtendedKeyStaysDown)
+{
+    // "left" is Caps Shift + 5 on the matrix, which keeps no press counts: letting it go opens Caps Shift
+    std::string error;
+    ASSERT_EQ(_keyboardManager->SetHeldKeys({"caps", "left"}, error), DebugKeyboardManager::SetHeldKeysStatus::Ok);
+    ASSERT_EQ(HalfRow(_context, 0xF7FE), 0x1F & ~0x10) << "5 down";
+
+    ASSERT_EQ(_keyboardManager->SetHeldKeys({"caps"}, error), DebugKeyboardManager::SetHeldKeysStatus::Ok);
+    EXPECT_EQ(HalfRow(_context, 0xF7FE), 0x1F) << "5 up";
+    EXPECT_EQ(HalfRow(_context, 0xFEFE), 0x1F & ~0x01) << "Caps Shift still down: it is in the wanted set";
+}
+
+/// endregion </SetHeldKeys>

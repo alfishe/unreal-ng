@@ -29,6 +29,7 @@ class EmulatorContext;
 enum EmulatorStateEnum : uint8_t;
 
 struct MainPosition;
+struct StopPositions;
 
 namespace execution
 {
@@ -38,6 +39,10 @@ namespace execution
 StateNode MainPositionNode(const MainPosition& main);
 /// The same in one line, the node's `text` ("main #8123: T 9 of 11, port write; 2 T past the card")
 std::string MainPositionText(const MainPosition& main);
+/// Both lanes at a stop (gs-debugger design §7.2), the paused event's and the snapshot's `positions`:
+/// [{cpu main, frame, t, pc, elapsed_t?, total_t?, bus_cycle?, text?}, {cpu gs | ms, frame, units, cycle, clock_hz,
+/// units_per_t, pc, gap_t, now_t, frame_end}]. `main`: a card's stop, main's instruction progress (MainPositionAt)
+StateNode PositionsNode(const StopPositions& positions, const MainPosition& main);
 
 /// region <Counted runs: limits and the answer every plane sends (re-api-efficiency F1)>
 /// The most one remote call runs (REST, WebSocket, MCP, CLI, the actions). A larger count is refused with this limit

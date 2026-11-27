@@ -111,6 +111,7 @@ inline std::string FormatStatus(const JoystickStateSnapshot& state, const std::s
             newline;
     if (!state.wired && !state.fit.empty())
         text += "  Fit: " + state.fit + newline;
+    text += "  Ports: " + DebugJoystickManager::DescribePorts(state) + newline;
     text += "  Host keys: " + (state.keys.empty() ? std::string("none") : state.keys) + newline;
     if (state.hasPads)
     {

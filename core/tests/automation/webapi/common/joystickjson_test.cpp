@@ -16,6 +16,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/joystick/joystick.h"
+#include "emulator/io/mouse/mouse.h"
 
 namespace
 {
@@ -187,6 +188,34 @@ TEST_F(JoystickWeb_Test, NoDeviceIs500WithTheManagerMessage)
     EXPECT_FALSE(status.body["available"].asBool());
     EXPECT_EQ(status.body["warning"].asString(), "Joystick device not available");
     _context->pJoystick = saved;
+}
+
+/// E2: the status says whether #1F is decoded right now and whether the Kempston mouse (the #xxDF address space) is on
+TEST_F(JoystickWeb_Test, Status_ReportsThePortDecodeAndTheKempstonMouse)
+{
+    Json::Value body = JoystickWeb::StatusReply(*_manager, "emu-1").body;
+    EXPECT_TRUE(body["port_decoded"].asBool()) << "the ZX-Evo board decodes #1F";
+    EXPECT_EQ(body["port_source"].asString(), "board");
+    EXPECT_TRUE(body["kempston_mouse_feature"].asBool()) << "on by default";
+    EXPECT_EQ(body["kempston_mouse_fitted"].asBool(), _context->pMouse->IsPresent());
+    EXPECT_NE(body["ports_text"].asString().find("Kempston joystick port #1F: decoded (built into this machine)"),
+              std::string::npos)
+        << body["ports_text"].asString();
+
+    // The mouse switched off by its feature: off the bus at once
+    ASSERT_TRUE(_context->pFeatureManager->setFeature(Features::kKempstonMouse, false));
+    body = JoystickWeb::StatusReply(*_manager, "emu-1").body;
+    EXPECT_FALSE(body["kempston_mouse_feature"].asBool());
+    EXPECT_FALSE(body["kempston_mouse_fitted"].asBool());
+    EXPECT_NE(body["ports_text"].asString().find("Kempston mouse: feature kempstonmouse off, its ports are free"),
+              std::string::npos)
+        << body["ports_text"].asString();
+
+    // The joystick taken off by its feature: the port stays decoded on this board but reads 0x00
+    ASSERT_TRUE(_context->pFeatureManager->setFeature(Features::kKempstonJoystick, false));
+    body = JoystickWeb::StatusReply(*_manager, "emu-1").body;
+    EXPECT_FALSE(body["port_decoded"].asBool());
+    EXPECT_TRUE(body["wired"].asBool());
 }
 
 TEST_F(JoystickWeb_Test, Status_ReportsStateRoutingKeysAndTap)

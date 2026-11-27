@@ -186,6 +186,9 @@ public:
     bool HasWork() const { return _work != nullptr; }
     /// The copy of the last frame end (a short lock; never waits for the emulation)
     GSProfileSnapshot Snapshot() const;
+    /// The newest published activity row (the twin timeline's density); false: none yet. A short lock, no copy of
+    /// the rest
+    bool LastActivity(GSProfileActivity& out) const;
     /// endregion
 
     /// region <Emulation thread: the card>

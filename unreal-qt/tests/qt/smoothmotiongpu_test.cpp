@@ -265,6 +265,34 @@ TEST_P(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
     EXPECT_GT(edges, 0) << "the regions rule asked the GPU";
 }
 
+TEST_P(SmoothMotionGPU_Test, BorderEffectsOnTheGpuAreTheCpus)
+{
+    // Stripes going down under a still paper, a tape loader's random lines: the cover rule's `behind` and landing
+    // checks, carryFirst's still samples and the confirmed vectors meet there. Pairs in order, as a stream
+    constexpr int kWidth = 128, kHeight = 96, kBorder = 16;
+    LayerFlow cpu;
+    for (bool loader : {false, true})
+        for (int k = 1; k <= TestTier::Pick(3, 8); k++)
+        {
+            SCOPED_TRACE(testing::Message() << (loader ? "loader" : "stripes") << " k " << k);
+            Image p(kWidth, kHeight), a(kWidth, kHeight), b(kWidth, kHeight);
+            p.pixels = smoothscenes::Border(kWidth, kHeight, kBorder, k - 1, loader);
+            a.pixels = smoothscenes::Border(kWidth, kHeight, kBorder, k, loader);
+            b.pixels = smoothscenes::Border(kWidth, kHeight, kBorder, k + 1, loader);
+            MotionField prev, next;
+            prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+            next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+            for (int w : {85, 171})
+            {
+                Image expected(kWidth, kHeight), out(kWidth, kHeight);
+                cpu.Compose(p.View(), a.View(), b.View(), prev, next, w, expected.pixels.data());
+                ASSERT_TRUE(gpu.ComposeLayers(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data()))
+                    << gpu.Log().toStdString();
+                EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "w " << w;
+            }
+        }
+}
+
 TEST_P(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
 {
 
@@ -318,7 +346,7 @@ TEST_P(SmoothMotionGPU_Test, TheWorstContentIsTheCpusBits)
         prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
         next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
         LayerFlow::Layers layers;
-        LayerFlow::Prepare(prev, next, width, height, layers);
+        LayerFlow::Prepare(prev, next, p.View(), a.View(), b.View(), layers);
         for (int w : {43, 128, 213})
         {
             Image expected(width, height), out(width, height);

@@ -4,8 +4,8 @@
 // starts, with the physical page its 16K window showed at that moment, in a ring of the newest kCapacity entries.
 //
 // It costs nothing until a debugger asks: Arm(true) raises the step-work bit kStepWorkPcHistory, and only then does
-// Z80::StepInstructionWithWork call Record before each instruction (an accepted interrupt is not an instruction and
-// is not recorded). Example: a CALL #C000 on TS-Conf with RAM page #20 in window 3 leaves {address #C000, ram, #20}
+// Z80::StepInstructionWithWork call Record before each instruction (an accepted interrupt is not an instruction: it
+// is not in this ring; the execution history `cpu` records it as an event, RecordInterrupt). Example: a CALL #C000 on TS-Conf with RAM page #20 in window 3 leaves {address #C000, ram, #20}
 // as the next entry. The ring belongs to the emulation thread; Report reads it at a coherent moment.
 
 #include <array>
@@ -40,8 +40,13 @@ public:
     bool IsArmed() const { return _armed; }
     void Clear();
 
-    /// One instruction starts at `address` (Z80 step, emulation thread only)
-    void Record(uint16_t address);
+    /// One instruction starts at `address` at T `t` of the frame (Z80 step, emulation thread only)
+    void Record(uint16_t address, uint32_t t);
+    /// An INT or NMI acknowledge starts at T `t`, interrupting `address`: an event record of the execution history
+    /// `cpu` (the twin timeline's INT marker and the width of the acknowledge), not an entry of this ring
+    void RecordInterrupt(bool nmi, uint16_t address, uint32_t t);
+    /// The execution history `cpu` (a reader's snapshot; the twin timeline switches it on while armed)
+    history::DeviceHistory<ExecRecord>& Exec() { return *_exec; }
 
     /// The newest `depth` entries, newest first
     std::vector<Entry> Newest(size_t depth) const;
@@ -59,8 +64,9 @@ public:
         bool busy = false;
     };
     /// Read `depth` entries (at most kCapacity) at a coherent moment; arms the history when it was off (the first
-    /// read starts it: entries come from then on)
-    static Result Report(Emulator* emulator, size_t depth);
+    /// read starts it: entries come from then on). `waitMs`: how long to wait for that moment (0: one try, busy at
+    /// once; a GUI thread never waits and tries again later)
+    static Result Report(Emulator* emulator, size_t depth, uint32_t waitMs = 500);
     /// Arm (starting empty) or stop the history at a coherent moment; empty string or the reason
     static std::string SetArmed(Emulator* emulator, bool on);
 

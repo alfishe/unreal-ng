@@ -153,7 +153,7 @@ ToolResult SlotReplyResult(int status, Json::Value response, const std::string& 
 /// The emulator_manage actions: the schema enum and the unknown-action answer read this one list
 const std::vector<std::string>& EmulatorManageActions()
 {
-    static const std::vector<std::string> actions = {"create", "switch_model", "list", "list_models", "list_machines", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
+    static const std::vector<std::string> actions = {"create", "switch_model", "list", "list_models", "list_machines", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy", "preset",
                                "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_send", "gs_conversation",
@@ -162,7 +162,7 @@ const std::vector<std::string>& EmulatorManageActions()
                                "gs_profile_clear", "board_action",
                                "rom_flash_status", "rom_flash_save", "rom_flash_discard",
                                "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_unplug", "slots_set",
-                               "network_configure", "switches", "switch"};
+                               "network_configure", "switches", "switch", "features", "feature"};
     return actions;
 }
 
@@ -173,7 +173,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     SetSchemaEnum(schema["properties"]["action"], EmulatorManageActions());
     schema["properties"]["action"]["description"] =
-        "Lifecycle operation. 'reset' is soft (the reset button) unless 'hard': true (a power cycle). 'create' makes a new running instance (fails with a reason on models this build "
+        "Lifecycle operation. 'preset' makes a ready machine for a reproducible run in one call and answers when it is "
+        "ready: 'model' with 'ram' (zero), 'cards' ([\"edge.1=kempston\"]: no restart, no polling), 'features' "
+        "({\"kempstonmouse\": false}), 'muted' (true), 'paused' (true: at power-on, before the first instruction), 'fast_tape' (false), "
+        "'take_control' (true: you hold run control, as after control_execution take_control), 'replace' (false; true "
+        "destroys every other instance); the answer lists the effective settings; a refusal names the valid values "
+        "and leaves no instance behind. "
+        "'reset' is soft (the reset button) unless 'hard': true (a power cycle). 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'list_machines' gives them grouped by "
         "family -> machine -> RAM size, the creatable ones ('all': true for every one; with a 'target' id that instance's "
@@ -234,7 +240,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "'dry_run', 'media_disposition' apply; the other settings go to the restarted machine), any other setting "
         "applies in place (status accepted). 'switches' lists the machine's front-panel switches (the Profi's turbo, "
         "cpm; none on most machines), 'switch' flips one ('switch': turbo | cpm, 'on': true | false; recorded by TTD "
-        "like a key).";
+        "like a key). 'features' lists the instance's runtime features (id, alias, on / off, what each does), "
+        "'feature' switches one ('name': id or alias, 'enabled': true | false; applied at once, per instance). Among "
+        "them the devices on the bus: kempstonmouse (on by default: the Kempston mouse answers #FADF / #FBDF / #FFDF, "
+        "so a program that reads its stick or keys at #DF gets the mouse counters; 'feature' name=kempstonmouse "
+        "enabled=false frees those ports) and kempstonjoystick.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
@@ -242,12 +252,48 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["all"]["description"] = "list_machines: every machine, also the ones this build cannot create";
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
-        "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS2, PLUS2A, "
+        "Hardware model short name for 'create' / 'preset' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS2, PLUS2A, "
         "PLUS3, PENTAGON, P2666, SCORPION, PROFSCORP, GMX, ATM450, ATM710, ATM3, TSL, PROFI, PROFI3, NEXT, SPRINTER; machine "
         "variants TSL-VDAC2 and PROFI-PLUS (a base model with a fixed board) (see list_models; creatability is "
         "build-dependent — check the 'creatable' flags: KAY, QUORUM, LSY256 and PHOENIX are listed but not creatable). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
         "(same as 'zxpoly': true with the base model)";
+    schema["properties"]["ram"]["type"] = "string";
+    schema["properties"]["ram"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["ram"]["enum"].append("zero");
+    schema["properties"]["ram"]["enum"].append("random");
+    schema["properties"]["ram"]["description"] =
+        "preset: RAM contents of the new machine - zero (default: every RAM page reads 0, a reproducible run) or random";
+    schema["properties"]["cards"]["type"] = "array";
+    schema["properties"]["cards"]["description"] =
+        "preset: the cards to fit, each \"<slot>=<card>\" (\"edge.1=kempston\"; slot auto: the planner's choice) or "
+        "{slot, card, options, adapter, replace}; planned as slots_plug plans a card, and the machine is created "
+        "with them: no restart";
+    schema["properties"]["features"]["type"] = "object";
+    schema["properties"]["features"]["description"] =
+        "preset: runtime features to set, {name: true | false} by id or alias ({\"kempstonmouse\": false}); an unknown "
+        "name refuses the call";
+    schema["properties"]["muted"]["type"] = "boolean";
+    schema["properties"]["muted"]["description"] = "preset: mute the mixer's master (default true)";
+    schema["properties"]["paused"]["type"] = "boolean";
+    schema["properties"]["paused"]["description"] =
+        "preset: leave the machine started and paused at power-on, before its first instruction (default true); false: running";
+    schema["properties"]["fast_tape"]["type"] = "boolean";
+    schema["properties"]["fast_tape"]["description"] =
+        "preset: the tape accelerators - false (default) switches features fasttape (the ROM loader trap) and turbotape "
+        "(turbo while the tape plays) off, a tape loads in real machine time; true switches both on. A name in "
+        "'features' wins";
+    schema["properties"]["take_control"]["type"] = "boolean";
+    schema["properties"]["take_control"]["description"] =
+        "preset: take run control of the new machine for you (default true; release_control ends the session)";
+    schema["properties"]["replace"]["type"] = "boolean";
+    schema["properties"]["replace"]["description"] =
+        "preset: destroy every other instance once the new machine is built (default false: the machine is created "
+        "next to the existing ones, and calls with target auto then need its id)";
+    schema["properties"]["select"]["type"] = "boolean";
+    schema["properties"]["select"]["description"] =
+        "preset: make the new machine the selected one (the one the GUI shows and target auto means; default false: "
+        "the selection is left alone)";
     schema["properties"]["ram_size"]["type"] = "integer";
     schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' / 'transfer_state' with 'model' (e.g. 128, 256, 512)";
     schema["properties"]["ram_power_on"]["type"] = "string";
@@ -399,6 +445,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["switch"]["description"] = "switch: the front-panel switch (turbo: Profi v3 / v5, cpm: Profi v5)";
     schema["properties"]["on"]["type"] = "boolean";
     schema["properties"]["on"]["description"] = "switch: the position (true = on)";
+    schema["properties"]["name"]["type"] = "string";
+    schema["properties"]["name"]["description"] =
+        "feature: the feature's id or alias (kempstonmouse / kmouse, sound, turbomode / turbo, ...; 'features' lists them)";
+    schema["properties"]["enabled"]["type"] = "boolean";
+    schema["properties"]["enabled"]["description"] = "feature: true = on, false = off";
     schema["properties"]["hard"]["type"] = "boolean";
     schema["properties"]["hard"]["default"] = false;
     schema["properties"]["hard"]["description"] =
@@ -412,13 +463,16 @@ void RegisterEmulatorManage(ToolRegistry& registry)
 
     registry.Register(
         "emulator_manage",
-        "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy. "
+        "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy; "
+        "preset: a ready machine for a reproducible run in one call (cards, features, muted, paused, run control). "
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
         "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode) "
         "the ZX-Evo's saved flash ROM (rom_flash_status/rom_flash_save/rom_flash_discard), "
         "and the ZX-bus slots (slots_catalog/slots_matrix/slots_plug/slots_remove/slots_set; a change restarts the machine); "
-        "network_configure changes the network settings (a network card change is a slot change: a restart).",
+        "network_configure changes the network settings (a network card change is a slot change: a restart). "
+        "features / feature list and switch the runtime features (feature name=kempstonmouse enabled=false takes the "
+        "Kempston mouse off ports #FADF / #FBDF / #FFDF).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -504,6 +558,42 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             if (action == "server")
             {
                 ForwardCall("GET", "/api/v1/emulator/status", nullptr, caller, "Server build fingerprint and creatable models", AppendFields(done));
+                return;
+            }
+
+            // A preset machine in one call (MachinePreset through POST /emulator/preset): the answer's text is the core's; with
+            // take_control the new session becomes this client's, as after control_execution take_control
+            if (action == "preset")
+            {
+                Json::Value body;
+                for (const char* key : {"model", "ram", "cards", "features", "muted", "paused", "fast_tape",
+                                        "take_control", "replace", "select"})
+                {
+                    if (args.isMember(key))
+                        body[key] = args[key];
+                }
+                body["surface"] = "mcp";
+                body["client"] = args.isMember("_mcp_client") ? args["_mcp_client"].asString() : std::string("mcp agent");
+                if (args.isMember("_peer"))
+                    body["peer"] = args["_peer"].asString();
+                caller.Call("POST", "/api/v1/emulator/preset", &body, [&caller, done](int status, Json::Value reply) {
+                    if (status != 201 && status != 200)
+                    {
+                        const std::string why = reply.get("message", "").asString();
+                        done(ToolResult::Error("preset refused (HTTP " + std::to_string(status) + "): " +
+                                               (why.empty() ? DescribeErrorBody(reply) : why)));
+                        return;
+                    }
+                    std::string text = reply.get("text", "").asString();
+                    const std::string session = reply["control"].get("session", "").asString();
+                    if (!session.empty())
+                    {
+                        caller.SetSession(session);
+                        text += " The user sees it and can take it back; release_control ends the session; a host "
+                                "script driving this emulator too sends the session id as X-Unreal-Session.";
+                    }
+                    done(ToolResult::Ok(text, std::move(reply)));
+                });
                 return;
             }
 
@@ -643,6 +733,66 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                     for (const Json::Value& sw : body["switches"])
                                         text += " " + sw["name"].asString() + (sw["on"].asBool() ? " on" : " off");
                                     done(ToolResult::Ok(text, std::move(body)));
+                                });
+                }
+                else if (action == "features")
+                {
+                    // The list as text too (an agent may see only the text): a feature per line
+                    caller.Call("GET", Endpoint(id, "/features"), nullptr, [id, done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error(status == 0 ? "WebAPI unreachable"
+                                                               : "HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        const Json::Value& features = body["features"];
+                        std::string text = std::to_string(features.size()) + " feature(s) of " + id +
+                                           " (switch one: action feature, name, enabled):";
+                        for (const Json::Value& feature : features)
+                        {
+                            text += "\n- " + feature["id"].asString();
+                            if (const std::string alias = feature.get("alias", "").asString(); !alias.empty())
+                                text += " (" + alias + ")";
+                            text += feature["enabled"].asBool() ? ": on" : ": off";
+                            if (const std::string mode = feature.get("mode", "").asString(); !mode.empty())
+                                text += ", mode " + mode;
+                            if (const std::string description = feature.get("description", "").asString(); !description.empty())
+                                text += " - " + description;
+                        }
+                        done(ToolResult::Ok(text, std::move(body)));
+                    });
+                }
+                else if (action == "feature")
+                {
+                    if (!args["name"].isString() || args["name"].asString().empty() || !args["enabled"].isBool())
+                    {
+                        done(ToolResult::Error("feature needs 'name' (the feature's id or alias; action features lists "
+                                               "them) and 'enabled' (true | false)"));
+                        return;
+                    }
+                    const std::string name = args["name"].asString();
+                    const bool enabled = args["enabled"].asBool();
+                    Json::Value request;
+                    request["enabled"] = enabled;
+                    caller.Call("PUT", Endpoint(id, "/feature/" + UrlEncodeSegment(name)), &request,
+                                [id, name, enabled, done](int status, Json::Value body) {
+                                    if (status == 200)
+                                    {
+                                        done(ToolResult::Ok("Feature " + name + (enabled ? ": on" : ": off") + " [target " + id + "]",
+                                                            std::move(body)));
+                                        return;
+                                    }
+                                    if (status == 404 && body["available_features"].isArray())
+                                    {
+                                        // An unknown name: the valid ones and the nearest
+                                        std::vector<std::string> valid;
+                                        for (const Json::Value& feature : body["available_features"])
+                                            valid.push_back(feature.asString());
+                                        done(ToolResult::Error(UnknownValueText("feature", name, valid)));
+                                        return;
+                                    }
+                                    done(ToolResult::Error(status == 0 ? "WebAPI unreachable"
+                                                                       : "HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
                                 });
                 }
                 else if (action == "zxpoly_status")
@@ -2893,7 +3043,7 @@ const std::vector<std::string>& InspectStateAspects()
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
-                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "timeline", "slots",
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
                                "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
@@ -2919,6 +3069,11 @@ void RegisterInspectState(ToolRegistry& registry)
         "prev_regs, pages, stack, time, 'count' code lines from PC, the 'windows' memory windows (base64) and 'pchist' PC "
         "history entries. 'pchist' = the PC history alone (GET /debug/pchist): the newest 'count' instructions the CPU "
         "started with their window's page; the first request starts recording. "
+        "'timeline' = the GS debugger's twin timeline (GET /debug/timeline): the main CPU and a sound card's CPU on one "
+        "clock; paused: NOW (main T minus the gap to the card), each lane's recent blocks with their measured widths "
+        "(at / duration in main T, the card's in its own cycles too), the next instructions, markers (breakpoints, host "
+        "port accesses, INT/NMI, the NeoGS clock change); running: the density per frame. 'cpu' gs | ms picks the card "
+        "lane; the request holds a 30 s lease that arms the histories it reads. "
         "'paging' = tagged paging latches + bank table (P1-2 design), 'ports' = static port map with semantic tags, "
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
@@ -3280,7 +3435,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_divmmc" && aspect != "next_nmi" && aspect != "next_magic_port" && aspect != "next_audio" && aspect != "next_input" && aspect != "next_uart" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
-                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
+                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" && aspect != "timeline" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
                     aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices" && aspect != "boards" &&
                     aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0 &&
@@ -3526,6 +3681,21 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             const std::string path =
                                 Endpoint(id, "/debug/pchist") + "?depth=" + std::to_string(std::min(count, 1024u));
+                            steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    acc[aspect] = std::move(body);
+                                    if (status != 200)
+                                        acc[aspect]["http_status"] = status;
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "timeline")
+                        {
+                            // The twin timeline (twintimeline.h): a card lane named by `cpu` (gs | ms), else the first
+                            std::string path = Endpoint(id, "/debug/timeline") + "?client=mcp";
+                            if (cpu == "gs" || cpu == "ms")
+                                path += "&cpu=" + cpu;
                             steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     acc[aspect] = std::move(body);
@@ -4155,7 +4325,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                 out << "\n[" << aspect << "] unavailable: " << value["unavailable"].asString();
                                 continue;
                             }
-                            if (value.isMember("cpu") && value["cpu"].isString())
+                            if (value.isMember("cpu") && value["cpu"].isString() && aspect != "timeline")  // both lanes
                                 out << "\n[" << aspect << "] cpu " << value["cpu"].asString() << ":";
                             if (aspect == "registers")
                             {
@@ -4277,6 +4447,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << item;
                                 }
                             }
+                            else if (aspect == "timeline" && value.isMember("text"))
+                                out << "\n[timeline]\n" << value["text"].asString();
+                            else if (aspect == "timeline" && value.isMember("message"))
+                                out << "\n[timeline] unavailable: " << value["message"].asString();
                             else if (aspect == "snapshot" && value.isMember("message"))
                                 out << "\n[snapshot] refused: " << value["message"].asString();
                             else if (aspect == "memory_map" && value.isMember("blocks"))
@@ -5753,7 +5927,7 @@ namespace
 /// The type_input actions: the schema enum and the unknown-action answer read this one list
 const std::vector<std::string>& TypeInputActions()
 {
-    static const std::vector<std::string> actions = {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys", "route"};
+    static const std::vector<std::string> actions = {"type", "tap", "press", "release", "set", "combo", "macro", "release_all", "status", "list_keys", "route"};
     return actions;
 }
 
@@ -5765,6 +5939,8 @@ void RegisterTypeInput(ToolRegistry& registry)
     SetSchemaEnum(schema["properties"]["action"], TypeInputActions());
     schema["properties"]["action"]["description"] =
         "Input operation. 'type' sends text (auto-shift; a line end presses ENTER; a character no key types refuses the text); 'tap' presses a key for N frames (count: N taps in a row); 'combo' presses several keys at once; "
+        "'set' makes exactly the keys of 'keys' held and releases every other injected key in one call ([] releases all; a "
+        "game's control state per step without a press and a release per key; an unknown name changes nothing); "
         "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
         "ATM Turbo 2+, both); 'status' shows it.";
     schema["properties"]["route"]["type"] = "string";
@@ -5781,7 +5957,8 @@ void RegisterTypeInput(ToolRegistry& registry)
         "Key name for tap/press/release (see list_keys), or keys held together joined with '+' (\"w+o\", \"caps+1\")";
     schema["properties"]["keys"]["type"] = "array";
     schema["properties"]["keys"]["items"]["type"] = "string";
-    schema["properties"]["keys"]["description"] = "Key names for 'combo': a list, one name per item ([\"w\", \"o\"])";
+    schema["properties"]["keys"]["description"] =
+        "Key names for 'combo' and 'set': a list, one name per item ([\"w\", \"o\"]); 'set': the complete held state, [] = none";
     schema["properties"]["name"]["type"] = "string";
     schema["properties"]["name"]["description"] = "Macro name for 'macro'";
     schema["properties"]["frames"]["type"] = "integer";
@@ -5808,7 +5985,8 @@ void RegisterTypeInput(ToolRegistry& registry)
     registry.Register(
         "type_input",
         "Send keyboard input to the emulator: type text or tokenized BASIC commands, tap/press/release keys, chords "
-        "(combo), named macros, release_all for stuck keys. Use list_keys to discover key names.",
+        "(combo), set the whole held-key state in one call (set), named macros, release_all for stuck keys. Use "
+        "list_keys to discover key names.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -5868,6 +6046,39 @@ void RegisterTypeInput(ToolRegistry& registry)
                 if (action == "tap" && args.isMember("gap_frames")) body["gap_frames"] = args["gap_frames"].asUInt();
                 std::string suffix = action == "tap" ? "/keyboard/tap" : (action == "press" ? "/keyboard/press" : "/keyboard/release");
                 ResolveAndForward(args, "POST", suffix, &body, caller, "Key " + action + ": " + args["key"].asString(), done);
+                return;
+            }
+            if (action == "set")
+            {
+                // The complete held state: a list (or one "w+o" text); [] releases every injected key
+                if (!args.isMember("keys") || !(args["keys"].isArray() || args["keys"].isString()))
+                {
+                    done(ToolResult::Error("set requires 'keys': the keys to hold ([\"w\", \"o\"]; [] releases all)"));
+                    return;
+                }
+                Json::Value body;
+                body["keys"] = args["keys"];
+                auto bodyCopy = std::make_shared<Json::Value>(body);
+                TargetResolver::ResolveFromArgs(args, caller, [bodyCopy, &caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    const std::string id = idOrError;
+                    caller.Call("POST", Endpoint(id, "/keyboard/set"), bodyCopy.get(), [bodyCopy, id, done](int status, Json::Value response) {
+                        if (status >= 200 && status < 300)
+                        {
+                            // The route's message names the keys now held
+                            done(ToolResult::Ok(response.get("message", "Keys set").asString() + " [target " + id + "]",
+                                                std::move(response)));
+                            return;
+                        }
+                        done(ToolResult::Error(status == 0 ? "WebAPI unreachable — is the emulator running with WebAPI enabled (port 8090)?"
+                                                           : "WebAPI returned HTTP " + std::to_string(status) + ": " +
+                                                                 DescribeErrorBody(response)));
+                    });
+                });
                 return;
             }
             if (action == "combo")
@@ -5930,7 +6141,11 @@ void RegisterMouseInput(ToolRegistry& registry)
         "(-127..127); 'glide' moves up to -4096..4096 in steps the program follows (one per frame; input sent "
         "meanwhile queues behind it, so a click after a glide lands where it ended); 'click' presses a button for N "
         "frames. Input is applied immediately; call control_execution run_frames to let the program react. 'status' "
-        "names the device and what it gives the guest (ports, serial line, PS/2).";
+        "names the device and what it gives the guest (ports, serial line, PS/2). The Kempston mouse is on by default "
+        "(feature kempstonmouse, [INPUT] Mouse=KEMPSTON in every shipped machine config) and answers ports #FADF "
+        "(buttons) / #FBDF (X) / #FFDF (Y) outside TR-DOS - the standard decode is A9 = 1 with A5-A0 = #1F, so a program "
+        "that reads a stick or keys at #DF gets the mouse counters; emulator_manage action=feature name=kempstonmouse "
+        "enabled=false takes the mouse off the bus and frees those ports.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["dx"]["type"] = "integer";
@@ -5970,7 +6185,9 @@ void RegisterMouseInput(ToolRegistry& registry)
         "mouse_input",
         "Send mouse input to the machine's own mouse (Kempston, Sprinter serial, ZX-Evo PS/2): relative move (dx/dy), "
         "glide (long moves the program can follow), press/release/click buttons, set the exact pressed set, wheel "
-        "steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
+        "steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges. The Kempston mouse is on "
+        "by default and answers ports #FADF / #FBDF / #FFDF; emulator_manage action=feature name=kempstonmouse "
+        "enabled=false frees them (a game that reads #DF for its own input).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -6165,7 +6382,13 @@ void RegisterJoystickInput(ToolRegistry& registry)
         "Kempston joystick (reads at IN #1F on the machines whose board decodes it: Pentagon, Scorpion, Profi, ZX-Evo "
         "BaseConf, TS-Conf, Sprinter, Next; not the 48K / 128K / +2 / +2A / +3 or the ATM Turbo 2+). 'press' holds buttons, 'release' lets them go, "
         "'set' makes exactly the given buttons (or state byte) held, 'tap' presses for N frames then releases. Input is "
-        "applied immediately; call control_execution run_frames to let the program react.";
+        "applied immediately; call control_execution run_frames to let the program react. On a machine without the "
+        "built-in port the stick is read at #1F only with the card: emulator_manage action=slots_plug slot=edge.1 "
+        "card=kempston (48K / 128K / +2 / +2A / +3; a slot change restarts the machine with a new id). 'status' says "
+        "whether #1F is decoded right now (port_decoded, port_source board | card) and whether the Kempston mouse is on "
+        "(kempston_mouse_feature / kempston_mouse_fitted): the mouse is on by default and answers #FADF / #FBDF / #FFDF, "
+        "so a game that reads its stick at #DF gets the mouse; emulator_manage action=feature name=kempstonmouse "
+        "enabled=false frees those ports.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     Json::Value nameEnum(Json::arrayValue);
@@ -6200,7 +6423,9 @@ void RegisterJoystickInput(ToolRegistry& registry)
         "Send Kempston joystick input to the emulator: press / release buttons, set the exact held set or state byte, tap "
         "for N frames, status (device byte, fitted / wired, host keys). Values are forwarded as-is; the WebAPI validates "
         "names and ranges and warns when the machine has no Kempston interface (48K, 128K, +2, +2A, +3, ATM): the warning "
-        "names the slot card `kempston` and the emulator_manage slots_plug call that fits it.",
+        "names the slot card `kempston` and the emulator_manage slots_plug call that fits it (slot=edge.1 card=kempston). "
+        "The Kempston mouse (on by default, ports #FADF / #FBDF / #FFDF) is switched off with emulator_manage "
+        "action=feature name=kempstonmouse enabled=false.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -6230,7 +6455,20 @@ void RegisterJoystickInput(ToolRegistry& registry)
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/joystick", nullptr, caller, "Joystick status", AppendFields(done));
+                // The port facts first (ports_text: is #1F decoded, is the Kempston mouse on), then every field
+                ResolveAndForward(args, "GET", "/joystick", nullptr, caller, "Joystick status", [done](ToolResult result) {
+                    if (!result.isError && result.structured.isObject())
+                    {
+                        Json::Value fields = result.structured;
+                        if (const std::string ports = fields.get("ports_text", "").asString(); !ports.empty())
+                        {
+                            result.text += "\n" + ports;
+                            fields.removeMember("ports_text");  // said once, in full
+                        }
+                        result.text += "\n" + FlatFields(fields);
+                    }
+                    done(std::move(result));
+                });
                 return;
             }
             if (action == "press" || action == "release" || action == "tap")

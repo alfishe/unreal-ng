@@ -57,6 +57,32 @@ def test_switches_say_none_on_a_machine_without_them(s):
     expect(missing.is_error and 'switch' in missing.text, 'switch needs its args', missing.text)
 
 
+def test_features_list_and_switch(s):
+    """features / feature: the list as text, the Kempston mouse switched off and on, an unknown name refused with the
+    valid ones"""
+    r = s.call('emulator_manage', {'action': 'features'})
+    ids = {f['id'] for f in r.structured.get('features', [])}
+    expect('kempstonmouse' in ids and 'feature(s)' in r.text, 'the features in the answer', r.text[:400])
+    expect(re.search(r'- kempstonmouse \(kmouse\): on - \S', r.text), 'id, alias, state and description in the text',
+           r.text[:1200])
+    try:
+        r = s.call('emulator_manage', {'action': 'feature', 'name': 'kempstonmouse', 'enabled': False})
+        expect('Feature kempstonmouse: off' in r.text, 'the text says the new state', r.text)
+        r = s.call('emulator_manage', {'action': 'features'})
+        expect('- kempstonmouse (kmouse): off' in r.text, 'the list shows it off', r.text[:1200])
+        r = s.call('joystick_input', {'action': 'status'})
+        expect('kempston_mouse_feature=false' in r.text and 'kempston_mouse_fitted=false' in r.text and
+               'feature kempstonmouse off' in r.text, 'the joystick status sees the mouse off the bus', r.text)
+    finally:
+        r = s.call('emulator_manage', {'action': 'feature', 'name': 'kmouse', 'enabled': True})
+    expect('Feature kmouse: on' in r.text, 'back on, by the alias', r.text)
+    r = s.call('emulator_manage', {'action': 'feature', 'name': 'kempstonmous', 'enabled': False}, ok=False)
+    expect(r.is_error and "Did you mean 'kempstonmouse'" in r.text and 'Valid features:' in r.text,
+           'an unknown feature names the valid ones', r.text)
+    r = s.call('emulator_manage', {'action': 'feature', 'name': 'kempstonmouse'}, ok=False)
+    expect(r.is_error and 'enabled' in r.text, 'feature needs enabled', r.text)
+
+
 def test_unknown_action_is_an_error(s):
     r = s.call('emulator_manage', {'action': 'bogus'}, ok=False)
     expect(r.is_error and 'bogus' in r.text, 'names the action', r.text)

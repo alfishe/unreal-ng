@@ -28,6 +28,7 @@ add_library(unreal-debugger-views STATIC
     ${ECAT_DIR}/dialogs/debugger/registersview.cpp
     ${ECAT_DIR}/dialogs/debugger/sideviews.cpp
     ${ECAT_DIR}/dialogs/debugger/ttdcontrols.cpp
+    ${ECAT_DIR}/dialogs/debugger/twintimeline.cpp
     ${ECAT_DIR}/emulator/disasm_buffer.cpp
     # unreal-qt's tab bars that scroll (an arrow at each end, the wheel switches tabs): Qt only
     ${CMAKE_SOURCE_DIR}/unreal-qt/src/widgets/tabscrollarrows.cpp

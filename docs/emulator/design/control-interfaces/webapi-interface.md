@@ -288,6 +288,58 @@ Entries that conflict (two cards with one job) refuse the machine with a `400` n
 }
 ```
 
+### 5a. Preset machine
+**Endpoint**: `POST /api/v1/emulator/preset`  
+**Description**: A machine for a reproducible run in one call ([command-interface.md, Preset machine](command-interface.md#preset-machine)): created with its cards (no restart, nothing to poll), the features set, the mixer's master muted, started and paused at power-on, before its first instruction, the caller's control session opened. The answer comes when the machine is ready and lists the effective settings, read back from it. Every route is also a WebSocket `call`.
+
+**Request** (only `model` is required; the defaults are the reproducible choice):
+```json
+{
+  "model": "48K",
+  "ram": "zero",
+  "cards": ["edge.1=kempston"],
+  "features": {"kempstonmouse": false},
+  "muted": true,
+  "paused": true,
+  "fast_tape": false,
+  "take_control": true,
+  "replace": false,
+  "client": "my-preset",
+  "lease_seconds": 60
+}
+```
+
+- `cards`: `"<slot>=<card>"` (slot `auto`: the planner's choice) or `{"slot", "card", "options", "adapter", "replace"}`; planned as `POST /slots/{slot}/plug` plans a card, and the machine is created with the result.
+- `fast_tape: false` switches the features `fasttape` and `turbotape` off; a name in `features` wins.
+- `take_control`: the session is the caller's: send `control.session` as the `X-Unreal-Session` header (as after `POST /control/session`); `surface` / `peer` as there.
+- `replace: true` destroys every other instance once the new one is built (409 while another client's explicit session holds one).
+- `select: true` makes it the selected one (the one a GUI shows, the default of calls with no target); by default the selection is left alone.
+
+**Response 201** (plus the identity fields of a create):
+```json
+{
+  "ok": true,
+  "status": "created",
+  "text": "Preset machine 6f2c... ready: 48K (48 KB), RAM zero, paused at frame 0 t 3.\nCards: edge.1 = kempston.\n...",
+  "id": "6f2c...",
+  "model": "48K",
+  "ram_kb": 48,
+  "ram": "zero",
+  "cards": [{"slot": "edge.1", "card": "kempston", "asked": true}],
+  "features": {"asked": {"kempstonmouse": false}, "not_default": {"fasttape": false, "kempstonmouse": false, "turbotape": false}},
+  "muted": true,
+  "paused": true,
+  "fast_tape": false,
+  "control": {"held": true, "session": "0d3e...", "header": "X-Unreal-Session", "surface": "webapi", "client": "my-preset", "lease_seconds": 60},
+  "position": {"frame": 0, "t": 3, "pc": 0},
+  "replaced": [],
+  "instances": 1,
+  "state": "paused"
+}
+```
+
+**Response 400**: an unknown model, `ram` value, card, feature or argument, a malformed card; `message` names the valid values (also in `valid`). **Response 409**: the slot plan refused the cards (`message`, `plan`, `buses`), a feature cannot be switched, the session cannot be taken, `replace` met a held machine. In every case no instance is left behind and the existing ones are untouched.
+
 ### 5b. Machines by family
 **Endpoint**: `GET /api/v1/emulator/machines[?all=true][&id=<emulator>]`  
 **Description**: The machines grouped family -> machine -> RAM size (`MachineCatalog`), in menu order: the one tree
@@ -549,6 +601,8 @@ GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&co
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 GET /api/v1/emulator/{id}/debug/snapshot      One coherent debugger picture (?disasm=N lines from PC, ?stack=N words, ?memory=space:addr:len repeatable or comma-separated, at most 8): seq, cpu, state, pause {reason, serial (one more at every stop; time travel moves and edits leave it), breakpoint_id, address}, consistency (paused | frame | stopped), regs (= /registers), prev_regs (at the previous stop), pages[], stack, time {frame, t, frame_t, line, dot}, disasm[] (= /disasm lines), memory[] {space, address, length, base64}; 503 when no coherent moment came within 500 ms
 POST /api/v1/emulator/{id}/stepout | skip_until | steps | stepover | run_*   Run-control calls: 409 "Run-control held by <surface>" while another surface (GDB) holds the claim (every call that advances the CPU); the long ones run on a pool of 4 threads of their own, so the two HTTP workers keep answering meanwhile (same reply, sent when the call finishes)
+GET  /api/v1/emulator/{id}/debug/timeline      The GS debugger's twin timeline (?cpu=gs|ms, span= ±T around NOW (default 60), recent= blocks per lane (64, at most 512), density= ticks (50), client= lease owner (rest), lease_ms= (30000; 0 until released), arm=false reads without a lease, wait_ms= paused: the wait for a coherent moment (500, 0..500; 0: one try, 503 at once - a GUI client)): {available, state, armed, cpu, lanes, now {frame, t, gap_t, main_t, main_frame, card_units, card_cycle}, position, window, recent {main, gs|ms: [{frame, t|units, pc, kind, at, duration_t, duration_units?, open?, text}]}, next, markers [{lane, kind breakpoint|host_port|int|nmi|clock_change, at, ...}], density, revision, text, started_now?, leases?}; paused: the blocks at a coherent moment (503 when none within wait_ms); running: the density only (never a pause); 404 without a card CPU
+POST /api/v1/emulator/{id}/debug/timeline/arm  {"on": true|false, "client"?, "lease_ms"?} -> {armed, started_now, leases [{owner, left_ms}]}: take / renew or end a lease; the last release turns the histories it switched on back off
 GET  /api/v1/emulator/{id}/debug/pchist        PC history, newest first (?depth=, default 32, at most 1024): {armed, started_now, total, capacity, entries [{address, kind rom|ram|cache, page}]} - one entry per instruction the CPU starts with its window's page; the first read starts recording (it costs nothing until then); POST {"enabled": false|true} stops / restarts it empty; also GET /debug/snapshot?pchist=N
 GET  /api/v1/emulator/{id}/debug/wait          Long-poll (?since=seq, default the current one; ?timeout_ms=0..60000, default 10000): answers when the debugger snapshot's seq moves past since (a stop, a run start, a tool edit) or at the timeout -> {seq, changed, state, pause}; no server thread waits
 POST /api/v1/emulator/{id}/ports/out          A debugger's port write through the machine's decoder (body: {"port": "0x13AF", "value": "0x20"}, numbers or text 0x13AF / #13AF / 13AFh / decimal): every side effect of a CPU OUT (paging, TS-Conf registers, AY, border, a card's port), but no port or memory breakpoint fires, device waits are dropped and TTD keeps it as a tool edit; runs paused, stopped or between two frames of a running machine -> {port, value, moment: paused | stopped | frame}; 503 when no coherent moment came within 500 ms
@@ -1028,6 +1082,10 @@ GET      /api/v1/emulator/{id}/features          Every feature with its state in
 GET      /api/v1/emulator/{id}/feature/{name}    One feature (id or alias)
 PUT|POST /api/v1/emulator/{id}/feature/{name}    Enable/disable (body: {"enabled": true})
 ```
+
+The list carries `id`, `alias`, `enabled`, `description` and `mode` per feature. MCP: `emulator_manage` `features` /
+`feature` (`name`, `enabled`). The Kempston mouse (`kempstonmouse`, on by default) answers `#FADF` / `#FBDF` / `#FFDF`;
+`PUT /feature/kempstonmouse {"enabled": false}` frees those ports for a program that reads `#DF` itself.
 
 The features, their aliases and defaults are listed in [command-interface.md §5](./command-interface.md#5-feature-management--configuration). Time-travel debugging holds some features off: `fastdisk` while a recording runs, history is replayed, or the machine sits in history; `fasttape`, `turbotape` while history is replayed or the machine sits in history (the engine's recording keeps them: the tape trap is a recorded edit). A held feature reads as `enabled: false` in both GET routes. Enabling it answers **409 Conflict** (`{"error": "Conflict", "message": "Cannot enable 'turbomode' while TTD recording is active or history is being replayed"}`); an unknown feature answers 404 with `available_features`; a body without `enabled` answers 400. Disabling always succeeds.
 
@@ -1600,6 +1658,7 @@ Programmatic keyboard input injection for automation and testing.
 POST /api/v1/emulator/{id}/keyboard/tap         Tap key (press + auto-release)
 POST /api/v1/emulator/{id}/keyboard/press       Press and hold key
 POST /api/v1/emulator/{id}/keyboard/release     Release held key
+POST /api/v1/emulator/{id}/keyboard/set         The complete held-key state: {"keys": ["w","o"]} ([] releases all)
 POST /api/v1/emulator/{id}/keyboard/combo       Tap modifier+key combo (e.g., SS+P for quote)
 POST /api/v1/emulator/{id}/keyboard/macro       Execute predefined macro
 POST /api/v1/emulator/{id}/keyboard/type        Type text sequence
@@ -1639,6 +1698,19 @@ its own stays one key (`+`, the extended keyboard's plus), and a `+` where a nam
 or a comma does not separate keys. An unknown name is a 400 whose message says so: "Unknown key 'w o': a key is one
 name (a, enter, caps); keys held together are joined with '+' (w+o); a space or a comma does not separate keys. Use
 GET /api/v1/emulator/{id}/keyboard/keys for valid names".
+
+**Whole key state** (`/keyboard/set`): the keys given are held, every other injected key is released, in one call -
+a game's control state per step without a press and a release per key. `keys` is a list of names (an item may be a
+chord) or one text with the names joined by `+`; `[]` (or `""`, `"none"`) releases every injected key. A key that is
+already held stays down with no release in between; a pending tap / type sequence is dropped. Every name is checked
+first: an unknown name is a 400 ("Unknown key ...; Nothing changed") and nothing changes; 409 while a TTD replay or
+an RZX playback drives the input. The answer: `{success, keys: [names now held], count, message}`.
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/set \
+     -H "Content-Type: application/json" \
+     -d '{"keys": ["q", "p"]}'
+```
 
 **Type Text** (plain literal characters):
 ```bash
@@ -1932,6 +2004,9 @@ an echo of the input (`buttons`, `frames`, `requested_state`), the resulting `st
 when the guest cannot see the buttons, a `warning`. The state object (also the body of the GET, plus
 `emulator_id`): `available`, `present`, `wired` (this machine answers the joystick: its board, or the slot card
 `kempston`), `fit` (when not wired: the plug command that fits the `kempston` card here; `""` when wired or nothing fits),
+`port_decoded` (`IN #1F` reads the stick right now: fitted and wired), `port_source` (`board`, `card` or `""`),
+`kempston_mouse_feature` / `kempston_mouse_fitted` (the Kempston mouse shares the `#xxDF` address space: on, it answers
+`#FADF` / `#FBDF` / `#FFDF`), `ports_text` (those four as one sentence),
 `state` (the byte), `port_value` (what `IN #1F` returns now), `buttons` (a boolean per name),
 `pressed` (the names), `button_names`, `keys` (host key bindings), `pending_tap`
 (`{mask, frames_left}` or `null`).

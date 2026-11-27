@@ -64,6 +64,18 @@ print(string.format("PC = 0x%04X", cpu:get_pc()))
 
 The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**Preset machine** (a ready machine for a reproducible run in one call, `MachinePreset`;
+[command-interface.md, Preset machine](command-interface.md#preset-machine)):
+```lua
+local preset, why = machine_preset{model = "48K", cards = {"edge.1=kempston"}, features = {kempstonmouse = false}}
+if not preset then error(why) end        -- a refusal names the valid values; no instance is left behind
+print(preset.text)                       -- the effective settings, line by line
+print(preset.id, preset.paused, preset.position.frame, preset.cards[1].slot, preset.control.held)
+```
+Defaults: `ram = "zero"`, `muted = true`, `paused = true` (at power-on), `fast_tape = false`,
+`take_control = true` (this script's session, as `take_control()`), `replace = false`. The new machine becomes the
+selected one (a script with no bound instance works on it from then on).
+
 **ZX-Poly** (four synchronized instances of one model, through the same
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```lua
@@ -833,6 +845,13 @@ page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
 -- A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
 -- breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 ok, err = port_out(0x13AF, 0x20)            -- TS-Conf: RAM page #20 into window 3 -> true
+
+-- The GS debugger's twin timeline: main CPU and card CPU on one clock; the call takes the script's lease (until
+-- timeline_arm(false)) that arms the histories it reads, so blocks come once the machine ran armed
+tl = timeline({cpu = "gs", span = 200, recent = 32})  -- {state, armed, cpu, lanes, now {frame, t, gap_t}, recent {main, gs},
+                                                      --  next, markers, density, text}
+print(tl.text)                                         -- NOW, the gap, each lane's blocks (at, width T, PC, instruction)
+timeline_arm(false)                                    -- release (true[, lease_ms]: take it without a read)
 
 -- PC history: the newest instructions with their window's page; the first call starts recording
 h = pc_history(16)                          -- {armed, started_now, total, capacity, entries = {{address, kind, page}, ...}}

@@ -23,6 +23,79 @@
         "Unknown model / unsupported RAM / model not creatable on this build / ram_power_on not random or zero; "
         "body carries message, requested_model and available_models_endpoint";
 
+    // POST /api/v1/emulator/preset - a preset machine in one call (MachinePreset)
+    {
+        Json::Value& preset = paths["/api/v1/emulator/preset"]["post"];
+        preset["summary"] = "Create a preset machine in one call";
+        preset["description"] =
+            "Creates a machine for a reproducible run and answers when it is ready: the cards are in their slots (the "
+            "machine is created with them: no restart, nothing to poll), the features are set, the mixer's master is "
+            "muted, the machine is started and paused at power-on, before its first instruction, and the caller holds run control "
+            "(`control.session`: send it as the X-Unreal-Session header). The answer lists the effective settings, "
+            "read back from the machine, as fields and as `text`. Everything that needs no machine is checked first "
+            "(400 names the valid values); a refused slot plan, feature or session (409) removes the never-started "
+            "machine: no instance is left behind. The new machine becomes the selected one.";
+        preset["tags"].append("Emulator Control");
+        Json::Value& schema = preset["requestBody"]["content"]["application/json"]["schema"];
+        schema["type"] = "object";
+        schema["required"].append("model");
+        Json::Value& properties = schema["properties"];
+        properties["model"]["type"] = "string";
+        properties["model"]["description"] = "Model short name (see /api/v1/emulator/models); a ZX-Poly configuration is refused";
+        properties["ram"]["type"] = "string";
+        properties["ram"]["enum"].append("zero");
+        properties["ram"]["enum"].append("random");
+        properties["ram"]["default"] = "zero";
+        properties["ram"]["description"] = "RAM contents at creation (alias ram_power_on): zero = every RAM page reads 0";
+        properties["cards"]["type"] = "array";
+        properties["cards"]["description"] =
+            "Cards to fit: \"<slot>=<card>\" strings (\"edge.1=kempston\"; slot auto: the planner's choice) or objects "
+            "{slot, card, options, adapter, replace}. Planned as a slot plug is (replace allows the removals the plan "
+            "lists)";
+        properties["features"]["type"] = "object";
+        properties["features"]["description"] =
+            "Runtime features to set, {name: bool} by id or alias ({\"kempstonmouse\": false}); an unknown name is a 400";
+        properties["muted"]["type"] = "boolean";
+        properties["muted"]["default"] = true;
+        properties["muted"]["description"] = "Mute the mixer's master";
+        properties["paused"]["type"] = "boolean";
+        properties["paused"]["default"] = true;
+        properties["paused"]["description"] = "Started and paused at power-on, before the first instruction; false: running";
+        properties["fast_tape"]["type"] = "boolean";
+        properties["fast_tape"]["default"] = false;
+        properties["fast_tape"]["description"] =
+            "The tape accelerators: false switches features fasttape (the ROM LD-BYTES trap) and turbotape (turbo "
+            "while the tape plays) off, true both on; a name in features wins";
+        properties["take_control"]["type"] = "boolean";
+        properties["take_control"]["default"] = true;
+        properties["take_control"]["description"] = "Open the caller's run-control session on the new machine";
+        properties["replace"]["type"] = "boolean";
+        properties["replace"]["default"] = false;
+        properties["replace"]["description"] =
+            "Destroy every other instance once the new machine is built; refused (409) while another client's "
+            "explicit session holds one of them";
+        properties["select"]["type"] = "boolean";
+        properties["select"]["default"] = false;
+        properties["select"]["description"] =
+            "Make the new machine the selected one (the one a GUI shows, the default of calls with no target); "
+            "false leaves the selection alone";
+        properties["client"]["type"] = "string";
+        properties["client"]["description"] = "The session's client name, shown to the user";
+        properties["lease_seconds"]["type"] = "integer";
+        properties["lease_seconds"]["default"] = 60;
+        properties["lease_seconds"]["description"] = "The session's idle lease (0: none)";
+        preset["responses"]["201"]["description"] =
+            "The machine is ready: id, model, ram, cards [{slot, card, options, asked}], features {asked, "
+            "not_default}, muted, paused, fast_tape, control {held, session, header, surface, client, lease_seconds}, "
+            "position {frame, t}, replaced, instances, text, and the identity fields of a create";
+        preset["responses"]["400"]["description"] =
+            "Unknown model, ram value, card, feature or argument, a malformed card: message names the valid values "
+            "(also in `valid`); nothing was created";
+        preset["responses"]["409"]["description"] =
+            "The slot plan refused the cards (message, plan, buses), a feature cannot be switched, the session "
+            "cannot be taken, or replace met a held machine; no instance is left behind";
+    }
+
     // GET /api/v1/emulator/status
     paths["/api/v1/emulator/status"]["get"]["summary"] = "Get overall emulator status";
     paths["/api/v1/emulator/status"]["get"]["description"] =

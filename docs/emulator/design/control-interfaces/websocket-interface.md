@@ -204,6 +204,7 @@ same without a call.
 | `recording.state` | per instance `{available, enabled, recording, paused, mode, file, frames, duration_s, emulated_s, file_bytes, fps}` (`GET /api/v1/monitor/recording.state`) | none | implemented |
 | `debug.labels` | per instance `{total, sets [{id, title, enabled, symbols}]}` (`GET /api/v1/monitor/debug.labels`) | none | implemented |
 | `ttd.status` | per instance `{state, recording, history, frame, first, end, frames, checkpoints, memory_bytes, history_bytes, page_store_bytes, bookmarks, write_journal_records, input_events, evicted_checkpoints, evicted_to_disk_segments, evicted_to_disk_checkpoints, read_back_segments, read_back_bytes, read_back_loads, read_back_hits}`: the cursor's fields at the rate, the sizes refreshed every 2 s (`GET /api/v1/monitor/ttd.status`; the full status is `GET …/ttd/status`) | none | implemented |
+| `debug.timeline` | per instance the GS debugger's twin timeline, published state only: `{available, armed, state, revision, cpu, frame, density [the newest 10 frames]}` (`GET /api/v1/monitor/debug.timeline`); the paused detail is `GET /debug/timeline` (also a socket `call`) | none (at most 10 Hz) | implemented |
 | `debug.analyzers` | per instance the profilers' session states `{opcode, memory, calltrace, coverage {available, recording, instructions}, cpuprofile, pchist}` (`GET /api/v1/monitor/debug.analyzers`) | none | implemented |
 | `debug.markup` | per instance the [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) `{available, revision, runtime (facts, facts-physical, coverage, none), layers [{layer, source, claims, entries, comments}]}` lowest first (`GET /api/v1/monitor/debug.markup`); a new value on every layer change (a mark, a comment, a clear, a profile laid over) and every L2 build | none | implemented (2026-11-05) |
 | `controllers.state` | per instance `{connectors [{id, kind, device, plugged, fixed}], plugged}` (`GET /api/v1/monitor/controllers.state`) | none | implemented |
@@ -311,6 +312,9 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
 ← {"t":"debug.events","op":"event","event":"paused","reason":"breakpoint","breakpoint_id":3,"address":32773,"access":"execute","seq":12,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
 ```
 
+- A breakpoint's or a step's `paused` carries `positions`: both lanes at the stop, `[{cpu main, frame, t, pc,
+  elapsed_t?, total_t?, bus_cycle?, text?}, {cpu gs|ms, frame, units, cycle, clock_hz, units_per_t, pc, gap_t, now_t,
+  frame_end}]` (the card lanes fitted; [gs-debugger design §7.2](../../../inprogress/2026-09-27-gs-debugger/design.md#72-event-stream-a4)).
 - The fields of the old socket's `event`, with `t` instead of `topic` and `instance` beside `emulator`. `seq` is the
   same number the old socket sends (per instance, one numbering for both sockets).
 - Every instance's events; a client that wants one filters by `instance` (the old socket's `emulator` filter is

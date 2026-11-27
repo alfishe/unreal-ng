@@ -1757,6 +1757,16 @@ void Emulator::Start()
 
 void Emulator::StartAsync()
 {
+    StartAsyncWithPause(nullptr, {});
+}
+
+void Emulator::StartAsyncPaused(const execution::Requester& requester, const std::string& reason)
+{
+    StartAsyncWithPause(&requester, reason);
+}
+
+void Emulator::StartAsyncWithPause(const execution::Requester* pauseAs, const std::string& pauseReason)
+{
     // A removed instance never runs again (a late GUI start, a request in flight)
     if (_retiring.load())
     {
@@ -1779,6 +1789,9 @@ void Emulator::StartAsync()
     _arbiter.SubmitIntent(execution::Intent::Run, execution::Requester{execution::Origin::Lifecycle, {}},
                           execution::IntentOptions{"start", false});
     _startIntentSubmitted = true;
+    // StartAsyncPaused: the pause is in the queue behind the run before the loop can make its first park check
+    if (pauseAs != nullptr)
+        _arbiter.SubmitIntent(execution::Intent::Pause, *pauseAs, execution::IntentOptions{pauseReason, false});
 
     // Start new thread with name 'emulator-xxxxxxxxxxxx' (last 12 chars of UUID) and execute Start() method from it
     // The short ID matches the shared memory naming convention for consistency
@@ -1963,6 +1976,9 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
     {
         // The stop's cause, for LastStop() and the broadcast: a breakpoint (OnBreakpointHit set it just before, on
         // this same thread) or a request
+        // A breakpoint's or step's stop comes on the emulation thread, the machine still: both lanes as they stand
+        if (_pendingPauseCause.hit || _pendingPauseCause.step)
+            _pendingPauseCause.positions = StopPositionsNow();
         std::lock_guard<std::mutex> lock(_prevStopMutex);
         _lastStop.reason = _pendingPauseCause.hit    ? DebugStop::Reason::Breakpoint
                            : _pendingPauseCause.step ? DebugStop::Reason::Step
@@ -2046,6 +2062,7 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
             payload->main = cause.main;
+            payload->positions = cause.positions;
         }
         else if (cause.step)
         {
@@ -2054,6 +2071,7 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
             payload->main = cause.main;
+            payload->positions = cause.positions;
         }
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
         return;
@@ -3277,7 +3295,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
             return false;
 
         if (!_directStop.hit)
-            _directStop = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}};
+            _directStop = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}, {}};
         if (kind == BreakpointHitKind::Execute)
         {
             _stoppedAtExecBreakpoint = true;
@@ -3297,7 +3315,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
         _stoppedAtExecBreakpoint = true;
         _stoppedAtExecPc = address;
     }
-    _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}};
+    _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}, {}};
     NoteBreakpointCallbacks(breakpointId, address, kind);
     Pause();
     _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
@@ -3317,7 +3335,7 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
 {
     const BreakpointSnapshot bp = breakpoints.GetBreakpointById(breakpointId);
     const bool hidden = bp && bp->hidden;
-    const BreakpointStop stop{true, breakpointId, address, kind, cpu, cpuPc, false, {}};
+    const BreakpointStop stop{true, breakpointId, address, kind, cpu, cpuPc, false, {}, {}};
     auto post = [&]() {
         auto* payload = new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden);
         payload->kind = kind;
@@ -3386,6 +3404,47 @@ MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
     position.onBoundary = _context->pDebugManager->CatchingUp();
     FillInstructionProgress(position);
     return position;
+}
+
+StopPositions Emulator::StopPositionsNow() const
+{
+    StopPositions positions;
+    Z80* z80 = _core ? _core->GetZ80() : nullptr;
+    if (!z80 || !_context)
+        return positions;
+    positions.known = true;
+    positions.frame = _context->emulatorState.frame_counter;
+    positions.mainT = z80->t;
+    positions.mainPc = z80->pc;
+    positions.frameT = _context->GetFrameTStates();
+    const DebugCpuId cards[2] = {DebugCpuId::GS, DebugCpuId::MultiSoundGS};
+    for (size_t i = 0; i < 2; i++)
+    {
+        GSCardTarget* target = _context->pDebugManager ? _context->pDebugManager->GetCardTarget(cards[i]) : nullptr;
+        GeneralSoundCard* card = target ? target->Card() : nullptr;
+        if (!card || card->cardUnitsPerSecond() <= 0.0)
+            continue;
+        CardLanePosition& lane = positions.cards[i];
+        lane.known = true;
+        lane.frameEnd = card->inFrameEndCatchUp();
+        Z80CpuRegisters regs{};
+        if (card->cardRegisters(regs))
+            lane.pc = regs.pc;
+        lane.units = card->cardFrameTime();
+        lane.cycle = card->cardCycles(lane.units);
+        lane.clockHz = card->cardCpuClockHz();
+        lane.unitsPerT = GSHostClock::unitsPerZxTact(_context, card->cardUnitsPerSecond());
+        if (lane.unitsPerT <= 0.0)
+            continue;
+        // In the frame-end catch-up main is past the frame end (its T wrapped, the frame counter names the next
+        // frame): the card's moment is in the frame before, main's T counted from that frame's start
+        if (lane.frameEnd)
+            lane.gapT = static_cast<double>(z80->t) + static_cast<double>(_context->GetFrameTStates()) -
+                        static_cast<double>(lane.units) / lane.unitsPerT;
+        else
+            lane.gapT = static_cast<double>(card->hostLead()) / lane.unitsPerT;
+    }
+    return positions;
 }
 
 void Emulator::FillInstructionProgress(MainPosition& position) const

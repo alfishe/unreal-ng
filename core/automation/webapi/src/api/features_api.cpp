@@ -71,6 +71,12 @@ void EmulatorAPI::getFeatures(const HttpRequestPtr& req, std::function<void(cons
             feature["mode"] = f.mode;
         }
 
+        // The short name the feature also answers to (kempstonmouse: kmouse)
+        if (!f.alias.empty())
+        {
+            feature["alias"] = f.alias;
+        }
+
         features.append(feature);
     }
 

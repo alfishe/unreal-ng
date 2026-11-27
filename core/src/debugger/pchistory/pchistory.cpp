@@ -2,6 +2,7 @@
 #include "emulator/readoutschanged.h"
 
 #include <algorithm>
+#include <string>
 
 #include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
@@ -37,17 +38,24 @@ void PcHistory::Clear()
     _total = 0;
 }
 
-void PcHistory::Record(uint16_t address)
+void PcHistory::Record(uint16_t address, uint32_t t)
 {
     const MemoryPageDescriptor where = _context->pMemory->MapZ80AddressToPhysicalPage(address);
     if (_exec.On() && !_context->ttdReplayActive)
-        _exec->PushFast(ExecRecord{ _context->emulatorState.frame_counter, address, static_cast<uint8_t>(where.mode),
-                                    static_cast<uint8_t>(where.page) });
+        _exec->PushFast(ExecRecord{ static_cast<uint32_t>(_context->emulatorState.frame_counter), t, address,
+                                    static_cast<uint8_t>(where.mode), static_cast<uint8_t>(where.page), 0 });
     if (!_armed)
         return;
     _ring[_next] = Entry{address, static_cast<uint8_t>(where.mode), where.page};
     _next = (_next + 1) % kCapacity;
     ++_total;
+}
+
+void PcHistory::RecordInterrupt(bool nmi, uint16_t address, uint32_t t)
+{
+    if (_exec.On() && !_context->ttdReplayActive)
+        _exec->PushFast(ExecRecord{ static_cast<uint32_t>(_context->emulatorState.frame_counter), t, address,
+                                    nmi ? ExecRecord::kNmi : ExecRecord::kInt, 0, 0 });
 }
 
 std::vector<PcHistory::Entry> PcHistory::Newest(size_t depth) const
@@ -86,7 +94,7 @@ StateNode PcHistory::ReportNow(size_t depth)
     return node;
 }
 
-PcHistory::Result PcHistory::Report(Emulator* emulator, size_t depth)
+PcHistory::Result PcHistory::Report(Emulator* emulator, size_t depth, uint32_t waitMs)
 {
     Result result;
     EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
@@ -97,11 +105,12 @@ PcHistory::Result PcHistory::Report(Emulator* emulator, size_t depth)
     }
     PcHistory& history = *context->pDebugManager->GetPcHistory();
     const Emulator::CoherentMoment where =
-        emulator->RunAtCoherentMoment([&]() { result.report = history.ReportNow(depth); }, 500);
+        emulator->RunAtCoherentMoment([&]() { result.report = history.ReportNow(depth); }, waitMs);
     if (where == Emulator::CoherentMoment::Busy)
     {
         result.busy = true;
-        result.error = "no coherent moment within 500 ms (the emulator is stepping or changing state); try again";
+        result.error = "no coherent moment within " + std::to_string(waitMs) +
+                       " ms (the emulator is stepping or changing state); try again";
     }
     return result;
 }

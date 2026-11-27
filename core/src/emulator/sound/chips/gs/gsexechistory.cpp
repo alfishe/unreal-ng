@@ -8,22 +8,36 @@
 
 #include "emulator/emulatorcontext.h"
 
-void GeneralSoundCard::pushExecStep(uint16_t pc)
+void GeneralSoundCard::beginExecRun(int64_t now)
+{
+    // The records' `t` counts from the card's frame start; in the frame-end catch-up the frame counter already names
+    // the next frame while the card still runs the one before
+    _runFrameBase = now - cardFrameTime();
+    const uint64_t frame = _execContext ? _execContext->emulatorState.frame_counter : 0;
+    _runFrame = static_cast<uint32_t>(frame - (inFrameEndCatchUp() && frame ? 1 : 0));
+}
+
+void GeneralSoundCard::pushExecStep(uint16_t pc, int64_t now)
 {
     if (_execContext && _execContext->ttdReplayActive)
         return;
     const CardPage page = mapCardAddress(pc);
-    _execHistory->PushFast(ExecRecord{ _execContext ? _execContext->emulatorState.frame_counter : 0, pc,
-                                       static_cast<uint8_t>(page.kind), page.page });
+    _execHistory->PushFast(ExecRecord{ _runFrame, execT(now), pc, static_cast<uint8_t>(page.kind), page.page, 0 });
 }
 
-void GeneralSoundCard::recordExecIdle(uint16_t head, uint64_t iterations)
+void GeneralSoundCard::pushExecEvent(uint8_t kind, uint16_t pc, int64_t at, uint8_t page, uint32_t idle)
 {
-    if (!execRecording())
+    if (_execContext && _execContext->ttdReplayActive)
+        return;
+    _execHistory->PushFast(ExecRecord{ _runFrame, execT(at), pc, kind, page, idle });
+}
+
+void GeneralSoundCard::recordExecIdle(uint16_t head, uint64_t iterations, int64_t start)
+{
+    if (!_runExec || !execRecording())
         return;
     const CardPage page = mapCardAddress(head);
-    _execHistory->PushFast(ExecRecord{ _execContext ? _execContext->emulatorState.frame_counter : 0, head,
-                                       static_cast<uint8_t>(page.kind), page.page,
+    _execHistory->PushFast(ExecRecord{ _runFrame, execT(start), head, static_cast<uint8_t>(page.kind), page.page,
                                        static_cast<uint32_t>(std::min<uint64_t>(iterations, UINT32_MAX)) });
 }
 
