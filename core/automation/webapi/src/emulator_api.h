@@ -2687,3 +2687,8 @@ std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex);
 
 }  // namespace v1
 }  // namespace api
+
+// The route table (initPathRouting: every ADD_METHOD_TO above) and drogon's binders for each method are instantiated
+// once, in emulator_api.cpp. Without this every file of the controller compiled them all again: three quarters of
+// each file's build time, thrown away by the linker
+extern template class drogon::HttpController<api::v1::EmulatorAPI, true>;

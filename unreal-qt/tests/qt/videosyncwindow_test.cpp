@@ -258,3 +258,24 @@ TEST(VideoSyncWindow_Test, TheBoxSaysTheSettingNotTheStep)
     window.refresh();
     EXPECT_FALSE(box->isChecked());
 }
+
+// An information window keeps its active colors when it is not the active window: on macOS the inactive Highlight is
+// gray, and the "Steady" pill and the frames graph went gray while the owner watched the emulator window beside it.
+// Again after a palette change (a theme switch)
+TEST(VideoSyncWindow_Test, InactiveLooksLikeActive)
+{
+    const QPalette before = QApplication::palette();
+    QPalette themed = before;
+    themed.setColor(QPalette::Active, QPalette::Highlight, QColor(10, 100, 250));
+    themed.setColor(QPalette::Inactive, QPalette::Highlight, QColor(128, 128, 128));
+    QApplication::setPalette(themed);
+    WindowDisplaySettings now = Quiet();
+    VideoSyncWindow window([&now]() { return now; });
+    EXPECT_EQ(window.palette().color(QPalette::Inactive, QPalette::Highlight), QColor(10, 100, 250));
+    QPalette dark = window.palette();
+    dark.setColor(QPalette::Active, QPalette::Highlight, QColor(200, 50, 50));
+    dark.setColor(QPalette::Inactive, QPalette::Highlight, QColor(60, 60, 60));
+    window.setPalette(dark);
+    EXPECT_EQ(window.palette().color(QPalette::Inactive, QPalette::Highlight), QColor(200, 50, 50));
+    QApplication::setPalette(before);
+}
