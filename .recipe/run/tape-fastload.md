@@ -15,13 +15,14 @@ Model: whatever the program wants (`48K` for classic titles).
 
 ```text
 load_software      {"path":"scratch/game.tap","play":true}   # mount + start playback in one shot
-invoke_api        {"method":"GET","path":"/api/v1/emulator/{id}/tape"}   # fast_load plan + block estimate
+invoke_api        {"method":"GET","path":"/api/v1/emulator/{id}/tape"}   # fast_load plan + block estimate (the answer is in the text too)
 invoke_api        {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"LOAD \"\""}}
 invoke_api        {"method":"POST","path":"/api/v1/emulator/{id}/tape/seek","body":{"block":17}}
 inspect_state     {"aspects":["screen_ocr","screen_digest"]}   # loaded? intro rendering?
 ```
 
-If `LOAD ""` has not been entered yet, type it before (or right after)
+The text of `load_software` with `play` carries the play answer (below): what the deck did and why. If
+`LOAD ""` has not been entered yet, type it before (or right after)
 `load_software {"play":true}` — playback alone does nothing without the
 loading command (see pitfalls). `load_software {"path":...,"autostart":true}`
 does both: it plays the tape and types `LOAD ""` (leaving a 128K menu for
@@ -92,7 +93,14 @@ The answer is the deck after the call: `result` (`started`, `resumed`, `already_
 `playing`, and `reason` when it does not play. The deck follows the loader: a loader that listens starts the tape by
 itself, and a tape with no loader listening is paused again by the watchdog (`GET /tape` then reads
 `"reason": "loader_quiet"` or `"parked"`). A play while the tape plays changes nothing. On a 48K a TZX `$2A` block
-stops the tape (`"reason": "stop_48k"`); the next play or the loader's next read goes on with the next block.
+stops the tape (`"reason": "stop_48k"`); the next play or the loader's next read goes on with the next block. In
+128K mode the `$2A` is passed. `mode_48k`, `skipped_blocks` and `block` (index, kind, name, bytes) say where the
+deck stands.
+
+**Do not send play in the middle of a load "to be sure".** The loader starts the tape by itself as soon as it
+listens. A play on a playing tape answers `already_playing` and changes nothing (it used to restart the block in
+flight from its pilot, which broke the load). A play with no loader listening starts the tape, and the watchdog
+pauses it again 2 to 100 frames later: the answer's text says so, and `GET /tape` gives the `reason` afterwards.
 
 Or let the MCP `load_software` tool do Steps 0–3 in one shot:
 
@@ -143,6 +151,9 @@ Use `GET .../tape/blocks/{index}` to identify which block is which (headers
 carry the program name in `.name`).
 
 ## Custom loaders (the `fast_load` reject reasons)
+
+The ROM trap takes the next block with a signal: control entries between blocks (a TZX `$2A`, a `$20` pause 0, a
+flow entry) no longer make it decline, so a tape with them still fast-loads its standard blocks.
 
 Blocks with `fast_load != "yes"` carry a reason (custom loader detected,
 non-standard pulse train...). Those play through the beeper in real time —

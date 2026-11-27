@@ -7,8 +7,9 @@ reverse-continue). It works, and the answers reproduce across two independent re
 query costs too much, though. This folder holds the fixes.
 
 **Status 2026-10-31: done.** Phase 1 (items 1-6) and phase 2 (blocks B-F, item 7 as block F) have landed. Deferred
-by design, each waiting for a measurement that asks for it: the clone pool of POC 038 ([phase-2-plan.md](phase-2-plan.md#why-no-clone-pool-now))
-and incremental consecutive seeks (memory known across operations, phase 2 block B).
+by design, waiting for a measurement that asks for it: incremental consecutive seeks (memory known across
+operations, phase 2 block B). The clone pool of POC 038, deferred with it, was dropped 2026-11-27 after the check in
+[replay-queries-2026-11-27.md](replay-queries-2026-11-27.md) ([phase-2-plan.md](phase-2-plan.md#why-no-clone-pool)).
 
 Order (owner, 2026-10-28):
 
@@ -16,7 +17,7 @@ Order (owner, 2026-10-28):
 2. **Phase 2:** a replay query engine ("replay a window with observers, collect every hit"). This phase starts
    only after phase 1 has landed. It needs a POC in `tools/poc/`, A/B benchmarks and a quality check.
    Plan (owner, 2026-10-28, after POCs 038 and 040): [phase-2-plan.md](phase-2-plan.md). Fast in-place replay,
-   HALT idle while TTD records, the round-2 feedback; the clone pool is deferred.
+   HALT idle while TTD records, the round-2 feedback; the clone pool was not built (dropped 2026-11-27).
 
 No phase 1 change touches the recording hot path. Every change is opt-in or fixes a wrong value, so existing
 clients keep their answers (QR-8).

@@ -188,17 +188,19 @@ handler converts it with `std::stoul` and is not guarded: unconfirmed what the c
 [ttd-recording.md](ttd-recording.md) records the machine as it runs. Notes from the handlers:
 
 - Scrubbing (seek, step-back, step-forward) pauses first and leaves the machine paused;
-  during `recording` those return 409. `step` / `run_frames` are not among the guarded
-  calls in the handlers above, so they run while recording is on: the direct run
-  moves the machine ahead without a pause event of its own (unconfirmed what the journal
-  holds after a long direct run: record, then verify with `ttd/position` before relying on it).
+  during `recording` it pauses the recording (`recording_paused: true`, everything up to that
+  instant is kept) and answers. `step` / `run_frames` run while recording is on and are
+  recorded like any other run: a stepped recording is the usual way to make a reproducible one
+  ([ttd-gameplay-automation.md](ttd-gameplay-automation.md)).
 - `skip_until` states it plainly: frames rendered during the skip are not captured by the
   recording subsystem (raw CPU stepping). Do not use it inside a recording you intend to
   replay frame by frame.
 - Prefer `run_frames` over wall-clock waiting when a deterministic point is needed; it is
   the unit TTD seeks in too (`ttd/seek` takes a frame and an optional T-state).
-- Loading media wipes the TTD history (MCP instructions), so run to the target state first,
-  then start recording.
+- A media load while recording is an event of the recording; on a stopped session it drops
+  the history, and a snapshot load or a reset ends the session and keeps its history
+  ([ttd-recording.md](ttd-recording.md#pitfalls)). Run to the target state first, then start
+  recording.
 
 ## Pitfalls
 

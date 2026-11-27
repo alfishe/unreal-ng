@@ -51,9 +51,12 @@ time_travel {"action":"bookmark_delete","label":"before-crash"}
 # save / load
 time_travel {"action":"dump","path":"scratch/session-001.ttd"}
 time_travel {"action":"load","path":"scratch/session-001.ttd"} # same model only; idle afterwards → seek
+time_travel {"action":"dump","path":"scratch/session-001.ttd","async":true}   # a long session: → Job 12 at once
+jobs        {"action":"wait","job":12,"wait_ms":60000}         # its end (long-poll); action "status" / "cancel"
 
 # coverage
 time_travel {"action":"coverage_summary","kind":"executed"}    # activity heatmap buckets
+time_travel {"action":"coverage_rare","kind":"executed","max_frames":3}   # code that ran in at most 3 frames
 
 # does the replay reproduce the recording (each frame replayed, compared with the next checkpoint; the machine stays)
 time_travel {"action":"replay_check"}                          # the whole history; "from_frame"/"to_frame", "stride"
@@ -193,8 +196,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/invalidate" | jq '.state'
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \
   -H 'Content-Type: application/json' -d '{"bytes": 4294967296}' | jq
 
-# From a past point (after a seek/step, state "detached"): truncate the
-# future there and continue recording. Refused (resumed:false) from "idle".
+# From a past point (after a seek/step, state "detached"): continue recording
+# there. Before the end of the active branch a new branch forks at that point
+# and the old future stays on its parent (GET /ttd/branches). Refused
+# (resumed:false) from "idle".
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'
 ```
 
@@ -310,6 +315,27 @@ A failed dump answers with the real reason (`reason`: `io` 409 with the system's
 507 only for a full disk, `too_large` 500) and removes its `<path>.partial` file (`partial_removed`). Long sessions
 need no splitting: streams over the 1 GiB record limit are chunked.
 
+### Long verbs as jobs
+
+A dump or a load of a long session, `probe-frames`, `memory-series`, `find-event`, `replay-check`, `export-clip`,
+`journal-build` and `branch-create` can outlast a client's HTTP timeout. With `async` the call answers the job's id
+at once (HTTP 202) and the work runs in the emulator; wait for its end with a long-poll, not a `sleep` loop:
+
+```bash
+JOB=$(curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/dump" -H 'Content-Type: application/json' \
+      -d '{"path": "scratch/session-001.ttd", "async": true}' | jq -r .job)
+curl -s "$BASE/jobs/$JOB?wait_ms=60000" | jq '{state, error, text}'    # up to 60000 ms a call; repeat while not ended
+curl -s "$BASE/emulator/$EMU_ID/jobs" | jq '.jobs[] | {job, kind, state}'   # this instance's jobs
+curl -s -X DELETE "$BASE/jobs/$JOB"                                    # cancel
+```
+
+States: `queued`, `running`, `done`, `failed`, `cancelled`. The TTD jobs of one instance run one after another.
+`probe-frames`, `memory-series` and `journal-build` stop on a cancel with what they got; the others answer 409.
+MCP: `async: true` on `time_travel` `dump` / `load` / `probe_frames` / `memory_series` / `journal_build` /
+`export_clip`, then `jobs {"action":"wait","job":N}`; the other long verbs through `jobs {"action":"start",...}`.
+CLI: `jobs start ttd dump path=...`, `jobs wait 12`. Lua / Python: `emu.jobs(...)`. Without `async` every verb
+answers as before. Reference: [jobs.md](../../docs/emulator/design/control-interfaces/jobs.md).
+
 The path is opened by the **emulator process** (relative paths resolve
 against its working directory). A load only succeeds into an instance of
 the same model the session was recorded on; otherwise it answers 400 with
@@ -358,7 +384,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `registers` (`af` `bc` `de` `hl` `ix` `iy` `sp`) at the IN / OUT instruction and `stack_top` (the word at SP:
   the caller's return address when the key routine pushed nothing) - replayed, the machine put back.
 - `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
-  optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
+  optional `chunk` (frames per chunk). It is synchronous (`"async": true` runs it as a [job](#long-verbs-as-jobs)),
+  pauses the emulator, and is refused while recording.
   The same export on the other surfaces: MCP `time_travel` action `export_clip` (`from_frame`, `to_frame`,
   `path`, `chunk`), CLI `ttd export-clip <from> <to> <dir> [--chunk N]`, Lua `ttd_export_clip(from, to, dir)`,
   Python `emu.ttd_export_clip(from_frame, to_frame, path)`.
@@ -367,9 +394,11 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
 
 With the coverage index enabled you get per-frame executed/written/read
 bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
-`coverage_scan` / `coverage_summary` or the WebAPI trio
-`GET /ttd/coverage/{probe,scan,summary}` (parameters in
-[ttd-reverse-debugging.md](ttd-reverse-debugging.md)).
+`coverage_scan` / `coverage_rare` / `coverage_summary` or the WebAPI routes
+`GET /ttd/coverage/{probe,scan,rare,summary}` (parameters in
+[ttd-reverse-debugging.md](ttd-reverse-debugging.md)). "When did each
+instruction first / last run" over the whole recording, or over several
+recordings, is the L1 analysis ([reverse-engineering.md](reverse-engineering.md)).
 
 ## Pitfalls
 

@@ -1,12 +1,12 @@
 # TTD analysis feedback: phase 2 plan
 
 Owner decision 2026-10-28. Phase 2 makes window questions fast on the user's own machine; the clone pool of
-POC 038 is deferred. Facts behind the plan:
+POC 038 was deferred then and dropped 2026-11-27. Facts behind the plan:
 [POC 038](../../../tools/poc/038-ttd-replay-query-engine/README.md) (clones: exact, 0.22 ms a frame, linear to 16)
 and [POC 040](../../../tools/poc/040-ttd-inplace-replay-profile/README.md) (where today's in-place replay spends its
 time, and what a recording costs).
 
-## Why no clone pool now
+## Why no clone pool
 
 After blocks B and C a window replays on the user's machine at about the speed of a debug-mode frame (0.3-0.8 ms):
 50,000 frames (about 17 minutes of play) in 15-40 s. Most questions do not replay at all:
@@ -19,10 +19,13 @@ What still needs a full replay: reads with their PC (fonts, tables), probes on r
 would answer those 8x faster and without holding the machine, at the cost of the largest block of the phase
 (pool, queue, jobs on six planes, 35-77 MB a clone). That is horizontal scaling for batch analysis.
 
-Next steps if measurements on real agent questions ask for it, in this order:
-
-1. one background clone (the user's machine is not held; no parallelism);
-2. the pool of POC 038's [proposal](../../../tools/poc/038-ttd-replay-query-engine/proposal.md), for batch work.
+Dropped 2026-11-27 (owner), after the check in [replay-queries-2026-11-27.md](replay-queries-2026-11-27.md): the
+background instance that exists since (the L1 build's and the access trace's `AnalysisInstance`) replays a window no
+faster than the machine does in place (773 against 691 µs a frame), making a clone costs 70-380 ms against the
+2.5-40 ms of one query, and a long window runs as a job that no longer blocks the reads of the state. Neither the
+one background clone nor the pool of POC 038's [proposal](../../../tools/poc/038-ttd-replay-query-engine/proposal.md)
+is planned. What the check found instead (two window verbs that are no jobs, two store reads that pause the
+machine) is in the TTD index's open tasks.
 
 ## Blocks
 
@@ -117,8 +120,9 @@ halted CPU reads nothing. POC 040, thread CPU time: continuous replay W1 426 →
 `HaltLoopPentagonTtdReplayWithInput` (keys pressed and released inside halted stretches; fails with the input limit
 removed).
 
-Not in this block: a separate TTD-only memory path (a third memory interface beside fast and debug). The CPU's
-debug work costs nothing measurable, and such a path saves part of 41-60 µs a frame at most.
+No separate TTD-only memory path (a third memory interface beside fast and debug) was built, and none will be
+(owner 2026-11-27): the CPU's debug work costs nothing measurable, and such a path would save part of 41-60 µs a
+frame at most.
 
 ### D. Game-analysis feedback, round 2
 

@@ -10,6 +10,7 @@ Code places are in this repository at the state of `github/master` on 2026-11-12
 Evidence paths name files in R, relative to its root, as plain text (for example games/chuckie-egg/work/stage2/NOTES.md).
 Code paths name files in this repository as `path:line`.
 "Still present" means the code place was read on 2026-11-12.
+"Outcome" lines and the last column of the §6 table were added on 2026-11-27: what was done about the item since (details in [TODO.md](TODO.md)). The findings themselves are left as written.
 Nothing was built or run for this analysis.
 A claim marked **unverified** comes from the agents' notes only, or from reading code without a reproduction.
 
@@ -76,6 +77,8 @@ Only `corpus.run_frames` splits its runs (`tools/verification/analysis/corpus.py
 
 **Still present.** Yes.
 
+**Outcome (2026-11-27).** Done 2026-11-19 (`c3ab886b3`): a count over the limit is refused, the answer carries `frames_run`, `frame`, `t`, `stop`.
+
 - `core/automation/webapi/src/api/debug_api.cpp:759`: `if (count > 10000) count = 10000; // Safety limit`.
   The REST answer reports `count` 10000, but no client reads it.
 - `core/automation/mcp/src/mcp-tools.cpp:2115-2119` builds the text from the requested number: "Ran 31000 frame(s)."
@@ -115,6 +118,8 @@ Agents distrust replays and re-record.
 
 **Still present.** Yes, by code reading.
 
+**Outcome (2026-11-27).** Done 2026-11-19 (`c3ab886b3`): runs aim at an absolute frame boundary, split-independent.
+
 - `core/src/emulator/emulator.cpp:3381-3423`, `Emulator::RunNFrames`, builds `TStateRunBudget::Frames(z80._frameLimit, frames)` relative to the T-state where the call starts (`core/src/emulator/tstaterunbudget.h`).
 - Each call stops after the instruction that crosses its budget.
   The overshoot is dropped: `_hasFrameStepTarget = false`.
@@ -149,6 +154,8 @@ The longest recordings cannot be kept.
 Work is split by the tool's limit, not by the game; every case since keeps recordings under about 100 000 frames.
 
 **Still present.** Yes, the message.
+
+**Outcome (2026-11-27).** Done 2026-11-16 (`d71ac0900`): the real reason (`io` / `no_space` / `too_large` / `session`), streams over 1 GiB chunked.
 
 - `core/src/debugger/ttd/engine/ttdsessionfile.cpp:443-449` maps every `false` from `AddRecord` / `EndPart` to the disk-full text.
 - `core/src/debugger/ttd/engine/ttdcontainer.cpp:150`, `WriteRecord`, also returns `false` when `storedSize > UINT32_MAX` or `rawSize > kMaxRawSize`.
@@ -190,6 +197,8 @@ Without analysis on them, agents write and keep about 1 700 lines of RZX tools (
 
 **Still present.** Yes.
 
+**Outcome (2026-11-27).** Open (waits for RZX and TTD interop, PLAN #27 R5).
+
 - `core/src/debugger/analyzers/analysis/analysisinstance.cpp:114-185` (`Make`) creates a fresh emulator and loads no RZX into it.
 - `core/src/debugger/ttd/ttdmachineperipherals.cpp:139-146` registers `RzxTtdState` only when `LoadedRzxSession()` exists.
 - The session holds an RZX playback state blob (84 bytes, with a fingerprint of the recording; `core/src/emulator/rzx/rzxttdstate.h`).
@@ -227,6 +236,8 @@ Multi-load games stop at their second load; each case finds its own workaround.
 
 **Still present.** Probably; the cause is **unverified**.
 
+**Outcome (2026-11-27).** Done 2026-11-27 (`17cc9e78f`, `5552cbf03`). The cause was not the one guessed: a play on a playing tape rewound the block in flight. Now a play leaves a playing tape alone, TZX `$2A` stops in 48K mode only, the play answer reports state and reason, the ROM trap passes control entries.
+
 - `core/src/loaders/tape/loader_tzx.cpp:1387-1399` turns `$2A` into an inert Control block (`playable=false`, no pulses): "inert in v1 (no machine check here)".
 - `$20` pause 0 continues past (`loader_tzx.cpp:1298-1318`).
 - The loader watchdog `handleFrameEnd` (`core/src/emulator/io/tape/tape.cpp:813-857`) parks at the next block, or pauses playback after `TAPE_*_HOLD_FRAMES` frames without loader reads.
@@ -259,6 +270,8 @@ The agent dropped the verb and searched by stepping.
 
 **Still present.** Probably; **unverified** (code reading, not reproduced).
 
+**Outcome (2026-11-27).** Done 2026-11-19 (`ac1ddd256`): reproduced; every index candidate is replayed, misses counted in `index_rejected`.
+
 - `core/src/debugger/ttd/ttdcontrollerfindevent.cpp:832-900`: the coverage-index path adds a sentinel hit with time `{frame, 0}` and no text once `k >= limit`.
   It also drops frames where the `runIn` probe misses.
 - Lines 347-353 cut the list to `limit`, which can leave sentinels in the answer and drop real hits.
@@ -289,6 +302,8 @@ The GS side of GS games is studied through workarounds (gs_session.py, 589 lines
 
 **Still present.** **Unverified** (not checked in code).
 
+**Outcome (2026-11-27).** Open.
+
 **Proposal.**
 Check the history writer for the COMRG read value; check the SZX writer for NeoGS and GS blocks; fix and add tests.
 
@@ -304,6 +319,8 @@ The history cannot be read while it records; frames after a snapshot load cannot
 
 **Still present.** **Unverified**.
 
+**Outcome (2026-11-27).** Verified 2026-11-24: no fault, no change (the histories are read while they record; a snapshot load restarts the machine's frame counter by design).
+
 **Proposal.**
 Flush on read (or on every frame end for the disk mode); keep the emulator's frame counter in the records, not a per-history counter.
 
@@ -318,6 +335,8 @@ games/switchblade/work/stage2/NOTES.md (the L1 roots section, near line 589).
 A false entry point in the code map; the agent has to explain it away.
 
 **Still present.** **Unverified**.
+
+**Outcome (2026-11-27).** Done 2026-11-24 (`2683ddc69`): verified present, the entry kind is `resume` unless the first PC is the reset vector.
 
 **Proposal.**
 Mark the first PC of a session that starts from a snapshot as `resume`, not `root`.
@@ -347,6 +366,8 @@ Every case that studies a variable over time wrote its own sampler.
 Tens of thousands of HTTP calls per study, hex text, and hours per series.
 
 **Still present.** Yes.
+
+**Outcome (2026-11-27).** Done 2026-11-19 (`9b6e49897`): verb `memory-series`.
 
 - `POST /ttd/memory-at` reads at most 65 536 bytes at one frame, as hex (`core/automation/webapi/src/api/ttd_api.cpp:609-623`; MCP `mcp-tools.cpp:6022`).
 - `probe-frames` takes at most 16 probes with pagination (`ttd_api.cpp:674-716`).
@@ -385,6 +406,8 @@ Zynaps GS: the GS bot died on a urllib timeout near frame 3500.
 Lost runs, and sleep-poll loops in every client.
 
 **Still present.** Yes.
+
+**Outcome (2026-11-27).** Done 2026-11-23 (`c86776e1c`): `async=true` on the long verbs, the `jobs` verbs, a long-poll.
 
 - `tools/verification/mcp/mcplib.py:76`: RPC timeout 120 s.
 - The MCP bridge receive timeout is 300 s (`mcp/bridge/src/mini-http.cpp:343-357`).
@@ -427,6 +450,8 @@ Thousands of calls per recording, F1 / F2 exposure on every one, and runs that a
 `run_until` and watches (#117) cover "run until X", but not "play this script".
 `mm_session.py` has a client-side player (`Player.run`), which is F1-exposed.
 
+**Outcome (2026-11-27).** Open (waits for the owner's choice of the runner: Lua + C or WASM).
+
 **Proposal.**
 A server-side script player: `POST /input/script`, MCP `input action=play_script`.
 
@@ -458,6 +483,8 @@ Short windows only; repeated recording.
 
 **Still present.** **Unverified** (filters not checked in the history code).
 
+**Outcome (2026-11-27).** Done 2026-11-27 (`7f2e66962`, `f8832f6a2`): record-time `filter` of the device histories, `filter` of MCP `analyze_performance porttrace`, the access trace filter `kinds` / `pc` / `addresses`; the machine port trace was event-only with filters already.
+
 **Proposal.**
 Filters at record time: CPU side (host / GS), port set, address set.
 An event-only trace mode (port writes and reads with frame and PC, no instruction stream) for sound studies.
@@ -481,6 +508,8 @@ l1merge.py in 8 copies (346 lines), for example under games/switchblade/tools/ a
 Each case re-implements the merge; the merged numbers are not checked by anyone.
 
 **Still present.** Yes; analysis builds over one session.
+
+**Outcome (2026-11-27).** Done 2026-11-25 (`96aea1d42`): `analysis build sessions=<list>`.
 
 **Proposal.**
 `analysis build` takes `sessions: [...]`, or `POST /analysis/merge` takes built analysis ids.
@@ -507,6 +536,8 @@ A figure script per case, and wrong screens when the flip is mid-frame.
 **Still present.** Yes.
 The `time_travel` actions (`core/automation/mcp/src/mcp-tools.cpp:5686-5694`) have no screen-at-frame.
 Live `inspect_state` has `screen_image` / `screen_attributes` with a choice of screen 0 / 1 (`mcp-tools.cpp:2699`).
+
+**Outcome (2026-11-27).** Done 2026-11-19 (`9b6e49897`): verb `screen-at`.
 
 **Proposal.**
 `time_travel action=screen_at frame=F`, `GET /ttd/screen-at`:
@@ -539,6 +570,8 @@ About 170 lines per case, and per-case differences that make runs not comparable
 
 **Still present.** Yes.
 
+**Outcome (2026-11-27).** Done 2026-11-26 (`df5cd5b79`) as the verb `preset` (created beside the existing instances, selected only with `select=true`) and `keys set`.
+
 **Proposal.**
 `emulator_manage action=lab` (`POST /emulator/lab`):
 
@@ -557,6 +590,8 @@ games/zynaps-gs/work/stage1/NOTES.md, lines 108-127 (used `memory_counters` inst
 
 **Still present.** Hit counters are part of PLAN #6 (slice 1f), not landed.
 
+**Outcome (2026-11-27).** Done 2026-11-19 (`ac1ddd256`, Qt `2362bc50c`): counting breakpoints with a per-hit record.
+
 **Proposal.**
 A counting breakpoint mode (`action: count`) that keeps the count and a bounded list of `{frame, t}` per hit.
 Deliver it with PLAN #6.
@@ -569,6 +604,8 @@ Deliver it with PLAN #6.
 games/nether-earth-gs/work/stage2/NOTES-trd.md, lines 75-90.
 
 **Still present.** **Unverified** in code; PLAN #111 plans first / last frame for L0.
+
+**Outcome (2026-11-27).** Done 2026-11-24 / 25 (`2683ddc69` first / last frame per instruction, `96aea1d42` `ignore_readers`).
 
 **Proposal.**
 First and last frame per instruction in L1.
@@ -584,6 +621,8 @@ games/nether-earth-gs/work/stage1/NOTES.md, lines 76-92.
 **Proposal.**
 A GS state verb: the GS CPU registers, the firmware's channel and sample tables, decoded.
 Combine with F7.
+
+**Outcome (2026-11-27).** Open.
 
 **Priority / size.** P3, M.
 
@@ -601,6 +640,8 @@ With five cases run in parallel (2026-11-12) the lead hands out port bases by ha
 - games/tujad/work/docs/tjB-NOTES.md, line 22.
 
 **Still present.** Yes; `mcplib.launch` refuses a taken port (`tools/verification/mcp/mcplib.py:248-254`).
+
+**Outcome (2026-11-27).** Done 2026-11-25 (`96aea1d42`, launch scripts `5aeaf906a`): `--port-base auto`, `--ports-file`.
 
 **Proposal.**
 `--port-base auto`: the app binds free ports and writes them to a ports file (`--ports-file path`).
@@ -626,6 +667,8 @@ The answer was a bare "Unknown action".
 **Still present.** Yes.
 `core/automation/mcp/src/mcp-tools.cpp:804, 2172, 5032` answer "Unknown action '...'" with no list.
 `slots_remove` exists since b7802d012 (2026-10-05; `mcp-tools.cpp:161`).
+
+**Outcome (2026-11-27).** Done 2026-11-25 (`96aea1d42`): the valid values and the nearest one in every MCP tool's refusal.
 
 **Proposal.**
 Every unknown action, parameter value and route answers with the valid ones and the nearest match ("did you mean `slots_remove`").
@@ -653,6 +696,8 @@ The Kempston stick could not drive the game: with menu option 4 (Kempston) the g
 A stage of recordings built on a workaround, and play through the stick not possible.
 
 **Still present.** The capability exists; it is not discoverable.
+
+**Outcome (2026-11-27).** Done 2026-11-26 (`df5cd5b79`): MCP `emulator_manage` `features` / `feature`, the joystick status reports the port decode and the Kempston mouse; the Bumpy retry is reverse-cases work.
 
 - The mouse can be switched off per instance: feature `kempstonmouse` (alias `kmouse`), `PUT /api/v1/emulator/{id}/feature/kempstonmouse` with `{"enabled": false}`.
   - Route: `core/automation/webapi/src/emulator_api.h:240`; handler `core/automation/webapi/src/api/features_api.cpp:166-210` (the body needs `enabled`).
@@ -692,6 +737,8 @@ games/chuckie-egg/work/stage2/faults_clock.out.
 `GET /registers` gives only `special.t` (`core/src/debugger/snapshot/debugsnapshot.cpp:61`).
 The frame is in `GET /debug/snapshot` (`debugsnapshot.cpp:347`, `time.frame`), `GET /frame_cost` and `GET /video/beam`.
 
+**Outcome (2026-11-27).** Done (`c3ab886b3` run answers, `2683ddc69` `special.frame` in `/registers`).
+
 **Proposal.**
 `frame` next to `t` in `/registers` and in every run answer (the F1 answer).
 
@@ -703,6 +750,8 @@ The frame is in `GET /debug/snapshot` (`debugsnapshot.cpp:347`, `time.frame`), `
 games/battle-command/work/docs/bcD-NOTES.md.
 
 **Still present.** Yes; the route reads the newest checkpoint at or before the frame and returns an `exact` flag (`ttd_api.cpp:609-623`).
+
+**Outcome (2026-11-27).** Done 2026-11-19 (`9b6e49897`): `moment`, `at_tinframe`, `moment_text`.
 
 **Proposal.**
 The answer states the moment in words: "state at the start of frame F (before its first instruction)", plus `frame`, `t` and `exact`.
@@ -716,6 +765,8 @@ The tool description says the same.
 games/advanced-nether-earth/work/stage3/NOTES.md, lines 185-188 (script frame + 1602).
 
 **Still present.** Yes; `capture.json` has `load_frames`, but the script frame offset is not written (`tools/verification/analysis/re_session.py:117, 171`).
+
+**Outcome (2026-11-27).** Done 2026-11-24 (`2683ddc69`): `script_start_frame`, `scripts[]`.
 
 **Proposal.**
 `capture.json` gets `script_start_frame` (the TTD frame of script frame 0) and the input script itself.
@@ -737,6 +788,8 @@ Earlier SS / symbol-shift name problems are fixed.
 Names are fixed (74739a0df, 2026-11-05; `tools/verification/analysis/mm_session.py:35`; `debugkeyboardmanager.cpp:1017-1019`).
 The error at `hostactions.cpp:230` still does not mention the separator.
 
+**Outcome (2026-11-27).** Done 2026-11-25 (`96aea1d42`, `5aeaf906a`): `+` joins keys held together on every plane, the refusal says how keys are written.
+
 **Proposal.**
 The error names the separator and gives an example ("keys are separated by spaces: `W O`").
 Accept `+` as a chord separator.
@@ -749,6 +802,8 @@ Accept `+` as a chord separator.
 games/switchblade/tools/rec_rzx.py (5 000-frame chunks to reach `FROM`).
 
 **Still present.** The verb exists: `POST /rzx/seek` (`core/automation/webapi/src/api/rzx_api.cpp:240-253`, since 4516abfa5, 2026-09-29), MCP `rzx_playback action=seek` (`mcp-tools.cpp:7797, 7861`).
+
+**Outcome (2026-11-27).** Open.
 
 **Proposal.**
 Mention seek in the `rzx_playback` description and in `.recipe/media/play-rzx.md` as the way to a start frame.
@@ -766,6 +821,8 @@ games/nether-earth-editor/work/edB/NOTES.md, lines 4-5.
 
 **Still present.** **Unverified** whether a capability call exists (PLAN #9 plans one).
 
+**Outcome (2026-11-27).** Done 2026-11-24 (`2683ddc69`): the tool list is checked at launch (`mcplib.launch(..., needs=)`); a capabilities route stays with PLAN #9.
+
 **Proposal.**
 `mcplib.launch` and `re_session` check the tool list (or a capabilities route, #9) against what they need and refuse with "this binary has no `analysis`; build current master".
 
@@ -780,38 +837,39 @@ games/nether-earth-editor/work/edB/NOTES.md, lines 4-5.
 
 ## 6. Summary
 
-| # | Item | Group | Priority | Size | Still present |
-|:--|:--|:--|:--|:--|:--|
-| F1 | `run_frames` silent 10 000 clamp, MCP text wrong; same for `/steps`, `run_tstates` | Fault | P1 | S | Yes |
-| F2 | Split-dependent T-state drift in `RunNFrames` | Fault | P1 | M | Yes (code) |
-| F3 | TTD dump: "disk full" for every failure; records over 1 GiB | Fault | P1 | M | Yes (message); cause unverified |
-| F4 | Analysis refuses sessions recorded during RZX playback | Fault | P1 | M | Yes |
-| S1 | Memory series verb (frames range, several ranges, changes only) | Slow path | P1 | M | Yes |
-| F5 | Tape play after `$2A` / pause does not move; play answer has no state | Fault | P2 | M | Probably; cause unverified |
-| F6 | `find_event` exec sentinel hits, missed hits | Fault | P2 | S | Probably (code reading) |
-| S2 | Job model / long-poll for long verbs | Slow path | P2 | M | Yes |
-| S3 | Server-side input script player with frame-exact events and recording | Slow path | P2 | M | Yes |
-| V1 | L1 over several sessions | Verb | P2 | M | Yes |
-| V2 | Screen as shown at a past frame | Verb | P2 | S | Yes |
-| V3 | Lab machine preset in one call; `keys set` | Verb | P2 | M | Yes |
-| E1 | Unknown action lists valid ones, "did you mean" | Ergonomics | P2 | S | Yes |
-| E2 | Bumpy: mouse on `$DF`; features in MCP; mouse / Kempston discoverability | Ergonomics | P2 | S | Capability exists, not discoverable |
-| F7 | GS COMRG value 0; NeoGS not in SZX | Fault | P3 | M | Unverified |
-| F8 | Port history buffered until off; frame counter reset on load | Fault | P3 | S | Unverified |
-| F9 | L1 false `root` at a snapshot's first PC | Fault | P3 | S | Unverified |
-| S4 | History / trace filters, event-only trace | Slow path | P3 | M | Unverified |
-| V4 | Counting breakpoints with per-hit frames (with PLAN #6) | Verb | P3 | M | Yes |
-| V5 | L1 first / last frame per instruction; reader-PC filter | Verb | P3 | S | Unverified |
-| V6 | GS firmware state view | Verb | P3 | M | Unverified |
-| V7 | `--port-base auto` and a ports file | Verb | P3 | S | Yes |
-| E3 | `frame` in `/registers` and run answers | Ergonomics | P3 | S | Yes |
-| E4 | `memory_at` states the moment it read | Ergonomics | P3 | S | Yes |
-| E5 | `capture.json` writes the script start frame | Ergonomics | P3 | S | Yes |
-| E6 | Key script error explains the separator | Ergonomics | P3 | S | Partly |
-| E7 | RZX seek discoverability | Ergonomics | P3 | S | Verb exists |
-| E8 | Capability check before a session | Ergonomics | P3 | S | Unverified |
+| # | Item | Group | Priority | Size | Still present (2026-11-12) | Outcome (2026-11-27) |
+|:--|:--|:--|:--|:--|:--|:--|
+| F1 | `run_frames` silent 10 000 clamp, MCP text wrong; same for `/steps`, `run_tstates` | Fault | P1 | S | Yes | done 2026-11-19 (`c3ab886b3`) |
+| F2 | Split-dependent T-state drift in `RunNFrames` | Fault | P1 | M | Yes (code) | done 2026-11-19 (`c3ab886b3`) |
+| F3 | TTD dump: "disk full" for every failure; records over 1 GiB | Fault | P1 | M | Yes (message); cause unverified | done 2026-11-16 (`d71ac0900`) |
+| F4 | Analysis refuses sessions recorded during RZX playback | Fault | P1 | M | Yes | open (waits for RZX and TTD interop, PLAN #27 R5) |
+| S1 | Memory series verb (frames range, several ranges, changes only) | Slow path | P1 | M | Yes | done 2026-11-19 (`9b6e49897`) |
+| F5 | Tape play after `$2A` / pause does not move; play answer has no state | Fault | P2 | M | Probably; cause unverified | done 2026-11-27 (`17cc9e78f`, `5552cbf03`) |
+| F6 | `find_event` exec sentinel hits, missed hits | Fault | P2 | S | Probably (code reading) | done 2026-11-19 (`ac1ddd256`) |
+| S2 | Job model / long-poll for long verbs | Slow path | P2 | M | Yes | done 2026-11-23 (`c86776e1c`) |
+| S3 | Server-side input script player with frame-exact events and recording | Slow path | P2 | M | Yes | open (waits for the owner's choice of the runner) |
+| V1 | L1 over several sessions | Verb | P2 | M | Yes | done 2026-11-25 (`96aea1d42`) |
+| V2 | Screen as shown at a past frame | Verb | P2 | S | Yes | done 2026-11-19 (`9b6e49897`) |
+| V3 | Lab machine preset in one call; `keys set` | Verb | P2 | M | Yes | done 2026-11-26 (`df5cd5b79`) as the verb `preset` (created beside the existing instances, selected only with `select=true`) and `keys set` |
+| E1 | Unknown action lists valid ones, "did you mean" | Ergonomics | P2 | S | Yes | done 2026-11-25 (`96aea1d42`) |
+| E2 | Bumpy: mouse on `$DF`; features in MCP; mouse / Kempston discoverability | Ergonomics | P2 | S | Capability exists, not discoverable | done 2026-11-26 (`df5cd5b79`) |
+| F7 | GS COMRG value 0; NeoGS not in SZX | Fault | P3 | M | Unverified | open |
+| F8 | Port history buffered until off; frame counter reset on load | Fault | P3 | S | Unverified | verified 2026-11-24: no fault, no change |
+| F9 | L1 false `root` at a snapshot's first PC | Fault | P3 | S | Unverified | done 2026-11-24 (`2683ddc69`) |
+| S4 | History / trace filters, event-only trace | Slow path | P3 | M | Unverified | done 2026-11-27 (`7f2e66962`, `f8832f6a2`) |
+| V4 | Counting breakpoints with per-hit frames (with PLAN #6) | Verb | P3 | M | Yes | done 2026-11-19 (`ac1ddd256`, Qt `2362bc50c`) |
+| V5 | L1 first / last frame per instruction; reader-PC filter | Verb | P3 | S | Unverified | done 2026-11-24 / 25 (`2683ddc69` first / last frame per instruction, `96aea1d42` `ignore_readers`) |
+| V6 | GS firmware state view | Verb | P3 | M | Unverified | open |
+| V7 | `--port-base auto` and a ports file | Verb | P3 | S | Yes | done 2026-11-25 (`96aea1d42`, launch scripts `5aeaf906a`) |
+| E3 | `frame` in `/registers` and run answers | Ergonomics | P3 | S | Yes | done (`c3ab886b3` run answers, `2683ddc69` `special.frame` in `/registers`) |
+| E4 | `memory_at` states the moment it read | Ergonomics | P3 | S | Yes | done 2026-11-19 (`9b6e49897`) |
+| E5 | `capture.json` writes the script start frame | Ergonomics | P3 | S | Yes | done 2026-11-24 (`2683ddc69`) |
+| E6 | Key script error explains the separator | Ergonomics | P3 | S | Partly | done 2026-11-25 (`96aea1d42`, `5aeaf906a`) |
+| E7 | RZX seek discoverability | Ergonomics | P3 | S | Verb exists | open |
+| E8 | Capability check before a session | Ergonomics | P3 | S | Unverified | done 2026-11-24 (`2683ddc69`) |
 
 In total: 28 items (5 P1, 9 P2, 14 P3).
+On 2026-11-27: 23 done or closed, 5 open (F4, S3, F7, V6, E7).
 F1 and E3 share the run answer; S2 carries S1 and S3 when they run long; E2 feeds V3.
 
 ## 7. Review (2026-11-12)
@@ -823,3 +881,6 @@ The lead re-read these code places against `github/master` and confirmed them:
 - E2: the feature route `emulator_api.h:240` exists.
 
 The **unverified** marks stand: F5-F9, S4, V5, E8 need a reproduction before work starts.
+
+Since then (2026-11-27) each was reproduced or checked before its work: F5, F6, F9 reproduced and fixed, F8 found
+to be no fault, S4 and V5 found partly there and completed, E8 done at launch; F7 is still unverified and open.
