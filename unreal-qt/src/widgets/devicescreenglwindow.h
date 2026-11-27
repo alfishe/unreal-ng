@@ -167,16 +167,18 @@ public:
     /// takeRecordingPictures gives them, about a frame later. Off: the pending reads and the target go
     void setRecordingCapture(bool enabled, int pictureHeight = 0);
     /// The file's frame for the GPU to compose (before setRecordingCapture; off with it): on macOS under GL each
-    /// capture is the whole frame drawn into the hardware encoder's own buffer, no copy through the CPU. Elsewhere
-    /// (Vulkan, Linux, Windows) the captures stay pictures read back
+    /// capture is the whole frame drawn into the hardware encoder's own buffer, no copy through the CPU. With
+    /// `nv12` (any backend) each capture is the picture converted to NV12 in its place, read back at 1.5 bytes a
+    /// pixel. Else the captures stay pictures read back
     void setRecordingFrame(const RecordingFrameLayout& layout);
     /// The recording pictures captured and not taken yet, oldest first, appended to `out`: a picture read back
     /// (B,G,R,A bytes: Format_ARGB32, top row first) or a frame the GPU composed, with its emulated frame number (0:
     /// not known); none when the window presented no new frame (hidden, minimized) or the capture is off
     void takeRecordingPictures(std::vector<RecordingPicture>& out);
-    /// A recording picture drawn now and read at once, the frame due (the window presents nothing: hidden,
-    /// minimized); the capture must be on. False: no GPU picture
-    bool grabRecordingPicture(QImage& out, uint64_t& frame);
+    /// A recording picture drawn now and taken at once, the frame due (the window presents nothing: hidden,
+    /// minimized, occluded): the frame composed by the GPU as the captures are (setRecordingFrame), else the picture
+    /// read back; the capture must be on. False: no GPU picture
+    bool grabRecordingPicture(RecordingPicture& out);
     bool recordingCaptureOn() const { return _recordCapture; }
 
     void setCRTEffectsEnabled(bool enabled);
@@ -337,6 +339,8 @@ private:
     gpu::Texture* _frameTarget = nullptr;  ///< Vulkan: what paintGL draws into (the presenter's texture, an image's)
     std::unique_ptr<gpu::Texture> _hudTexture;  ///< Vulkan: the HUD painted on the CPU, over the picture
     std::unique_ptr<gpu::Program> _hudProgram;
+    std::unique_ptr<gpu::Program> _recordCopyProgram;  ///< the recording's picture into the encoder's frame (macOS)
+    std::unique_ptr<gpu::Program> _recordNv12Program;  ///< the recording's picture as NV12 (packRecordingNv12)
     QImage _hudImage;
     std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
     bool _glInitialized = false;
@@ -510,6 +514,10 @@ private:
     /// The drawn picture (`rect` of _recordTarget, GL rows) composed by the GPU into a frame of the file
     /// (setRecordingFrame) in `slot`. False: not this way (no layout, not GL, not macOS)
     bool composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot);
+    /// The drawn picture as NV12 at the frame's place (RecordingFrameLayout::nv12) into _recordNv12: a texel holds
+    /// four Y or two U,V bytes, so its rows read back are the NV12 bytes. `image`: the picture's size as
+    /// RecordingPicture carries it. False: not this way (the picture read as it is)
+    bool packRecordingNv12(const gpu::Rect& rect, const QSize& kept, QSize& image);
     RecordingFrameLayout _recordFrame;
 #ifdef __APPLE__
     std::unique_ptr<RecordingSurfaces> _recordSurfaces;
@@ -517,6 +525,8 @@ private:
     bool _recordCapture = false;
     int _recordHeight = 0;
     std::unique_ptr<gpu::Texture> _recordTarget;  ///< kept from picture to picture (a new one each time cost 0.1 ms)
+    std::unique_ptr<gpu::Texture> _recordScaled;  ///< the picture in blocks, then scaled smooth (macOS compose)
+    std::unique_ptr<gpu::Texture> _recordNv12;    ///< the picture as NV12 bytes in RGBA8 texels (packRecordingNv12)
     /// The frame itself while smooth motion shows a picture between two frames: the recording has one picture per
     /// emulated frame, labelled with its number (a picture between N and N+1 put the border's change a frame early)
     std::unique_ptr<gpu::Texture> _recordSource;
@@ -528,6 +538,7 @@ private:
         int slot = 0;
         QSize size;
         uint64_t frame = 0;  ///< the emulated frame shown (0: not known)
+        bool nv12 = false;   ///< the read is _recordNv12's (`size`: the NV12 image's)
 #ifdef __APPLE__
         RecordingSurfaces::Pending composed;  ///< a frame the GPU composes (else a read in the slot)
 #endif

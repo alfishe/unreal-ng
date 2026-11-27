@@ -158,6 +158,57 @@ void main() {
 }
 )";
 
+/// The window recording's picture into the encoder's frame (macOS: composeRecordingFrame), as it is
+[[maybe_unused]] const char* const kRecordCopyFragment = R"(
+#version 330
+uniform sampler2D source;
+in vec2 texCoord;
+out vec4 color;
+void main() {
+    color = texture(source, texCoord);
+}
+)";
+
+/// The window recording's picture as NV12 bytes (packRecordingNv12): the target's texel (col, row) holds the Y of
+/// pixels 4 col .. 4 col + 3 of row `row` (row < height), else U,V of chroma columns 2 col and 2 col + 1 of chroma
+/// row `row - height`. FrameScaler::PackedToNv12's integer arithmetic (BT.709, limited range, the chroma of a 2x2
+/// block's average): a picture sampled texel for texel gives its bytes
+const char* const kRecordNv12Fragment = R"(
+#version 330
+uniform sampler2D source;
+uniform vec2 origin;      // the texture coordinate of the place's top left corner
+uniform vec2 stepPx;      // per pixel of the place
+uniform ivec4 inside;     // the picture in the place: x0, y0, x1, y1 (pixels, rows from the top)
+uniform ivec3 background; // 0..255
+uniform int height;       // the place's rows
+out vec4 color;
+ivec3 Pixel(int x, int y) {
+    if (x < inside.x || y < inside.y || x >= inside.z || y >= inside.w)
+        return background;
+    return ivec3(texture(source, origin + (vec2(x, y) + 0.5) * stepPx).rgb * 255.0 + 0.5);
+}
+float Luma(ivec3 p) {
+    return float(clamp(((47 * p.r + 157 * p.g + 16 * p.b + 128) >> 8) + 16, 0, 255)) / 255.0;
+}
+vec2 Chroma(int cx, int cy) {
+    ivec3 s = (Pixel(cx, cy) + Pixel(cx + 1, cy) + Pixel(cx, cy + 1) + Pixel(cx + 1, cy + 1)) >> 2;
+    int u = ((112 * s.b - 26 * s.r - 86 * s.g + 128) >> 8) + 128;
+    int v = ((112 * s.r - 102 * s.g - 10 * s.b + 128) >> 8) + 128;
+    return vec2(float(clamp(u, 0, 255)), float(clamp(v, 0, 255))) / 255.0;
+}
+void main() {
+    int col = int(gl_FragCoord.x);
+    int row = int(gl_FragCoord.y);
+    if (row < height) {
+        int x = col * 4;
+        color = vec4(Luma(Pixel(x, row)), Luma(Pixel(x + 1, row)), Luma(Pixel(x + 2, row)), Luma(Pixel(x + 3, row)));
+    } else {
+        int cy = (row - height) * 2;
+        color = vec4(Chroma(col * 4, cy), Chroma(col * 4 + 2, cy));
+    }
+}
+)";
+
 // The last probe (the GUI thread): -1 none yet, 0 no GPU, 1 a hardware one; the renderer it saw
 std::atomic<int> gGpuProbe{-1};
 QString gGpuRenderer;
@@ -317,6 +368,8 @@ void DeviceScreenGLWindow::releaseGLObjects()
     _gpuTimes.Release(false);
     _hudTexture.reset();
     _hudProgram.reset();
+    _recordCopyProgram.reset();
+    _recordNv12Program.reset();
     _frameTarget = nullptr;
     dropPresenter();  // its GL objects in this context; Vulkan: its swapchain, before the device and the surface
     _gpu.reset();
@@ -2035,6 +2088,8 @@ void DeviceScreenGLWindow::setRecordingCapture(bool enabled, int pictureHeight)
         if (!enabled)
         {
             _recordTarget.reset();  // a GL texture goes with its context current
+            _recordScaled.reset();
+            _recordNv12.reset();
             _recordSource.reset();
 #ifdef __APPLE__
             if (_recordSurfaces)
@@ -2055,7 +2110,7 @@ void DeviceScreenGLWindow::setRecordingFrame(const RecordingFrameLayout& layout)
 void DeviceScreenGLWindow::dropCapture(PendingCapture& capture)
 {
 #ifdef __APPLE__
-    if (_recordSurfaces && capture.composed.slot >= 0)
+    if (_recordSurfaces && capture.composed.pixelBuffer)
         _recordSurfaces->Drop(capture.composed);
 #endif
     (void)capture;  // a read in a slot is simply started again over
@@ -2064,42 +2119,105 @@ void DeviceScreenGLWindow::dropCapture(PendingCapture& capture)
 bool DeviceScreenGLWindow::composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot)
 {
 #ifdef __APPLE__
-    static_assert(RecordingSurfaces::kSlots == gpu::Device::kReadSlots, "one capture per read slot");
-    if (_recordFrame.size.isEmpty() || !_gpu || _gpu->GetBackend() != gpu::Device::Backend::GL || !_recordTarget)
+    if (_recordFrame.size.isEmpty() || _recordFrame.nv12 || !_gpu || _gpu->GetBackend() != gpu::Device::Backend::GL ||
+        !_recordTarget)
         return false;
     if (!_recordSurfaces)
         _recordSurfaces = std::make_unique<RecordingSurfaces>();
     if (!_recordSurfaces->Configure(_recordFrame.size.width(), _recordFrame.size.height()))
         return false;
-    // The picture where the CPU way puts it (WindowRecorder::Writer::composeInto): a few pixels off its place,
-    // centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept
+    // The picture where the CPU way puts it (WindowRecorder::Writer::composeInto): in scale x scale blocks; a few
+    // pixels off its place, centered as it is (the extra edge cut); else scaled into the place's corner, its aspect
+    // kept
+    const int scale = std::clamp(_recordFrame.scale, 1, 4);
+    const QSize picture = kept * scale;
     const QRect place = _recordFrame.screenRect;
-    QRect from(QPoint(0, 0), kept);  // rows from the top
+    QRect from(QPoint(0, 0), picture);  // the picture's pixels, rows from the top
     QRect to;
     bool linear = false;
-    if (std::abs(kept.width() - place.width()) <= 4 && std::abs(kept.height() - place.height()) <= 4)
+    if (std::abs(picture.width() - place.width()) <= 4 && std::abs(picture.height() - place.height()) <= 4)
     {
-        const int left = place.x() + (place.width() - kept.width()) / 2;
-        const int top = place.y() + (place.height() - kept.height()) / 2;
-        to = QRect(left, top, kept.width(), kept.height()).intersected(QRect(QPoint(0, 0), _recordFrame.size));
+        const int left = place.x() + (place.width() - picture.width()) / 2;
+        const int top = place.y() + (place.height() - picture.height()) / 2;
+        to = QRect(left, top, picture.width(), picture.height()).intersected(QRect(QPoint(0, 0), _recordFrame.size));
         from = QRect(to.x() - left, to.y() - top, to.width(), to.height());
     }
     else
     {
-        to = QRect(place.topLeft(), kept.scaled(place.size(), Qt::KeepAspectRatio));
+        to = QRect(place.topLeft(), picture.scaled(place.size(), Qt::KeepAspectRatio));
         linear = true;
     }
     if (to.isEmpty() || from.isEmpty())
         return false;
-    const int fromGl[4] = {rect.x + from.x(), rect.y + kept.height() - from.y() - from.height(), from.width(),
-                           from.height()};
-    const int toRows[4] = {to.x(), to.y(), to.width(), to.height()};
+    if (!_recordCopyProgram)
+    {
+        std::string log;
+        _recordCopyProgram = _gpu->CreateProgram(CRT_VERTEX_SHADER, kRecordCopyFragment, log);
+        if (!_recordCopyProgram)
+        {
+            qWarning() << "DeviceScreenGLWindow: the recording copy program failed:" << QString::fromStdString(log);
+            return false;
+        }
+    }
+    auto& gl = static_cast<gpu::GlDevice&>(*_gpu);
+    // The source: the drawn picture, a texel per `scale` pixels (a nearest draw makes the blocks); scaled smooth too,
+    // the blocks are made first (the CPU way's order: the CRT mask stays sharp, then the whole is scaled)
+    gpu::Texture* source = _recordTarget.get();
+    gpu::Rect sourceRect = rect;
+    int sourceScale = scale;
+    if (linear && scale > 1)
+    {
+        if (!_recordScaled || _recordScaled->Width() != picture.width() || _recordScaled->Height() != picture.height())
+            _recordScaled = _gpu->CreateTexture(picture.width(), picture.height(), gpu::Format::RGBA8);
+        if (!_recordScaled)
+            return false;
+        const float w = static_cast<float>(_recordTarget->Width());
+        const float h = static_cast<float>(_recordTarget->Height());
+        _recordCopyProgram->SetTexture("source", _recordTarget.get(), {});
+        // Texture to texture, GL rows both: the quad's top corners (texRect.xy) take the source's top rows
+        _recordCopyProgram->SetFloat4("texRect", static_cast<float>(rect.x) / w,
+                                      static_cast<float>(rect.y + rect.height) / h,
+                                      static_cast<float>(rect.x + rect.width) / w, static_cast<float>(rect.y) / h);
+        gpu::DrawState state;
+        state.viewport = {0, 0, picture.width(), picture.height()};
+        gl.Draw(*_recordCopyProgram, *_recordScaled, state);
+        _recordCopyProgram->SetTexture("source", nullptr);
+        source = _recordScaled.get();
+        sourceRect = {0, 0, picture.width(), picture.height()};
+        sourceScale = 1;
+    }
+    // `from` in the source's GL rows (from the bottom), as texture coordinates. The frame's GL row r is its row r
+    // from the top: the quad's top corners (texRect.xy) land on the frame's lower rows, so they take the picture's
+    // lower rows; the picture comes out the right way up
+    const float sourceW = static_cast<float>(source->Width() * sourceScale);
+    const float sourceH = static_cast<float>(source->Height() * sourceScale);
+    const float originX = static_cast<float>(sourceRect.x * sourceScale);
+    const float originY = static_cast<float>(sourceRect.y * sourceScale);
+    const float x0 = (originX + static_cast<float>(from.x())) / sourceW;
+    const float x1 = (originX + static_cast<float>(from.x() + from.width())) / sourceW;
+    const float y0 = (originY + static_cast<float>(picture.height() - from.y() - from.height())) / sourceH;
+    const float y1 = (originY + static_cast<float>(picture.height() - from.y())) / sourceH;
     const QColor color = _recordFrame.background;
     const float background[3] = {static_cast<float>(color.redF()), static_cast<float>(color.greenF()),
                                  static_cast<float>(color.blueF())};
+    const int frameW = _recordFrame.size.width();
+    const int frameH = _recordFrame.size.height();
+    const auto draw = [&](unsigned framebuffer) {
+        std::unique_ptr<gpu::Texture> frame = gl.WrapFramebuffer(framebuffer, frameW, frameH);
+        if (!frame)
+            return false;
+        gpu::Sampler sampler;
+        sampler.filter = linear ? gpu::Filter::Linear : gpu::Filter::Nearest;
+        _recordCopyProgram->SetTexture("source", source, sampler);
+        _recordCopyProgram->SetFloat4("texRect", x0, y0, x1, y1);
+        gpu::DrawState state;
+        state.viewport = {to.x(), to.y(), to.width(), to.height()};
+        gl.Draw(*_recordCopyProgram, *frame, state);
+        _recordCopyProgram->SetTexture("source", nullptr);
+        return true;
+    };
     PendingCapture capture;
-    if (!_recordSurfaces->Compose(slot, static_cast<gpu::GlDevice&>(*_gpu).FramebufferId(*_recordTarget), fromGl,
-                                  toRows, linear, background, capture.composed))
+    if (!_recordSurfaces->Compose(background, draw, capture.composed))
         return false;
     capture.slot = slot;
     capture.size = kept;
@@ -2112,6 +2230,85 @@ bool DeviceScreenGLWindow::composeRecordingFrame(const gpu::Rect& rect, const QS
     (void)slot;
     return false;
 #endif
+}
+
+bool DeviceScreenGLWindow::packRecordingNv12(const gpu::Rect& rect, const QSize& kept, QSize& image)
+{
+    if (!_recordFrame.nv12 || _recordFrame.size.isEmpty() || !_gpu || !_recordTarget || kept.isEmpty())
+        return false;
+    const QRect place = _recordFrame.screenRect;
+    if (place.isEmpty() || ((place.width() | place.height()) & 1) != 0)
+        return false;
+    // The picture where the CPU way puts it in its place (composeNv12 / composeInto): in scale x scale blocks; a few
+    // pixels off, centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept (not
+    // in blocks: that stays the CPU's)
+    const int scale = std::clamp(_recordFrame.scale, 1, 4);
+    const QSize picture = kept * scale;
+    const float w = static_cast<float>(_recordTarget->Width());
+    const float h = static_cast<float>(_recordTarget->Height());
+    // A pixel of the picture (from its top left) is (rect.x + px / sx, rect.y + kept.h - py / sy) in the target's
+    // GL texels: its texture coordinate goes from the picture's top left corner
+    float originX = static_cast<float>(rect.x) / w;
+    float originY = static_cast<float>(rect.y + kept.height()) / h;
+    float stepX = 1.0f / (w * static_cast<float>(scale));
+    float stepY = -1.0f / (h * static_cast<float>(scale));
+    QRect inside;
+    bool linear = false;
+    if (std::abs(picture.width() - place.width()) <= 4 && std::abs(picture.height() - place.height()) <= 4)
+    {
+        const int left = (place.width() - picture.width()) / 2;
+        const int top = (place.height() - picture.height()) / 2;
+        inside = QRect(QPoint(left, top), picture).intersected(QRect(QPoint(0, 0), place.size()));
+        originX -= static_cast<float>(left) * stepX;
+        originY -= static_cast<float>(top) * stepY;
+    }
+    else
+    {
+        if (scale > 1)
+            return false;
+        inside = QRect(QPoint(0, 0), picture.scaled(place.size(), Qt::KeepAspectRatio));
+        if (inside.isEmpty())
+            return false;
+        stepX *= static_cast<float>(kept.width()) / static_cast<float>(inside.width());
+        stepY *= static_cast<float>(kept.height()) / static_cast<float>(inside.height());
+        linear = true;
+    }
+    if (!_recordNv12Program)
+    {
+        std::string log;
+        _recordNv12Program = _gpu->CreateProgram(CRT_VERTEX_SHADER, kRecordNv12Fragment, log);
+        if (!_recordNv12Program)
+        {
+            qWarning() << "DeviceScreenGLWindow: the recording NV12 program failed:" << QString::fromStdString(log);
+            _recordFrame.nv12 = false;  // the pictures as they are from now on
+            return false;
+        }
+    }
+    const int texels = (place.width() + 3) / 4;
+    const int rows = place.height() * 3 / 2;
+    if (!_recordNv12 || _recordNv12->Width() != texels || _recordNv12->Height() != rows)
+        _recordNv12 = _gpu->CreateTexture(texels, rows, gpu::Format::RGBA8);
+    if (!_recordNv12)
+        return false;
+    gpu::Sampler sampler;
+    sampler.filter = linear ? gpu::Filter::Linear : gpu::Filter::Nearest;
+    const QColor color = _recordFrame.background;
+    const int32_t background[3] = {color.red(), color.green(), color.blue()};
+    gpu::Program& p = *_recordNv12Program;
+    p.SetTexture("source", _recordTarget.get(), sampler);
+    p.SetFloat2("origin", originX, originY);
+    p.SetFloat2("stepPx", stepX, stepY);
+    p.SetInt4("inside", inside.left(), inside.top(), inside.left() + inside.width(), inside.top() + inside.height());
+    p.SetInts("background", background, 3);
+    p.SetInt("height", place.height());
+    p.SetFloat4("texRect", 0.0f, 0.0f, 1.0f, 1.0f);
+    gpu::DrawState state;
+    state.viewport = {0, 0, texels, rows};
+    _gpu->Draw(p, *_recordNv12, state);
+    p.SetTexture("source", nullptr);
+    // The bytes: the place's width (the texels' last few may pass it), its rows and half as many again
+    image = QSize(place.width(), rows);
+    return true;
 }
 
 bool DeviceScreenGLWindow::drawRecordingPicture(gpu::Rect& rect, QSize& kept)
@@ -2208,13 +2405,17 @@ void DeviceScreenGLWindow::captureForRecording()
         dropCapture(_recordPending.front());  // not taken (the GUI busy elsewhere): its slot is the one started now
         _recordPending.pop_front();
     }
+    QSize nv12;
     if (composeRecordingFrame(rect, kept, _recordSlot))
         _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
-    else if (_gpu->BeginRead(_recordSlot, *_recordTarget, rect, true))
+    else if (packRecordingNv12(rect, kept, nv12)
+                 ? _gpu->BeginRead(_recordSlot, *_recordNv12, {0, 0, _recordNv12->Width(), _recordNv12->Height()})
+                 : _gpu->BeginRead(_recordSlot, *_recordTarget, rect, true))
     {
         PendingCapture capture;
         capture.slot = _recordSlot;
-        capture.size = kept;
+        capture.nv12 = !nv12.isEmpty();
+        capture.size = capture.nv12 ? nv12 : kept;
         capture.frame = shownFrameNumber();
         _recordPending.push_back(std::move(capture));
         _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
@@ -2226,7 +2427,7 @@ uint64_t DeviceScreenGLWindow::shownFrameNumber() const
     return _shownInfo.serial != 0 ? _shownInfo.geometry.frameNumber : 0;
 }
 
-bool DeviceScreenGLWindow::grabRecordingPicture(QImage& out, uint64_t& frame)
+bool DeviceScreenGLWindow::grabRecordingPicture(RecordingPicture& out)
 {
     if (!_recordCapture || !_gpu || !isValid() || !makeCurrent())
         return false;
@@ -2239,13 +2440,39 @@ bool DeviceScreenGLWindow::grabRecordingPicture(QImage& out, uint64_t& frame)
     {
         // A slot no capture waits in: the pending ones are taken before a grab
         const int slot = _recordPending.empty() ? _recordSlot : -1;
-        QImage image(kept, QImage::Format_ARGB32);
-        read = slot >= 0 && !image.isNull() && _gpu->BeginRead(slot, *_recordTarget, rect, true) &&
-               _gpu->FinishRead(slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), true);
-        if (read)
+        if (slot >= 0 && composeRecordingFrame(rect, kept, slot))
         {
-            out = std::move(image);
-            frame = shownFrameNumber();
+#ifdef __APPLE__
+            // The whole frame composed in the encoder's buffer, as a capture is, waited for at once
+            PendingCapture capture = std::move(_recordPending.back());
+            _recordPending.pop_back();
+            out.frame = _recordSurfaces->Finish(capture.composed);
+            out.number = capture.frame;
+            read = out.frame != nullptr;
+#endif
+        }
+        else if (QSize nv12; slot >= 0 && packRecordingNv12(rect, kept, nv12))
+        {
+            QImage image(nv12, QImage::Format_Grayscale8);
+            read = !image.isNull() &&
+                   _gpu->BeginRead(slot, *_recordNv12, {0, 0, _recordNv12->Width(), _recordNv12->Height()}) &&
+                   _gpu->FinishRead(slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), false);
+            if (read)
+            {
+                out.image = std::move(image);
+                out.number = shownFrameNumber();
+            }
+        }
+        else if (slot >= 0)
+        {
+            QImage image(kept, QImage::Format_ARGB32);
+            read = !image.isNull() && _gpu->BeginRead(slot, *_recordTarget, rect, true) &&
+                   _gpu->FinishRead(slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), true);
+            if (read)
+            {
+                out.image = std::move(image);
+                out.number = shownFrameNumber();
+            }
         }
     }
     doneCurrent();
@@ -2259,7 +2486,7 @@ void DeviceScreenGLWindow::takeRecordingPictures(std::vector<RecordingPicture>& 
     for (PendingCapture& capture : _recordPending)
     {
 #ifdef __APPLE__
-        if (_recordSurfaces && capture.composed.slot >= 0)
+        if (_recordSurfaces && capture.composed.pixelBuffer)
         {
             RecordingPicture picture;
             picture.frame = _recordSurfaces->Finish(capture.composed);
@@ -2269,9 +2496,10 @@ void DeviceScreenGLWindow::takeRecordingPictures(std::vector<RecordingPicture>& 
             continue;
         }
 #endif
-        QImage image(capture.size, QImage::Format_ARGB32);  // B,G,R,A bytes on a little-endian host
-        if (!image.isNull() &&
-            _gpu->FinishRead(capture.slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), true))
+        // B,G,R,A bytes on a little-endian host; NV12's rows as the texels hold them (GL's row 0: the top one)
+        QImage image(capture.size, capture.nv12 ? QImage::Format_Grayscale8 : QImage::Format_ARGB32);
+        if (!image.isNull() && _gpu->FinishRead(capture.slot, image.bits(), static_cast<size_t>(image.bytesPerLine()),
+                                                !capture.nv12))
         {
             RecordingPicture picture;
             picture.image = std::move(image);

@@ -652,11 +652,17 @@ struct WindowRecorder::Writer
     {
         const QImage& picture = job.picture;
         const QImage::Format format = picture.format();
+        const bool keyboardFits =
+            job.keyboard.isNull() || (Even(keyboardRect) && QRect(QPoint(0, 0), size).contains(keyboardRect));
+        // NV12 from the GPU (RecordingFrameLayout::nv12): the place's size, any scale (the window made the blocks)
+        if (format == QImage::Format_Grayscale8)
+            return picture.width() == screenRect.width() && picture.height() == screenRect.height() * 3 / 2 &&
+                   Even(screenRect) && QRect(QPoint(0, 0), size).contains(screenRect) && keyboardFits;
         if (scale != 1 || !(Bgra(format) || format == QImage::Format_RGBA8888) || picture.width() < 4 ||
             picture.height() < 4 || picture.width() > screenRect.width() || picture.height() > screenRect.height() ||
             !Even(screenRect) || !QRect(QPoint(0, 0), size).contains(screenRect))
             return false;
-        return job.keyboard.isNull() || (Even(keyboardRect) && QRect(QPoint(0, 0), size).contains(keyboardRect));
+        return keyboardFits;
     }
 
     /// The frame of transfer nv12 straight in NV12, no B,G,R,A frame: the picture converted at its own size and
@@ -705,7 +711,20 @@ struct WindowRecorder::Writer
         uint8_t* uvAt = uvPlane + static_cast<size_t>(screenRect.y() / 2) * stride + screenRect.x();
         const size_t srcStride = static_cast<size_t>(picture.bytesPerLine());
         std::function<void(int)> band;
-        if (pw == rw && ph == rh)
+        if (picture.format() == QImage::Format_Grayscale8)
+        {
+            // Converted by the GPU: its Y rows, then its U,V rows, into the place
+            band = [&](int part)
+            {
+                const uint32_t first = rh / 2 * part / kParts * 2;
+                const uint32_t last = rh / 2 * (part + 1) / kParts * 2;
+                for (uint32_t row = first; row < last; ++row)
+                    std::memcpy(yAt + row * stride, picture.constScanLine(static_cast<int>(row)), rw);
+                for (uint32_t row = first / 2; row < last / 2; ++row)
+                    std::memcpy(uvAt + row * stride, picture.constScanLine(static_cast<int>(rh + row)), rw);
+            };
+        }
+        else if (pw == rw && ph == rh)
         {
             band = [&](int part)
             {
@@ -1657,10 +1676,13 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     connect(_screen, &DeviceScreenWrapper::refreshed, this, &WindowRecorder::onRefreshed);
 #ifdef __APPLE__
     // The Mac's own encoder takes frames the GPU window composes in its buffers (no copy through the CPU); the CPU
-    // way stays for the software screen, a hidden window, Vulkan, and the scaled-up (blocky) picture
-    if (_writer->native && _writer->scale == 1)
-        _screen->setRecordingFrame({_writer->size, _writer->screenRect, kBackground});
+    // way stays for the software screen and Vulkan
+    if (_writer->native)
+        _screen->setRecordingFrame({_writer->size, _writer->screenRect, kBackground, _writer->scale});
 #endif
+    // Transfer nv12: the GPU window converts the picture in its place, the writer only puts the bytes in the frame
+    if (_writer->nv12)
+        _screen->setRecordingFrame({_writer->size, _writer->screenRect, kBackground, _writer->scale, true});
     _capture = _screen->setRecordingCapture(true, _request.pictureHeight);
     fill(out);
     return true;
@@ -1784,7 +1806,7 @@ void WindowRecorder::onRefreshed()
     {
         RecordingPicture picture;
         std::string error;
-        if (!_screen || !_screen->grabRecordingPicture(picture.image, picture.number, error, _request.pictureHeight))
+        if (!_screen || !_screen->grabRecordingPicture(picture, error, _request.pictureHeight))
             return;
         pictures.push_back(std::move(picture));
     }
