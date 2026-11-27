@@ -327,7 +327,7 @@ Checks:
 
 - `--self-check` with `--connect`: its last block, `async connection`, opens a second, asynchronous connection
   through `LatencyProxy` (`latencycheck.cpp`). It delays answers by 300 ms and then stalls them. The block checks
-  that no shim call takes 20 ms or more, that a stall shows as a wait, that the machine is held again afterwards,
+  that a step shows under way at once, that a stall shows as a wait, that the machine is held again afterwards,
   and that closing a stalled connection ends in bounded time.
 - `--gui-gap-check [--gap-latency-ms 300] [--gap-stall-ms 6000] [--gap-limit-ms 0]` with `--connect`: the window
   over the same proxy. It presses pause, step, step over, step out, run and pause with no delay, with the delay,
