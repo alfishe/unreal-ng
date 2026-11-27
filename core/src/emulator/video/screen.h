@@ -1095,7 +1095,7 @@ protected:
     /// The slot's frame went to the temporal effect and its output has not come yet, but will (its generation lasts)
     bool SlotAwaitsOutputLocked(size_t index) const;
     std::mutex _temporalCreateMutex;
-    std::atomic<uint8_t> _temporalDelayFrames{0};  // video delay the effect needs (0 = off)
+    std::atomic<uint8_t> _temporalDelayFrames{0};  // video delay the effect needs, + 1 for smooth motion's read ahead (0 = off)
     int _audioExtraDelayFrames = 0;                // emulation thread: what SoundManager was told
     bool _temporalRestoreScreenHQ = false;         // switched on for the effect: off again with it
     bool _temporalRestoreZXDLSS = false;
