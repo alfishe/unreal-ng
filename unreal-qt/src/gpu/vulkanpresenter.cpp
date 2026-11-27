@@ -1292,6 +1292,11 @@ uint64_t VulkanPresenter::LatePresents() const
     return _impl->lead.Late();
 }
 
+uint64_t VulkanPresenter::SteppedPresents() const
+{
+    return _impl->lead.Steps();
+}
+
 uint64_t VulkanPresenter::Presented() const
 {
     std::lock_guard<std::mutex> lock(_impl->statsMutex);

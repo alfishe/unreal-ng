@@ -308,6 +308,7 @@ public:
 
     int64_t LeadNs(int64_t refreshPeriodNs) const override { return _lead.Margin(refreshPeriodNs); }
     uint64_t LatePresents() const override { return _lead.Late(); }
+    uint64_t SteppedPresents() const override { return _lead.Steps(); }
 
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override
     {
