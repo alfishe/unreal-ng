@@ -172,8 +172,10 @@ Distinct from live coverage: when a TTD session has been recorded (see
 [ttd-recording.md](ttd-recording.md) and
 [ttd-reverse-debugging.md](ttd-reverse-debugging.md)), an index answers "in
 which frames was this address range executed / written / read" without
-re-running the machine. All three are `GET`, under
-`/emulator/{id}/ttd/coverage/`:
+re-running the machine. The routes are `GET`, under
+`/emulator/{id}/ttd/coverage/` (`probe`, `scan`, `summary` below; `rare`,
+the code or data touched in at most N frames of a window, in
+[ttd-gameplay-automation.md](ttd-gameplay-automation.md#3-find-the-event-five-moves)):
 
 ```bash
 # one frame: was 0x5B00-0x5BFF executed in frame 120?
@@ -203,9 +205,14 @@ when your range was clamped); `summary` -> `bucket_size`, `bucket_count`,
 `written_distinct`, `read_distinct`, `has_keyframe`. Bad parameters return
 HTTP 400 with `{"error","message"}`.
 
-Not confirmed from source: MCP has no dedicated action for these three routes;
-reach them with `invoke_api`. Whether the index is built in both TTD journal
-modes was not checked here.
+MCP: `time_travel` actions `coverage_probe`, `coverage_scan`, `coverage_rare`
+and `coverage_summary`, with the same parameters. The index does not depend on
+the write journal (a recording without the journal answers these too);
+`index_available` says whether the frames asked have it.
+
+The first and the last frame each instruction ran in, over a whole recording
+or several, is not a coverage query: the L1 analysis lists it per instruction
+(`analysis` `build`, [reverse-engineering.md](reverse-engineering.md)).
 
 ## Typical uses
 
@@ -216,7 +223,7 @@ modes was not checked here.
 | Code / data split for a SkoolKit disassembly | `coverage_export` to a map, then `sna2ctl.py -m` |
 | What did TR-DOS do during this command? | `trdos` analyzer session + `events` |
 | Is the loader driving the FDC itself? | `trdos` `raw/fdc` (PC of each FDC access); see [nonstandard-loader.md](nonstandard-loader.md) |
-| In which recorded frame did this address first run? | `ttd/coverage/scan` (`first_match`), then seek |
+| In which recorded frame did this address first run? | `ttd/coverage/scan` (`first_match`), then seek; for every instruction at once: the L1 build's `first_frame` / `last_frame` |
 | Which RAM bank does it thrash? | not this recipe: [memory-counters.md](memory-counters.md) |
 
 ## Pitfalls

@@ -2019,6 +2019,10 @@ private:
     /// the composed pixels are written. Machine state is never changed.
     /// Checkpoint restores themselves never paint (ResyncScreenState), so
     /// this is the only place that decides what a TTD position shows.
+    /// A device picture (ITTDDisplayParticipant) moves the replay's start back by its lead-in, and further (up to
+    /// kComposeMoreLeadIns checkpoints) while it reports lines not drawn by the replay; where the session holds
+    /// nothing earlier, _composedPictureIncomplete is set (the seek's check: picture_incomplete).
+    static constexpr unsigned kComposeMoreLeadIns = 4;
     static constexpr uint64_t kEndedFrame = UINT64_MAX;     ///< ComposeDisplay: the frame that ended here
     static constexpr uint64_t kCurrentFrame = UINT64_MAX - 1;   ///< ComposeDisplay: the current frame to its end
     void ComposeDisplay(bool frameTarget, uint64_t frame = kEndedFrame);
@@ -2386,6 +2390,9 @@ private:
     };
     std::vector<std::unique_ptr<ComposeScratch>> _composeScratch;
     size_t _composeDepth = 0;
+    /// The last outermost ComposeDisplay's device picture holds lines the replay did not draw (the session holds
+    /// no checkpoint early enough): the position's picture is not the live one
+    bool _composedPictureIncomplete = false;
 
     /// @brief Capture the live machine state into `out` (pure copies; no
     /// timeline or dirty-tracker effects). Without @p withMemory the RAM, the framebuffer and plane B are left

@@ -129,13 +129,16 @@ one call instead of a seek and a capture per frame (see
   stopped session's history;
   a ROM reload, model switch or slot change ends the session (the engine). A snapshot load and a reset END the session
   and keep its history (one rule; a new session only with the `ttdrestart` feature or a black box).
-- While recording, the host speed is held at 1x and turbo / fast tape /
-  fast disk are off, so a recording plays at real speed. See
+- While recording, the host speed is held at 1x and fast disk is off; turbo
+  mode, turbo tape and fast tape stay as they are (a tape still loads fast
+  inside a recording). See
   [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
-- Development mode (`{}`, the default on `ttd/start`) also keeps the
-  write journal (`find-last`, `cause-chain`, `diff`'s last writers); the
-  history keeps a window (the history limit, see
-  [ttd-recording.md](ttd-recording.md)), older frames drop out.
+- The write journal is off by default (`{}` on `ttd/start`): `find-last`,
+  `cause-chain` and `diff`'s last writers still answer, by replaying a frame;
+  `{"journal": true}` records it for instant answers
+  ([ttd-write-journal.md](ttd-write-journal.md)). With a history limit set
+  (see [ttd-recording.md](ttd-recording.md)) the history keeps a window and
+  older frames drop out.
 - If you need the *live* machine to keep running from a past point
   (rather than just inspecting it), `ttd/seek` then `ttd/resume` —
   otherwise seeking alone leaves the instance paused at that frame,

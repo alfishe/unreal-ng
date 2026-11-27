@@ -214,6 +214,12 @@ public:
     void HoldCode();
     /// Drop predecoded and translated code of all guest memory (its bytes were replaced)
     void InvalidateAllCode();
+    /// Write watch of the ESP memory (TTD hashes only what was written): the CPU's stores and the host's views
+    /// (EspMemory::WatchHostWrites). False: the CPU has no watch, TakeWrites always answers all
+    bool WatchWrites(bool on);
+    /// The host ranges written since the last call (appended to `out`, 4 KB pages for the CPU's stores), the
+    /// watch armed again. True: take all of the memory as written (a reset, no CPU watch, too many views)
+    bool TakeWrites(std::vector<std::pair<const uint8_t*, uint32_t>>& out);
 
     /// region <Input journal (TTD)>
 
@@ -553,6 +559,8 @@ private:
     void InstallPorts();
 
     std::unique_ptr<IEspCpu> _cpu;
+    bool _cpuWatches = false;                ///< WatchWrites: the CPU has a watch on
+    std::vector<uintptr_t> _writtenPages;    ///< TakeWrites' buffer
     EspAppHostPorts _outer;  ///< the owner's ports
     EspAppHostPorts _ports;  ///< what the host calls: _outer through the journal
     std::function<void(uint32_t, uint32_t)> _replayLinkWrite;  ///< SetReplayLinkSink

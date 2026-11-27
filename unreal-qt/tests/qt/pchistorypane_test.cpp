@@ -4,7 +4,6 @@
 
 #include <QApplication>
 #include <QCoreApplication>
-#include <QElapsedTimer>
 #include <QHeaderView>
 #include <QAbstractItemModel>
 #include <QItemSelectionModel>
@@ -157,20 +156,23 @@ TEST(PcHistoryPane_Test, ARefreshNeverWaitsForABusyMachine)
             },
             1000);
     });
-    ASSERT_TRUE(TestWait::For([&] { return held.load(); }));
-    QElapsedTimer clock;
-    clock.start();
+    if (!TestWait::For([&] { return held.load(); }))
+    {
+        release = true;
+        other.join();
+        FAIL() << "the other client never got the machine";
+    }
+    // The machine is held until the refresh is back: its one try finds it busy whatever the host's speed
+    const int busy = pane.busyReads();
     pane.refresh();
-    const qint64 blocked = clock.elapsed();
-    EXPECT_LT(blocked, 20) << "the GUI thread waited " << blocked << " ms for the machine";
-    EXPECT_GE(pane.busyReads(), 1);
+    EXPECT_EQ(pane.busyReads(), busy + 1) << "one try, found busy";
     EXPECT_EQ(Rows(list), 1) << "busy: the list shown stays";
     release = true;
     other.join();
-    QElapsedTimer pump;
-    pump.start();
-    while (Rows(list) != 2 && pump.elapsed() < 1000)
+    EXPECT_TRUE(TestWait::For([&] {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        return Rows(list) == 2;
+    }, std::chrono::seconds(5)));
     EXPECT_EQ(Rows(list), 2) << "read again once the machine was free";
 
     pane.setRecording(false);

@@ -16,6 +16,7 @@ either counted in emulated time or ends on an event the emulator reports. Works 
 | a byte reaches a value at a frame end | `POST /run_until {"if":"M(#5C3A) == 1"}` (`W(x)`, registers, `x@prev`: `M(#A13C) != M(#A13C)@prev` = it changed) | Checked once a frame, no breakpoint feature needed. The exact write: a `write` breakpoint below. |
 | a game event (a profile's `died`) | `POST /run_until {"event":"died"}` | Needs a play profile with `events:` ([game events](../input/game-haptics.md)). |
 | a typed sequence is played out | `GET /keyboard/status` until `sequence_running` is false | |
+| a long verb ends (a TTD dump or load, `memory-series`, an analysis build) | start it with `"async": true`, then `GET /api/v1/jobs/{job}?wait_ms=60000` (MCP `jobs` `wait`) | A long-poll: it answers when the job ends or after `wait_ms` (at most 60000), no thread held, no `sleep`. [ttd-recording.md](ttd-recording.md#long-verbs-as-jobs). |
 
 Run control in [execution-control-and-stepping.md](execution-control-and-stepping.md), breakpoint kinds in
 [breakpoints-and-events.md](breakpoints-and-events.md), the long-poll and the snapshot in

@@ -40,7 +40,11 @@ These are the "answer the question backwards" primitives:
   count ([TTD on a sound card's CPU](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu))
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
-- *Which frames touched this address range?* → coverage probe/scan/summary
+- *Which frames touched this address range?* → coverage probe/scan/summary; *which code ran in only a few frames?*
+  → coverage rare
+- *What did the program do over the whole recording* (routines, calls, loops, the first / last frame each
+  instruction ran in), *or over several recordings?* → not a frame query: the L1 analysis, `analysis build`
+  ([reverse-engineering.md](reverse-engineering.md)); `explain-frame` is one frame
 - *In which frames did a game profile's probe fire?* → `probe-frames` (MCP `probe_frames`: the probes as the profile
   writes them, `if:` included; a replay of the window, the machine stays)
 
@@ -59,6 +63,8 @@ time_travel {"action":"coverage_probe","frame":11782,"kind":"executed",
 time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind":"written",
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
+time_travel {"action":"coverage_rare","from_frame":11000,"to_frame":12000,"kind":"executed",
+             "addr_from":"0x8000","addr_to":"0xFFFF","phys_page":2,"max_frames":3}   # rare code, rarest first
 # the recording cut into phases (start here on an unknown session):
 time_travel {"action":"timeline"}   # min_phase_ms (default 200); buckets=true adds an overview
 #   each phase: tags (screen = bytes the renderer shows were written, on every video family; tape only with a tape in;
@@ -282,7 +288,8 @@ replaying, see `POST /ttd/port-events` (MCP `time_travel` `port_events`) in
 
 ### Coverage index — which frames touched a range
 
-Three GET endpoints:
+Four GET endpoints (`probe`, `scan`, `summary` below; `rare`, the code or data touched in at most `max_frames`
+frames of a window, in [ttd-gameplay-automation.md](ttd-gameplay-automation.md#3-find-the-event-five-moves)):
 
 ```bash
 # Did frame 11782 execute anything in $4000-$7FFF?
@@ -352,10 +359,15 @@ Space `cpu` (the default) reads Z80 addresses through the paging stored with eac
 
 `screen-at` gives the frame's final picture as positioning there shows it (`which: shown`, PNG): the frame is replayed in a sandbox and the machine is put back. `which: normal` / `shadow` gives RAM page 5 / 7 at the frame's end, as a PNG or as bytes (`bitmap`, `attributes`, `raw`). The answer names the screen shown at the frame's start and end and where inside the frame it flipped (`#7FFD` bit 3, sampled at 312 points): a double-buffered game's back buffer is the other screen. The last recorded frame has not ended and is refused. MCP: `time_travel` `screen_at` (an image block). CLI: `ttd screen-at --frame F [--save FILE]`. Lua: `ttd_screen_at{frame = F}`. Python: `emu.ttd_screen_at(F)`.
 
+### Long windows
+
+`probe-frames`, `memory-series`, `find-event` and `replay-check` over a long window can outlast a client's timeout:
+`"async": true` answers a job id at once and `GET /jobs/{job}?wait_ms=` waits for the result (MCP: `async` on
+`probe_frames` / `memory_series`, then the `jobs` tool) - [ttd-recording.md](ttd-recording.md#long-verbs-as-jobs).
+
 ## Workflow: crash post-mortem (summary)
 
-1. Record through the crash in development mode
-   ([ttd-recording.md](ttd-recording.md)); stop.
+1. Record through the crash ([ttd-recording.md](ttd-recording.md)); stop.
 2. Bookmark the crash position: `POST /ttd/bookmarks {"label":"crash"}`.
 3. `find-last` the corrupted address → writer PC.
 4. `reverse-continue {"pcs":[writer]}` → the call site that set it up.

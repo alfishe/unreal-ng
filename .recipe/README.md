@@ -135,7 +135,7 @@ call.
 
 | Recipe | What it covers |
 |:--|:--|
-| [_common/setup.md](_common/setup.md) | Build, launch, kill stale instances, port discipline, model choice, instance lifecycle |
+| [_common/setup.md](_common/setup.md) | Build, launch, kill stale instances, port discipline (`--port-base auto`, `--ports-file`), model choice, a lab machine in one call (`preset`), instance lifecycle |
 | [_common/transports.md](_common/transports.md) | WebAPI vs MCP: when to use which, request idioms, `search_api`/`invoke_api` escape hatch, parity rule |
 | [_common/machines.md](_common/machines.md) | Model table (RAM options, creatability, variants, ZX-Poly), create/identity patterns, per-machine introspection endpoints, sound-card config keys |
 
@@ -183,10 +183,10 @@ call.
 
 | Recipe | What it covers |
 |:--|:--|
-| [analysis/reverse-engineering.md](analysis/reverse-engineering.md) | Reverse engineering on the analysis layers: capture from the game's medium, directed coverage, the review queue and resolve, experiments on muted clones, export, the rebuild / assemble gates, the score against a reference |
-| [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, write journal on demand, dump/save `.ttd`, load back, seek/step, bookmarks, coverage heatmap |
+| [analysis/reverse-engineering.md](analysis/reverse-engineering.md) | Reverse engineering on the analysis layers: capture from the game's medium, one L1 over several recordings, directed coverage, the review queue and resolve, experiments on muted clones, export, the rebuild / assemble gates, the score against a reference |
+| [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, write journal on demand, dump/save `.ttd`, load back, long verbs as jobs (`async`, the long-poll), seek/step, bookmarks, coverage heatmap |
 | [analysis/ttd-write-journal.md](analysis/ttd-write-journal.md) | The write journal on demand: record it, switch it during a recording, build it later for any span by replay |
-| [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, coverage probe/scan |
+| [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, cause chain, backtrace, find event, explain frame, diff, memory at / series, screen at, coverage probe / scan / rare |
 | [analysis/ttd-gameplay-automation.md](analysis/ttd-gameplay-automation.md) | Drive a game deterministically, record it, find gameplay events (crash, jump, death) in code and memory; checks for gameplay tests, speedrun plan |
 | [analysis/waiting-and-watching.md](analysis/waiting-and-watching.md) | Waits that do not depend on host timing (`run_frames`, `skip_until`, breakpoint + `debug/wait` loop, OCR / digest polling), who writes an address (write breakpoint, TTD `find-last`, operand search over all RAM) |
 | [analysis/conditional-breakpoints.md](analysis/conditional-breakpoints.md) | Conditional breakpoints: the condition language in examples, `match_count` / `hit_count`, refusals with the reason, the run-time failure mark, CLI `if` / `bpcond`, MCP, Lua, Python |

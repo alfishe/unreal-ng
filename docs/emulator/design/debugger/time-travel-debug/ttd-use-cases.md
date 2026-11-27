@@ -313,8 +313,9 @@ marketing:
 * **Watching a range in one call.** Compose per-address queries (§5).
 * **Hit counters.** Compute from history (§6).
 * **Rewriting history.** You can resume recording from a past point
-  (`ttd resume`), which truncates everything after it — but you cannot edit a
-  recorded frame and replay forward with the change.
+  (`ttd resume`): a new branch forks there and what was recorded after it
+  stays on its parent (`ttd branches`) — but you cannot edit a recorded frame
+  and replay forward with the change on the same branch.
 * **Cross-machine playback.** A recording carries its machine model and refuses
   to load into a different one. This is deliberate: the alternative is a session
   that appears to work and produces a corrupt machine.

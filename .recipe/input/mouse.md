@@ -196,6 +196,12 @@ emu.mouse_release_all()
 
 ## Pitfalls
 
+- **The Kempston mouse is on by default and answers `#FADF` / `#FBDF` / `#FFDF`.** A game that reads its joystick
+  with a loose decode (port `#DF`) gets the mouse instead of the stick. Switch it off for such a run: MCP
+  `emulator_manage {"action":"feature","name":"kempstonmouse","enabled":false}` (`{"action":"features"}` lists
+  them), WebAPI `PUT /feature/kempstonmouse {"enabled":false}`, or `"features":{"kempstonmouse":false}` in the
+  `preset` call that makes the machine. `joystick_input {"action":"status"}` says whether the mouse is on and
+  whether `#1F` is decoded ([joystick.md](joystick.md)).
 - **Paused machine:** the reply's `state` is from before the change; run frames,
   then read `status`.
 - **ZX-Evo / TS-Conf after `counters`:** the AVR registers take the values as

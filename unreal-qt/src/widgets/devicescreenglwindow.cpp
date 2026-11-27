@@ -384,6 +384,7 @@ void DeviceScreenGLWindow::releaseGLObjects()
     _slangRunner.reset();
     _gpuTimes.Release(false);
     _hudTexture.reset();
+    _hudTextureSerial = 0;
     _hudProgram.reset();
     _recordCopyProgram.reset();
     _recordPlanesProgram.reset();
@@ -3052,23 +3053,37 @@ void DeviceScreenGLWindow::drawHudOverTarget(gpu::Texture& target, int surfaceWi
             return;
         }
     }
-    if (_hudImage.width() != surfaceWidth || _hudImage.height() != surfaceHeight)
-        _hudImage = QImage(surfaceWidth, surfaceHeight, QImage::Format_RGBA8888_Premultiplied);
-    _hudImage.fill(Qt::transparent);
-    _hudImage.setDevicePixelRatio(dpr);
-    {
-        QPainter painter(&_hudImage);
-        if (_hudOverlay && _hudOverlay->isVisible())
-            _hudOverlay->renderHUD(painter, width(), height(), dpr);
-        if (_overlayPainter)
-            _overlayPainter(painter, width(), height());
-    }
-    if (!_hudTexture || _hudTexture->Width() != surfaceWidth || _hudTexture->Height() != surfaceHeight)
-        _hudTexture = _gpu->CreateTexture(surfaceWidth, surfaceHeight, gpu::Format::RGBA8);
-    if (!_hudTexture)
+    // A HUD that does not move with time (HudOverlay::prepareLayer) and no other overlay: the texture uploaded for its
+    // layer stays until the layer changes, an empty one is not drawn; otherwise painted and uploaded on every frame
+    const bool hudShown = _hudOverlay && _hudOverlay->isVisible();
+    const bool hudStill =
+        !_overlayPainter && hudShown && _hudOverlay->prepareLayer(width(), height(), static_cast<float>(dpr));
+    if (hudStill && _hudOverlay->layerEmpty())
         return;
-    _gpu->Upload(*_hudTexture, {0, 0, surfaceWidth, surfaceHeight}, _hudImage.constBits(),
-                 static_cast<int>(_hudImage.bytesPerLine() / 4));
+    const bool sameSize = _hudTexture && _hudTexture->Width() == surfaceWidth && _hudTexture->Height() == surfaceHeight;
+    if (!hudStill || !sameSize || _hudTextureSerial != _hudOverlay->layerSerial())
+    {
+        if (_hudImage.width() != surfaceWidth || _hudImage.height() != surfaceHeight)
+            _hudImage = QImage(surfaceWidth, surfaceHeight, QImage::Format_RGBA8888_Premultiplied);
+        _hudImage.fill(Qt::transparent);
+        _hudImage.setDevicePixelRatio(dpr);
+        {
+            QPainter painter(&_hudImage);
+            if (hudShown)
+                _hudOverlay->renderHUD(painter, width(), height(), static_cast<float>(dpr));
+            if (_overlayPainter)
+                _overlayPainter(painter, width(), height());
+        }
+        if (!sameSize)
+            _hudTexture = _gpu->CreateTexture(surfaceWidth, surfaceHeight, gpu::Format::RGBA8);
+        _hudTextureSerial = 0;
+        if (!_hudTexture)
+            return;
+        _gpu->Upload(*_hudTexture, {0, 0, surfaceWidth, surfaceHeight}, _hudImage.constBits(),
+                     static_cast<int>(_hudImage.bytesPerLine() / 4));
+        if (hudStill)
+            _hudTextureSerial = _hudOverlay->layerSerial();
+    }
     _hudProgram->SetTexture("hud", _hudTexture.get());
     _hudProgram->SetInt("height", surfaceHeight);
     _hudProgram->SetFloat4("texRect", 0.0f, 0.0f, 1.0f, 1.0f);

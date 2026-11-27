@@ -27,7 +27,7 @@ invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/profiler/portt
 control_execution  {"action":"run_frames","frames":600}
 invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/profiler/porttrace/stop"}
 invoke_api         {"method":"GET", "path":"/api/v1/emulator/{id}/profiler/porttrace/events","query_params":{"limit":100}}
-#   quick variant, no session: analyze_performance {"action":"porttrace","frames":600,"limit":100}
+#   quick variant, no session: analyze_performance {"action":"porttrace","frames":600,"limit":100,"filter":"fdc-only"}
 
 # signal 2 — fastdisk litmus:
 invoke_api         {"method":"PUT", "path":"/api/v1/emulator/{id}/feature/fastdisk","body":{"enabled":true}}

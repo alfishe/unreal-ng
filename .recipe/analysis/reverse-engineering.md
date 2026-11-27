@@ -94,7 +94,10 @@ first line of the dump's answer. With `--record-load` also `power-on.szx` (the s
 `start.szx` is then the machine after the load, while `start.bin` is the memory at the recording's first keyframe
 (power-on, `capture.json` `start` says where), so it matches the build. A stage's own `start.bin` is the one
 `build` writes (with `--into`, in the stage's folder); `build` with no window writes it at the recording's first
-keyframe. The instance stays up: its MCP endpoint is `http://127.0.0.1:<port-base + 200>/mcp`. A folder made by
+keyframe. The machine is made with one `emulator_manage` `preset` call (RAM zeroed, a Kempston card where the model
+has the edge connector, muted, run control taken). The instance stays up: its MCP endpoint is
+`http://127.0.0.1:<port-base + 200>/mcp`, or with `--port-base auto` (the emulator picks a free base itself) the
+`mcp` field of `W/session.json`. A folder made by
 `build --into` shares the instance but does not own it: `stop --work` the folder that launched it (`stop` checks the
 pid is still the launched unreal-qt before it ends it).
 
@@ -131,6 +134,29 @@ seeded random play (the seed is the work folder's name). A code arrival is the f
 one per writer routine; a window build starts at the arrival's instruction, so its start image is the stage just
 unpacked. `stages` suggests `--to-frame` as the next arrival's frame + 1, so the window ends after the frame the next
 stage begins in. A recording replays exactly, so every later build, counter and experiment needs no capture again.
+
+### One L1 over several recordings
+
+A program played in several sessions (one per level, per load, per input script) is one L1, not one build each:
+
+```bash
+python3 $R build --work W --sessions current W-level2/session.ttd W-level3/session.ttd
+python3 $R build --work W --ignore-readers 5B00-5BFF,FE00-FE7F     # a depacker's reads are not uses of the bytes
+```
+
+```text
+analysis {"action":"build","sessions":["current","/abs/W-level2/session.ttd"],"ignore_readers":"5B00-5BFF"}
+```
+
+`sessions` names the recordings in order: `current` (the loaded one) and saved files (`session.ttd` of other
+captures, `time_travel` `dump`), at most 64, all recorded on this machine (the same model and cards). Counts,
+routines, the call graph and byte uses add up; `replay.sessions[]` gives each session's own frames and its
+`frame_base` on the build's one frame axis. No window (`--stage`, `--from-frame`, `--to-frame`) goes with it, and
+`experiment` / `cover` need a build of one session. Every `instructions[]` row of L1 ends with the first and the
+last frame the instruction ran in (per session too): "when did this code first run" is read from the build, not
+asked frame by frame. `ignore_readers` takes the Z80 ranges of code (a depacker, a checksum loop) whose data reads
+would mark the packed bytes as read by the program; its writes and its own code are analyzed as ever. A build runs
+as a job: the script long-polls it (`jobs` `wait`), no `sleep`.
 
 ### Interrupt handlers
 
@@ -320,4 +346,6 @@ or names (the message names the field and what it takes).
   those not `resolved`.
 - **A `#` in a title or comment is fine.** The export writes it so that no SkoolKit writer reads it as a macro.
 - **One instance per work folder.** `capture` launches its own on `--port-base` (+100 CLI, +200 MCP, ...); pick free
-  ports when other runs are up, and `stop` it when done.
+  ports when other runs are up, or pass `--port-base auto` and let the emulator pick them, and `stop` it when done.
+- **A binary older than the script is refused at launch** ("has no MCP tool ...: build current master"): the tool
+  list is checked before the capture starts, not at the first call that needs it.

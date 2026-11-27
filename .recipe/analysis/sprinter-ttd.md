@@ -34,8 +34,9 @@ mouse packet resumes on the same bit. Port journals stay off on the Sprinter ("t
 source supplies the IM2 vector"; with a NeoGS added behind the ISA ZX-bus adapter also "NeoGS: its ZX-DMA ..."): replay runs against
 the live devices, so keep the same floppy / HDD images inserted.
 
-Recording turns the host turbo mode off (as on every machine): 21 MHz Sprinter frames run at their
-real cost, ~10 ms of host time per frame with the full renderer.
+Recording holds the host speed multiplier at 1x and fast disk off (as on every machine); turbo mode stays
+as it is. 21 MHz Sprinter frames run at their real cost, ~10 ms of host time per frame with the full
+renderer.
 
 ## MCP (preferred)
 

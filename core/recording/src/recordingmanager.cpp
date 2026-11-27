@@ -1440,7 +1440,9 @@ bool RecordingManager::InitializeEncoder()
     config.captureRegion = _captureRegion;
     config.scaleFactor = HasFixedOutput() ? 1 : _scaleFactor;
     config.fixedOutput = HasFixedOutput();
-    config.useHardwareAccel = _acceleration != EncoderAcceleration::Software;
+    // Auto: the process's default (EncoderConfig::HardwareDefault, false in the test programs)
+    config.useHardwareAccel = _acceleration == EncoderAcceleration::Hardware ||
+                              (_acceleration == EncoderAcceleration::Auto && EncoderConfig::HardwareDefault());
 
     // Determine container from filename extension
     size_t dotPos = _outputFilename.rfind('.');
@@ -1486,7 +1488,8 @@ bool RecordingManager::InitializeEncoder()
     // Auto: pick one based on availability — native first if available and compatible
     if (backend == EncoderBackend::Auto)
     {
-        if (_acceleration == EncoderAcceleration::Software)
+        if (_acceleration == EncoderAcceleration::Software ||
+            (_acceleration == EncoderAcceleration::Auto && !EncoderConfig::HardwareDefault()))
         {
             // The native encoders are the GPU ones: software means ffmpeg's libx264 / libx265
             backend = EncoderBackend::FFmpeg;

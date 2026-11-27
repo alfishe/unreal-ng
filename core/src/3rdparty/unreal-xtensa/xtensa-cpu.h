@@ -209,6 +209,17 @@ public:
     /// false. One KeepHeldCode() per HoldCode().
     void HoldCode();
     bool KeepHeldCode();
+    /// Write watch (a time-travel recorder hashing only the memory written): on, every guest or host Write*()
+    /// store into a writable page records the page's host address once, in WrittenPages(), until ArmWriteWatch()
+    /// watches every page again. The stores take the slow path the decoded-code check already has, once per page
+    /// per arming; off (the default) nothing changes. A host that writes guest memory through its own pointers
+    /// reports those writes itself
+    void WatchWrites(bool on);
+    bool WatchingWrites() const { return watching_; }
+    /// Watch every writable page again (after the caller took WrittenPages())
+    void ArmWriteWatch();
+    /// Host addresses of the 4 KB pages written since the last ArmWriteWatch() (a page may repeat: one per alias)
+    std::vector<uintptr_t>& WrittenPages() { return writtenPages_; }
 
     // ---- traps and host calls ----
     void SetTrapRange(uint32_t base, uint32_t size);
@@ -325,6 +336,11 @@ private:
     bool codeHeld_ = false;             ///< HoldCode()'s copy is of the current decoded code
     std::vector<uintptr_t> heldPages_;  ///< host pages of codePages_ at HoldCode()
     std::vector<uint8_t> heldBytes_;    ///< 4 KB per held page
+    bool watching_ = false;                ///< WatchWrites
+    std::vector<uintptr_t> writtenPages_;  ///< WrittenPages
+    static CodePage watchSentinel_;        ///< the code of a watched page without decoded code (no bits)
+    static CodePage* WatchSentinel() { return &watchSentinel_; }
+    bool HasCode(const PageEntry& e) const;
 
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blockMap_;
     std::vector<std::unique_ptr<Block>> retired_;

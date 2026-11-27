@@ -158,5 +158,8 @@ live state saved and put back, `PauseRecordingForBrowsing` for a live recording,
 
 - No per-game names: a routine is an address; the symbols (labels loaded into the debugger) name it when present.
 - No call graph across frames: one frame, and the routines open at its start are named by their entry only if they
-  were called inside it.
+  were called inside it. The question over many frames belongs to the L1 analysis (`analysis build`: routines, calls
+  and loops of a whole recording, first / last frame per instruction, several sessions:
+  [analysis-layers.md](../../emulator/analysis/analysis-layers.md)); explain frame stays one frame for good (owner
+  2026-11-27).
 - Not a profiler over many frames: one frame per call (the timeline already summarises a range).

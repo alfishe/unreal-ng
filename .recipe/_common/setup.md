@@ -19,6 +19,7 @@ envelope in [transports.md](transports.md); every tool takes `target`,
 emulator_manage {"action":"list_models"}                 # creatable flags before choosing
 emulator_manage {"action":"server"}                      # build fingerprint (branch/commit)
 emulator_manage {"action":"create","model":"PENTAGON"}   # → structuredContent.emulators[0].id
+emulator_manage {"action":"preset","model":"48K","cards":["edge.1=kempston"]}   # or: the whole lab machine in one call (below)
 control_execution {"action":"run_frames","frames":100}   # pause + synchronous advance
 control_execution {"action":"step"}                      # single instruction
 control_execution {"action":"resume"}                    # free-run
@@ -103,6 +104,19 @@ curl -s -X POST http://localhost:8192/mcp -H 'Content-Type: application/json' \
 
 Check the ports with `lsof -i :<port>` first; stop only that instance's PID.
 
+Or let the emulator pick free ports itself, so parallel agents and tests need no bases handed out
+([environment-variables](../../docs/emulator/environment-variables.md#all-six-ports-at-once---port-base-and---ports-file)):
+
+```bash
+./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt --port-base auto --ports-file scratch/ports.json &
+# wait for the file (written whole, by rename), then:
+jq . scratch/ports.json
+# {"port_base":20600,"webapi":20600,"cli":20700,"mcp":20800,"gdb":20900,"dezog":21000,"zrcp":21100,"pid":4242}
+```
+
+`--port-base N` takes a number instead (WebAPI N, CLI N+100, MCP N+200, GDB N+300, DeZog N+400, ZRCP N+500). The
+servers come up a moment after the file appears: poll the port. No free base: stderr and exit code 2.
+
 ### 3. Pick a machine model
 
 Runtime-authoritative list with `creatable` flags:
@@ -148,6 +162,45 @@ curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' -d
   "params":{"name":"emulator_manage","arguments":{"action":"create","model":"PENTAGON"}}}' | jq .
 ```
 
+### 4a. A lab machine in one call: `preset`
+
+A reverse-engineering or verification run wants the same machine every time: RAM zeroed, a card or two fitted, sound
+muted, paused before the first instruction, run control held. `preset` does all of it in one call and answers when
+the machine is ready: the cards are planned inside the creation (no restart, no new id, nothing to poll). Reference:
+[command-interface.md, Preset machine](../../docs/emulator/design/control-interfaces/command-interface.md#preset-machine).
+
+```text
+emulator_manage {"action":"preset","model":"48K","cards":["edge.1=kempston"],"features":{"kempstonmouse":false}}
+#   Preset machine 6f2c... ready: 48K (48 KB), RAM zero, paused at frame 0 t 3.
+#   Cards: edge.1 = kempston.
+#   Features not at their default: fasttape off, kempstonmouse off (asked), turbotape off.
+#   Sound: master muted. Fast tape: off (fasttape and turbotape off: a tape loads in real machine time).
+#   Run control: held by you (mcp, session 0d3e...).
+```
+
+```bash
+curl -s -X POST "$BASE/emulator/preset" -H 'Content-Type: application/json' \
+     -d '{"model":"48K","cards":["edge.1=kempston"],"features":{"kempstonmouse":false}}' \
+  | jq '{id, paused, muted, fast_tape, cards, session: .control.session, position}'
+# 201; send the session id as the X-Unreal-Session header of the calls that change this machine
+```
+
+| Argument | Default | Note |
+|:--|:--|:--|
+| `model` | required | as for `create` |
+| `ram` | `zero` | `random`: power-on noise in the screen pages |
+| `cards` | none | `"<slot>=<card>"` or `{slot, card, options, adapter, replace}` |
+| `features` | none | `{name: bool}`, by id or alias |
+| `muted`, `paused`, `take_control` | `true` | paused at power-on: frame 0, t 3 |
+| `fast_tape` | `false` | `false` switches `fasttape` and `turbotape` off (a tape loads in real machine time); `true` leaves both on |
+| `replace` | `false` | `true` destroys every other instance once the new one is built |
+| `select` | `false` | the new machine is created beside the existing ones and the selection (what a GUI shows, the default target of calls without one) is left alone; `true` selects it |
+
+Other planes: CLI `preset 48K card=edge.1=kempston feature=kempstonmouse=off`, Lua
+`machine_preset{model = "48K", cards = {"edge.1=kempston"}}`, Python `machine_preset("48K", cards=["edge.1=kempston"])`.
+A refusal (an unknown card, a slot plan that does not fit, a feature that cannot be switched) names the valid values
+and leaves no instance behind. With other instances up, pass the new id as `target` (it is not selected by itself).
+
 ### 5. Instance lifecycle
 
 | Operation | WebAPI | MCP action |
@@ -190,7 +243,13 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/resume" | jq .
 ```
 
 MCP: `control_execution` with actions `run`, `pause`, `resume`, `step`,
-`step_n`, `run_frames`, `run_tstates`, `run_to_interrupt`.
+`step_n`, `run_frames`, `run_tstates`, `run_to_interrupt`. A counted run answers what it ran (`frames_run`,
+`frame`, `t`, `stop`); a count over the limit (200000 frames) is refused, never cut silently.
+
+An unknown action or value on any MCP tool answers with the valid ones and the nearest match ("Unknown action
+'slots_plugg'. Did you mean 'slots_plug'? Valid actions: ..."): read the refusal instead of guessing again. Long
+verbs (a TTD dump or load, an analysis build) take `async: true` and are waited for with the `jobs` tool
+([ttd-recording.md](../analysis/ttd-recording.md#long-verbs-as-jobs)).
 
 ### 7. Verify what is on screen (assertion primitives)
 
