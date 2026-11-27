@@ -196,8 +196,9 @@ jobs:
           apt-get update
           # libudev-dev and pkg-config: the Stream Deck companion's hidraw backend (steps at the end); the X11 and
           # Wayland dev headers: SDL3's video drivers for the terminal debuggers' pixel window (lib/SDL fails its
-          # configure on a partial set, e.g. X11 without Xcursor) - the same list as release.yml
-          apt-get install -y --no-install-recommends cmake ninja-build uuid-dev libssl-dev zlib1g-dev \
+          # configure on a partial set, e.g. X11 without Xcursor) - the same list as release.yml. lld: the link
+          # (cmake/Linker.cmake), 5-10 times faster than GNU ld
+          apt-get install -y --no-install-recommends cmake ninja-build lld uuid-dev libssl-dev zlib1g-dev \
             libudev-dev pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
             libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libegl-dev libdecor-0-dev
 

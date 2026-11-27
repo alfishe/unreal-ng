@@ -73,6 +73,8 @@ when it is installed. Nothing to set, nothing to clean. Details: [`tools/build/R
 - **A clone** (the Windows host) passes `-DUNREAL_CCACHE_MASTER_DIR=<the master clone>/scratch/ccache` at configure.
 - An existing build directory switches to it at its next configure (`build.sh` configures every time; after a plain
   `cmake --build` run `cmake -S . -B <dir>` once). `-DUNREAL_CCACHE=OFF` turns it off (timing a cold compile).
+- **Linker**: gcc / clang off Apple link with lld when it is installed (Linux, MinGW; not with LTO), 5-10 times faster
+  than GNU ld. Details: [`tools/build/README.md`](tools/build/README.md#linker).
 
 ### Linux (gcc) check
 

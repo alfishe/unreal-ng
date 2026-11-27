@@ -47,6 +47,7 @@ project(unreal VERSION 1.0.0)
 # -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitize.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Lto.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Linker.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ccache.cmake)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
