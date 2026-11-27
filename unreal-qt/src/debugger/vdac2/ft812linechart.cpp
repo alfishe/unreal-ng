@@ -148,3 +148,5 @@ void Ft812LineChart::mouseMoveEvent(QMouseEvent* event)
 }
 
 /// endregion
+
+#include "moc_ft812linechart.cpp"

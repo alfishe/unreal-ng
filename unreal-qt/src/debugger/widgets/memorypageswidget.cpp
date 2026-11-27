@@ -153,3 +153,5 @@ void MemoryPagesWidget::prepareForShutdown()
     qDebug() << "MemoryPagesWidget::prepareForShutdown()";
     m_isShuttingDown = true;
 }
+
+#include "moc_memorypageswidget.cpp"

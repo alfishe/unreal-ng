@@ -190,3 +190,5 @@ void FlattenDialog::RunChosen()
     _result = reply;
     accept();
 }
+
+#include "moc_flattendialog.cpp"

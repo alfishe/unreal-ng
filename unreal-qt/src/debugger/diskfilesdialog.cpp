@@ -260,3 +260,5 @@ void DiskFilesDialog::importLabels()
                          .arg(QString::fromStdString(reply.body.find("main")->s), QString::fromStdString(reply.body.find("set")->s),
                               complete ? QString() : tr(" (not every label got a value)")));
 }
+
+#include "moc_diskfilesdialog.cpp"

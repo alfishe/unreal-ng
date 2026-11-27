@@ -326,3 +326,5 @@ bool MemoryPagesVisWidget::eventFilter(QObject* watched, QEvent* event)
 
     return QWidget::eventFilter(watched, event);
 }
+
+#include "moc_memorypagesviswidget.cpp"

@@ -801,3 +801,5 @@ void MediaPanelWindow::onFilesDropped(int row, const QStringList& paths)
     }
     insertInto(target.slot, path);
 }
+
+#include "moc_mediapanelwindow.cpp"

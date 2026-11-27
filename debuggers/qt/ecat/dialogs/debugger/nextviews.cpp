@@ -1159,3 +1159,5 @@ void ZxDmaTraceView::activated(int row, int column)
         if (Memory * ram = card_ram()) emit router->show_memory_offset(ram, m_rows[(size_t)row].card_address);
     }
 }
+
+#include "moc_nextviews.cpp"

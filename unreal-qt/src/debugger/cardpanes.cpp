@@ -533,3 +533,5 @@ QWidget* Pane::widget() const
     return inspector;
 }
 }  // namespace CardPanes
+
+#include "moc_cardpanes.cpp"

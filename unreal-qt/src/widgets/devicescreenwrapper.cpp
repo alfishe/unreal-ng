@@ -767,3 +767,5 @@ float DeviceScreenWrapper::temporalDecay() const
         return _software->temporalDecay();
     return 0.5f;
 }
+
+#include "moc_devicescreenwrapper.cpp"

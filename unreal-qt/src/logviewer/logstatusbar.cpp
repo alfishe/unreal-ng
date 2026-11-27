@@ -15,3 +15,5 @@ LogStatusBar::~LogStatusBar()
 {
     delete ui;
 }
+
+#include "moc_logstatusbar.cpp"

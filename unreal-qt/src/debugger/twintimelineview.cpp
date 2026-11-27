@@ -1279,3 +1279,5 @@ QAction* TwinTimelineSettings::CreateAction(QObject* parent)
 }
 
 // endregion </TwinTimelineSettings>
+
+#include "moc_twintimelineview.cpp"

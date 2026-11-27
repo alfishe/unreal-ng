@@ -420,6 +420,140 @@ void QHexView::setAutoWidth(bool r) {
     this->checkState();
 }
 
+namespace {
+/// unreal-ng: the rows drawHeader / drawDocument make, as texts with their format ranges (what a QTextDocument block
+/// holds): insertText as QTextCursor's, a row ends at insertBlock
+class QHexRowSink {
+public:
+    struct Row {
+        QString text;
+        QList<QTextLayout::FormatRange> formats;
+    };
+
+    void insertText(const QString& s, const QTextCharFormat& format = QTextCharFormat()) {
+        if(s.isEmpty())
+            return;
+        if(!m_row.formats.isEmpty() && m_row.formats.back().format == format)
+            m_row.formats.back().length += static_cast<int>(s.size());
+        else
+            m_row.formats.append({static_cast<int>(m_row.text.size()), static_cast<int>(s.size()), format});
+        m_row.text += s;
+    }
+    void setBlockFormat(const QTextBlockFormat& format) { m_block = format; }
+    void insertBlock(const QTextBlockFormat& next = QTextBlockFormat()) {
+        if(m_block.background().style() != Qt::NoBrush)
+            m_blockBackground = true;
+        rows.push_back(std::move(m_row));
+        m_row = Row();
+        m_block = next;
+    }
+    bool hadBlockBackground() const { return m_blockBackground; }
+
+    std::vector<Row> rows;
+
+private:
+    Row m_row;
+    QTextBlockFormat m_block;
+    bool m_blockBackground{false};
+};
+} // namespace
+
+bool QHexView::paintRows(QPainter* painter, const std::vector<std::pair<qint64, qint64>>& runs, qint64 rows,
+                         int headerrows, const QByteArray& key) const {
+    // The rows drawn once into pixmaps over the viewport's background, then copied (a QTextLayout's draw of a row of
+    // coloured bytes cost more than its making); drawn directly when a pixmap could not match: a background that is
+    // no plain colour, a row height in fractions of a pixel, a scaled painter
+    const QBrush background = this->viewport()->palette().brush(this->viewport()->backgroundRole());
+    const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+    const QColor text = QPalette().color(QPalette::Text);
+    QByteArray layoutsKey = key;
+    layoutsKey += QByteArray::number(dpr) + ' ' + QByteArray::number(background.color().rgba()) + ' ' +
+                  QByteArray::number(text.rgba());
+    if(layoutsKey != m_rowLayoutsKey || m_rowLayouts.size() > 512) {
+        m_rowLayouts.clear();
+        m_rowPixmaps.clear();
+        m_rowLayoutsKey = layoutsKey;
+    }
+    if(m_rowPixmaps.size() > 96)  // a few views' rows (a pixmap holds a row's pixels)
+        m_rowPixmaps.clear();
+    const quint64 top = static_cast<quint64>(this->verticalScrollBar()->value());
+    // Each view row's layout: kept, or made from its text as the document would lay out its block
+    struct Laid {
+        qint64 row;
+        std::shared_ptr<QTextLayout> layout;
+        QByteArray key;
+    };
+    std::vector<Laid> layouts;
+    for(const auto& run : runs)
+        for(qint64 row = run.first; row <= run.second; row++) {
+            const bool isheader = headerrows != 0 && row == 0;
+            const qint64 line = row - headerrows;
+            if(!isheader && (line < 0 || line >= rows || top + static_cast<quint64>(line) >= this->lines()))
+                continue;
+            const QByteArray rowkey = isheader ? QByteArray("H") + this->headerKey()
+                                               : this->lineKey(static_cast<qint64>(top) + line);
+            std::shared_ptr<QTextLayout>& layout = m_rowLayouts[rowkey];
+            if(!layout) {
+                QHexRowSink sink;
+                if(isheader)
+                    this->drawHeader(sink);
+                else
+                    this->drawDocument(sink, line, line);
+                if(sink.hadBlockBackground() || sink.rows.size() != 1) {
+                    m_rowLayouts.remove(rowkey);
+                    return false;
+                }
+                auto made = std::make_shared<QTextLayout>(sink.rows.front().text, this->font());
+                QTextOption option;
+                option.setWrapMode(QTextOption::NoWrap);
+                made->setTextOption(option);
+                made->setFormats(sink.rows.front().formats);
+                made->beginLayout();
+                QTextLine textline = made->createLine();
+                if(textline.isValid())
+                    textline.setPosition(QPointF(0, 0));
+                made->endLayout();
+                layout = std::move(made);
+            }
+            layouts.push_back({row, layout, rowkey});
+        }
+    // A row's height: its line's (the document stacks its blocks so)
+    for(const auto& [row, layout, rowkey] : layouts)
+        if(layout->lineCount() > 0) {
+            m_blockHeight = layout->lineAt(0).height();
+            break;
+        }
+    const qreal x = -this->horizontalScrollBar()->value();
+    const bool pixmaps = background.style() == Qt::SolidPattern && background.color().alpha() == 255 &&
+                         m_blockHeight > 0 && qFuzzyCompare(m_blockHeight, qRound(m_blockHeight)) &&
+                         painter->transform().type() <= QTransform::TxTranslate;
+    if(!pixmaps) {
+        painter->save();
+        painter->setPen(text);  // as QTextDocument::drawContents: the default text colour
+        for(const auto& [row, layout, rowkey] : layouts)
+            layout->draw(painter, QPointF(x, row * m_blockHeight));
+        painter->restore();
+        return true;
+    }
+    const int height = qRound(m_blockHeight);
+    for(const auto& [row, layout, rowkey] : layouts) {
+        QPixmap& pixmap = m_rowPixmaps[rowkey];
+        if(pixmap.isNull()) {
+            // As wide as the row's text and a few pixels for a glyph reaching past its advance
+            const int width = qCeil(layout->lineCount() > 0 ? layout->lineAt(0).naturalTextWidth() : 0) + 4;
+            pixmap = QPixmap(qCeil(width * dpr), qCeil(height * dpr));
+            pixmap.setDevicePixelRatio(dpr);
+            pixmap.fill(background.color());
+            QPainter p(&pixmap);
+            p.setRenderHints(painter->renderHints());
+            p.setPen(text);
+            layout->draw(&p, QPointF(0, 0));
+        }
+        painter->drawPixmap(QPointF(x, row * height), pixmap);
+    }
+    return true;
+}
+
 void QHexView::paint(QPainter* painter, const QRegion& exposed) const {
     // unreal-ng: a paint of some rows only (endChanges repaints the rows that changed) lays out and draws only them;
     // the rows have one height (one font), so a row's place is its index times that height
@@ -452,7 +586,15 @@ void QHexView::paint(QPainter* painter, const QRegion& exposed) const {
         runs.push_back({0, rows + headerrows - 1});
 
     bool header = false;
+    // unreal-ng: the rows as kept QTextLayouts (paintRows); the document path when a row needs it or the rows have
+    // no height yet
+    const bool rowpaint = m_rowLayoutsOn && rows > 0 && this->paintRows(painter, runs, rows, headerrows, key);
+    if(rowpaint)
+        for(const auto& run : runs)
+            header = header || (headerrows != 0 && run.first == 0);
     for(const auto& run : runs) {
+        if(rowpaint)
+            break;
         QTextDocument doc;
         doc.setDocumentMargin(0);
         doc.setUndoRedoEnabled(false);
@@ -794,7 +936,8 @@ void QHexView::drawSeparators(QPainter* p) const {
     p->setPen(oldpen);
 }
 
-void QHexView::drawHeader(QTextCursor& c) const {
+template<typename Sink>
+void QHexView::drawHeader(Sink& c) const {
     if(m_options.hasFlag(QHexFlags::NoHeader))
         return;
 
@@ -917,7 +1060,8 @@ void QHexView::drawHeader(QTextCursor& c) const {
     c.insertBlock();
 }
 
-void QHexView::drawDocument(QTextCursor& c, qint64 first, qint64 last) const {
+template<typename Sink>
+void QHexView::drawDocument(Sink& c, qint64 first, qint64 last) const {
     if(!m_hexdocument)
         return;
 
@@ -1268,7 +1412,8 @@ QHexArea QHexView::areaFromPoint(QPoint pt) const {
     return QHexArea::Extra;
 }
 
-QTextCharFormat QHexView::drawFormat(QTextCursor& c, quint8 b, const QString& s,
+template<typename Sink>
+QTextCharFormat QHexView::drawFormat(Sink& c, quint8 b, const QString& s,
                                      QHexArea area, qint64 line, qint64 column,
                                      bool applyformat) const {
     QTextCharFormat cf, selcf;

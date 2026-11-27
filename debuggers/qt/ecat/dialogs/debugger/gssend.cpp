@@ -426,3 +426,5 @@ QString GsSendView::newest_state() const
 {
     return m_sent.empty() ? QString() : m_sent.back().state;
 }
+
+#include "moc_gssend.cpp"

@@ -397,3 +397,5 @@ void DockingManager::setSnappingLocked(bool locked)
 {
     _isSnappingLocked = locked;
 }
+
+#include "moc_dockingmanager.cpp"

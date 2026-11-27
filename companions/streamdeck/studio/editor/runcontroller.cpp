@@ -170,3 +170,5 @@ void RunController::Stop()
         emit StateChanged();
     }
 }
+
+#include "moc_runcontroller.cpp"

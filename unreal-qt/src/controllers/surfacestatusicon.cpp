@@ -75,3 +75,5 @@ void SurfaceStatusIcon::showMenu()
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->popup(QCursor::pos());
 }
+
+#include "moc_surfacestatusicon.cpp"

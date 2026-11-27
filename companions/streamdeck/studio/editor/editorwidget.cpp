@@ -794,3 +794,5 @@ bool EditorWidget::DeleteSelected(QString* error)
     }
     return _doc->Apply(QStringLiteral("Delete"), [&](json& d) { return ops::RemoveNode(d, id); }, error);
 }
+
+#include "moc_editorwidget.cpp"

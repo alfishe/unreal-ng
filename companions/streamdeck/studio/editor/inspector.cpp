@@ -896,3 +896,5 @@ void Inspector::BuildActionStep(QFormLayout* form, const json& d)
         Rebuild();
     });
 }
+
+#include "moc_inspector.cpp"

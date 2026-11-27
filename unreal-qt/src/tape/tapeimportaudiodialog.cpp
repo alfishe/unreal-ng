@@ -301,3 +301,5 @@ void TapeImportAudioDialog::showResult()
     _statusLabel->setText(tr("Recognition ready — Save As… writes the tape image."));
     _saveButton->setEnabled(true);
 }
+
+#include "moc_tapeimportaudiodialog.cpp"

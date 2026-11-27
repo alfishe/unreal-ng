@@ -603,3 +603,5 @@ bool EmulatorBinding::tapeGetBlockData(size_t index, std::vector<uint8_t>& out)
     out = blocks[index].data;
     return true;
 }
+
+#include "moc_emulatorbinding.cpp"

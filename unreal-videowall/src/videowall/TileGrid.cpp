@@ -431,3 +431,5 @@ auto& desc = screen->GetFramebufferDescriptor();
     }
 }
 
+
+#include "moc_TileGrid.cpp"

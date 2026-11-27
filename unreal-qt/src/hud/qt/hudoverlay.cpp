@@ -1408,3 +1408,5 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
 
     painter.restore();
 }
+
+#include "moc_hudoverlay.cpp"

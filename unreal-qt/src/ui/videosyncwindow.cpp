@@ -686,3 +686,5 @@ void VideoSyncWindow::refresh()
     }
     showTiles(tiles);
 }
+
+#include "moc_videosyncwindow.cpp"

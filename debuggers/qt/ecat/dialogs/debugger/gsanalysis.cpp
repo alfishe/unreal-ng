@@ -730,3 +730,5 @@ void GsWritersView::refresh()
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->setUpdatesEnabled(true);
 }
+
+#include "moc_gsanalysis.cpp"

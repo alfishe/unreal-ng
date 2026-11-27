@@ -633,3 +633,5 @@ void MouseCaptureController::postButtons()
     else
         MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_BUTTON, MouseEvent::Buttons(_buttonMask, _targetId));
 }
+
+#include "moc_mousecapturecontroller.cpp"

@@ -1485,6 +1485,64 @@ the GS slot.
   disassembly decode 0.45, the PC history read 0.4), the PC history list repaint 0.55 ms (every row moves down, Qt's
   item view repaints them all), the memory view 0.5 ms, with the timeline on its read 0.4 ms and paint 0.6 ms. Tests
   `QHexViewRepaint_Test`, `PcHistoryPane_Test.ALongRunBetweenStopsReadsTheWholeRing`, `.AStopsStatusRelaysOutNothing`.
+- **The second pass at a stop's cost (2026-11-27, target 3 ms).** Measured the same way: the temporary event profiler,
+  QoS user-interactive on the offscreen GUI thread. This time the app clicked its own Step In / Step Over / Step In /
+  Step Out actions, the owner's path, with no automation session. Under a session `RemoteControlGuard` switches every
+  action, and that cost belongs to it, not to the debugger. The program repeats: a chain of `CALL #9000`, the routine
+  `CALL #9100` (`DI; LD B,0; DJNZ $; RET`, so a step over adds 259 entries to the PC history and fills its ring).
+  What was left before this pass, per stop:
+  - the PC history list, a `QTreeWidget` of items: every stop made items, removed 1024 and relaid out the view;
+  - the memory view laid out each exposed row through a `QTextDocument`;
+  - a step over or a step out switched the toolbar to its running state and back (two toolbar and window relayouts);
+  - `clearStopBanner` hid the card line and main's position line, which the stop showed again (two window relayouts);
+  - a step out refreshed all panes three times: `stepOut` itself, the breakpoint hit and the pause notice;
+  - the speed control's spin box repainted on every sync, the same value set again;
+  - the disassembly's scroll bar repainted on every step, its handle on the same pixels.
+
+  Fixes, the panes look the same:
+  - PC history:
+    - a `QTreeView` over a ring model (`PcHistoryModel`); once the ring is full, a stop turns the ring (one
+      `dataChanged`, no relayout);
+    - the new rows go in at the top as moved pixels (`viewport()->scroll`) plus the new rows;
+    - the stripes follow the entry (its sequence number), not the row, so the moved pixels stay right;
+    - the picked row follows its entry;
+  - the memory view (QHexView, vendored): a row is built once as a `QTextLayout` (`QHexRowSink`, the same formats as
+    the document) and cached as an opaque pixmap keyed by its contents. This needs an integer row height, a solid
+    background and no transform other than a translation. A row with a block background, or any other case, takes
+    the document path;
+  - the disassembly draws its pieces as cached `QStaticText`; its 64K scroll bar (`widgetupdates::QuietScrollBar`)
+    repaints on a value change only when the handle moves, except a transient (overlay) bar or one at its ends;
+  - `DebuggerWindow::requestStepUpdate()` drops a refresh when the machine is where the last one showed it
+    (`stateMark()`: frame, T, PC, the pages, each fitted card CPU's PC / SP / AF);
+  - the running toolbar state is set only while the machine still runs (not for a step paused again before the
+    queued state arrived);
+  - `clearStopBanner` leaves the two lines to their own fill;
+  - the spin box is set only when its value changes.
+
+  Interleaved A/B: master against this branch, the profiler counting only outermost events (its own cost out). 3 runs
+  × 120 stops each, Pentagon with NeoGS, default panes, host at load average 36-45 on 20 cores. GUI-thread CPU per
+  stop:
+
+  | Timeline | Mean (master -> branch) | Median (master -> branch) | Max (master -> branch) |
+  |---|---|---|---|
+  | Off | 9.1 -> 3.7 ms | 8.6 -> 3.7 ms | 34 -> 13.7 ms |
+  | On | 13.2 -> 4.6 ms | 11.3 -> 4.5 ms | 38 -> 14.2 ms |
+
+  Without the first 4 stops after the debugger opens (cold caches), the max is 8.2 ms (timeline off) and 9.8 ms
+  (timeline on). By action, timeline off: step 3.2, step over 3.4, step out 4.7 ms.
+
+  Left per stop:
+  - `updateState` 1.1 ms: the PC history 0.4, the disassembly 0.4, the memory view 0.2;
+  - the window repaint 2 ms: the disassembly 0.3, its scroll bar 0.13 when PC moves far, the memory view 0.2, the PC
+    history 0.17, backing store flush;
+  - a step out pays the toolbar's running state (the machine still runs when the queued state arrives).
+
+  Tests:
+  - `PcHistoryPane_Test.AStopPaintsOnlyItsNewRowWhileTheListFills` and `.AStopPaintsOnlyItsNewRowOnceTheRingIsFull`
+    (both fail on master: 335 px painted, rows not moved);
+  - `PcHistoryPane_Test.ThePickedRowFollowsItsEntry`;
+  - `QHexViewRepaint_Test.TheRowLayoutsPaintWhatTheDocumentPainted` (pixel equality);
+  - `QuietScrollBar_Test` (`.AStepThatLeavesTheHandleInPlacePaintsNothing` fails with a plain `QScrollBar`).
 
 ### 7.4 External debuggers (A3)
 

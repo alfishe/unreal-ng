@@ -374,3 +374,5 @@ void AppSoundManager::stopNominalRateWatch()
     _watchedDeviceObjectID = 0;
 }
 #endif  // __APPLE__
+
+#include "moc_soundmanager.cpp"

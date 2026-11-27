@@ -14,6 +14,9 @@
 - **Methods/Functions**: Use `PascalCase` (e.g., `GetExecutableDir()`).
 - **Variables/Fields**: Use `camelCase` (e.g., `framebufferDigest`, `tStates`).
 - **Private Member Variables**: Prefix with an underscore (e.g., `_emulator`, `_context`).
+- **Qt moc**: a source whose header declares `Q_OBJECT` / `Q_GADGET` / `Q_NAMESPACE` ends with
+  `#include "moc_<header name>.cpp"`. AUTOMOC then compiles that moc with the source; otherwise it lands in the
+  target's `mocs_compilation.cpp`, one file of all the target's mocs, rebuilt whole when any of those headers changes.
 
 ## Testing Conventions
 - **Test Classes**: Use the pattern `ClassName_Test` (e.g., `WD1793_Test`).

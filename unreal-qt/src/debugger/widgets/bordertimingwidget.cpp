@@ -166,3 +166,5 @@ void BorderTimingWidget::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     refresh();
 }
+
+#include "moc_bordertimingwidget.cpp"

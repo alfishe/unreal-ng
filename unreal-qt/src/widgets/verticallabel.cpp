@@ -39,3 +39,5 @@ QSize VerticalLabel::sizeHint() const
     QSize s = QLabel::sizeHint();
     return QSize(s.height(), s.width());
 }
+
+#include "moc_verticallabel.cpp"

@@ -13,3 +13,5 @@ void GenericDbgWnd::update_view()
 {
     update();
 }
+
+#include "moc_genericdbgwnd.cpp"

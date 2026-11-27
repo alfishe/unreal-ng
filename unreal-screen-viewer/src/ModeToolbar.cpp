@@ -115,3 +115,5 @@ void ModeToolbar::updateButtonStates()
     _horizontalButton->setChecked(_dualLayout == DualLayout::Horizontal);
     _verticalButton->setChecked(_dualLayout == DualLayout::Vertical);
 }
+
+#include "moc_ModeToolbar.cpp"

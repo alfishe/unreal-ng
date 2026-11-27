@@ -904,3 +904,5 @@ void StatusBarManager::applyRzxStyle()
     _rzx->setStyleSheet(QStringLiteral("QLabel { padding: 1px 4px 0 4px; ") + color + open + QStringLiteral(" }"));
 }
 
+
+#include "moc_statusbarmanager.cpp"

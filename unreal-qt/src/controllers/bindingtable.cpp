@@ -1641,3 +1641,5 @@ bool BindingTable::eventFilter(QObject* watched, QEvent* event)
 }
 
 #endif
+
+#include "moc_bindingtable.cpp"

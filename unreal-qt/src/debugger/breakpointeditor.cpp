@@ -1151,3 +1151,5 @@ BreakpointDescriptor BreakpointEditor::getBreakpointDescriptor() const
 {
     return _descriptor;
 }
+
+#include "moc_breakpointeditor.cpp"

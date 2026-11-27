@@ -324,3 +324,5 @@ void DebuggerCpuTabs::release()
         if (debug->SelectedCpu() != DebugCpuId::Main && debug->SelectedCpu() == _current)
             debug->SelectCpu(DebugCpuId::Main);
 }
+
+#include "moc_debuggercpu.cpp"

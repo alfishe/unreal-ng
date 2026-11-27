@@ -245,3 +245,5 @@ void IntParametersDialog::setControlsEnabled(bool enabled)
     _okButton->setEnabled(enabled);
     _cancelButton->setEnabled(enabled);
 }
+
+#include "moc_intparametersdialog.cpp"

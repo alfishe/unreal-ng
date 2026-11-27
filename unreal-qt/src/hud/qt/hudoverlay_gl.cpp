@@ -354,3 +354,5 @@ void HudOverlayGL::paintGL()
 
     painter.end();
 }
+
+#include "moc_hudoverlay_gl.cpp"

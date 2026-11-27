@@ -535,3 +535,5 @@ void DebuggerControl::PublishInstance()
             view->SetInstance(endpoint, id);
     Publish();
 }
+
+#include "moc_debuggercontrol.cpp"

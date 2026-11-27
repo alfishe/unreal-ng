@@ -2406,3 +2406,5 @@ void VideoRecordingWidget::onRecordingStateChanged(bool isRecording, const std::
     // Refresh UI to reflect new state
     updateRecordingControls();
 }
+
+#include "moc_videorecordingwidget.cpp"

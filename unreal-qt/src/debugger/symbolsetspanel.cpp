@@ -148,3 +148,5 @@ void SymbolSetsPanel::dropSelected()
     refresh();
     emit setsChanged();
 }
+
+#include "moc_symbolsetspanel.cpp"
