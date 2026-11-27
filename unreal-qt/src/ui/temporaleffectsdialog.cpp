@@ -393,3 +393,5 @@ void TemporalEffectsDialog::onDecayChanged(double value)
         _screenWrapper->setTemporalDecay(static_cast<float>(value));
     emit settingsChanged();
 }
+
+#include "moc_temporaleffectsdialog.cpp"

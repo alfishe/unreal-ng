@@ -228,3 +228,5 @@ void HandheldPad::track(const QString& source, bool touching, float x, float y)
             emit verb(negative ? Verb::Up : Verb::Down);  // y -1 is up: the focus follows the finger
     }
 }
+
+#include "moc_handheldpad.cpp"

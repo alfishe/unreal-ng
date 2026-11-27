@@ -121,6 +121,43 @@ inline const char* getTapeBlockKindName(TapeBlockKindEnum value)
     return result;
 };
 
+/// What a control entry (kind Control) does. `StopIn48kMode` is the only one the deck acts on while it plays
+/// (Tape::AdvanceToNextBlock); the others describe the entry for the catalog.
+enum class TapeControlEnum : uint8_t
+{
+    None,             // not a control entry
+    Pause,            // TZX $20 with a pause: silence of that length
+    StopTape,         // TZX $20 with pause 0 ("stop the tape"): playback runs past it
+    StopIn48kMode,    // TZX $2A: the tape stops when the machine is in 48K mode, else it is passed
+    Flow              // jump / loop / call / return / select left in the stream (linearization budget exceeded)
+};
+
+/// Stable wire name of a control entry for the machine surfaces; "" for None
+inline const char* getTapeControlName(TapeControlEnum value)
+{
+    const char* result;
+    switch (value)
+    {
+        case TapeControlEnum::Pause:
+            result = "pause";
+            break;
+        case TapeControlEnum::StopTape:
+            result = "stop";
+            break;
+        case TapeControlEnum::StopIn48kMode:
+            result = "stop_48k";
+            break;
+        case TapeControlEnum::Flow:
+            result = "flow";
+            break;
+        default:
+            result = "";
+            break;
+    }
+
+    return result;
+};
+
 /// How a block's signal is produced. StandardRom blocks are byte payloads
 /// encoded with ROM timings (representation 1); Custom blocks are byte
 /// payloads with non-ROM bit timings (representation 2); PulseStream blocks
@@ -203,6 +240,10 @@ struct TapeBlock
     // trains, whose structure the engine does not know.
     size_t pilotEdgeCount = 0;              // leading entries that are pilot tone
     bool trailingPause = false;             // the last entry is the pause after the data
+
+    // TZX $2A, "stop the tape if in 48K mode": a block without a signal that stops the deck when the head
+    // passes it on a machine in 48K mode (Tape::IsIn48kMode); passed in silence otherwise
+    bool stopIn48kMode = false;
 };
 
 /// endregion </Types>
@@ -240,6 +281,7 @@ struct TapeBlockDescriptor
     TapeTimingProfile timing;                // full profile — details pane & API expose it verbatim
     uint32_t baudEstimate = 0;               // 3500000 / (zeroHalf + oneHalf); 0 for pulse streams
     std::string groupLabel;                  // TZX $21 group, attached to the following block
+    TapeControlEnum control = TapeControlEnum::None;  // what a Control entry does (TZX $20 / $2A / flow)
 
     // validation & derived
     bool checksumValid = false;              // XOR(byte payload) == 0; false + rawSize == 0 -> "n/a"

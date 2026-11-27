@@ -569,3 +569,5 @@ void SlotConfigDialog::onSave()
     emit accepted(_slotId, cardId, options);
     accept();
 }
+
+#include "moc_slotconfigdialog.cpp"

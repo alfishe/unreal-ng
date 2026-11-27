@@ -683,3 +683,5 @@ void VirtualDeck::ShowRemote(const sdb::Event& e)
     }
     emit Changed();
 }
+
+#include "moc_virtualdeck.cpp"

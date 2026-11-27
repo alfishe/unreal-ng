@@ -52,3 +52,5 @@ void MetadataSettings::Set(Switch which, bool on)
     settings.setValue(QLatin1String(kEntries[index].key), on);
     emit changed();
 }
+
+#include "moc_metadatasettings.cpp"

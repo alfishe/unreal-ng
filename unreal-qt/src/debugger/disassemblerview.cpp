@@ -7,3 +7,5 @@ DisassemblerView::DisassemblerView(QWidget *parent) : QWidget(parent), ui(new Ui
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
 }
+
+#include "moc_disassemblerview.cpp"

@@ -335,23 +335,11 @@ void CLIProcessor::HandleTapePlay(const ClientSession& session, std::shared_ptr<
 
     EmulatorPauseBracket bracket(emulator);
 
-    // Paused -> resume the frozen position IN PLACE (FR-6); otherwise start at the consumption cursor - where a
-    // real tape head would be. A tape loaded while a TTD recording runs lands at the next frame boundary: queued
-    switch (context->pTape->Play())
-    {
-        case TapePlayResult::NoBlocks:
-            session.SendResponse(std::string("Error: Tape image has no loadable blocks") + NEWLINE);
-            break;
-        case TapePlayResult::Resumed:
-            session.SendResponse(std::string("Tape playback resumed (in place)") + NEWLINE);
-            break;
-        case TapePlayResult::Queued:
-            session.SendResponse(std::string("Tape playback starts when the tape is in") + NEWLINE);
-            break;
-        case TapePlayResult::Started:
-            session.SendResponse(std::string("Tape playback started") + NEWLINE);
-            break;
-    }
+    // Frozen in a block -> resume IN PLACE (FR-6); playing -> left as it is; otherwise start at the first block
+    // with a signal from the consumption cursor on. A tape loaded while a TTD recording runs lands at the next
+    // frame boundary: queued. Two lines: what the call did, then the deck after it (Tape::PlayWithReport)
+    const TapePlayReport report = context->pTape->PlayWithReport();
+    session.SendResponse((report.Ok() ? "" : "Error: ") + report.ActionText() + NEWLINE + report.StateText() + NEWLINE);
 }
 
 void CLIProcessor::HandleTapePause(const ClientSession& session, std::shared_ptr<Emulator> emulator,

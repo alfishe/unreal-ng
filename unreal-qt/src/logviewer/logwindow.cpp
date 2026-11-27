@@ -128,3 +128,5 @@ void LogWindow::prepareForShutdown()
     qDebug() << "LogWindow::prepareForShutdown()";
     m_isShuttingDown = true;
 }
+
+#include "moc_logwindow.cpp"

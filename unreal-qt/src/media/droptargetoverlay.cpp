@@ -504,3 +504,5 @@ void DropTargetOverlay::dropEvent(QDropEvent* event)
         _autoHide.start(1500);  // the reason stays a moment after the drop, then goes
     }
 }
+
+#include "moc_droptargetoverlay.cpp"

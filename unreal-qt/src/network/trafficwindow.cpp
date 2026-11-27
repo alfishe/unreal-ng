@@ -432,3 +432,5 @@ void TrafficWindow::onStream()
 {
     control(_streaming ? "stream-stop" : "stream", {}, 0);
 }
+
+#include "moc_trafficwindow.cpp"

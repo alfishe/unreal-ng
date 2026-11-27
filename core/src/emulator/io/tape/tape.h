@@ -7,6 +7,7 @@
 #include "emulator/io/tape/tapecatalog.h"
 #include "emulator/io/tape/tapereadclassifier.h"    // TapeFastLoadPlan (§5.8) — leaf, no cycle
 #include "emulator/platform.h"
+#include "emulator/state/statenode.h"        // the play report every automation plane renders
 #include "common/sound/filters/filter_dc.h"
 #include "common/sound/filters/filter_lpf.h"
 
@@ -83,8 +84,76 @@ enum class TapePlayResult : uint8_t
     Started,   ///< from the consumption cursor
     Resumed,   ///< a paused tape, in place
     Queued,    ///< the tape is on its way (a load while a TTD recording runs): it plays once it is in the deck
-    NoBlocks   ///< no tape, or one without a loadable block
+    NoBlocks,  ///< no tape, or one without a loadable block
+    AlreadyPlaying,  ///< the tape was playing: nothing changed (the block in flight is not restarted)
+    EndOfTape  ///< no block with a signal from the consumption cursor on: nothing to play
 };
+
+/// Stable wire name of a play result (the `result` field of the play report)
+inline const char* getTapePlayResultName(TapePlayResult value)
+{
+    const char* result;
+    switch (value)
+    {
+        case TapePlayResult::Started:
+            result = "started";
+            break;
+        case TapePlayResult::Resumed:
+            result = "resumed";
+            break;
+        case TapePlayResult::Queued:
+            result = "queued";
+            break;
+        case TapePlayResult::NoBlocks:
+            result = "no_blocks";
+            break;
+        case TapePlayResult::AlreadyPlaying:
+            result = "already_playing";
+            break;
+        case TapePlayResult::EndOfTape:
+            result = "end_of_tape";
+            break;
+        default:
+            result = "unknown";
+            break;
+    }
+    return result;
+}
+
+/// Why a paused tape is paused (TapePlaybackState::Paused)
+enum class TapePauseReason : uint8_t
+{
+    None,         ///< not paused, or not known (a state saved before the reason was kept)
+    User,         ///< a pause request (CLI, WebAPI, the host action, the Qt deck)
+    LoaderQuiet,  ///< the loader watchdog: no loader listened while a block played (frozen in the block)
+    Parked,       ///< the loader watchdog: no loader listened in the silence after a block (before the next block)
+    Stop48k       ///< a TZX $2A block ("stop the tape if in 48K mode") on a machine in 48K mode
+};
+
+/// Stable wire name of a pause reason (the `reason` field of the play report)
+inline const char* getTapePauseReasonName(TapePauseReason value)
+{
+    const char* result;
+    switch (value)
+    {
+        case TapePauseReason::User:
+            result = "user";
+            break;
+        case TapePauseReason::LoaderQuiet:
+            result = "loader_quiet";
+            break;
+        case TapePauseReason::Parked:
+            result = "parked";
+            break;
+        case TapePauseReason::Stop48k:
+            result = "stop_48k";
+            break;
+        default:
+            result = "paused";
+            break;
+    }
+    return result;
+}
 
 /// What a seek request did (Tape::Seek)
 enum class TapeSeekResult : uint8_t
@@ -141,6 +210,44 @@ struct TapePosition
     double blockTotalSeconds = 0.0; // from catalog descriptor
 };
 
+/// What a play request did and the deck as it is after it (Tape::PlayWithReport). Built once here; every
+/// automation plane renders it (Text() for the CLI and the messages, ToNode() for JSON / Lua / Python), none
+/// derives it again
+struct TapePlayReport
+{
+    TapePlayResult result = TapePlayResult::NoBlocks;
+    bool loaded = false;                 ///< a tape with blocks is in the deck
+    TapePlaybackState state = TapePlaybackState::Idle;
+    /// Why the tape does not play, "" while it plays: `no_tape`, `queued`, `end_of_tape`, `stopped` (in the deck,
+    /// not started), or a pause reason (getTapePauseReasonName)
+    std::string reason;
+    bool mode48k = false;                ///< the machine is in 48K mode (what a TZX $2A block asks)
+
+    size_t blockCount = 0;
+    TapePosition position;               ///< the block under the head (the next one up when none is in flight)
+    bool hasBlock = false;               ///< position.blockIndex names a block (false at the end of the tape)
+    std::string blockKind;               ///< getTapeBlockKindName
+    std::string blockControl;            ///< getTapeControlName, "" unless a control entry
+    std::string blockType;               ///< a header's type ("Program", "Code"...), "" otherwise
+    std::string blockName;               ///< a header's name, "" otherwise
+    size_t blockBytes = 0;               ///< byte payload with flag and checksum; 0 for pulse and control blocks
+
+    std::vector<size_t> skippedBlocks;   ///< blocks without a signal this play passed to reach its block
+
+    bool Ok() const { return result != TapePlayResult::NoBlocks; }
+    bool Playing() const { return state == TapePlaybackState::Playing; }
+
+    /// What the call did, one sentence without a full stop ("Tape playback started")
+    std::string ActionText() const;
+    /// The deck after the call, one sentence ("Tape: playing, block 5 of 6 (data, 36354 bytes), 0.0 of 198.7 s")
+    std::string StateText() const;
+    /// ActionText(). StateText()
+    std::string Text() const;
+    /// result, playing, state, reason, mode_48k, block_count, position {block, pulse, seconds_into_block,
+    /// block_total_seconds}, block {index, kind, control, type, name, bytes}, skipped_blocks, text
+    StateNode ToNode() const;
+};
+
 /// endregion </Playback state and position>
 
 /// A 'pulse' here is either a mark or a space, so 2 pulses makes a complete square wave cycle.
@@ -184,6 +291,10 @@ protected:
     // Paused queryable — the freeze was implicit in a live _currentTapeBlock
     // before, invisible to GetPlaybackState().
     bool _playbackFrozen = false;
+
+    // Why the position is frozen (meaningful only while _playbackFrozen): the watchdog, a pause request or a
+    // TZX $2A stop. Saved for TTD in the state's spare byte
+    TapePauseReason _pauseReason = TapePauseReason::None;
 
     size_t _tapePosition = 0;
 
@@ -286,7 +397,8 @@ public:
     /// watchdog when a multi-stage loader stops polling while it processes
     /// (decompression, bank switching). stopPlayback() is for the end of the
     /// tape only.
-    void pausePlayback();
+    /// @param reason who pauses: a pause request (the default, every plane's pause) or the loader watchdog
+    void pausePlayback(TapePauseReason reason = TapePauseReason::User);
 
     /// Resume (or first-start) signal playback triggered by sustained EAR
     /// polling from ANY code — RAM-resident custom loaders never reach the ROM
@@ -306,11 +418,33 @@ public:
     /// available.
     bool EnsureImageLoaded();
 
-    /// The play button of every surface (CLI, WebAPI, MCP, Python, Lua, the host actions, the Qt deck): a paused
-    /// tape resumes in place (FR-6), else it starts at the consumption cursor. A tape still on its way to the deck
-    /// (MediaManager::HasIncoming: a load while a TTD recording runs lands at the next frame boundary) is queued
-    /// and starts from its first block when it lands; a stop drops the request. The caller holds the CPU
-    TapePlayResult Play();
+    /// The play button of every surface (CLI, WebAPI, MCP, Python, Lua, the host actions, the Qt deck):
+    /// - a tape frozen inside a block resumes in place (FR-6);
+    /// - a tape that plays keeps playing: the block in flight is NOT restarted (a second play in the middle of
+    ///   a load used to rewind the block to its pilot and break the load);
+    /// - else it starts at the consumption cursor, at the first block with a signal from there on: control
+    ///   entries (TZX $20 pause 0, $2A, flow leftovers) are passed, a play request does not stop at a $2A;
+    /// - nothing with a signal left: the tape is at its end (EndOfTape).
+    /// A tape still on its way to the deck (MediaManager::HasIncoming: a load while a TTD recording runs lands at
+    /// the next frame boundary) is queued and starts from its first block when it lands; a stop drops the
+    /// request. The caller holds the CPU
+    TapePlayResult Play() { return PlayWithReport().result; }
+
+    /// Play() with the deck's state after the call: playing or not, why not, the block and the position
+    TapePlayReport PlayWithReport();
+
+    /// The deck as it is now, as PlayWithReport() reports it after a play (`result` is not set: NoBlocks without
+    /// a tape, else Started). Reads only: no image is loaded for it
+    TapePlayReport DescribeTransport() const;
+
+    /// Whether the machine is in 48K mode, the question of a TZX $2A block ("stop the tape if in 48K mode"):
+    /// a 48K model, or a 128K-class machine whose #7FFD paging is locked (bit 5: 48 BASIC from the 128K menu,
+    /// a 48K snapshot), which a program cannot tell from a 48K. An unlocked 128K with the 48K ROM paged in
+    /// (USR 0) is not: its paging works, a 128K-aware program loads everything in one go
+    bool IsIn48kMode() const;
+
+    /// Why the tape is paused; None unless GetPlaybackState() is Paused
+    TapePauseReason GetPauseReason() const;
 
     /// The tape slot puts a medium in: the deck stops, drops what it played and
     /// plays `image` from its first block (the medium keeps owning it).
@@ -324,11 +458,24 @@ public:
     /// sentinel maps to 0 for external observers.
     size_t GetConsumptionCursor() const;
 
+    /// A block the head can play or a trap can deliver; a control entry (a TZX $20 pause 0, a $2A, a flow
+    /// leftover) has none and takes no tape
+    static bool BlockHasSignal(const TapeBlock& block)
+    {
+        // A byte block keeps its bytes when its edges are freed after it played: it has a signal
+        return !block.data.empty() || !block.edgePulseTimings.empty();
+    }
+
+    /// The first block with a signal at or after `from` (the block count when none is left)
+    size_t NextSignalBlock(size_t from) const;
+
     /// Advance the consumption cursor past block `index` (trap consumption path).
     void ConsumeBlock(size_t index);
 
     /// Start signal playback honoring the consumption cursor (signal fallback
     /// path). No-op without blocks; a cursor at end-of-tape leaves the tape off.
+    /// Blocks without a signal at the cursor (control entries) are passed first: playback starts at the next
+    /// block that has one, and when none is left the tape is at its end (state Ended).
     void StartPlaybackAtCursor();
 
     /// Direct read access to the parsed blocks (UI / trap component / tests).
@@ -439,6 +586,19 @@ protected:
     /// pilot: the next listening read starts that block from its first pulse.
     void ParkAtNextBlock();
 
+    /// The head leaves the block it played: on to the next block with a signal. Control entries on the way are
+    /// passed in no time; a TZX $2A among them stops the tape when the machine is in 48K mode (paused before
+    /// the next block with a signal, reason Stop48k: the next play or listening loader goes on from there).
+    /// False: playback is off (the $2A stop, or the end of the tape)
+    bool AdvanceToNextBlock();
+
+    /// Move the cursor over blocks without a signal. `stop48k` (when given) is set if a $2A was among them and
+    /// the machine is in 48K mode
+    void SkipSignalLessBlocks(bool* stop48k = nullptr);
+
+    /// A frozen position inside a block that a resume can continue from (nothing consumed past it)
+    bool HasFrozenBlockInFlight() const;
+
     bool generateBitstreamForStandardBlock(TapeBlock& tapeBlock);
 
     size_t generateBitstream(TapeBlock& tapeBlock,
@@ -503,6 +663,7 @@ public:
     using Tape::getPilotSample;
 
     using Tape::stopPlayback;
+    using Tape::getTapeStreamBit;
 
     /// The natural end of the tape, as its last pulse brings it about: the head past the last block,
     /// playback stopped (state Ended). A stop mid-block no longer gets there: it keeps the block
@@ -530,6 +691,8 @@ public:
     using Tape::_currentClockCount;
     using Tape::_currentTapeBlock;
     using Tape::_tapeBitState;
+    using Tape::_playbackFrozen;
+    using Tape::_pauseReason;
 };
 
 #endif // _CODE_UNDER_TEST

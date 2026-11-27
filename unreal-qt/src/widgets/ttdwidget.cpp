@@ -1406,3 +1406,5 @@ void TtdWidget::buildJournal(uint64_t fromFrame, uint64_t toFrame)
     emit viewportRefreshRequested();
     updateTelemetry();
 }
+
+#include "moc_ttdwidget.cpp"

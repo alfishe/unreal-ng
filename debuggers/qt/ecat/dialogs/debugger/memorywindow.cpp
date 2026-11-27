@@ -61,3 +61,5 @@ GenericDbgWnd * CreateMemoryWindow(QWidget *parent, Emulator * e, ComputerDevice
     if (a == nullptr) return nullptr;
     return new MemoryWindow(parent, e, a);
 }
+
+#include "moc_memorywindow.cpp"

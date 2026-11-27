@@ -120,3 +120,5 @@ void PatchCordOverlay::paintEvent(QPaintEvent*)
             painter.drawText(tag, Qt::AlignCenter, cord.tag);
         }
 }
+
+#include "moc_patchcordoverlay.cpp"

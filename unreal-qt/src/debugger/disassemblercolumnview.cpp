@@ -183,3 +183,5 @@ void DisassemblerColumnView::insertPath(REDasm::ListingItem* fromitem, u64 fromi
         m_paths.append({ fromidx, toidx, THEME_VALUE("graph_edge") });
 }
 */
+
+#include "moc_disassemblercolumnview.cpp"

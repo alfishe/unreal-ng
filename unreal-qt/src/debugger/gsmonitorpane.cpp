@@ -865,3 +865,5 @@ QString GsMonitorPane::actionText() const
 }
 
 /// endregion
+
+#include "moc_gsmonitorpane.cpp"

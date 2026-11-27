@@ -517,3 +517,5 @@ bool Memory16KBWidget::eventFilter(QObject* watched, QEvent* event)
     }
     return QWidget::eventFilter(watched, event);
 }
+
+#include "moc_memory16kbwidget.cpp"

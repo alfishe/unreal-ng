@@ -200,12 +200,10 @@ else ()
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/zesarux/" FALSE OUTVAR TEST_CPP_FILES)
 endif ()
 
-# MCP automation tests exercise the drogon-free MCP sources (dispatcher, tools,
-# router, resources, target resolver), which depend on jsoncpp only. They are
-# compiled into the test binary when the vendored jsoncpp_static target exists —
-# i.e. when the unified build added core/automation (WebAPI + MCP enabled)
-# before this directory. Otherwise the tests/automation folder is excluded.
-if (ENABLE_WEBAPI_AUTOMATION AND ENABLE_MCP_AUTOMATION AND TARGET jsoncpp_static)
+# MCP automation tests exercise the drogon-free MCP layer (automation_mcp_core: dispatcher, tools, router, resources,
+# target resolver) and the WebAPI hubs (automation_webapi_hubs). Both libraries exist when the unified build added
+# core/automation (WebAPI + MCP enabled) before this directory. Otherwise the tests/automation folder is excluded.
+if (ENABLE_WEBAPI_AUTOMATION AND ENABLE_MCP_AUTOMATION AND TARGET automation_mcp_core AND TARGET automation_webapi_hubs)
     set(MCP_TESTS_AVAILABLE TRUE)
 else()
     set(MCP_TESTS_AVAILABLE FALSE)
@@ -244,42 +242,12 @@ if (NOT TARGET ${PROJECT_NAME})
     # Enable test wrappers in code
     target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
 
-    # MCP automation: compile the drogon-free MCP sources into the test binary.
-    # Drogon appears only in automation-mcp.cpp / webapi-client.cpp, which are
-    # deliberately NOT listed here; the sources below need jsoncpp only.
+    # MCP automation: the drogon-free MCP layer and the WebAPI hubs come as the libraries the server links
+    # (automation_mcp_core, automation_webapi_hubs), not compiled here a second time. Plain signature (no keyword) to
+    # match the existing target_link_libraries call below; listed before core, whose symbols they use
     if (MCP_TESTS_AVAILABLE)
-        target_sources(${PROJECT_NAME} PRIVATE
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-dispatcher.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-tools.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-router.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-resources.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-asm.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-signature.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-controllers.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-actions.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-gui.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-streamdeck.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-bus.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-history.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-jobs.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-audio.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-gsanalysis.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/mcp-vdac4.cpp
-            ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
-            ${ROOT_DIR}/core/automation/webapi/src/companion-event-hub.cpp
-            ${ROOT_DIR}/core/automation/webapi/src/ws-hub.cpp
-            ${ROOT_DIR}/core/automation/webapi/src/surface-hub.cpp
-            ${ROOT_DIR}/core/automation/webapi/src/debug-event-hub.cpp
-            ${ROOT_DIR}/core/automation/webapi/src/common/upload_sweep.cpp
-        )
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/webapi/src)
-        target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/mcp/src)
-        # Plain signature (no keyword) to match the existing target_link_libraries call below
-        target_link_libraries(${PROJECT_NAME} jsoncpp_static)
+        target_link_libraries(${PROJECT_NAME} automation_mcp_core automation_webapi_hubs)
     endif()
 
     # 'pch.h' is our precompiled header

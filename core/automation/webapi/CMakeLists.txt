@@ -167,6 +167,21 @@ set(ZLIB_INCLUDE_DIRS ${ZLIB_INCLUDE_DIR} CACHE PATH "" FORCE)
 add_subdirectory(lib/drogon)
 
 
+# The socket hubs and the upload sweep: jsoncpp and core headers, no drogon. Their own library in the unified build
+# (below), linked by the WebAPI and by core-tests, so the tests do not compile them a second time
+set(HUB_SOURCES
+    src/common/upload_sweep.h
+    src/common/upload_sweep.cpp
+    src/companion-event-hub.cpp
+    src/companion-event-hub.h
+    src/ws-hub.cpp
+    src/ws-hub.h
+    src/surface-hub.cpp
+    src/surface-hub.h
+    src/debug-event-hub.cpp
+    src/debug-event-hub.h
+)
+
 set(COMMON_SOURCES
     src/hello_world_api.cpp
     src/hello_world_api.h
@@ -207,8 +222,6 @@ set(COMMON_SOURCES
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
     src/common/upload_helper.cpp
-    src/common/upload_sweep.h
-    src/common/upload_sweep.cpp
     src/api/interpreter_api.cpp
     src/api/interpreter_api.h
     src/api/basic_api.cpp
@@ -238,14 +251,6 @@ set(COMMON_SOURCES
     src/api-websocket.cpp
     src/api-websocket.h
     src/common/request_gates.h
-    src/companion-event-hub.cpp
-    src/companion-event-hub.h
-    src/ws-hub.cpp
-    src/ws-hub.h
-    src/surface-hub.cpp
-    src/surface-hub.h
-    src/debug-event-hub.cpp
-    src/debug-event-hub.h
     src/automation-webapi.cpp
     src/automation-webapi.h
 )
@@ -263,6 +268,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         src/main.cpp
 
         ${COMMON_SOURCES}
+        ${HUB_SOURCES}
     )
 
     # For standalone build
@@ -430,4 +436,21 @@ if (TARGET unrealng::swsignature)
     target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
 endif()
 
-
+# The hubs library (HUB_SOURCES): compiled with the WebAPI's own include paths, definitions and options, so its objects
+# see the same core layout (ENABLE_RECORDING above) as the files that call them
+if (TARGET automation_webapi AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    add_library(automation_webapi_hubs STATIC ${HUB_SOURCES})
+    target_include_directories(automation_webapi_hubs
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
+        PRIVATE $<TARGET_PROPERTY:automation_webapi,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(automation_webapi_hubs PRIVATE $<TARGET_PROPERTY:automation_webapi,COMPILE_DEFINITIONS>)
+    target_compile_options(automation_webapi_hubs PRIVATE $<TARGET_PROPERTY:automation_webapi,COMPILE_OPTIONS>)
+    target_link_libraries(automation_webapi_hubs PUBLIC jsoncpp_static PRIVATE zstd::libzstd)
+    if (TARGET unrealng::controllers)
+        target_link_libraries(automation_webapi_hubs PRIVATE unrealng::controllers)
+    endif ()
+    if (TARGET unrealng::swsignature)
+        target_link_libraries(automation_webapi_hubs PRIVATE unrealng::swsignature)
+    endif ()
+    target_link_libraries(automation_webapi PRIVATE automation_webapi_hubs)
+endif ()

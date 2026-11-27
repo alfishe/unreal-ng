@@ -249,3 +249,5 @@ bool SlotChangeController::Undo(QWidget* parent)
     emit undoAvailable(false);
     return true;
 }
+
+#include "moc_slotchangecontroller.cpp"

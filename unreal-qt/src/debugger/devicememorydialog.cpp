@@ -171,3 +171,5 @@ void DeviceMemoryDialog::documentChanged()
         _shown[i] = now[i];
     }
 }
+
+#include "moc_devicememorydialog.cpp"

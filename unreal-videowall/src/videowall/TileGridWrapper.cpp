@@ -321,3 +321,5 @@ void TileGridWrapper::setFocusedIndex(int index)
         _gpuGrid->setFocusedIndex(index);
     // CPU mode handles focus via Qt's focus system
 }
+
+#include "moc_TileGridWrapper.cpp"

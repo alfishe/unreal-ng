@@ -6929,3 +6929,5 @@ void MainWindow::initializePlatformLinux()
 }
 
 // endregion </Helper methods>
+
+#include "moc_mainwindow.cpp"

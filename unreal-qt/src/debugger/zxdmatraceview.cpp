@@ -377,3 +377,5 @@ int ZxDmaTraceView::rowCount() const
 {
     return _model->rowCount();
 }
+
+#include "moc_zxdmatraceview.cpp"

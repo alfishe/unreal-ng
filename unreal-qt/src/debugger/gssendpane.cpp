@@ -470,3 +470,5 @@ QString GsSendPane::rowsText() const
         lines << _table->item(r, 1)->text() + QLatin1Char(' ') + _table->item(r, 2)->text();
     return lines.join(QLatin1Char('\n'));
 }
+
+#include "moc_gssendpane.cpp"

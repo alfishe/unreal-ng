@@ -251,3 +251,5 @@ void BreakpointGroupDialog::updateStatusBar()
     int totalGroups = _groupList->count();
     _statusLabel->setText(QString("Total groups: %1").arg(totalGroups));
 }
+
+#include "moc_breakpointgroupdialog.cpp"

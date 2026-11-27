@@ -88,3 +88,5 @@ void ProgramControl::Publish()
     if (_host && _hooks.keyboardState)
         _host->Root().SetState(QStringLiteral("osd_keyboard_state"), _hooks.keyboardState());
 }
+
+#include "moc_programcontrol.cpp"

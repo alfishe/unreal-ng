@@ -4,6 +4,7 @@
 #include "../emulator_api.h"
 #include <optional>
 #include "../common/upload_helper.h"
+#include "../common/statenode_json.h"
 
 #include <debugger/media/sectorwrite.h>
 #include <emulator/media/floppyformats.h>
@@ -135,6 +136,8 @@ static Json::Value blockDescriptorJson(const TapeBlockDescriptor& descriptor, co
     if (descriptor.rawSize > 0)
         block["raw_size"] = jsonSize(descriptor.rawSize);
     block["playable"] = descriptor.playable;
+    if (descriptor.control != TapeControlEnum::None)
+        block["control"] = getTapeControlName(descriptor.control);
 
     if (descriptor.kind != TapeBlockKindEnum::Control && plan.perBlock.size() > descriptor.index)
     {
@@ -168,6 +171,9 @@ static Json::Value buildTapeSnapshot(EmulatorContext* context)
 
     ret["format"] = tape->GetLoadedFormatId();
     ret["state"] = tapePlaybackStateName(tape->GetPlaybackState());
+    // Why it does not play (end_of_tape, stopped, or a pause reason: user, loader_quiet, parked, stop_48k)
+    if (const TapePlayReport transport = tape->DescribeTransport(); !transport.reason.empty())
+        ret["reason"] = transport.reason;
 
     std::optional<TapePosition> position = tape->GetPosition();
     if (position.has_value())
@@ -396,20 +402,21 @@ void EmulatorAPI::playTape(const HttpRequestPtr& /*req*/,
     std::optional<Emulator::CpuHold> hold;
     hold.emplace(*emulator, "webapi media");
     
-    // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
-    // (FR-6), otherwise start at the consumption cursor
+    // Parse-once (idempotent); frozen in a block -> resume IN PLACE (FR-6), playing -> left as it is, otherwise
+    // start at the first block with a signal from the consumption cursor on
     // A tape loaded while a TTD recording runs lands at the next frame boundary: its play is queued till then
-    const TapePlayResult result = context->pTape->Play();
-    const bool played = result != TapePlayResult::NoBlocks;
+    // The answer is the deck after the call (Tape::PlayWithReport), read under the same hold: no wait on the
+    // emulation thread, the state is final when the call returns
+    const TapePlayReport report = context->pTape->PlayWithReport();
+    const bool played = report.Ok();
     
     hold.reset();
     
-    Json::Value ret;
+    // The report's fields at the top level (result, playing, state, reason, position, block, skipped_blocks,
+    // text), then the envelope every tape route answers with
+    Json::Value ret = StateNodeToJson(report.ToNode());
     ret["status"] = played ? "success" : "error";
-    ret["message"] = !played                            ? "Tape image has no loadable blocks"
-                     : result == TapePlayResult::Resumed ? "Tape playback resumed (in place)"
-                     : result == TapePlayResult::Queued  ? "Tape playback starts when the tape is in"
-                                                         : "Tape playback started";
+    ret["message"] = report.Text();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(played ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);

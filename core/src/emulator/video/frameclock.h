@@ -28,6 +28,9 @@ struct FrameTimingInput
     /// The longest delay the reader can wait (the frames the screen holds): a target at most this after the frame's
     /// end (the emulated clock's, else the latch). 0: no limit
     int64_t maxDelayNs = 0;
+    /// The delay was changed on purpose (a temporal effect switched on or off, the sound delayed to match at the same
+    /// frame): cut to the new time, not carried
+    bool cut = false;
 };
 
 struct FrameTimingResult
@@ -45,8 +48,8 @@ struct FrameTimingResult
 /// Consecutive targets must stay smooth: a presenter shows each frame for target(n+1) - target(n). So a switch
 /// between the audio and the emulated clock, or a step of the audio clock (an underrun moves the stream), does
 /// not jump. The step is carried and paid back by kSlewNs per frame. A break in the frame sequence (a pause, a
-/// seek, a stall), turbo, or a step too large to carry cuts to the new time at once: nothing smooth was shown
-/// across it.
+/// seek, a stall), turbo, a step too large to carry, or a delay changed on purpose (FrameTimingInput::cut) cuts to
+/// the new time at once: nothing smooth was shown across it.
 ///
 /// Threading: the emulation thread only (one per screen). No OS calls, no thread.
 class FrameClock

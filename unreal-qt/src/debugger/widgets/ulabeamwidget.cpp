@@ -324,3 +324,5 @@ void ULABeamWidget::updateScreenImage()
         }
     }
 }
+
+#include "moc_ulabeamwidget.cpp"

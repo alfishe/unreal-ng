@@ -351,3 +351,5 @@ void ConnectorCard::paintEvent(QPaintEvent* event)
     painter.setBrush(colour);
     painter.drawRoundedRect(QRectF(box.left(), box.top() + 6, 3, box.height() - 12), 1.5, 1.5);
 }
+
+#include "moc_connectorcard.cpp"

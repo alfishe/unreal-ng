@@ -428,3 +428,5 @@ void FlagsView::mouseDoubleClickEvent(QMouseEvent *event)
         x += w;
     }
 }
+
+#include "moc_registersview.cpp"

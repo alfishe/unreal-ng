@@ -128,3 +128,5 @@ bool HudOverlayWrapper::isVisible() const
 {
     return _widget ? _widget->isVisible() : false;
 }
+
+#include "moc_hudoverlaywrapper.cpp"

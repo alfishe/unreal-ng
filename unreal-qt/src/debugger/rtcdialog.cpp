@@ -227,3 +227,5 @@ void RtcDialog::cellEdited(QTableWidgetItem* item)
         _status->setText(tr("Cell %1 = %2").arg(Hex2(index), Hex2(value)));
     refresh();
 }
+
+#include "moc_rtcdialog.cpp"

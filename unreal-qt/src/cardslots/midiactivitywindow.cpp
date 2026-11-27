@@ -227,3 +227,5 @@ void MidiActivityWindow::panic()
     const MidiControlReply reply = MidiControl::Execute(emulator->GetContext(), "panic");
     _panicResult->setText(Q(reply.message));
 }
+
+#include "moc_midiactivitywindow.cpp"

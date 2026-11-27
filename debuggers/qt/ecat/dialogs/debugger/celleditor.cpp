@@ -73,3 +73,5 @@ void CellEditor::focusOutEvent(QFocusEvent *event)
     QLineEdit::focusOutEvent(event);
     if (isVisible()) emit cancelled();
 }
+
+#include "moc_celleditor.cpp"

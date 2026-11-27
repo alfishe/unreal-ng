@@ -184,3 +184,5 @@ nlohmann::json ListenServer::Describe() const
             {"serial", _deck->Serial().toStdString()},
             {"model", std::string(_deck->GetModel().name)}};
 }
+
+#include "moc_listenserver.cpp"

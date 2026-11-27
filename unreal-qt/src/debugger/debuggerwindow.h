@@ -127,6 +127,8 @@ protected:
     /// One updateState in the event loop's next turn for any number of stop notices (the frame refreshes queued
     /// while a step ran, the step's end, the pause): a burst refreshes the panes once, never once per notice
     void requestUpdateState();
+    void requestStepUpdate();             ///< a step's end: requestUpdateState unless the panes show it already
+    std::vector<uint64_t> stateMark() const;  ///< the machine's position: frame, T, PC of every CPU, pages
     /// The memory view at PC's page (a paused machine)
     void showMemoryAtPc();
     /// The memory view's colours: the memory markup's spans on the page shown (a colour per kind, the layer and
@@ -279,6 +281,10 @@ protected:
     bool _inStepOutOperation = false;               // Flag indicating we're in a step-out operation
     bool _waitingForInterrupt = false;              // Flag indicating we're waiting for an interrupt
     bool _updatePending = false;  ///< requestUpdateState posted its refresh, not run yet
+    /// Where the machine stood at the last refresh of the panes (stateMark): a step's end notice (cpuStepComplete)
+    /// for a machine still there is the step this window made and refreshed already (a click on Step In refreshes at
+    /// once, then the notice of the same step arrived and refreshed everything again)
+    std::vector<uint64_t> _refreshedMark;
     bool _isClosing = false;                         // Flag indicating window is being destroyed
     bool _speedControlActive = false;                // Speed widget is auto-stepping (set synchronously via signal)
     std::vector<uint16_t> _deactivatedBreakpoints;  // Stores IDs of temporarily deactivated breakpoints

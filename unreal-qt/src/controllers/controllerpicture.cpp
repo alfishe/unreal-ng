@@ -423,3 +423,5 @@ void ControllerPicture::mousePressEvent(QMouseEvent* event)
     }
     QWidget::mousePressEvent(event);
 }
+
+#include "moc_controllerpicture.cpp"

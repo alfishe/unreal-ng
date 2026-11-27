@@ -162,3 +162,5 @@ void PortWatchDialog::refresh()
     }
     _table->setRowCount(row);
 }
+
+#include "moc_portwatchdialog.cpp"

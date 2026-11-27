@@ -8,14 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 message(">> <${PROJECT_NAME}>")
 
-# Static library: MCP protocol layer (dispatcher, tools, router, resources —
-# drogon-free by design) + the drogon HTTP adapter (automation-mcp.cpp) and
-# loopback client (webapi-client.cpp). drogon/jsoncpp_static targets are
-# created by the sibling webapi subtree, so the parent only adds this
-# directory when ENABLE_WEBAPI_AUTOMATION is active.
-add_library(${PROJECT_NAME} STATIC
-    src/automation-mcp.h
-    src/automation-mcp.cpp
+# The MCP protocol layer (dispatcher, tools, router, resources): drogon-free, jsoncpp only. Its own library, so the
+# server and core-tests link the same objects instead of the tests compiling all of it a second time
+add_library(automation_mcp_core STATIC
     src/mcp-dispatcher.h
     src/mcp-dispatcher.cpp
     src/mcp-protocol.h
@@ -56,19 +51,32 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-vdac4.cpp
     src/target-resolver.h
     src/target-resolver.cpp
+)
+
+# Consumers (automation library, tests) include the drogon-free MCP headers
+target_include_directories(automation_mcp_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(automation_mcp_core PUBLIC
+    jsoncpp_static
+)
+
+# The server: the drogon HTTP adapter (automation-mcp.cpp) and the loopback client (webapi-client.cpp) over the
+# protocol layer. drogon/jsoncpp_static targets are created by the sibling webapi subtree, so the parent only adds
+# this directory when ENABLE_WEBAPI_AUTOMATION is active. automation-mcp.h itself depends on neither
+add_library(${PROJECT_NAME} STATIC
+    src/automation-mcp.h
+    src/automation-mcp.cpp
     src/webapi-client.h
     src/webapi-client.cpp
 )
 
 add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-# Consumers (automation library, tests) include the drogon-free MCP headers;
-# automation-mcp.h itself depends on neither drogon nor jsoncpp
-target_include_directories(${PROJECT_NAME} PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
 target_link_libraries(${PROJECT_NAME}
+    PUBLIC
+        automation_mcp_core
     PRIVATE
         drogon
         jsoncpp_static

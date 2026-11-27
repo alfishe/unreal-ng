@@ -419,3 +419,5 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
     painter.drawText(QRectF(8, kPlot - 18, width() - 16, 16), Qt::AlignLeft | Qt::AlignVCenter,
                      metrics.elidedText(_detail, Qt::ElideRight, width() - 16));
 }
+
+#include "moc_devicetestpanel.cpp"

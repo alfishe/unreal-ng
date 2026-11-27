@@ -78,6 +78,7 @@ DisassemblyView::DisassemblyView(QWidget* parent) : QAbstractScrollArea(parent)
     viewport()->setMouseTracking(true);  // the hover line
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setVerticalScrollBar(new widgetupdates::QuietScrollBar(Qt::Vertical, this));  // a step repaints it only if moved
 
     // The 64K: the scrollbar is the top row's address; its arrows, pages and drags are the widget's to resolve
     // (rows through the strip, a snap to an instruction start)
@@ -231,9 +232,11 @@ void DisassemblyView::paintEvent(QPaintEvent* event)
     QFont bold = font();
     bold.setBold(true);
     // Each piece at its column: a glyph of another width (the breakpoint dot) never shifts the columns after it
+    // Laid out once (laidOut), drawn at the baseline drawText put it on: the static text's top is its ascent above
+    const int top = ascent - metrics.ascent();
     const auto text = [&](int column, int y, const QString& value, const QColor& color) {
         painter.setPen(color);
-        painter.drawText(left + column * cw, y + ascent, value);
+        painter.drawStaticText(QPointF(left + column * cw, y + top), laidOut(value));
     };
     for (size_t i = 0; i < m_lines.size(); ++i)
     {
@@ -272,7 +275,8 @@ void DisassemblyView::paintEvent(QPaintEvent* event)
         if (!line.mark.isNull())
         {
             painter.setFont(bold);
-            text(BREAKPOINT_COL_WIDTH, y, QString(line.mark), kMarkColor);
+            painter.setPen(kMarkColor);
+            painter.drawText(left + BREAKPOINT_COL_WIDTH * cw, y + ascent, QString(line.mark));
             painter.setFont(font());
         }
         text(ADDRESS_COL, y, hexAddress(line.address), kAddressColor);
@@ -302,6 +306,26 @@ bool IsMarkKey(const QKeyEvent* event)
            (mods == Qt::ControlModifier || mods == Qt::AltModifier);
 }
 }  // namespace
+
+const QStaticText& DisassemblyView::laidOut(const QString& text) const
+{
+    constexpr qsizetype kTexts = 4096;  // a few hundred rows' pieces
+    const QString fontKey = font().key();
+    if (fontKey != m_textsFont || m_texts.size() > kTexts)
+    {
+        m_texts.clear();
+        m_textsFont = fontKey;
+    }
+    auto it = m_texts.find(text);
+    if (it == m_texts.end())
+    {
+        QStaticText laid(text);
+        laid.setTextFormat(Qt::PlainText);
+        laid.prepare(QTransform(), font());
+        it = m_texts.insert(text, laid);
+    }
+    return *it;
+}
 
 bool DisassemblyView::event(QEvent* event)
 {
@@ -1659,3 +1683,5 @@ void DisassemblerWidget::prepareForShutdown()
     qDebug() << "DisassemblerWidget::prepareForShutdown()";
     m_isShuttingDown = true;
 }
+
+#include "moc_disassemblerwidget.cpp"

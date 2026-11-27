@@ -52,11 +52,21 @@
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["description"] =
-        "A paused tape resumes in place, else it plays from the consumption cursor. A tape loaded while TTD records "
-        "lands at the next frame boundary: a play before that is queued (\"Tape playback starts when the tape is "
-        "in\") and the tape starts from its first block when it lands; a stop drops it.";
+        "A tape frozen inside a block resumes in place; a tape that plays is left as it is (the block in flight is "
+        "not restarted); else it plays from the consumption cursor, at the first block with a signal from there on "
+        "(control entries - TZX $20 pause 0, $2A - are passed and listed in skipped_blocks). A tape loaded while TTD "
+        "records lands at the next frame boundary: a play before that is queued (\"Tape playback starts when the "
+        "tape is in\") and the tape starts from its first block when it lands; a stop drops it. The answer is the "
+        "deck after the call: result (started, resumed, already_playing, queued, end_of_tape, no_blocks), playing, "
+        "state, reason when it does not play (end_of_tape, stopped, queued, no_tape, or a pause reason: user, "
+        "loader_quiet, parked, stop_48k = a TZX $2A block on a machine in 48K mode), mode_48k, block_count, "
+        "position {block, pulse, seconds_into_block, block_total_seconds}, block {index, kind, control, type, name, "
+        "bytes}, skipped_blocks, and text / message with the same in words. The deck follows the loader: a tape "
+        "that plays with no loader listening is paused again by the watchdog (reason loader_quiet or parked in GET "
+        "/tape), and a loader that listens starts it by itself.";
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["responses"]["200"]["description"] =
-        "Tape playback started, resumed, or queued for a tape on its way";
+        "The deck after the call: playing (started, resumed, already playing), queued for a tape on its way, or at "
+        "the end of the tape (result end_of_tape, playing false)";
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["responses"]["400"]["description"] =
         "Tape image has no loadable blocks (no tape in and none on its way)";
 

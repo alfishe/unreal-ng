@@ -730,3 +730,5 @@ void TapeManagerWindow::updateDetails()
         _detailsLabel->setText(_detailsLabel->text() + tr("<br>Preview: %1").arg(preview));
     }
 }
+
+#include "moc_tapemanagerwindow.cpp"

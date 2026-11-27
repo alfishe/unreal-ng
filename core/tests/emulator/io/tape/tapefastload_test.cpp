@@ -429,6 +429,53 @@ TEST_F(TapeFastLoad_Test, DataConsume)
     EXPECT_EQ(_tape->GetConsumptionCursor(), 2u);
 }
 
+// A control entry between two blocks (a TZX $2A, a $20 pause 0) takes no tape: the trap that delivered the header
+// delivers the data block behind it, it does not decline on the entry and fall back to the signal
+TEST_F(TapeFastLoad_Test, ControlEntriesBetweenBlocksArePassed)
+{
+    std::vector<uint8_t> headerPayload;
+    std::vector<uint8_t> dataPayload;
+    const std::vector<std::vector<uint8_t>> pair = MakeHeaderDataPair(headerPayload, dataPayload);
+
+    std::vector<uint8_t> tzx = { 'Z', 'X', 'T', 'a', 'p', 'e', '!', 0x1A, 1, 20 };
+    const auto standard = [&tzx](const std::vector<uint8_t>& block) {
+        tzx.push_back(0x10);
+        tzx.push_back(0xE8);  // pause 1000 ms
+        tzx.push_back(0x03);
+        tzx.push_back(static_cast<uint8_t>(block.size() & 0xFF));
+        tzx.push_back(static_cast<uint8_t>(block.size() >> 8));
+        tzx.insert(tzx.end(), block.begin(), block.end());
+    };
+    standard(pair[0]);
+    for (uint8_t byte : { 0x2A, 0x00, 0x00, 0x00, 0x00 })  // stop the tape if in 48K mode
+        tzx.push_back(byte);
+    for (uint8_t byte : { 0x20, 0x00, 0x00 })              // pause 0
+        tzx.push_back(byte);
+    standard(pair[1]);
+
+    const std::string path = TestPathHelper::GetTestScratchPath("tapefastload/control-between.tzx");
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(tzx.data()), static_cast<std::streamsize>(tzx.size()));
+    }
+    _context->coreState.tapeFilePath = path;
+
+    SetupLDBytesInvocation(0x00, 17, 0x8000, 0x1234);
+    ASSERT_TRUE(_fastLoad->HandleLDBytesTrap(*_z80));
+    const size_t afterHeader = _tape->GetConsumptionCursor();
+    ASSERT_LT(afterHeader, _tape->GetBlocks().size());
+    ASSERT_FALSE(Tape::BlockHasSignal(_tape->GetBlocks()[afterHeader])) << "the cursor stands on a control entry";
+
+    SetupLDBytesInvocation(0xFF, 8, 0xC000, 0x0ABC);
+    EXPECT_TRUE(_fastLoad->HandleLDBytesTrap(*_z80)) << "the data block behind the control entries";
+    EXPECT_EQ(ReadZ80Memory(0xC000, dataPayload.size()), dataPayload);
+    EXPECT_EQ(_tape->GetConsumptionCursor(), _tape->GetBlocks().size());
+
+    // Nothing with a signal left: the end of the tape, a decline
+    SetupLDBytesInvocation(0xFF, 8, 0xC000, 0x0ABC);
+    EXPECT_FALSE(_fastLoad->HandleLDBytesTrap(*_z80));
+}
+
 // §12.1-4: 64K wrap — IX=$FF00, DE=$200; only the RAM part is observable
 TEST_F(TapeFastLoad_Test, Wrap64K)
 {

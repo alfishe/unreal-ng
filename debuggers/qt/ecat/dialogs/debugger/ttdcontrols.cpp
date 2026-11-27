@@ -728,3 +728,5 @@ void TtdControls::build_branch_menu()
     m_branch_menu->addAction(tr("Save Lineage..."), this, [this]() { save_lineage(); });
     m_branch_menu->setToolTipsVisible(true);
 }
+
+#include "moc_ttdcontrols.cpp"

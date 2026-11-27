@@ -246,3 +246,5 @@ void FloppyDiskWidget::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     refresh();
 }
+
+#include "moc_floppydiskwidget.cpp"

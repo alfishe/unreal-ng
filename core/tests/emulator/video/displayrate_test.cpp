@@ -326,4 +326,9 @@ TEST(DisplayRate_Test, SmoothGuardTriesTheLevelAboveAgainAfterAWaitThatGrows)
     EXPECT_FALSE(guard.RetryDue(now + SmoothGuard::kMaxRetryNs)) << "the settings set again: nothing to retry";
     guard.SteppedDown(now);
     EXPECT_TRUE(guard.RetryDue(now + SmoothGuard::kFirstRetryNs)) << "the first wait again";
+    // One level up and still below the top: the next one after the wait as it is now, not doubled again
+    now += SmoothGuard::kFirstRetryNs;
+    guard.RetryLater(now);
+    EXPECT_FALSE(guard.RetryDue(now + 2 * SmoothGuard::kFirstRetryNs - 1));
+    EXPECT_TRUE(guard.RetryDue(now + 2 * SmoothGuard::kFirstRetryNs));
 }

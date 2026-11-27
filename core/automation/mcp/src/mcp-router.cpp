@@ -372,6 +372,9 @@ namespace
 
 std::string DescribeBody(const Json::Value& body);
 
+/// The most characters of a body invoke_api puts into its text when the body has no message of its own
+constexpr size_t kInvokeTextLimit = 4000;
+
 /// Shared invocation path used by invoke_api and search_api(auto_invoke)
 void InvokeEndpoint(const std::string& method, const std::string& rawPath, const Json::Value* body, const Json::Value& query,
                     const Json::Value& args, IApiCaller& caller, ToolCallback done)
@@ -409,13 +412,26 @@ void InvokeEndpoint(const std::string& method, const std::string& rawPath, const
 
             std::ostringstream out;
             out << "HTTP " << status << " " << method << " " << path;
-            if (responseBody.isObject())
+            // The answer in the text: a client may see nothing else. A message or an error, else the answer's own
+            // text, else the body as compact JSON (bounded: the whole body stays in structuredContent)
+            std::string message = DescribeBody(responseBody);
+            if (message.empty() && responseBody.isObject() && responseBody["text"].isString())
+                message = responseBody["text"].asString();
+            if (message.empty() && (responseBody.isObject() || responseBody.isArray()) && !responseBody.empty())
             {
-                std::string message = DescribeBody(responseBody);
-                if (!message.empty())
+                Json::StreamWriterBuilder writer;
+                writer["indentation"] = "";
+                message = Json::writeString(writer, responseBody);
+                if (message.size() > kInvokeTextLimit)
                 {
-                    out << "\n" << message;
+                    const size_t rest = message.size() - kInvokeTextLimit;
+                    message.resize(kInvokeTextLimit);
+                    message += "... (" + std::to_string(rest) + " more characters: the whole body is in structuredContent)";
                 }
+            }
+            if (!message.empty())
+            {
+                out << "\n" << message;
             }
 
             if (status >= 200 && status < 300)

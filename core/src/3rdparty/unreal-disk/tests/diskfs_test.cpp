@@ -136,8 +136,9 @@ TEST(DiskFs_Test, IsdosDevicesAnywhere)
     const std::vector<uint8_t> device = Bytes("loaders/isdos/HDDNEMO.img");
     const size_t first = 777, second = first + device.size() / 512 + 5;
     std::vector<uint8_t> disk((second + 200) * 512 + device.size(), 0);
-    std::memcpy(disk.data() + first * 512, device.data(), device.size());
-    std::memcpy(disk.data() + second * 512, device.data(), device.size());
+    // std::copy: memcpy here made gcc 15 -O3 (MinGW) warn of an overlap of two near-2^63-byte ranges (-Wrestrict)
+    std::copy(device.begin(), device.end(), disk.begin() + first * 512);
+    std::copy(device.begin(), device.end(), disk.begin() + second * 512);
     MemoryDevice hdd(disk);
     DiskFs fs(hdd);
     ASSERT_EQ(fs.Volumes().size(), 2u);
