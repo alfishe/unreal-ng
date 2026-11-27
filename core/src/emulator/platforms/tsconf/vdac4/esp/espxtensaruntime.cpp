@@ -108,6 +108,9 @@ EspXtensaRuntime::EspXtensaRuntime(std::function<void(const int16_t*, size_t, ui
             _audio(pcm.data(), pcm.size() / 2, rate);
         });
     };
+    ports.moduleBytes = [this](const std::string& name, std::vector<uint8_t>& bytes) {
+        return _appHost ? _appHost->ReadModule(name.c_str(), bytes) : static_cast<int>(kZmError);
+    };
     ports.log = [this](const std::string& line) {
         if (!_log)
             return;
@@ -374,6 +377,12 @@ void EspXtensaRuntime::StopApp()
     Flush();
     _host->StopApp();
     _appHost = nullptr;
+}
+
+bool EspXtensaRuntime::UsesModule(const std::string& name) const
+{
+    const_cast<EspXtensaRuntime*>(this)->WaitIdle();
+    return _host->UsesModule(name);
 }
 
 int EspXtensaRuntime::Command(uint8_t command, const uint8_t* data, size_t size)

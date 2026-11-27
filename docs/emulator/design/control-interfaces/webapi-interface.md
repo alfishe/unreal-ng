@@ -108,7 +108,9 @@ The WebAPI implements the same command semantics as other interfaces (CLI, Pytho
 - `model` / `model_full_name`: short name (for create requests) and human-readable name
 - `ram_kb`: configured RAM
 - `video_mode`: active video mode (`null` until the screen subsystem exists; `ATM16`/`Profi 512x240`/... on builds with extended video support)
-- `speed_multiplier`: live Z80 frequency multiplier (reflects turbo)
+- `speed_multiplier`: guest Z80 clock over the base 3.5 MHz, live (machine turbo: `4` = 14 MHz on TS-Conf / ZX-Evo,
+  `1.43` = Profi hi-res). **Not the emulation speed**: that is the `speed` setting (`GET /settings/speed`, host
+  speed multiplier 1-16)
 - `config_folder`: machine config folder under `configs/`
 
 ### 2. Get Server Status
@@ -689,7 +691,7 @@ GET  /api/v1/emulator/{id}/state/devices       The device catalog: {available, r
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives, command history (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/history             Device histories by registry id: mode, limit, counts, stream (../debugger/device-history.md)
 GET  /api/v1/emulator/{id}/history/{device}    One history: stats + records (?last=N); ?since=S: the first N records numbered after the cursor S, each with its seq, + next_since, missed, restarted (../debugger/device-history.md#reading-after-a-cursor)
-POST /api/v1/emulator/{id}/history/{device}/config  {"mode": "off|ring|capture", "limit", "stream", "stream_limit"}
+POST /api/v1/emulator/{id}/history/{device}/config  {"mode": "off|ring|capture", "limit", "stream", "stream_limit", "filter": "side=host out=true"}
 POST /api/v1/emulator/{id}/history/{device}/clear
 POST /api/v1/emulator/{id}/history/{device}/pause   Hold: nothing recorded, the records kept (/resume goes on)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
@@ -697,7 +699,7 @@ GET  /api/v1/emulator/{id}/state/cdaudio       CD drives' audio: disc and tracks
 POST /api/v1/emulator/{id}/cdaudio/{verb}      CD audio control: status | play (track, to | lba, frames | msf, end) | pause | resume | stop | volume (left, right, route, sotc) | mixer (volume, mute, solo); drive picks the drive. 409 recording / no-disc / not-playing, 404 no-cd-drive
 GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vdac_ver, blt2 - [MISC] TS_VDAC), memory map (+ fm_maps raw), video (mode, geometry, TSU, the engine's line with t0_gpage / t1_gpage), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs[72] = the register file as last written (404 on other machines)
 GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette for debug views: t_config, tilemap_page, sprite_page, tile_layers[] (t0 / t1: enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette bits), sprites[] (all 85 descriptors: active, leap, layer s0 / s1 / s2, x, y, width, height, flips, tile, bitmap_x, bitmap_y, palette, words[]), active_sprites, cram[] (256 cells: value, rgb) (404 on other machines)
-GET  /api/v1/emulator/{id}/vdac4/state         TS-Conf VDAC4 board (Tang + ESP32-S3) [?log=N recent ESP log lines, default 50, max 256]: tang {personality, armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last, error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames}, packets {count, recent[]}, audio {input_rate, output_rate, queued, underruns, dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits, esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits, ft_owner_wait_ms}, log[]; 409 "No VDAC4 Board" with the reason. Never parks the emulation thread (safe to poll)
+GET  /api/v1/emulator/{id}/vdac4/state         TS-Conf VDAC4 board (Tang + ESP32-S3) [?log=N recent ESP log lines, default 50, max 256]: tang {personality, armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last, error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames}, packets {count, recent[]}, audio {input_rate, output_rate, queued, underruns, dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits, esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits, ft_owner_wait_ms}, log[]; 409 "No VDAC4 Board" with the reason. Never parks the emulation thread (safe to poll)
 GET  /api/v1/emulator/{id}/vdac4/esp/memory    VDAC4 ESP memory, read-only [?address=A (32-bit, 0x hex)&size=N (default 16, max 4096)&app=1 (A is an address of the running app's ELF image)]: {address, size, app, hex}; 400 bad range / no app / unmapped, 409 no board
 GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, ppi8255, pit8253, usart8251 (404 with the reason on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)

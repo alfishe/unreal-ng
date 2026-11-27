@@ -137,23 +137,34 @@ inline bool SmoothMotionHelps(bool vrr, double displayHz, double machineHz)
 
 /// Smooth motion's step down: do the interpolated pictures reach the screen in time on this machine? Told per
 /// picture drawn by what the presenter saw (its count of late presents) and, where no presenter counts (the software
-/// screen), by the drawing itself taking most of a refresh. Of kWindow pictures, kLates late or slow ones: step down
-/// (the cheap interpolation, then the blend). The Steam Deck: 18.9 ms a picture on its GPU at 16.7 ms a refresh, 13
+/// screen), by the drawing itself taking most of a refresh. kBadWindows windows in a row of kWindow pictures with
+/// kLates late or slow ones each: step down (the cheap interpolation, then the blend). One window is not enough: a
+/// single stall of the machine (another app's GPU work, a build) makes several presents late at once, about 0.4 s
+/// of pictures, and stepped down an interpolation drawn in 1 ms of a 16.7 ms refresh (the owner's Mac, 60 Hz). The Steam Deck: 18.9 ms a picture on its GPU at 16.7 ms a refresh, 13
 /// pictures a second reached the screen
 class SmoothGuard
 {
 public:
     static constexpr uint32_t kWindow = 20;
     static constexpr uint32_t kLates = 4;
+    static constexpr uint32_t kBadWindows = 3;
 
     /// Start over; `latePresents`: the presenter's count now (0: none)
     void Reset(uint64_t latePresents = 0)
     {
-        _drawn = _lates = _slow = 0;
+        _drawn = _lates = _slow = _badWindows = 0;
         _lastLate = latePresents;
     }
+    /// Every refresh: whether smooth motion draws now, the presenter's count now. While it does not (turbo, low
+    /// latency, the temporal blend, another sync step), the presenter's late presents are not its pictures': on again,
+    /// it starts over from the count then, not from the one it stopped at
+    void Track(bool active, uint64_t latePresents)
+    {
+        if (!active)
+            Reset(latePresents);
+    }
     /// An interpolated picture drawn in `drawNs` at a refresh of `refreshNs`, the presenter's late presents at
-    /// `latePresents` so far. true: the window closed with too many late or slow pictures
+    /// `latePresents` so far. true: the kBadWindows-th window in a row closed with too many late or slow pictures
     bool Note(uint64_t latePresents, int64_t drawNs, int64_t refreshNs)
     {
         _lates += static_cast<uint32_t>(latePresents - (latePresents < _lastLate ? latePresents : _lastLate));
@@ -164,16 +175,47 @@ public:
             return false;
         _closedLates = _lates;
         _closedSlow = _slow;
-        const bool down = _lates >= kLates || _slow >= kLates;
+        _badWindows = _lates >= kLates || _slow >= kLates ? _badWindows + 1 : 0;
         _drawn = _lates = _slow = 0;
-        return down;
+        if (_badWindows < kBadWindows)
+            return false;
+        _badWindows = 0;
+        return true;
     }
     uint32_t ClosedLates() const { return _closedLates; }  ///< of the last window closed
     uint32_t ClosedSlow() const { return _closedSlow; }
 
+    /// A step down is not for good: the lates may have been the machine's for a while (a build beside it, the first
+    /// seconds of a start), not the pictures'. kFirstRetryNs after a step down the level above is tried again; each
+    /// step down after doubles the wait, up to kMaxRetryNs (a machine that cannot draw them, the Steam Deck: a window
+    /// of 20 late pictures every 5 minutes at most). StartOver (the settings set again) gives the first wait again
+    static constexpr int64_t kFirstRetryNs = 10'000'000'000;
+    static constexpr int64_t kMaxRetryNs = 300'000'000'000;
+    void SteppedDown(int64_t nowNs)
+    {
+        _retryAtNs = nowNs + _retryNs;
+        _retryNs = _retryNs * 2 < kMaxRetryNs ? _retryNs * 2 : kMaxRetryNs;
+    }
+    /// The level above is due to be tried again (once: the caller steps up and calls Reset)
+    bool RetryDue(int64_t nowNs)
+    {
+        if (_retryAtNs == 0 || nowNs < _retryAtNs)
+            return false;
+        _retryAtNs = 0;
+        return true;
+    }
+    void StartOver(uint64_t latePresents = 0)
+    {
+        Reset(latePresents);
+        _retryAtNs = 0;
+        _retryNs = kFirstRetryNs;
+    }
+
 private:
-    uint32_t _drawn = 0, _lates = 0, _slow = 0, _closedLates = 0, _closedSlow = 0;
+    uint32_t _drawn = 0, _lates = 0, _slow = 0, _badWindows = 0, _closedLates = 0, _closedSlow = 0;
     uint64_t _lastLate = 0;
+    int64_t _retryAtNs = 0;
+    int64_t _retryNs = kFirstRetryNs;
 };
 
 inline VideoSync PickVideoSync(bool vrr, double displayHz, double machineHz, VideoSync last = VideoSync::Off)

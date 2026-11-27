@@ -9,6 +9,9 @@
 //                                           --self-check, --measure and --screenshot work on it too
 //   unreal-debugger --zoom 1.5 [...]      the window's scale (Ctrl+= / Ctrl+- / Ctrl+0, Ctrl + the wheel)
 //   unreal-debugger --self-check --timeline-shots DIR   also saves the twin timeline paused and running as PNGs
+//   unreal-debugger --connect ... --gui-gap-check [--gap-latency-ms 300] [--gap-stall-ms 6000] [--gap-limit-ms 50]
+//                                         the GUI thread's longest stall through a proxy that delays, then stalls,
+//                                         the emulator's answers (latencycheck.h); exit code 2 on a failure
 //
 // Run from the build's bin/ directory (the core finds data/ there). A small screen window shows the machine; the
 // debugger is ecat's DebuggerWindow as it is, over the adapter of adapter/unrealmachine.cpp (the core in this
@@ -44,6 +47,7 @@
 #include <QProgressDialog>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QThread>
 #include <QTimer>
 #include <QTableWidget>
 #include <QClipboard>
@@ -69,12 +73,14 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 #include <ctime>
 
 #include "debuggercontrol.h"
 #include "guicontrol/host.h"
 #include "guicontrol/windowbinding.h"
+#include "latencycheck.h"
 #include "remotemachine.h"
 #include "unrealmachine.h"
 #include "dialogs/debugger/addressmenu.h"
@@ -2865,6 +2871,14 @@ int main(int argc, char * argv[])
     QCommandLineOption emulatorOpt("emulator", "With --connect: the emulator's id or symbolic id (default: the first)", "id");
     parser.addOption(connectOpt);
     parser.addOption(emulatorOpt);
+    QCommandLineOption gapOpt("gui-gap-check", "With --connect: the GUI thread's longest stall while the emulator's answers come late, then not at all");
+    QCommandLineOption gapLatencyOpt("gap-latency-ms", "With --gui-gap-check: the latency added to each answer", "ms", "300");
+    QCommandLineOption gapStallOpt("gap-stall-ms", "With --gui-gap-check: how long the connection stalls", "ms", "6000");
+    QCommandLineOption gapLimitOpt("gap-limit-ms", "With --gui-gap-check: a longer stall of the GUI thread is a failure (0: none)", "ms", "0");
+    parser.addOption(gapOpt);
+    parser.addOption(gapLatencyOpt);
+    parser.addOption(gapStallOpt);
+    parser.addOption(gapLimitOpt);
     parser.addPositionalArgument("file", "Snapshot, tape or disk to load");
     parser.process(app);
     g_timeline_shots = parser.value(timelineShotsOpt);
@@ -2876,7 +2890,9 @@ int main(int argc, char * argv[])
 
     std::string error;
     const bool remote = parser.isSet(connectOpt);
+    std::unique_ptr<LatencyProxy> proxy;  // gone after the machine, whose last requests go through it
     std::unique_ptr<ecatshim::Emulator> machine;
+    RemoteOptions remote_options;         // as asked (the async part of the connect self-check connects again)
     if (remote) {
         RemoteOptions ro;
         const QString where = parser.value(connectOpt);
@@ -2884,6 +2900,16 @@ int main(int argc, char * argv[])
         ro.host = (colon > 0 ? where.left(colon) : where).toStdString();
         if (colon > 0) ro.port = (uint16_t)where.mid(colon + 1).toUInt();
         ro.emulator = parser.value(emulatorOpt).toStdString();
+        remote_options = ro;
+        // The checks and measurements read back what they have just done: every request waited for. The window
+        // itself never waits for the network
+        ro.synchronous = parser.isSet(checkOpt) || parser.isSet(shotOpt) || parser.isSet(measureOpt) || parser.isSet(listOpt);
+        if (parser.isSet(gapOpt)) {
+            // Every connection of the debugger through the proxy, which delays and stalls on the check's command
+            proxy = std::make_unique<LatencyProxy>(QString::fromStdString(ro.host), ro.port);
+            ro.host = "127.0.0.1";
+            ro.port = proxy->port();
+        }
         machine = CreateRemoteMachine(ro, error);
         if (!machine && !parser.isSet(listOpt)) {
             //No suitable emulator yet: a normal course, the debugger waits for one (a look a second), nothing logged
@@ -2893,13 +2919,38 @@ int main(int argc, char * argv[])
                                     "Quit", 0, 0);
             waiting.setWindowTitle("unreal-debugger");
             waiting.setMinimumDuration(0);
+            // Each look on a thread of its own, one at a time: the dialog answers while the emulator does not
+            std::mutex found_mutex;
+            std::unique_ptr<ecatshim::Emulator> found;
+            QThread * look = nullptr;
             QTimer retry;
             QObject::connect(&retry, &QTimer::timeout, [&]() {
-                machine = CreateRemoteMachine(ro, error);
-                if (machine) waiting.accept();
+                {
+                    std::lock_guard<std::mutex> lock(found_mutex);
+                    if (found) {
+                        waiting.accept();
+                        return;
+                    }
+                }
+                if (look != nullptr && !look->isFinished()) return;
+                delete look;
+                look = QThread::create([&]() {
+                    std::string why;
+                    std::unique_ptr<ecatshim::Emulator> m = CreateRemoteMachine(ro, why);
+                    std::lock_guard<std::mutex> lock(found_mutex);
+                    found = std::move(m);
+                });
+                look->start();
             });
             retry.start(1000);
-            if (waiting.exec() != QDialog::Accepted || !machine) return 0;
+            const int answer = waiting.exec();
+            retry.stop();
+            if (look != nullptr) {
+                look->wait();
+                delete look;
+            }
+            machine = std::move(found);
+            if (answer != QDialog::Accepted || !machine) return 0;
         }
         options.model = "remote";
         options.card = where.toStdString();
@@ -3013,6 +3064,21 @@ int main(int argc, char * argv[])
     dbg->show();
     const std::unique_ptr<guicontrol::Host> gui = start_gui_control(static_cast<DebuggerWindow *>(dbg), machine.get(), remote);
 
+    if (parser.isSet(gapOpt) && proxy) {
+        setvbuf(stdout, nullptr, _IONBF, 0);
+        QTimer::singleShot(0, [&]() {
+            GapCheckOptions o;
+            o.latency_ms = parser.value(gapLatencyOpt).toInt();
+            o.stall_ms = parser.value(gapStallOpt).toInt();
+            o.limit_ms = parser.value(gapLimitOpt).toDouble();
+            wait_for([]() { return false; }, 1000);  // the window's first reads
+            const int failed = GuiGapCheck(machine.get(), static_cast<DebuggerWindow *>(dbg), proxy.get(), o);
+            printf("gui-gap-check: %s\n", failed ? "FAILED" : "all passed");
+            dbg->close();
+            QApplication::exit(failed ? 2 : 0);
+        });
+    }
+
     if (parser.isSet(checkOpt)) {
         // Qt's own file dialogs: the check answers them, a native one it cannot reach
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
@@ -3021,7 +3087,13 @@ int main(int argc, char * argv[])
             // After the boot (200 frames, 4 s of the machine's time): the ROM's menu, interrupts on
             ecatshim::Emulator * m = machine.get();
             wait_for([m]() { return machine_frames(m) >= 200; }, 30000);
-            const int failed = self_check(m, dbg);
+            int failed = self_check(m, dbg);
+            // Connected: the window's own connection never waits on the views' thread (a second one, asynchronous,
+            // through a proxy that delays and stalls it)
+            if (remote) {
+                printf("async connection\n");
+                failed += AsyncRemoteCheck(remote_options.host, remote_options.port, RemoteMachineId(m));
+            }
             QDir(scratch_dir()).removeRecursively();  // this process's files only
             printf("self-check: %s\n", failed ? "FAILED" : "all passed");
             fflush(stdout);

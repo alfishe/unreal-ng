@@ -462,7 +462,9 @@ void VideoSyncWindow::refresh()
         return;
     const WindowDisplaySettings s = _settings();
     const WindowPresentStats& p = s.present;
-    setSyncChecked(p.sync != "off");
+    // The setting, not the step in effect: "on" is smooth motion auto (View > Video Synchronization). The step is off
+    // for any mode set by hand (interpolate, blend), and a box made from it unticked itself every refresh after a click
+    setSyncChecked(s.smoothMotion == "auto");
 
     if (s.emulatorId.empty())
     {

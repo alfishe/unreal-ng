@@ -149,8 +149,10 @@ public:
     };
 
     /// `pool` (optional): the block rows split over its threads, the same field (each block reads only the pass
-    /// before)
-    void Estimate(const Picture& a, const Picture& b, int range, ThreadPool* pool = nullptr);
+    /// before). `hint` (optional): a field of a nearby pair, the same size or not, that speeds the search where its
+    /// motion goes on; the field is the same with any hint or none
+    void Estimate(const Picture& a, const Picture& b, int range, ThreadPool* pool = nullptr,
+                  const MotionField* hint = nullptr);
     /// `w` 0..2 * kOne. `mask` (width * height, optional): only the pixels whose byte is non-zero are written
     void Compose(const Picture& a, const Picture& b, int w, uint32_t* out, const uint8_t* mask = nullptr) const;
 
@@ -277,7 +279,11 @@ public:
     void SetGame(const GameVideo* game);
     bool HasGame() const { return _hasGame; }
 
-    /// The frames in order of their serials, each once. A size change starts over
+    /// Targets further apart than this many frame periods: a pause between the two frames, no motion across it
+    static constexpr int64_t kGapPeriods = 4;
+
+    /// The frames in order of their serials, each once (an older serial is ignored). A size change, a serial missed
+    /// or a target not after the last one starts over
     void Push(uint64_t serial, int64_t targetNs, const uint32_t* pixels, int width, int height);
     /// Forget every frame (a detach, a seek)
     void Reset();
@@ -320,7 +326,9 @@ private:
         MotionField field;
     };
 
-    const MotionField& FieldFor(const Stored& a, const Stored& b, int range);
+    /// The field a -> b over `range`, cached in two slots. `keep`: a field returned before that must stay valid (the
+    /// slot holding it is not reused)
+    const MotionField& FieldFor(const Stored& a, const Stored& b, int range, const MotionField* keep = nullptr);
     /// Interpolate's picture of the pair a, b with `p` the frame before a (a itself after a start or a seek)
     void ComposeLayers(const Stored& p, const Stored& a, const Stored& b, int w, uint32_t* out);
     void Compose(const MotionField& field, const Picture& a, const Picture& b, int w, uint32_t* out,

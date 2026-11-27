@@ -5647,7 +5647,7 @@ namespace PythonBindings
             .def("history_config",
                  [](Emulator& self, const std::string& device, std::optional<std::string> mode,
                     std::optional<uint64_t> limit, std::optional<std::string> stream,
-                    std::optional<uint64_t> streamLimit) -> py::object {
+                    std::optional<uint64_t> streamLimit, std::optional<std::string> filter) -> py::object {
                      HistoryRequest request;
                      request.verb = "config";
                      request.device = device;
@@ -5655,12 +5655,14 @@ namespace PythonBindings
                      request.limit = limit;
                      request.stream = stream;
                      request.streamLimit = streamLimit;
+                     request.filter = filter;
                      return StateNodeToPy(python_history::Run(self, request));
                  },
                  py::arg("device"), py::arg("mode") = py::none(), py::arg("limit") = py::none(),
-                 py::arg("stream") = py::none(), py::arg("stream_limit") = py::none(),
+                 py::arg("stream") = py::none(), py::arg("stream_limit") = py::none(), py::arg("filter") = py::none(),
                  "Configure a device history: mode off / ring / capture, limit (ring size; capture cap, 0 = none), "
-                 "stream (a JSON Lines file, '' = none), stream_limit; omitted fields keep their value")
+                 "stream (a JSON Lines file, '' = none), stream_limit, filter (which records are recorded at all: "
+                 "'side=host out=true', '' = every record); omitted fields keep their value")
             .def("history_clear", [](Emulator& self, const std::string& device) -> py::object {
                 HistoryRequest request;
                 request.verb = "clear";

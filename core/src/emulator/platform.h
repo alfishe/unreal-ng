@@ -696,6 +696,7 @@ struct CONFIG
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
 	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
 	bool vdac2_ft_draw_thread = true;	// [VDAC2] FtDrawThread: the FT812's drawing on its renderer thread (same picture)
+	uint8_t vdac2_ft_draw_threads = 1;	// [VDAC2] FtDrawThreads: threads drawing the FT812's lines (EveSetDrawThreads); 0 = by the host's cores
 	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
 	bool ts_vdac4 = false;			// [MISC] TS_VDAC4: the VDAC4 board on the VDAC2 firmware build (ts_vdac = 7): Tang FPGA (FT812 core) + ESP32-S3 (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
 	uint8_t vdac4_ramg_mb = 2;		// [VDAC4] RamG: RAM_G at power-on, 2 or 3 (MB); the ESP / apps switch it through FT_CFG
@@ -705,6 +706,7 @@ struct CONFIG
 	bool vdac4_esp_thread = true;		// [VDAC4] EspThread: the ESP app's jobs on a worker thread (same results either way)
 	bool vdac4_ft_thread = false;		// [VDAC4] FtThread: the Tang / FT812 work of the ESP's jobs on a thread of its own
 	bool vdac4_ft_draw_thread = true;	// [VDAC4] FtDrawThread: the FT812's drawing on its renderer thread (same picture)
+	uint8_t vdac4_ft_draw_threads = 1;	// [VDAC4] FtDrawThreads: threads drawing the FT812's lines (EveSetDrawThreads); 0 = by the host's cores
 	uint8_t vdac4_esp_latency_ms = 4;	// [VDAC4] EspLatencyMs: 1..16 ms the app's outputs reach the firmware after its job
 	char vdac4_esp_cache[FILENAME_MAX] = {};	// [VDAC4] EspCache: ESP module cache directory; empty = <data dir>/vdac4/zm
 	char vdac4_esp_log[FILENAME_MAX] = {};		// [VDAC4] EspLog: ESP app log file; empty = off

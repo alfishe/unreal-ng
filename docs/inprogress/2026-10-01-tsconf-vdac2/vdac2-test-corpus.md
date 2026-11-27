@@ -125,7 +125,7 @@ Header, 64 bytes:
 |---|---|---|
 | 0 | 4 | magic `EVR1` |
 | 4 | 4 | header size (64) |
-| 8 | 4 | chip model (812) |
+| 8 | 4 | chip model: 812 (FT812), 4 (the VDAC4 board's FT812, `EVE_MODEL_VDAC4`) |
 | 12 | 4 | external clock in Hz (VDAC2: 8 000 000) |
 | 16 | 20 | SHA-1 of the ROM image the chip ran with (zeros: no ROM) |
 | 36 | 4 | ROM image size in bytes |
@@ -141,7 +141,7 @@ payload. The clock is the chip's system clock count since its creation
 |---|---|---|
 | 1 select | u8 level (1 = selected) | advance to the clock, `EveSelect` |
 | 2 byte | u8 mosi, u8 miso | advance, `EveExchange(mosi)`; the result must equal miso |
-| 3 frame | u64 completed frames, u8 drawn, u16 width, u16 height, u64 FNV-1a 64 of the ARGB8888 picture (bytes of each pixel, low byte first) | advance; `EveCompletedFrames` must equal the count; when drawn and the replay draws at the same size, the hashes must be equal |
+| 3 frame | u64 completed frames, u8 drawn, u16 width, u16 height, u64 FNV-1a 64 of the ARGB8888 picture (bytes of each pixel, low byte first) | advance; `EveCompletedFrames` must equal the count; when drawn and the replay draws at the same size, the hashes must be equal. The frame a capture started in is recorded as not drawn: its lines above the start were drawn before the saved state |
 | 4 power-on | - | advance, `EveReset` |
 | 5 end | - | advance to the clock: the end of the capture |
 | 6 state | u32 size, state blob, u32 regions, per region: u8 name length, name, u32 size, bytes | the first record of a capture started on a running chip: `EveLoadState`, the regions written back, `EveMemoryRestored` |

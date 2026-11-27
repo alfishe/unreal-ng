@@ -235,7 +235,8 @@ void LuaEmulator::RegisterNetworkAndGs(sol::state& lua)
             request.since = *since;
         return historyRun(s, request);
     });
-    // history_config(device, {mode = "ring", limit = 256, stream = "fdc.jsonl", stream_limit = 0})
+    // history_config(device, {mode = "ring", limit = 256, stream = "fdc.jsonl", stream_limit = 0,
+    //                         filter = "side=host out=true"})
     lua.set_function("history_config", [historyRun](sol::this_state s, const std::string& device, sol::table options) {
         HistoryRequest request;
         request.verb = "config";
@@ -248,6 +249,8 @@ void LuaEmulator::RegisterNetworkAndGs(sol::state& lua)
             request.stream = *stream;
         if (sol::optional<uint64_t> streamLimit = options["stream_limit"])
             request.streamLimit = *streamLimit;
+        if (sol::optional<std::string> filter = options["filter"])
+            request.filter = *filter;
         return historyRun(s, request);
     });
     lua.set_function("history_clear", [historyRun](sol::this_state s, const std::string& device) {

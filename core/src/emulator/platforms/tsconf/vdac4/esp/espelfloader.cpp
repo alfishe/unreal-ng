@@ -132,7 +132,7 @@ uint32_t EspElfImage::RemapText(uint32_t address) const
 {
     const EspElfSection& text = sections[Text];
     if (address >= text.addr && address < text.addr + text.size)
-        return address + kEspIbusOffset;
+        return address + textBusOffset;
     return address;
 }
 
@@ -244,7 +244,8 @@ const char* EspElfImageProblem(const uint8_t* data, size_t size)
     return nullptr;
 }
 
-bool EspElfLoad(const uint8_t* data, size_t size, IEspElfHost& host, EspElfImage& image, std::string& error)
+bool EspElfLoad(const uint8_t* data, size_t size, IEspElfHost& host, EspElfImage& image, std::string& error,
+                const EspElfTextRoom* room)
 {
     image = EspElfImage{};
     if (const char* problem = EspElfImageProblem(data, size))
@@ -273,7 +274,16 @@ bool EspElfLoad(const uint8_t* data, size_t size, IEspElfHost& host, EspElfImage
 
     EspElfSection* sections = image.sections;
     EspElfSection& text = sections[EspElfImage::Text];
-    image.textBlock = host.AllocPsram(text.size);
+    if (room != nullptr && room->address != 0 && text.size <= room->size)
+    {
+        image.textBlock = room->address;
+        image.textBorrowed = true;
+        image.textBusOffset = room->busOffset;
+    }
+    else
+    {
+        image.textBlock = host.AllocPsram(text.size);
+    }
     if (image.textBlock == 0)
     {
         error = "no memory for .text";
@@ -396,7 +406,7 @@ void EspElfUnload(IEspElfHost& host, EspElfImage& image)
 {
     if (image.dataBlock != 0)
         host.FreePsram(image.dataBlock);
-    if (image.textBlock != 0)
+    if (image.textBlock != 0 && !image.textBorrowed)
         host.FreePsram(image.textBlock);
     image = EspElfImage{};
 }

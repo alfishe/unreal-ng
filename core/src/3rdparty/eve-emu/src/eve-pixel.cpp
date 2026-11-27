@@ -117,22 +117,6 @@ bool BlendSpanFast(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t c
 
 } // namespace
 
-bool ScissorSpan(const LineRun& run, int32_t& first, int32_t& last)
-{
-    const GraphicsContext& ctx = run.ctx;
-    if (run.y < ctx.scissorY || run.y >= static_cast<uint32_t>(ctx.scissorY) + ctx.scissorHeight)
-        return false;
-    const int32_t left = ctx.scissorX;
-    const int32_t right = ctx.scissorX + ctx.scissorWidth;
-    first = first > left ? first : left;
-    last = last < right ? last : right;
-    if (first < 0)
-        first = 0;
-    if (last > static_cast<int32_t>(run.width))
-        last = static_cast<int32_t>(run.width);
-    return first < last;
-}
-
 template <LineMode Mode>
 void Shade(LineRun& run, int32_t x, uint32_t r, uint32_t g, uint32_t b, uint32_t a)
 {

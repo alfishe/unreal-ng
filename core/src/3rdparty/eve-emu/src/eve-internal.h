@@ -539,6 +539,24 @@ struct AsyncDrawingDelete
     void operator()(AsyncDrawing* async) const;
 };
 
+// What drawing the lines cost the host (EveGetHostDrawStats): wall time per visible line of the frame being drawn,
+// published at its end. Not chip state (never saved, compared or restored); shared by a chip and its renderer's
+// shadow, so the owner reads what the renderer measured
+struct HostDrawStats; // eve-dl.cpp
+struct HostDrawStatsDelete
+{
+    void operator()(HostDrawStats* stats) const;
+};
+
+// Worker threads that draw lines of one frame side by side (EveSetDrawThreads, eve-dl.cpp DrawLinesParallel)
+struct LineWorkers; // eve-dl.cpp
+struct LineWorkersDelete
+{
+    void operator()(LineWorkers* workers) const;
+};
+// Fewer lines due than this: drawn on the calling thread (waking the workers costs more)
+constexpr uint32_t kParallelMinLines = 8;
+
 } // namespace EveLib
 
 // --- The chip context (one allocation in EveCreate) -------------------------------------
@@ -626,7 +644,13 @@ struct EveChip
     bool lineKeepEnabled = true;           // false: every line is drawn (tests compare both)
     uint64_t drawRegChanges = 0;
     uint64_t outputVersion = 1;
-    bool lineFromPlan = false;             // the line just drawn came from the recorded walk
+    // Lines drawn by worker threads (EveSetDrawThreads): lines that replay one recorded walk whose start and end
+    // handles are equal depend on nothing another of them writes. Not chip state: a host setting
+    bool lineRepeatEnabled = true;  // lines with the same texel rows as the last one copied (eve-render.h LineRepeat)
+    uint32_t drawThreads = 0;                       // threads drawing lines, the calling one included (0, 1: off)
+    uint32_t parallelMinLines = EveLib::kParallelMinLines;
+    uint64_t parallelLines = 0;                     // lines that went to a parallel batch (tests)
+    std::unique_ptr<EveLib::LineWorkers, EveLib::LineWorkersDelete> lineWorkers;
     std::unique_ptr<uint8_t[]> probeColor;   // the same for EveProbePixel
     std::unique_ptr<uint8_t[]> probeStencil;
     std::unique_ptr<uint8_t[]> probeTag;
@@ -653,6 +677,7 @@ struct EveChip
     // Lines went to the renderer ahead since the last catch-up (CatchUpAhead)
     bool drawnAhead = false;
     std::unique_ptr<EveLib::AsyncDrawing, EveLib::AsyncDrawingDelete> async;
+    std::shared_ptr<EveLib::HostDrawStats> hostStats; // EveGetHostDrawStats (EveCreate; the shadow shares it)
 };
 
 namespace EveLib
@@ -807,7 +832,10 @@ bool AsyncDrawingStatePending(const EveChip& chip, bool metrics);
 // REG_TAG as the drawing left it, into the chip's register (a host read)
 void AsyncSyncTag(EveChip& chip);
 // EveFramesBarrier
+std::shared_ptr<HostDrawStats> MakeHostDrawStats();
 void AsyncFramesBarrier(EveChip& chip);
+// EveFramesBarrierTo
+void AsyncFramesBarrierTo(EveChip& chip, uint64_t frameEnds);
 // The REG_TAG of the last frames barrier into the chip's register, once the renderer has it: before anything reads
 // the register. Logically part of that read (the barrier's store, deferred), so a const chip takes it too
 void AsyncStorePendingTag(const EveChip& chip);

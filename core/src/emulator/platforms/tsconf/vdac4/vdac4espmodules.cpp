@@ -145,6 +145,7 @@ bool EspModuleCache::ValidName(const char* name)
 
 void EspModuleCache::Load()
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     for (EspModuleCacheEntry& entry : _entries)
         entry = EspModuleCacheEntry{};
     _clock = 0;
@@ -207,6 +208,7 @@ bool EspModuleCache::SaveIndex()
 
 const EspModuleCacheEntry* EspModuleCache::Find(const char* name) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (name == nullptr)
         return nullptr;
     for (const EspModuleCacheEntry& entry : _entries)
@@ -232,6 +234,7 @@ void EspModuleCache::Drop(EspModuleCacheEntry* entry)
 
 bool EspModuleCache::Has(const char* name, uint32_t size, uint32_t stamp) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     const EspModuleCacheEntry* entry = Find(name);
     return entry != nullptr && entry->size == size && entry->stamp == stamp;
 }
@@ -243,6 +246,7 @@ size_t EspModuleCache::Footprint(size_t size)
 
 size_t EspModuleCache::FreeBytes() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     size_t used = Footprint(kIndexBytes);
     for (const EspModuleCacheEntry& entry : _entries)
     {
@@ -254,6 +258,7 @@ size_t EspModuleCache::FreeBytes() const
 
 bool EspModuleCache::CanFit(uint32_t size, const char* busy) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     size_t kept = Footprint(kIndexBytes);
     const EspModuleCacheEntry* held = busy != nullptr ? Find(busy) : nullptr;
     if (held != nullptr)
@@ -263,6 +268,7 @@ bool EspModuleCache::CanFit(uint32_t size, const char* busy) const
 
 size_t EspModuleCache::Count() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     size_t total = 0;
     for (const EspModuleCacheEntry& entry : _entries)
     {
@@ -290,6 +296,7 @@ bool EspModuleCache::EvictOne(const char* busy)
 
 bool EspModuleCache::Store(const char* name, uint32_t stamp, const uint8_t* data, uint32_t size, const char* busy)
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (!ValidName(name) || data == nullptr || size == 0)
         return false;
     if (EspModuleCacheEntry* old = Slot(name))
@@ -334,8 +341,19 @@ bool EspModuleCache::Store(const char* name, uint32_t stamp, const uint8_t* data
     return SaveIndex();
 }
 
+bool EspModuleCache::ReadModule(const char* name, std::vector<uint8_t>& out)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    const EspModuleCacheEntry* entry = Find(name);
+    if (entry == nullptr)
+        return false;
+    out.assign(entry->size, 0);
+    return Read(name, out.data(), static_cast<uint32_t>(out.size()));
+}
+
 bool EspModuleCache::Read(const char* name, uint8_t* data, uint32_t size)
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     EspModuleCacheEntry* entry = Slot(name);
     if (entry == nullptr || entry->size != size)
         return false;

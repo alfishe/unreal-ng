@@ -382,3 +382,79 @@ TEST(EveAsyncDrawing_Test, FramesBarrierPresentsTheFramesAndKeepsTheTagOfItsPoin
     std::lock_guard<std::mutex> guard(presented.lock);
     EXPECT_EQ(presented.hashes, syncHashes);
 }
+
+TEST(EveAsyncDrawing_Test, FramesBarrierToLetsTheRendererLagByOneHostFrame)
+{
+    // The host's frame-end pattern (EveHostCard::OnFrameEnd): wait for the frames queued by the previous barrier
+    // only. Every frame is still presented in order, at most one host frame late, and REG_TAG reads as the chip's
+    Chip sync;
+    Chip async;
+    ASSERT_NE(sync.chip, nullptr);
+    ASSERT_NE(async.chip, nullptr);
+    Presented presented;
+    presented.chip = &async;
+    Traffic bus({&sync, &async});
+
+    for (Chip* c : {&sync, &async})
+    {
+        c->HostCommand(0x44); // CLKEXT
+        c->HostCommand(0x00); // ACTIVE
+        EveAdvance(c->chip, 1000000);
+    }
+    const std::pair<uint32_t, uint32_t> timing[] = {
+        {kRegHcycle, 100}, {kRegHoffset, 10}, {kRegHsize, kWidth}, {kRegHsync0, 0}, {kRegHsync1, 5},
+        {kRegVcycle, 60},  {kRegVoffset, 4},  {kRegVsize, kHeight}, {kRegVsync0, 0}, {kRegVsync1, 2},
+        {kRegTagX, 10},    {kRegTagY, 20},    {kRegPclk, 1}};
+    for (const auto& [address, value] : timing)
+        bus.Write32(address, value);
+    std::vector<uint8_t> bitmap(kBitmapBytes);
+    for (uint8_t& b : bitmap)
+        b = static_cast<uint8_t>(bus.Next());
+    bus.Write(0, bitmap);
+    bus.DisplayList(0x0A141E, 5);
+    for (Chip* c : {&sync, &async})
+        EveSetOutput(c->chip, c->frame.data(), kWidth, kWidth, kHeight, 1);
+    ASSERT_EQ(EveQueuedFrameEnds(async.chip), 0u);  // not drawing asynchronously yet
+    ASSERT_EQ(EveSetAsyncDrawing(async.chip, 1, &OnFrame, &presented), 0) << EveLastError();
+
+    std::vector<uint64_t> syncHashes;
+    const uint64_t frames = EveCompletedFrames(sync.chip);
+    constexpr uint32_t kFrames = 16;
+    uint64_t sinceBarrier = 0;
+    uint64_t lastQueued = 0;
+    size_t hashesAtLastBarrier = 0;
+    while (EveCompletedFrames(sync.chip) < frames + kFrames)
+    {
+        const uint64_t step = std::max<uint64_t>(1, std::min<uint64_t>(bus.Next() % 1500, EveClocksToNextEvent(sync.chip)));
+        const uint64_t before = EveCompletedFrames(sync.chip);
+        EveAdvance(sync.chip, step);
+        EveAdvance(async.chip, step);
+        sinceBarrier += step;
+        if (EveCompletedFrames(sync.chip) != before)
+            syncHashes.push_back(Hash(sync.frame.data(), sync.frame.size()));
+        const uint64_t frame = EveCompletedFrames(sync.chip) - frames;
+        if (bus.Next() % 4 == 0)
+            bus.DisplayList(bus.Next() & 0xFFFFFF, 1 + bus.Next() % 200);
+        if (sinceBarrier >= 5000)
+        {
+            sinceBarrier = 0;
+            const uint64_t queued = EveQueuedFrameEnds(async.chip);
+            EveFramesBarrierTo(async.chip, lastQueued);
+            {
+                std::lock_guard<std::mutex> guard(presented.lock);
+                // At least what the previous barrier saw queued; never more than drawn by the synchronous chip,
+                // and the same pictures in the same order
+                ASSERT_GE(presented.hashes.size(), hashesAtLastBarrier) << "frame " << frame;
+                ASSERT_LE(presented.hashes.size(), syncHashes.size()) << "frame " << frame;
+                ASSERT_TRUE(std::equal(presented.hashes.begin(), presented.hashes.end(), syncHashes.begin()))
+                    << "frame " << frame;
+            }
+            hashesAtLastBarrier = syncHashes.size();
+            lastQueued = queued;
+            ASSERT_EQ(EvePeek(async.chip, kRegTag), EvePeek(sync.chip, kRegTag)) << "frame " << frame;
+        }
+    }
+    EveFramesBarrier(async.chip);
+    std::lock_guard<std::mutex> guard(presented.lock);
+    EXPECT_EQ(presented.hashes, syncHashes);
+}

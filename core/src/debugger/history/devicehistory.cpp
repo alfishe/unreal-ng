@@ -45,6 +45,11 @@ StateNode StatsNode(const IDeviceHistory& history)
     node["kept"] = static_cast<int64_t>(stats.kept);
     node["dropped"] = static_cast<int64_t>(stats.dropped);
     node["paused"] = stats.paused;
+    if (!stats.config.filter.empty())
+    {
+        node["filter"] = stats.config.filter;
+        node["filtered"] = static_cast<int64_t>(stats.filtered);
+    }
     if (!stats.config.stream.empty())
     {
         StateNode stream = StateNode::Object();

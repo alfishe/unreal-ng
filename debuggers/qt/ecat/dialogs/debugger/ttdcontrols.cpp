@@ -12,12 +12,14 @@
 #include <QJsonDocument>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QStringList>
 #include <QToolBar>
 #include <QToolButton>
 
 #include <algorithm>
+#include <memory>
 #include <set>
 
 namespace {
@@ -108,6 +110,19 @@ bool TtdControls::call(const std::string &verb, std::map<std::string, std::strin
     if (out) *out = o;
     if (!a.ok && !title.isEmpty() && inform) inform(title, o.value("message").toString(tr("The emulator did not answer.")), true);
     return a.ok;
+}
+
+void TtdControls::call_then(const std::string &verb, std::map<std::string, std::string> options, const QString &title,
+                            std::function<void(bool ok, const QJsonObject &answer)> then)
+{
+    QPointer<TtdControls> self(this);
+    e->ttd_call_async(verb, options, [self, title, then](const Emulator::TtdAnswer &a) {
+        if (self.isNull()) return;
+        const QJsonObject o = QJsonDocument::fromJson(QByteArray::fromStdString(a.json)).object();
+        if (!a.ok && !title.isEmpty() && self->inform)
+            self->inform(title, o.value("message").toString(tr("The emulator did not answer.")), true);
+        if (then) then(a.ok, o);
+    });
 }
 
 void TtdControls::poll(bool force)
@@ -251,18 +266,22 @@ void TtdControls::update_actions()
 }
 
 bool TtdControls::move(const std::string &verb, std::map<std::string, std::string> options, const QString &title,
-                       QJsonObject * out)
+                       std::function<void(const QJsonObject &answer)> then)
 {
-    QJsonObject answer;
-    if (!call(verb, std::move(options), &answer, title)) {
+    //-1 while the answer is to come (a remote machine's: under way), else whether it moved
+    auto result = std::make_shared<int>(-1);
+    call_then(verb, std::move(options), title, [this, then, result](bool ok, const QJsonObject &answer) {
+        *result = ok ? 1 : 0;
+        if (!ok) {
+            poll(true);
+            return;
+        }
+        m_last_result = answer.value("text").toString().trimmed();
+        if (then) then(answer);
         poll(true);
-        return false;
-    }
-    m_last_result = answer.value("text").toString().trimmed();
-    if (out) *out = answer;
-    poll(true);
-    emit moved();
-    return true;
+        emit moved();
+    });
+    return *result != 0;
 }
 
 QString TtdControls::card_cpu() const
@@ -302,20 +321,29 @@ QString TtdControls::describe_card(const QJsonObject &card)
 }
 
 bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::map<std::string, std::string> options,
-                            const QString &title, bool * at_end)
+                            const QString &title, std::function<void()> at_end)
 {
     options["cpu"] = cpu.toStdString();
-    QJsonObject answer;
+    auto result = std::make_shared<int>(-1);
+    call_then(verb, std::move(options), QString(), [this, cpu, title, at_end, result](bool ok, const QJsonObject &answer) {
+        *result = card_moved(cpu, title, ok, answer, at_end) ? 1 : 0;
+    });
+    return *result != 0;
+}
+
+bool TtdControls::card_moved(const QString &cpu, const QString &title, bool ok, const QJsonObject &answer,
+                             const std::function<void()> &at_end)
+{
     //A refusal (no card, no counts, no history, no breakpoints) is said here: its text is the core's
-    if (!call(verb, std::move(options), &answer)) {
+    if (!ok) {
         m_last_result = title + ": " + answer.value("message").toString(tr("The emulator did not answer."));
         if (inform) inform(title, answer.value("message").toString(tr("The emulator did not answer.")), true);
         poll(true);
         return false;
     }
     //An answer that moved nothing (at_start, at_end, no_hit): the machine stays where it was
-    if (!answer.value("reached").toBool() && at_end != nullptr && answer.value("status").toString() == "at_end") {
-        *at_end = true;
+    if (!answer.value("reached").toBool() && at_end && answer.value("status").toString() == "at_end") {
+        at_end();
         return false;
     }
     if (!answer.value("reached").toBool()) {
@@ -350,14 +378,15 @@ bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::ma
     return true;
 }
 
-bool TtdControls::step_forward(const std::string &kind, unsigned int address)
+bool TtdControls::step_forward(const std::string &kind, unsigned int address, std::function<void()> live)
 {
     const QString card = card_cpu();
     if (card.isEmpty() || !m_shown || !m_live) return false;
     //In the past only (rule 3: forward actions there replay); live, the card's own step runs
     poll(true);
     if (!m_shown || m_status.value("state").toString() != "detached") return false;
-    //At the history's end the card steps on live, unrecorded (D-3, as the main CPU's steps): the window's own step
+    //At the history's end the card steps on live, unrecorded (D-3, as the main CPU's steps): the window's own step,
+    //by the caller when that answer came before the return, else by `live`
     std::map<std::string, std::string> options{{"dir", "forward"}};
     if (kind != "in") options["kind"] = kind;
     if (kind == "to") options["pc"] = std::to_string(address & 0xFFFF);
@@ -365,9 +394,14 @@ bool TtdControls::step_forward(const std::string &kind, unsigned int address)
                           : kind == "out" ? tr("Step out")
                           : kind == "to" ? tr("Run to the cursor")
                                          : tr("Step");
-    bool at_end = false;
-    card_move(card, "step-instruction", std::move(options), title, &at_end);
-    return !at_end;
+    auto returned = std::make_shared<bool>(false);
+    auto at_end = std::make_shared<bool>(false);
+    card_move(card, "step-instruction", std::move(options), title, [returned, at_end, live]() {
+        if (!*returned) *at_end = true;
+        else if (live) live();
+    });
+    *returned = true;
+    return !*at_end;
 }
 
 void TtdControls::step_back()
@@ -436,14 +470,14 @@ void TtdControls::run_back()
     for (unsigned int a : addresses) conditions.emplace_back(a, cpu->breakpoint_condition(a));
     if (std::string condition = run_back_condition(conditions); !condition.empty()) options["condition"] = condition;
     //Not found: the machine stays where it is and the answer says so (matched false)
-    QJsonObject answer;
-    if (!move("reverse-continue", options, tr("Run Back"), &answer)) return;
-    if (answer.value("matched").toBool())
-        m_last_result = tr("Run Back: at the breakpoint %1").arg(hex4((unsigned int)answer.value("pc").toInteger()));
-    else {
-        m_last_result = tr("Run Back: no breakpoint was reached earlier in the history");
-        if (inform) inform(tr("Run Back"), m_last_result, false);
-    }
+    move("reverse-continue", options, tr("Run Back"), [this](const QJsonObject &answer) {
+        if (answer.value("matched").toBool())
+            m_last_result = tr("Run Back: at the breakpoint %1").arg(hex4((unsigned int)answer.value("pc").toInteger()));
+        else {
+            m_last_result = tr("Run Back: no breakpoint was reached earlier in the history");
+            if (inform) inform(tr("Run Back"), m_last_result, false);
+        }
+    });
     update_actions();
 }
 
@@ -455,47 +489,56 @@ void TtdControls::branch_here()
     //From where the machine stands inside the history; a machine that ran on past the end of a stopped recording
     //goes back to that end first (what ran after the stop was not recorded)
     if (m_status.value("state").toString() != "detached") {
-        QJsonObject seek;
         const std::string end = std::to_string(m_status.value("current_end_frame").toInteger());
-        if (!call("seek", {{"frame", end}}, &seek) || !seek.value("reached").toBool()) {
-            QMessageBox::warning(m_window, title,
-                                 tr("Could not go back to the end of the recording: %1")
-                                     .arg(seek.value("message").toString()));
-            poll(true);
-            return;
-        }
-        emit moved();
+        call_then("seek", {{"frame", end}}, QString(), [this, title](bool ok, const QJsonObject &seek) {
+            if (!ok || !seek.value("reached").toBool()) {
+                QMessageBox::warning(m_window, title,
+                                     tr("Could not go back to the end of the recording: %1").arg(seek.value("message").toString()));
+                poll(true);
+                return;
+            }
+            emit moved();
+            resume_here(title, {{"media", "ask"}});
+        });
+        return;
     }
     //A medium that cannot go back there (another medium in the slot, a write beyond its undo log) needs the user's
     //decision, as in the TTD panel
-    std::map<std::string, std::string> options{{"media", "ask"}};
-    QJsonObject answer;
-    bool ok = call("resume", options, &answer);
-    if (answer.value("needs_decision").toBool()) {
-        QString list;
-        for (const QJsonValue &v : answer.value("media").toArray())
-            list += QString("\n- %1: %2").arg(v.toObject().value("slot").toString(), v.toObject().value("reason").toString());
-        QMessageBox box(QMessageBox::Question, title,
-                        tr("These media cannot go back to this point:%1\n\nThe recording goes on from here either "
-                           "way. What should happen to them?")
-                            .arg(list),
-                        QMessageBox::NoButton, m_window);
-        QPushButton * empty = box.addButton(tr("Empty the slots"), QMessageBox::AcceptRole);
-        QPushButton * keep = box.addButton(tr("Keep them as they are"), QMessageBox::AcceptRole);
-        box.addButton(QMessageBox::Cancel);
-        box.setDefaultButton(empty);
-        box.exec();
-        const QAbstractButton * clicked = box.clickedButton();
-        if (clicked != empty && clicked != keep) return;   //cancelled: nothing changed
-        options["media"] = clicked == empty ? "empty" : "keep";
-        ok = call("resume", options, &answer);
-    }
-    if (!ok || !answer.value("resumed").toBool())
-        QMessageBox::warning(m_window, title,
-                             ok ? tr("The recording could not go on from here.") : answer.value("message").toString());
-    //The machine stays paused here: the debugger's Run goes on (and records now)
-    poll(true);
-    emit moved();
+    resume_here(title, {{"media", "ask"}});
+}
+
+void TtdControls::resume_here(const QString &title, std::map<std::string, std::string> options)
+{
+    const bool asking = options["media"] == "ask";
+    call_then("resume", options, QString(), [this, title, options, asking](bool ok, const QJsonObject &answer) {
+        if (asking && answer.value("needs_decision").toBool()) {
+            QString list;
+            for (const QJsonValue &v : answer.value("media").toArray())
+                list += QString("\n- %1: %2").arg(v.toObject().value("slot").toString(), v.toObject().value("reason").toString());
+            QMessageBox box(QMessageBox::Question, title,
+                            tr("These media cannot go back to this point:%1\n\nThe recording goes on from here either "
+                               "way. What should happen to them?")
+                                .arg(list),
+                            QMessageBox::NoButton, m_window);
+            QPushButton * empty = box.addButton(tr("Empty the slots"), QMessageBox::AcceptRole);
+            QPushButton * keep = box.addButton(tr("Keep them as they are"), QMessageBox::AcceptRole);
+            box.addButton(QMessageBox::Cancel);
+            box.setDefaultButton(empty);
+            box.exec();
+            const QAbstractButton * clicked = box.clickedButton();
+            if (clicked != empty && clicked != keep) return;   //cancelled: nothing changed
+            std::map<std::string, std::string> decided = options;
+            decided["media"] = clicked == empty ? "empty" : "keep";
+            resume_here(title, decided);
+            return;
+        }
+        if (!ok || !answer.value("resumed").toBool())
+            QMessageBox::warning(m_window, title,
+                                 ok ? tr("The recording could not go on from here.") : answer.value("message").toString());
+        //The machine stays paused here: the debugger's Run goes on (and records now)
+        poll(true);
+        emit moved();
+    });
 }
 
 const QJsonObject * TtdControls::branch(unsigned int id) const
@@ -519,9 +562,8 @@ void TtdControls::rename_branch(unsigned int id)
     const QString name = QInputDialog::getText(m_window, tr("Rename Branch"), tr("Name:"), QLineEdit::Normal,
                                                b->value("name").toString(), &ok);
     if (ok && !name.trimmed().isEmpty())
-        call("branch-update", {{"branch", std::to_string(id)}, {"name", name.trimmed().toStdString()}}, nullptr,
-             tr("Rename Branch"));
-    poll(true);
+        call_then("branch-update", {{"branch", std::to_string(id)}, {"name", name.trimmed().toStdString()}},
+                  tr("Rename Branch"), [this](bool, const QJsonObject &) { poll(true); });
 }
 
 void TtdControls::tag_branch(unsigned int id)
@@ -534,9 +576,8 @@ void TtdControls::tag_branch(unsigned int id)
     const QString text = QInputDialog::getText(m_window, tr("Branch Tags"), tr("Tags (comma separated):"),
                                                QLineEdit::Normal, tags.join(", "), &ok);
     if (ok)
-        call("branch-update", {{"branch", std::to_string(id)}, {"tags", text.toStdString()}}, nullptr,
-             tr("Branch Tags"));
-    poll(true);
+        call_then("branch-update", {{"branch", std::to_string(id)}, {"tags", text.toStdString()}}, tr("Branch Tags"),
+                  [this](bool, const QJsonObject &) { poll(true); });
 }
 
 void TtdControls::note_branch(unsigned int id)
@@ -547,18 +588,16 @@ void TtdControls::note_branch(unsigned int id)
     const QString note = QInputDialog::getMultiLineText(m_window, tr("Branch Note"), tr("Note:"),
                                                         b->value("note").toString(), &ok);
     if (ok)
-        call("branch-update", {{"branch", std::to_string(id)}, {"note", note.toStdString()}}, nullptr,
-             tr("Branch Note"));
-    poll(true);
+        call_then("branch-update", {{"branch", std::to_string(id)}, {"note", note.toStdString()}}, tr("Branch Note"),
+                  [this](bool, const QJsonObject &) { poll(true); });
 }
 
 void TtdControls::pin_branch(unsigned int id)
 {
     const QJsonObject * b = branch(id);
     if (b == nullptr) return;
-    call("branch-update", {{"branch", std::to_string(id)}, {"pinned", b->value("pinned").toBool() ? "false" : "true"}},
-         nullptr, tr("Pin Branch"));
-    poll(true);
+    call_then("branch-update", {{"branch", std::to_string(id)}, {"pinned", b->value("pinned").toBool() ? "false" : "true"}},
+              tr("Pin Branch"), [this](bool, const QJsonObject &) { poll(true); });
 }
 
 bool TtdControls::delete_branch(unsigned int id)
@@ -598,11 +637,23 @@ bool TtdControls::delete_branch(unsigned int id)
     if (on_lineage && parent)
         what += tr("\n\nThe timeline runs on it: it switches to '%1' first.").arg(parent->value("name").toString());
     if (!confirm || !confirm(tr("Delete Branch"), what)) return false;
-    if (on_lineage && parent && !switch_branch(parent_id)) return false;
-    const bool ok = call("branch-delete", {{"branch", std::to_string(id)}, {"force", pinned ? "true" : "false"}},
-                         nullptr, tr("Delete Branch"));
-    poll(true);
-    return ok;
+    //The delete after the switch's answer (a remote machine's comes later); -1 while to come
+    auto result = std::make_shared<int>(-1);
+    auto remove = [this, id, pinned, result]() {
+        call_then("branch-delete", {{"branch", std::to_string(id)}, {"force", pinned ? "true" : "false"}},
+                  tr("Delete Branch"), [this, result](bool ok, const QJsonObject &) {
+                      *result = ok ? 1 : 0;
+                      poll(true);
+                  });
+    };
+    if (on_lineage && parent) {
+        if (!move("branch-switch", {{"branch", std::to_string(parent_id)}}, tr("Switch Branch"),
+                  [remove](const QJsonObject &) { remove(); }))
+            return false;
+    } else {
+        remove();
+    }
+    return *result != 0;
 }
 
 void TtdControls::save_lineage()
@@ -612,8 +663,10 @@ void TtdControls::save_lineage()
                                                       tr("Time Travel Session (*.ttd)"));
     if (file.isEmpty()) return;
     if (!e->debug_paused()) e->debug_pause();
-    if (call("dump", {{"path", file.toUtf8().toStdString()}, {"lineage", "true"}}, nullptr, tr("Save Lineage")))
-        QMessageBox::information(m_window, tr("Save Lineage"), tr("The history shown saved to %1").arg(file));
+    call_then("dump", {{"path", file.toUtf8().toStdString()}, {"lineage", "true"}}, tr("Save Lineage"),
+              [this, file](bool ok, const QJsonObject &) {
+                  if (ok) QMessageBox::information(m_window, tr("Save Lineage"), tr("The history shown saved to %1").arg(file));
+              });
 }
 
 void TtdControls::build_branch_menu()

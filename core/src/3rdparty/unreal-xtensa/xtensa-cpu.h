@@ -166,6 +166,12 @@ struct CpuState
     uint32_t br = 0;            ///< b0..b15
     uint32_t fr[16] = {};       ///< FPU registers as bit patterns
     uint64_t ccount = 0;        ///< cycles = instructions executed
+    /// Performance monitor over ERI (RER / WER): PMG, PMCTRL0/1, PM0/1. Only INSN (select 2) counts, by CCOUNT
+    /// (one instruction per cycle); stall and cache events stay 0 (no cache model)
+    uint32_t pmg = 0;
+    uint32_t pmCtrl[2] = {};
+    uint32_t pm[2] = {};        ///< counts up to pmFrom
+    uint64_t pmFrom[2] = {};    ///< CCOUNT the running INSN counters count from
     uint32_t callKind = 2;      ///< N of the last CALLn / CALLXn (0 for CALL0 / CALLX0), for the trap helpers
     uint32_t trapEntered = 0;   ///< the host entered the current trap callee's frame
     uint32_t trapArgSp = 0;     ///< caller's a1 when the trap frame was entered (stack arguments)
@@ -301,6 +307,10 @@ private:
     bool FillFrame(uint32_t m, uint32_t n, uint32_t& faultAddress);
     bool SpillAll(uint32_t& faultAddress);
     void EnterTrapFrame(uint32_t sp);
+    bool PmCounting(int i) const;
+    void PmFold(uint64_t now);
+    uint32_t EriRead(uint32_t address, uint64_t now);
+    void EriWrite(uint32_t address, uint32_t value, uint64_t now);
     uint32_t& Phys(uint32_t group, uint32_t n) { return state_.ar[(group * 4 + n) & 63]; }
 
     CpuState state_;

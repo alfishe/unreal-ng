@@ -152,11 +152,11 @@ Rgba Packed(const EveChip& chip, uint32_t row, uint32_t x, uint32_t bits)
 }
 
 // A glyph pixel of a ROM text font: white where the bit is set.
-Rgba Glyph(const EveChip& chip, uint32_t fontHandle, uint32_t character, uint32_t gx, uint32_t gy, uint32_t height)
+Rgba Glyph(const EveChip& chip, const BitmapHandle* handles, uint32_t fontHandle, uint32_t character, uint32_t gx, uint32_t gy, uint32_t height)
 {
     const uint32_t handle = character >= kHighCharacters ? fontHandle + 1 : fontHandle;
     const uint32_t index = character >= kHighCharacters ? character - kHighCharacters : character;
-    const BitmapHandle& font = chip.state.handles[handle];
+    const BitmapHandle& font = handles[handle];
     const uint32_t row = ReadByte(chip, font.source + index * height + gy);
     return Luminance(((row >> (kBitsPerByte - 1 - gx)) & 1) ? kChannelMax : 0);
 }
@@ -220,7 +220,7 @@ Rgba Texel(const LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t st
     case kFormatText8x8:
     {
         const uint32_t character = ReadByte(chip, base + (y / kText8x8Height) * stride + x / kTextCell);
-        return Glyph(chip, kFont8x8, character, x % kTextCell, y % kText8x8Height, kText8x8Height);
+        return Glyph(chip, run.handles, kFont8x8, character, x % kTextCell, y % kText8x8Height, kText8x8Height);
     }
     case kFormatTextVga:
     {
@@ -230,7 +230,7 @@ Rgba Texel(const LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t st
         constexpr uint32_t kForegroundMask = 0xF;
         const uint32_t cell = base + (y / kTextVgaHeight) * stride + (x / kTextCell) * kTextVgaCellBytes;
         const uint32_t character = ReadByte(chip, cell);
-        const Rgba glyph = Glyph(chip, kFont8x16, character, x % kTextCell, y % kTextVgaHeight, kTextVgaHeight);
+        const Rgba glyph = Glyph(chip, run.handles, kFont8x16, character, x % kTextCell, y % kTextVgaHeight, kTextVgaHeight);
         return glyph.a != 0 ? VgaColor(ReadByte(chip, cell + 1) & kForegroundMask) : kTransparent;
     }
     case kFormatBargraph:
@@ -409,14 +409,23 @@ const uint32_t* LinePalette(LineRun& run, uint8_t format)
     const bool argb8 = chip.vdac4 && format == kFormatPaletted8;
     const uint32_t source = argb8 ? Vdac4PaletteBase(run.ctx.paletteSource) : run.ctx.paletteSource;
     const uint8_t key = argb8 ? kPaletteKeyVdac4Argb : format;
-    for (uint32_t k = 0; k < kPaletteCacheEntries; ++k)
     {
-        const PaletteCache& c = chip.palettes[k];
+        const PaletteCache& c = run.palettes[run.paletteHit];
         if (c.valid && c.source == source && c.format == key && c.ramGWrites == chip.ramGWrites)
             return c.entry;
     }
-    PaletteCache& cache = chip.palettes[chip.paletteNext];
-    chip.paletteNext = (chip.paletteNext + 1) % kPaletteCacheEntries;
+    for (uint32_t k = 0; k < kPaletteCacheEntries; ++k)
+    {
+        const PaletteCache& c = run.palettes[k];
+        if (c.valid && c.source == source && c.format == key && c.ramGWrites == chip.ramGWrites)
+        {
+            run.paletteHit = k;
+            return c.entry;
+        }
+    }
+    run.paletteHit = *run.paletteNext;
+    PaletteCache& cache = run.palettes[*run.paletteNext];
+    *run.paletteNext = (*run.paletteNext + 1) % kPaletteCacheEntries;
     if (argb8)
     {
         // VDAC4: one ARGB8888 entry (bytes B, G, R, A) per index, packed as the general path
@@ -591,21 +600,26 @@ bool DrawTransparentSpan(LineRun& run, int32_t first, int32_t last)
 template <typename Sink>
 void WithRowFetch(LineRun& run, const BitmapHandle& h, const uint8_t* row, Sink sink)
 {
-    const uint32_t* table16 = TableFor(h.format);
-    const uint32_t* table8 = ByteTableFor(h.format);
-    const uint32_t* luminance = LuminanceTableFor(h.format);
-    const uint32_t* palette =
-        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
-            ? LinePalette(run, h.format)
-            : nullptr;
-    const uint32_t bpp = BitsPerPixel(h.format);
-    if (table16 != nullptr)
-        sink([row, table16](uint32_t u) { return table16[row[2 * u] | (static_cast<uint32_t>(row[2 * u + 1]) << kBitsPerByte)]; });
-    else if (palette != nullptr)
+    // Only the format's own decoder is looked up (a span costs about as much as its pixels: 33 on average in games)
+    if (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
+    {
+        const uint32_t* palette = LinePalette(run, h.format);
         sink([row, palette](uint32_t u) { return palette[row[u]]; });
-    else if (table8 != nullptr)
+        return;
+    }
+    if (const uint32_t* table16 = TableFor(h.format))
+    {
+        sink([row, table16](uint32_t u) { return table16[row[2 * u] | (static_cast<uint32_t>(row[2 * u + 1]) << kBitsPerByte)]; });
+        return;
+    }
+    if (const uint32_t* table8 = ByteTableFor(h.format))
+    {
         sink([row, table8](uint32_t u) { return table8[row[u]]; });
-    else if (bpp == kBitsPerByte)
+        return;
+    }
+    const uint32_t* luminance = LuminanceTableFor(h.format);
+    const uint32_t bpp = BitsPerPixel(h.format);
+    if (bpp == kBitsPerByte)
         sink([row, luminance](uint32_t u) { return luminance[row[u]]; });
     else
     {
@@ -849,7 +863,7 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
     if (layoutWidth == 0 || layoutHeight == 0)
     {
 #ifdef EVE_PROFILE
-        Profile().fastRejects["empty layout, handle " + std::to_string(&h - run.chip->state.handles)]++;
+        Profile().fastRejects["empty layout, handle " + std::to_string(&h - run.handles)]++;
 #endif
         return DrawTransparentSpan(run, first, last);
     }
@@ -952,7 +966,7 @@ uint32_t PixelsPerClock(uint8_t format, uint8_t filter)
 template <LineMode Mode>
 void DrawBitmap(LineRun& run, const Vertex& v)
 {
-    const BitmapHandle& h = run.chip->state.handles[v.handle];
+    const BitmapHandle& h = run.handles[v.handle];
     const int32_t width = static_cast<int32_t>(HandleWidth(h));
     const int32_t height = static_cast<int32_t>(HandleHeight(h));
     // Sample positions are relative to the vertex, at pixel centers (spec §6.5, V3).

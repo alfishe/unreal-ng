@@ -170,6 +170,7 @@ EveChip* EveCreate(const EveConfig* config)
     }
     chip->costs = {kCostCommand, kCostDisplayListWord, kCostMemoryPerByte, kCostMemcrcPerByte,
                    kCostInflatePerOutputByte, kCostLoadImagePerPixel};
+    chip->hostStats = MakeHostDrawStats();
     chip->decoderState.reset(new (std::nothrow) uint8_t[chip->inflate->stateSize]());
     chip->workBuffer.reset(new (std::nothrow) uint8_t[kWorkBufferSize]());
     chip->inputBuffer.reset(new (std::nothrow) uint8_t[kRamCmdSize]());

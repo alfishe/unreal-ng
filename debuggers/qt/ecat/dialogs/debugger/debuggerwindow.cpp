@@ -31,6 +31,7 @@
 #include <QTabWidget>
 #include <QTabBar>
 #include <QStyleFactory>
+#include <QPointer>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -470,8 +471,9 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     //group's verb, gs-debugger design §8); everywhere else the step above. Ahead of it: it runs first
     disconnect(m_step_action, &QAction::triggered, this, nullptr);
     connect(m_step_action, &QAction::triggered, this, [this]() {
-        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward()) return;
-        run_command([](Emulator * e, CPU * c) { e->debug_step(c); });
+        auto live = [this]() { run_command([](Emulator * e, CPU * c) { e->debug_step(c); }); };
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("in", 0, live)) return;
+        live();
     });
     m_step_over = add(":/icons/step_over", tr("Step over"), QKeySequence(Qt::Key_F8),
         [](Emulator * e, CPU * c) { e->debug_step_over(c); });
@@ -481,13 +483,15 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     //the card steps on live, as the main CPU does)
     disconnect(m_step_over, &QAction::triggered, this, nullptr);
     connect(m_step_over, &QAction::triggered, this, [this]() {
-        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("over")) return;
-        run_command([](Emulator * e, CPU * c) { e->debug_step_over(c); });
+        auto live = [this]() { run_command([](Emulator * e, CPU * c) { e->debug_step_over(c); }); };
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("over", 0, live)) return;
+        live();
     });
     disconnect(m_step_out, &QAction::triggered, this, nullptr);
     connect(m_step_out, &QAction::triggered, this, [this]() {
-        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("out")) return;
-        run_command([](Emulator * e, CPU * c) { e->debug_step_out(c); });
+        auto live = [this]() { run_command([](Emulator * e, CPU * c) { e->debug_step_out(c); }); };
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("out", 0, live)) return;
+        live();
     });
 
     m_to_cursor = tb->addAction(tool_icon(":/icons/finish"), tr("Run to the cursor"));
@@ -825,14 +829,17 @@ bool DebuggerWindow::run_to_cursor()
     const unsigned int address = p->code->cursor_address();
     //Not in ecat: on a card's tab in the past the card runs to the cursor through the history (at its end it runs
     //on live, as the main CPU does)
-    if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("to", address)) {
+    CPU * c = p->cpu;
+    Emulator * em = e;
+    auto live = [this, em, c, address]() {
+        em->invoke([em, c, address]() { em->debug_run_to(c, address); });
+        show_state();
+    };
+    if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("to", address, live)) {
         show_state();
         return true;
     }
-    CPU * c = p->cpu;
-    Emulator * em = e;
-    e->invoke([em, c, address]() { em->debug_run_to(c, address); });
-    show_state();
+    live();
     return true;
 }
 
@@ -849,21 +856,30 @@ bool DebuggerWindow::card_run_to(const QString &until, uint64_t value, Emulator:
     if (card == nullptr || !held()) return false;
     mark_all();
     Emulator * em = e;
-    Emulator::CardRunAnswer a;
     const std::string what = until.toStdString();
-    e->invoke([em, card, what, value, &a]() { a = em->debug_card_run_to(card, what, value); });
-    //Said where the machine's state is: the core's sentence (where it stopped, or why it did not run)
-    m_run_message = QString::fromStdString(a.message);
-    //Taken as a stop of its own: every view read again (a run to a main T is a direct run, with no stop event)
-    m_serial = e->debug_serial();
-    m_paused = e->debug_paused() && !e->debug_stepping();
-    if (m_paused) {
-        refresh_all(true);
-        m_card_strip = read_card_strip();
-        refresh_banner();
-    }
+    //The answer comes when the run has ended: at once in process, later from a remote machine (its views' thread
+    //never waits); the window may be gone by then
+    QPointer<DebuggerWindow> self(this);
+    //The caller's answer only when it came before the return (its place is the caller's)
+    auto returned = std::make_shared<bool>(false);
+    auto done = [self, answer, returned](const Emulator::CardRunAnswer &a) {
+        if (answer != nullptr && !*returned) *answer = a;
+        if (self.isNull()) return;
+        //Said where the machine's state is: the core's sentence (where it stopped, or why it did not run)
+        self->m_run_message = QString::fromStdString(a.message);
+        //Taken as a stop of its own: every view read again (a run to a main T is a direct run, with no stop event)
+        self->m_serial = self->e->debug_serial();
+        self->m_paused = self->e->debug_paused() && !self->e->debug_stepping();
+        if (self->m_paused) {
+            self->refresh_all(true);
+            self->m_card_strip = self->read_card_strip();
+            self->refresh_banner();
+        }
+        self->show_state();
+    };
+    e->invoke([em, card, what, value, done]() { em->debug_card_run_to_async(card, what, value, done); });
+    *returned = true;
     show_state();
-    if (answer != nullptr) *answer = a;
     return true;
 }
 
@@ -1134,10 +1150,38 @@ void DebuggerWindow::show_state()
     }
     //Where the machine is in time: "History: frame 12 of 40, replaying" (forward actions replay)
     if (m_ttd != nullptr && !m_ttd->moment().isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_ttd->moment();
+    //Not in ecat: a remote machine slow to answer, or a command it refused
+    if (e->debug_online())
+        if (const std::string link = e->debug_link_text(); !link.empty())
+            text += (QString(" ") + QChar(0x00B7) + " ") + QString::fromStdString(link);
     m_state->setText(text);
     //Read whole: the label as wide as its text
     m_state->setMinimumWidth(std::max((int)std::lround(200 * dbg::zoom(dbg::Zoom::Frame, m_zoom)), m_state->sizeHint().width()));
     update_actions();
+}
+
+//Not in ecat: a remote machine's answers came (read in the background) while the machine is held, the views read
+//again what they show, once for all that came within a few milliseconds; no stop: the listing stays where it is
+void DebuggerWindow::follow_data()
+{
+    const uint64_t data = e->debug_data_serial();
+    if (data == m_data_serial) return;
+    m_data_serial = data;
+    if (m_data_pending) return;
+    m_data_pending = true;
+    QTimer::singleShot(30, this, [this]() {
+        m_data_pending = false;
+        if (!e->loaded || !e->debug_online() || !m_paused) {
+            show_state();
+            return;
+        }
+        refresh_all(false);
+        refresh_side();
+        m_card_strip = read_card_strip();
+        refresh_banner();
+        if (m_timeline != nullptr && m_timeline->isVisible()) m_timeline->refresh();
+        show_state();
+    });
 }
 
 void DebuggerWindow::on_debug_event()
@@ -1145,7 +1189,11 @@ void DebuggerWindow::on_debug_event()
     if (!e->loaded) return;
     if (follow_online()) return;
     const unsigned int serial = e->debug_serial();
-    if (serial == m_serial) return;
+    if (serial == m_serial) {
+        follow_data();
+        show_state();
+        return;
+    }
     m_serial = serial;
     const bool paused = e->debug_paused() && !e->debug_stepping();
     m_paused = paused;

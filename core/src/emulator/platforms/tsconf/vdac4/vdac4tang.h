@@ -90,6 +90,8 @@ public:
     void Reset() override;
     void OnFrameEnd() override;
     void SetShowing(bool showing) override;
+    /// The ESP job that hosts the FT812 is done with the chip
+    void WaitChipIdle() override { WaitEsp(); }
     size_t TakeIntEdges(uint32_t rasterInFrame, uint32_t* out, size_t max) override;
     void select(bool selected) override;
     uint8_t exchange(uint8_t mosi) override;

@@ -125,6 +125,7 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         threads["esp_thread"] = s.espThread;
         threads["ft_thread"] = s.ftThread;
         threads["ft_draw_thread"] = s.ftDrawThread;
+        threads["ft_draw_threads"] = s.ftDrawThreads;
         threads["esp_latency_ms"] = s.espLatencyMs;
         threads["esp_jobs"] = s.espJobs;
         threads["esp_threaded_jobs"] = s.espThreadedJobs;
