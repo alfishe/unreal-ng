@@ -549,3 +549,5 @@ void DisassemblerTextView::showPopup(const QPoint& pos)
     */
 }
 
+
+#include "moc_disassemblertextview.cpp"

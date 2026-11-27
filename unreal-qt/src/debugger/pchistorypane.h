@@ -7,17 +7,19 @@
 #include <QWidget>
 
 class Emulator;
-class QLabel;
+class PcHistoryStatusLine;
 class QTimer;
-class QTreeWidget;
+class PcHistoryList;
+class PcHistoryModel;
 
 /// The PC history pane of the debugger window (debugger additions tdd §7): the newest instructions the CPU started,
 /// newest first, each with the page its 16K window showed and the instruction read from that page. It records
 /// while it is shown (setRecording; PcHistory arms the CPU hook) and stops when hidden, so the emulation pays
 /// nothing then. The window refreshes it on every stop; picking a row shows that address in the disassembly.
 /// A refresh never waits on the emulation thread: busy (the machine stopping, another client holding it) the list
-/// stays and is read again a moment later; only the new rows are made (the older ones move down), the columns have
-/// fixed widths (no measuring of 1024 rows per stop).
+/// stays and is read again a moment later; a stop reads only its new entries, makes only their rows and paints only
+/// them (the older rows move down as pixels: PcHistoryList), the columns have fixed widths (no measuring of 1024 rows
+/// per stop).
 class PcHistoryPane : public QWidget
 {
     Q_OBJECT
@@ -51,7 +53,7 @@ private:
     struct Key
     {
         uint16_t address = 0;
-        char kind = 0;
+        char kind = 0;  ///< MemoryBankModeEnum
         uint8_t page = 0;
         bool operator==(const Key& other) const
         {
@@ -60,6 +62,7 @@ private:
     };
     static constexpr int kRetryMs = 30;
     static constexpr int kRetries = 30;
+    static constexpr size_t kOverlap = 8;  ///< rows shown a stop reads again to check the new entries continue them
     void read();
     void retryLater();
     void setStatus(const QString& text);
@@ -74,6 +77,8 @@ private:
     QTimer* _retry = nullptr;
     std::shared_ptr<Emulator> _emulator;
     bool _recording = false;
-    QLabel* _status = nullptr;
-    QTreeWidget* _list = nullptr;
+    PcHistoryStatusLine* _status = nullptr;
+    PcHistoryModel* _model = nullptr;
+    PcHistoryList* _list = nullptr;
+    bool _filling = false;  ///< the pane changes the rows: the current row moving is not a pick
 };

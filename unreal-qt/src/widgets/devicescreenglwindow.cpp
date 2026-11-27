@@ -572,6 +572,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
         _presenter->SetRefreshHandler(&DeviceScreenGLWindow::onDisplayRefresh, this);
         qInfo().noquote() << "DeviceScreenGLWindow: native presenter, lead" << presentLeadNs() / 1'000'000 << "ms;"
                           << QString::fromStdString(_presenter->Describe());
+        settleSmoothGuard();
     }
 
     // Occluded or minimized: the system would drop every present. Nothing is copied, interpolated or drawn (the GPU
@@ -582,11 +583,14 @@ void DeviceScreenGLWindow::renderNative(bool force)
         _presentPending = _presentPending || force;
         _presentHidden = true;
         _recovery.Hidden();
+        settleSmoothGuard();
         _smoothRefreshNs = 0;
         _idleRefreshes++;
         scheduleNative();
         return;
     }
+    if (_presentHidden)
+        settleSmoothGuard();  // shown again: the lates of the first moments are the window's, not the pictures'
     _presentHidden = false;
 
     // The presenter paces (b-vsync on a display link): its tick gives the refresh to draw for, the timer only forced
@@ -1201,6 +1205,7 @@ void DeviceScreenGLWindow::init(uint16_t width, uint16_t height, void* buffer, f
 
     _latchedFrame = QImage(width, height, QImage::Format_RGBA8888);
     _latchedFrame.fill(Qt::black);
+    _latchedContent = 0;
 
     _textureNeedsUpdate = true;
 }
@@ -1218,6 +1223,7 @@ void DeviceScreenGLWindow::detach()
         _nextFrameSource = nullptr;
     }
     _latchedFrame = QImage();
+    _latchedContent = 0;
     _emulator.reset();
     _frameHistory.clear();
 
@@ -1234,6 +1240,7 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
         _frameSource = std::move(source.at);
         _nextFrameSource = std::move(source.next);
+        _latchedContent = 0;  // another source: what _latchedFrame holds is no version of its frames
     }
     // UNREAL_EFFECTS_DEVICE overrides [VIDEO] EffectsDevice
     _smoothOnGpu = !source.onCpu;
@@ -1263,7 +1270,7 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
     _smoothTooSlow = false;
     _smoothSteppedDown = false;
     _smooth.SetLite(false);
-    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+    _smoothGuard.StartOver(_presenter ? _presenter->LatePresents() : 0);
     _uploadedSerial = 0;
     updateDisplayRate();
     updateVideoSync();
@@ -1349,7 +1356,8 @@ void DeviceScreenGLWindow::updateVideoSync()
     qInfo() << "DeviceScreenGLWindow: video sync" << VideoSyncName(_sync) << "->" << VideoSyncName(sync) << "("
             << QString::fromStdString(reason) << ")";
     _sync = sync;
-    // Smooth motion on or off: the interpolation starts from the frames that come from now on
+    // Smooth motion on or off: the interpolation starts from the frames that come from now on, its guard as well
+    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
     std::lock_guard<std::mutex> lock(_frameSourceMutex);
     _smooth.Reset();
     _smoothShown = {};
@@ -1441,6 +1449,7 @@ void DeviceScreenGLWindow::updateDisplayRate()
         return restoreDisplayRate(error.c_str());
     qInfo() << "DeviceScreenGLWindow: display rate" << pick.hz << "Hz for the machine's" << machineHz << "(was"
             << _originalHz << ")";
+    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);  // the switch's blanking is no late picture
     _displayHz = pick.hz;
     _displayState = "matched";
     _displayReason.clear();
@@ -1459,21 +1468,34 @@ void DeviceScreenGLWindow::watchScreenRate()
                 if (_isShuttingDown)
                     return;
                 qInfo() << "DeviceScreenGLWindow: the display's rate is" << hz << "Hz now";
+                // The presents late across the switch (the display blanks) are not the interpolation's
+                _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
                 updateDisplayRate();
                 updateVideoSync();
             },
             Qt::QueuedConnection);
 }
 
+void DeviceScreenGLWindow::settleSmoothGuard()
+{
+    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+    _smoothGuardFromNs = SteadyNowNs() + kSmoothGuardSettleNs;
+}
+
 void DeviceScreenGLWindow::noteInterpolated(int64_t drawNs)
 {
+    if (SteadyNowNs() < _smoothGuardFromNs)
+    {
+        _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+        return;
+    }
     // An interpolated picture drawn. Do they reach the screen in time? Told by what the presenter saw, whatever the
     // device and the picture's size: of the last kSmoothGuardWindow of them, kSmoothGuardLates or more presents a
     // refresh late is an interpolation this machine cannot draw within a refresh (the Steam Deck: 18.9 ms a picture
     // on its GPU at 16.7 ms a refresh; 13 pictures a second reached the screen, and the lead those lates widened to
-    // its bound halved the blend's too). Then it steps down, until the settings are set again: first to the cheap
-    // interpolation (LiteFlow, about 1 / 30 of the time on one thread), and if that is late as well (or was the
-    // mode chosen), to the blend
+    // its bound halved the blend's too). Then it steps down for a while (SmoothGuard::SteppedDown, retrySmoothStep):
+    // first to the cheap interpolation (LiteFlow, about 1 / 30 of the time on one thread), and if that is late as
+    // well (or was the mode chosen), to the blend. Not in the first seconds of a window shown (settleSmoothGuard)
     // Without a presenter (the GL swap alone) the drawing's own time tells
     if (_smoothGuard.Note(_presenter ? _presenter->LatePresents() : 0, drawNs, refreshPeriodNs()))
     {
@@ -1485,11 +1507,32 @@ void DeviceScreenGLWindow::noteInterpolated(int64_t drawNs)
         }
         else
             _smoothTooSlow = true;
+        _smoothGuard.SteppedDown(SteadyNowNs());
         qWarning() << "DeviceScreenGLWindow: smooth motion's interpolation is too slow here (of its last"
                    << SmoothGuard::kWindow << "pictures" << _smoothGuard.ClosedLates() << "a refresh late,"
                    << _smoothGuard.ClosedSlow() << "drawn in most of a refresh) -"
-                   << (_smoothTooSlow ? "blended from now on" : "the cheap interpolation from now on");
+                   << (_smoothTooSlow ? "blended" : "the cheap interpolation") << "for a while";
     }
+}
+
+void DeviceScreenGLWindow::retrySmoothStep()
+{
+    // A step down tried again after its wait (SmoothGuard::SteppedDown): one level up, the guard counting afresh
+    if (!(_smoothTooSlow || _smoothSteppedDown) || !_smoothGuard.RetryDue(SteadyNowNs()))
+        return;
+    if (_smoothTooSlow)
+        _smoothTooSlow = false;  // the cheap interpolation again (or the full one, if it was the mode chosen)
+    else
+    {
+        _smoothSteppedDown = false;
+        _smooth.SetLite(false);
+        _smoothShown = {};
+    }
+    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+    if (_smoothSteppedDown)
+        _smoothGuard.RetryLater(SteadyNowNs());  // the full interpolation is tried next, after the same wait
+    qInfo() << "DeviceScreenGLWindow: smooth motion tries" << (_smooth.Lite() ? "the cheap interpolation" : "the interpolation")
+            << "again";
 }
 
 void DeviceScreenGLWindow::dropPresenter()
@@ -1527,8 +1570,13 @@ void DeviceScreenGLWindow::feedSmooth()
         PresentFrameInfo next;
         if (!_nextFrameSource(last, frame.bits(), static_cast<size_t>(frame.sizeInBytes()), &next) || next.serial == 0)
             break;
-        _smoothFeedInfo[_smoothFed++] = next;
         last = next.serial;
+        // Of another size than the window's frames (a video mode switch, the window's new size still queued): its
+        // pixels are not rows of this image. Left out; the engine starts over from the next one it gets
+        if (next.geometry.width != 0 &&
+            (next.geometry.width != frame.width() || next.geometry.height != frame.height()))
+            continue;
+        _smoothFeedInfo[_smoothFed++] = next;
     }
 }
 
@@ -1540,10 +1588,20 @@ void DeviceScreenGLWindow::pushSmooth()
         const PresentFrameInfo& info = _smoothFeedInfo[k];
         _smooth.Push(info.serial, info.targetNs, reinterpret_cast<const uint32_t*>(frame.constBits()), frame.width(),
                      frame.height());
+        _smoothPushed[_smoothNextPushed] = {info.serial, info.content};
+        _smoothNextPushed = (_smoothNextPushed + 1) % _smoothPushed.size();
         _smoothTrace.Frame(info.serial, info.targetNs, reinterpret_cast<const uint32_t*>(frame.constBits()),
                            frame.width(), frame.height());
     }
     _smoothFed = 0;
+}
+
+uint64_t DeviceScreenGLWindow::pushedContent(uint64_t serial) const
+{
+    for (const PushedContent& pushed : _smoothPushed)
+        if (pushed.serial == serial)
+            return pushed.content;
+    return 0;
 }
 
 void DeviceScreenGLWindow::clearFrameSource()
@@ -2523,9 +2581,20 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
         PresentFrameInfo info;
-        if (_frameSource && !_latchedFrame.isNull() &&
-            _frameSource(hostNs, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
+        info.content = _latchedContent;  // the version held: not copied again (a refresh between two frames)
+        bool got = _frameSource && !_latchedFrame.isNull() &&
+                   _frameSource(hostNs, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info);
+        // Of another size than _latchedFrame (a video mode switch, the window's new size still queued): its pixels
+        // are not rows of the image, not a picture to show
+        if (got && info.geometry.width != 0 &&
+            (info.geometry.width != _latchedFrame.width() || info.geometry.height != _latchedFrame.height()))
         {
+            got = false;
+            _latchedContent = 0;
+        }
+        if (got)
+        {
+            _latchedContent = info.content;
             sourceImage = &_latchedFrame;
             geometry = info.geometry;  // the geometry latched with the frame: the picture view cuts by it
             newFrame = info.serial == 0 || info.serial != _uploadedSerial;
@@ -2545,6 +2614,11 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                     updateVideoSync();
                 }, Qt::QueuedConnection);
             const bool smoothNow = smoothActive();
+            // Off (turbo, low latency, the temporal blend, another sync step): the presents late meanwhile are not
+            // the interpolation's, on again it starts counting from now
+            _smoothGuard.Track(smoothNow, _presenter ? _presenter->LatePresents() : 0);
+            if (smoothNow)
+                retrySmoothStep();
             if (smoothNow && !_smoothWasActive)
             {
                 // On again (low latency or temporal blending switched off, turbo ended): from the frames that come
@@ -2649,8 +2723,24 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                     _smoothFrame = QImage(sourceImage->size(), QImage::Format_RGBA8888);
                     _smoothShown = {};  // a new image holds no picture yet
                 }
-                // The GPU's passes alone (the device's segments) and the refresh on the CPU's clock
-                const bool draws = !(plan == _smoothShown);
+                // The frame due as it is, and _latchedFrame holds it in the version the engine has (the same bits):
+                // that image goes up, no copy into _smoothFrame. Not while tracing (the trace reads _smoothFrame)
+                const bool latched = plan.kind == smoothmotion::SmoothMotion::Kind::Frame &&
+                                     plan.serial == _shownInfo.serial && _shownInfo.content != 0 &&
+                                     pushedContent(plan.serial) == _shownInfo.content && !_smoothTrace.Active();
+                if (latched)
+                {
+                    _smoothChanged = !(plan == _smoothShown);
+                    _smoothShown = plan;
+                    _smoothShownLatched = true;
+                    smoothImage = sourceImage;
+                }
+            }
+            if (!kept && smoothImage == nullptr)
+            {
+                // The GPU's passes alone (the device's segments) and the refresh on the CPU's clock. After a frame that
+                // went up from _latchedFrame, _smoothFrame holds no picture: drawn whatever the plan
+                const bool draws = !(plan == _smoothShown) || _smoothShownLatched;
                 const bool timed = draws && _smooth.GetDevice() != nullptr;
                 if (timed)
                     _gpuTimes.Open(GpuPassTimes::Smooth);
@@ -2682,6 +2772,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                 {
                     _smoothChanged = !(plan == _smoothShown);
                     _smoothShown = plan;
+                    _smoothShownLatched = false;
                     smoothImage = &_smoothFrame;
                 }
             }
@@ -3339,6 +3430,7 @@ bool DeviceScreenGLWindow::event(QEvent* event)
                 renderGL();
             return true;
         case QEvent::Expose:
+            settleSmoothGuard();
             if (isExposed())
             {
                 if (syncWatched() && !_syncTimer->isActive() && !_isShuttingDown)
@@ -3371,3 +3463,5 @@ void DeviceScreenGLWindow::handleExternalKeyRelease(QKeyEvent* event)
 {
     keyReleaseEvent(event);
 }
+
+#include "moc_devicescreenglwindow.cpp"

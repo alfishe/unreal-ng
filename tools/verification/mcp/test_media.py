@@ -5,7 +5,11 @@ for another machine switches only when asked, an .spg uploaded"""
 
 import base64
 import os
+import re
+import socket
 import sys
+import time
+import urllib.parse
 
 from mcplib import expect, main
 
@@ -299,6 +303,162 @@ def test_disk_profi_cpm_pro(s):
     expect(len(exported) == len(image) and exported[4096:5120] == image[4096:5120],
            'the dump keeps its size and the boot sector in the fifth place of track 0', str(len(exported)))
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def _stop48k_tzx():
+    """A synthetic TZX written to the repository's scratch/: block 0 pure data ($14, no pilot, 1 s pause), block 1
+    TZX $2A (stop the tape if in 48K mode), block 2 a standard data block ($10)"""
+    data = bytes([0xFF, 1, 2, 3, 0xFF ^ 1 ^ 2 ^ 3])
+    tzx = bytearray(b'ZXTape!\x1a\x01\x14')
+    tzx += bytes([0x14]) + (855).to_bytes(2, 'little') + (1710).to_bytes(2, 'little') + bytes([8])
+    tzx += (1000).to_bytes(2, 'little') + (8).to_bytes(3, 'little') + bytes(range(8))
+    tzx += bytes([0x2A]) + (0).to_bytes(4, 'little')
+    tzx += bytes([0x10]) + (1000).to_bytes(2, 'little') + len(data).to_bytes(2, 'little') + data
+    folder = os.path.join(ROOT, 'scratch', 'mcp-verification')
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, 'stop48k.tzx')
+    with open(path, 'wb') as out:
+        out.write(tzx)
+    return path
+
+
+def _tape_info(s):
+    """GET /tape/info as a dict (invoke_api's text is the HTTP line only: the state is in structuredContent)"""
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/tape/info'})
+    return (r.structured or {}).get('body', {})
+
+
+def _play_through_the_stop48k_block(s, model):
+    """Loads the synthetic tape on a fresh `model` and plays block 0 with no loader listening: its data runs out in
+    two frames, and in the pause after it the watchdog moves the tape on, over the $2A. Returns the play answers'
+    texts (the first play, a play while it plays) and GET /tape/info after 10 frames"""
+    s.fresh_machine(model)
+    r = s.call('load_software', {'path': _stop48k_tzx(), 'play': True})
+    expect('Tape playback started' in r.text and 'Tape: playing, block 0 of 3' in r.text,
+           'the play answer in the load text: started, playing, block 0', r.text)
+    first = r.text
+    again = s.call('actions', {'action': 'run', 'id': 'media.tape', 'params': {'op': 'play'}})
+    expect('already playing' in again.text and 'block 0 of 3' in again.text,
+           'a play while it plays leaves the block in flight', again.text)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 10})
+    return first, again.text, _tape_info(s)
+
+
+def test_tape_play_answer_on_48k_stops_at_the_2a_block(s):
+    _, _, info = _play_through_the_stop48k_block(s, '48K')
+    brief = {k: info.get(k) for k in ('state', 'reason', 'position')}
+    expect(info.get('state') == 'paused', 'paused after the $2A', brief)
+    expect(info.get('reason') == 'stop_48k', 'the reason: the TZX $2A block in 48K mode', brief)
+    expect(info.get('position', {}).get('block') == 2, 'stopped before block 2, not on the $2A', brief)
+    expect(info['blocks'][1].get('control') == 'stop_48k', 'the catalog names the $2A entry', info['blocks'][1])
+
+    # Resumable: play goes on with the block after the $2A, and the text says where the tape is
+    r = s.call('actions', {'action': 'run', 'id': 'media.tape', 'params': {'op': 'play'}})
+    expect('Tape playback started' in r.text and 'Tape: playing, block 2 of 3 (data' in r.text,
+           'play after the stop: block 2 plays', r.text)
+    expect((r.structured or {}).get('result', {}).get('tape', {}).get('mode_48k') is True,
+           'the machine is in 48K mode', r.structured)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 5})
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/tape/play'})
+    expect('already playing' in r.text and 'block 2 of 3' in r.text, 'the tape moved into block 2', r.text)
+    expect('pulse 0,' not in r.text, 'pulses of block 2 went by', r.text)
+
+    # The cursor on the $2A itself: play passes it and says so (a play request is not stopped by it)
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/tape/seek', 'body': {'block': 1}})
+    r = s.call('actions', {'action': 'run', 'id': 'media.tape', 'params': {'op': 'play'}})
+    expect('passed block 1 (no signal)' in r.text and 'block 2 of 3' in r.text,
+           'play on the $2A block starts block 2', r.text)
+
+    # A play with no loader listening: the watchdog pauses the tape again, and the state says who did
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/tape/seek', 'body': {'block': 2}})
+    s.call('actions', {'action': 'run', 'id': 'media.tape', 'params': {'op': 'play'}})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 400})  # the watchdog rewinds the pilot: paused
+    info = _tape_info(s)
+    expect(info.get('state') == 'paused' and info.get('reason') == 'loader_quiet',
+           'paused again by the loader watchdog, and it says so', {k: info.get(k) for k in ('state', 'reason')})
+    s.fresh_machine()
+
+
+def test_tape_play_answer_on_128k_passes_the_2a_block(s):
+    _, _, info = _play_through_the_stop48k_block(s, '128K')
+    brief = {k: info.get(k) for k in ('state', 'reason', 'position')}
+    expect(info.get('reason') == 'parked', 'a 128K passes the $2A: parked by the watchdog (no loader listening)', brief)
+    expect(info.get('position', {}).get('block') == 2, 'parked before block 2, not on the $2A', brief)
+    r = s.call('actions', {'action': 'run', 'id': 'media.tape', 'params': {'op': 'play'}})
+    expect('Tape playback started' in r.text and 'Tape: playing, block 2 of 3 (data' in r.text,
+           'play: block 2 plays', r.text)
+    expect((r.structured or {}).get('result', {}).get('tape', {}).get('mode_48k') is False,
+           'the machine is in 128K mode', r.structured)
+    s.fresh_machine()
+
+
+def _cli(s, emu, command):
+    """One command on the CLI plane (its port is the MCP port - 100), the selected instance `emu`. The CLI is another
+    client: MCP lets run control go first (a take replaces its implicit session, the release ends it) and takes it
+    back after, over the CLI's implicit session"""
+    s.call('control_execution', {'action': 'take_control'}, ok=False)
+    s.call('control_execution', {'action': 'release_control'}, ok=False)
+    try:
+        return _cli_command(s, emu, command)
+    finally:
+        s.call('control_execution', {'action': 'take_control'}, ok=False)
+
+
+def _cli_command(s, emu, command):
+    port = urllib.parse.urlparse(s.url).port - 100
+    with socket.create_connection(('127.0.0.1', port), timeout=30) as sock:
+        def read_until_prompt():
+            data = b''
+            deadline = time.time() + 30
+            while not re.search(rb'\n> (\x1b\[K)?$', data) and time.time() < deadline:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+            return data.decode(errors='replace')
+        read_until_prompt()
+        sock.sendall(f'select {emu}\n'.encode())
+        read_until_prompt()
+        sock.sendall((command + '\n').encode())
+        return read_until_prompt().replace('\r', '')
+
+
+def test_tape_play_answer_on_cli_lua_python(s):
+    """The same report on the other planes: the CLI's two lines, Lua's `ok, report`, Python's dict"""
+    s.fresh_machine('48K')
+    s.call('load_software', {'path': _stop48k_tzx()})
+    emu = s.call('emulator_manage', {'action': 'list'}).structured['emulators'][0]['id']
+    seek = {'method': 'POST', 'path': '/api/v1/emulator/{id}/tape/seek', 'body': {'block': 1}}
+
+    s.call('invoke_api', seek)
+    text = _cli(s, emu, 'tape play')
+    expect('Tape playback started, passed block 1 (no signal)' in text and 'Tape: playing, block 2 of 3 (data' in text,
+           'the CLI answers what the call did and the deck after it', text)
+    text = _cli(s, emu, 'tape play')
+    expect('already playing' in text, 'the CLI: a second play leaves the tape as it is', text)
+
+    s.call('invoke_api', seek)
+    code = ('local ok, r = tape_play() '
+            'print("lua-play", ok, r.result, r.playing, r.state, r.position.block, r.block.kind, #r.skipped_blocks, '
+            'r.skipped_blocks[1], r.mode_48k)')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect(re.search(r'lua-play\s+true\s+started\s+true\s+playing\s+2(\.0)?\s+data\s+1\s+1(\.0)?\s+true', output),
+           'Lua: ok and the report', output)
+
+    s.call('invoke_api', seek)
+    code = ('import unreal_emulator as ue\n'
+            'emu = ue.emu_get_selected()\n'
+            'r = emu.tape_play(report=True)\n'
+            'print("py-play", r["result"], r["playing"], r["position"]["block"], r["block"]["kind"], '
+            'r["skipped_blocks"], r["mode_48k"])\n'
+            'print("py-again", emu.tape_play(), emu.tape_play(report=True)["result"])\n')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/python/exec', 'body': {'code': code}}, ok=False)
+    if 'Python automation is not available' not in r.text:
+        output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+        expect('py-play started True 2 data [1] True' in output, 'Python: the report as a dict', output)
+        expect('py-again True already_playing' in output, 'Python: the plain call still answers a bool', output)
+    s.fresh_machine()
 
 
 def test_zz_snapshot_for_another_machine_switches_only_when_asked(s):

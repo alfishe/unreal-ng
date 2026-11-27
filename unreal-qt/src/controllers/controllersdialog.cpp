@@ -1139,3 +1139,5 @@ void ControllersDialog::setSurfaceTargets(SurfaceTargets* targets)
     _root->addWidget(_surfaces);
     _cords->raise();
 }
+
+#include "moc_controllersdialog.cpp"

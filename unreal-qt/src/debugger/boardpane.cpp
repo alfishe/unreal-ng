@@ -642,3 +642,5 @@ bool BoardPane::stacked() const
 {
     return _blockLayout->direction() == QBoxLayout::TopToBottom;
 }
+
+#include "moc_boardpane.cpp"

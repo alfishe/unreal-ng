@@ -1913,3 +1913,5 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
                               QString::fromStdString(decision.reason)));
 }
 #endif
+
+#include "moc_hostcontrollers.cpp"

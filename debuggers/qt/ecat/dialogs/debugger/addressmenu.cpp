@@ -100,3 +100,5 @@ void exec_address_menu(QWidget * from, const QPoint &global, const AddressTarget
     add_address_actions(&menu, from, t);
     menu.exec(global);
 }
+
+#include "moc_addressmenu.cpp"

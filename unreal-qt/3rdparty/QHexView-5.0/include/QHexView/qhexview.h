@@ -9,8 +9,15 @@
 #include <QHexView/model/qhexdocument.h>
 #include <QList>
 #include <QRectF>
+#include <QRegion>
 #include <QTextCharFormat>
+#include <QHash>
+#include <QPixmap>
+#include <QTextLayout>
+#include <limits>
 #include <functional>
+#include <memory>
+#include <vector>
 
 #if defined(QHEXVIEW_ENABLE_DIALOGS)
 class HexFindDialog;
@@ -115,20 +122,47 @@ public Q_SLOTS:
     void setAutoWidth(bool r);
     // unreal-ng: the tooltip of the byte under the mouse comes from the host (empty: the metadata comments)
     void setToolTipProvider(std::function<QString(qint64 offset)> provider) { m_tooltipprovider = std::move(provider); }
+    // unreal-ng: the changes made between beginChanges() and endChanges() (a new document, the metadata, the cursor)
+    // repaint only the rows whose painted content they change, not the whole view (a debugger stop moves the PC
+    // highlight by a row or two); a change of the view itself (a scroll, the size, the options) repaints it all
+    void beginChanges();
+    void endChanges();
+    // unreal-ng: rows painted as kept QTextLayouts (default) or through a QTextDocument per paint, as upstream (tests
+    // compare the two)
+    qsizetype rowPixmapCount() const { return m_rowPixmaps.size(); }  // the rows kept as pixels (tests)
+    void setRowLayouts(bool on) {
+        m_rowLayoutsOn = on;
+        m_rowLayouts.clear();
+        m_rowPixmaps.clear();
+        this->viewport()->update();
+    }
 
 private:
-    void paint(QPainter* painter) const;
+    void paint(QPainter* painter, const QRegion& exposed) const;
+    void updateView();                    // unreal-ng: a full repaint, or one deferred to endChanges()
+    QByteArray paintKey() const;          // unreal-ng: what every painted row depends on
+    QByteArray headerKey() const;         // unreal-ng: what the header row depends on
+    QByteArray lineKey(qint64 line) const;  // unreal-ng: what the row of a document line depends on
     void checkOptions();
     void checkState();
     void checkAndUpdate(bool calccolumns = false);
     void calcColumns();
     void ensureVisible();
     void drawSeparators(QPainter* p) const;
-    void drawHeader(QTextCursor& c) const;
-    void drawDocument(QTextCursor& c) const;
-    QTextCharFormat drawFormat(QTextCursor& c, quint8 b, const QString& s,
+    // unreal-ng: `Sink` is a QTextCursor (the document path) or the row texts of paintRows (QHexRowSink)
+    template<typename Sink> void drawHeader(Sink& c) const;
+    template<typename Sink>
+    void drawDocument(Sink& c, qint64 first = 0,
+                      qint64 last = std::numeric_limits<qint64>::max()) const;
+    template<typename Sink>
+    QTextCharFormat drawFormat(Sink& c, quint8 b, const QString& s,
                                QHexArea area, qint64 line, qint64 column,
                                bool applyformat) const;
+    // unreal-ng: paints the view rows of `runs` ([first, last], the header is row 0) as one QTextLayout per row, kept
+    // for the next paint while the row's key stays; false (nothing painted) when a row needs the document path (a
+    // block background: the styled header, line backgrounds)
+    bool paintRows(QPainter* painter, const std::vector<std::pair<qint64, qint64>>& runs, qint64 rows,
+                   int headerrows, const QByteArray& key) const;
     unsigned int calcAddressWidth() const;
     int visibleLines(bool absolute = false) const;
     qint64 getLastColumn(qint64 line) const;
@@ -154,6 +188,7 @@ protected:
     bool event(QEvent* e) override;
     void showEvent(QShowEvent* e) override;
     void paintEvent(QPaintEvent*) override;
+    void scrollContentsBy(int dx, int dy) override;  // unreal-ng: a repaint deferred in a batch of changes
     void resizeEvent(QResizeEvent* e) override;
     void focusInEvent(QFocusEvent* e) override;
     void focusOutEvent(QFocusEvent* e) override;
@@ -185,6 +220,19 @@ private:
     QHexMetadata* m_hexmetadata{nullptr};
     QHexDelegate* m_hexdelegate{nullptr};
     quint8 m_hexLineWidth;
+    // unreal-ng: the batched changes (beginChanges) and what the rows on screen were painted from
+    int m_changes{0};
+    bool m_changesPending{false};
+    bool m_ensureVisiblePending{false};
+    mutable qreal m_blockHeight{0};
+    mutable QByteArray m_paintedKey, m_paintedHeader;
+    mutable quint64 m_paintedTop{0};  // the first document line painted
+    mutable std::vector<QByteArray> m_paintedLines;  // per visible row, from the top one
+    // unreal-ng: the rows laid out (paintRows) by their key, for the view's paintKey m_rowLayoutsKey
+    mutable QHash<QByteArray, std::shared_ptr<QTextLayout>> m_rowLayouts;
+    mutable QByteArray m_rowLayoutsKey;
+    mutable QHash<QByteArray, QPixmap> m_rowPixmaps;  // unreal-ng: those rows' pixels, by their key
+    bool m_rowLayoutsOn{true};
 #if defined(QHEXVIEW_ENABLE_DIALOGS)
     HexFindDialog *m_hexdlgfind{nullptr}, *m_hexdlgreplace{nullptr};
 #endif

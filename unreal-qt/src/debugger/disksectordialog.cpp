@@ -320,3 +320,5 @@ void DiskSectorDialog::documentChanged()
         _shown[i] = now[i];
     }
 }
+
+#include "moc_disksectordialog.cpp"

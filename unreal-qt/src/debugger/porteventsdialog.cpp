@@ -418,3 +418,5 @@ void PortEventsDialog::seekToRow(int row)
     _status->setText(tr("At frame %1, T %2").arg(QString::fromStdString(frame), QString::fromStdString(t)));
     emit seekedTo(static_cast<uint16_t>(_hits->item(row, ColPc)->text().toUInt(nullptr, 16)));
 }
+
+#include "moc_porteventsdialog.cpp"

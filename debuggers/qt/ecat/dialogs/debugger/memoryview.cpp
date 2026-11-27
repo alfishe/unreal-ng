@@ -991,3 +991,5 @@ void MemoryTabs::mark_stop()
     for (MemoryPanel * m : m_panels) m->mark_stop();
     if (m_paged != nullptr) m_paged->mark_stop();
 }
+
+#include "moc_memoryview.cpp"

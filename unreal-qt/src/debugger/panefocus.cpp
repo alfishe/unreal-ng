@@ -225,3 +225,5 @@ void PaneFocus::Place()
         cell = _panes[focused].cells[std::min(_cell[focused], _panes[focused].cells.size() - 1)];
     _cellFrame->Around(cell);
 }
+
+#include "moc_panefocus.cpp"

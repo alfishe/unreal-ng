@@ -444,3 +444,5 @@ void DebugVisualizationWindow::onDumpVizDataClicked()
             "Failed to write visualization data file.");
     }
 }
+
+#include "moc_debugvisualizationwindow.cpp"

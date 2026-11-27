@@ -994,3 +994,5 @@ bool GsAnalysisPane::isMarked(int row, int column) const
 {
     return _marked.count({row, column}) != 0;
 }
+
+#include "moc_gsanalysispane.cpp"

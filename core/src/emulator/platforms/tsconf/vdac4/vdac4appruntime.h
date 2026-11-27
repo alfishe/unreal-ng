@@ -61,6 +61,19 @@ public:
         }
         return answered;
     }
+    /// The firmware's own LINK write (the link watch's mark, a Z80 TANG_WRITE), not the app's: no replay of the ESP's
+    /// app gives it back, so the Tang counts it for TTD (Vdac4Tang::Q2OutsideInputs)
+    virtual bool FirmwareLinkWrite(uint32_t address, uint32_t value) { return LinkWrite(address, value); }
+    /// core_load of a held core: the Tang runs the core whose VDAC4 mark is `usercode` (0x564434xx). kZmOk with
+    /// the core's LINK VERSION word once it answers; kZmError when the Tang has no such core
+    virtual int LoadCore(uint32_t usercode, uint32_t& version)
+    {
+        (void)usercode;
+        (void)version;
+        return kZmError;
+    }
+    /// core_back / tang::backToSlot0: the Tang back to slot 0 (TS-Conf). False: it did not come back
+    virtual bool CoreBack() { return false; }
 
     static constexpr uint32_t kLinkFtAddr = 0x54;
     static constexpr uint32_t kLinkFtData = 0x58;
@@ -104,6 +117,26 @@ public:
     virtual IVdac4TangLink* Tang() = 0;
     /// Events SendEvent takes now before it answers kZmBusy (the free places of the 8-deep queue)
     virtual size_t EventQueueRoom() const { return 8; }
+    /// data_open (0.1.166): the data file `name` (upper case 8.3) of app `app` the Z80 program registered with
+    /// MOD_QUERY flag 4: kZmOk with its number at the Z80 and its length, else kZmNotFound
+    virtual int DataFile(const std::string& app, const std::string& name, uint8_t& index, uint32_t& size)
+    {
+        (void)app;
+        (void)name;
+        (void)index;
+        (void)size;
+        return kZmNotFound;
+    }
+    /// core_load: the held FPGA core `name` (from MOD_QUERY flag 2) onto the Tang; kZmOk with the core's LINK
+    /// VERSION word, kZmNotFound when the board holds no such core, kZmBusy / kZmError otherwise
+    virtual int CoreLoad(const std::string& name, uint32_t& version)
+    {
+        (void)name;
+        (void)version;
+        return kZmNotFound;
+    }
+    /// core_back: the Tang back to slot 0 (TS-Conf)
+    virtual int CoreBack() { return kZmOk; }
 };
 
 /// What the running app declared (zm_app_t name, version, command_first, command_last)
@@ -136,6 +169,14 @@ public:
         (void)name;
         return false;
     }
+    /// A 0x6F frame from the Z80: a piece of a data file the app asked for ([request][offset LE32][data])
+    virtual void DataPiece(const uint8_t* data, size_t size)
+    {
+        (void)data;
+        (void)size;
+    }
+    /// The firmware's table of data files changed (a MOD_QUERY flag 4 registration)
+    virtual void DataFilesChanged() {}
     /// The running app's state for Vdac4Esp::Save (bounded by the runtime); empty by default
     virtual void SaveState(std::vector<uint8_t>& out) const { out.clear(); }
     /// Vdac4Esp::Load of a state with this app running: restore it from SaveState without StartApp. False: it

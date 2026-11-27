@@ -70,6 +70,9 @@ std::vector<TimelineMark> Crossed(uint64_t from, uint64_t to, uint64_t first, do
     std::vector<TimelineMark> marks;
     if (from == to)
         return marks;
+    // At most a boundary, a bookmark and an edge or barrier. Reserved, also so that gcc 13 sees no reallocation in the
+    // push_back below: without LTO it reported a false -Wstringop-overflow in the realloc path of an empty vector
+    marks.reserve(3);
     const bool forward = to > from;
 
     if (fps > 0)

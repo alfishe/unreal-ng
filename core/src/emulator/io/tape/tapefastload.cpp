@@ -77,9 +77,12 @@ bool TapeFastLoad::HandleLDBytesTrap(Z80& cpu)
     if (!_tape.EnsureImageLoaded())
         return false;
 
-    // Row 4: consumption cursor at end of tape — a real tape has run out.
-    const size_t cursor = _tape.GetConsumptionCursor();
+    // Row 4: consumption cursor at end of tape — a real tape has run out. Control entries at the cursor (a TZX
+    // $20 pause 0, a $2A, a flow leftover: they follow a block the trap delivered) take no tape, so the block the
+    // ROM routine would find next is the first one with a signal. A $2A does not hold the trap back in 48K mode:
+    // LD-BYTES is a loader that listens, and a listening loader restarts a tape stopped there.
     const std::vector<TapeBlock>& blocks = _tape.GetBlocks();
+    const size_t cursor = _tape.NextSignalBlock(_tape.GetConsumptionCursor());
     if (cursor >= blocks.size())
         return false;
 
@@ -133,8 +136,9 @@ const TapeBlock* TapeFastLoad::PeekNextBlock()
     if (!_tape.EnsureImageLoaded())
         return nullptr;
 
-    const size_t cursor = _tape.GetConsumptionCursor();
+    // The block the trap would deliver: control entries at the cursor are passed (HandleLDBytesTrap row 4)
     const std::vector<TapeBlock>& blocks = _tape.GetBlocks();
+    const size_t cursor = _tape.NextSignalBlock(_tape.GetConsumptionCursor());
 
     return cursor < blocks.size() ? &blocks[cursor] : nullptr;
 }

@@ -163,7 +163,7 @@ int TapePlays(const TTDExternalEvent& e)
     const std::string reason(e.reason);
     if (reason == "tape play" || reason == "tape resume")
         return 1;
-    if (reason == "tape stop" || reason == "tape pause" || reason == "tape park")
+    if (reason == "tape stop" || reason == "tape pause" || reason == "tape park" || reason == "tape stop 48k")
         return 0;
     return -1;
 }

@@ -11,7 +11,9 @@
 ///           instead, each with its "seq", and next_since (the cursor of the next read), missed (records after the
 ///           cursor no longer kept) and restarted (the cursor was past the newest record: read from the oldest kept)
 ///   config  mode off / ring / capture, limit (ring size; capture cap, 0 = none), stream (a JSON Lines file, "" =
-///           none) and streamLimit (records, 0 = none). Fields not given keep their value
+///           none), streamLimit (records, 0 = none) and filter (which records are recorded at all, as
+///           "side=host out=true port=#B3,#BB pc=#8000-#9FFF": historyfilter.h; "" = every record). Fields not
+///           given keep their value
 ///   clear   drops the records and the counts; the configuration stays
 ///   pause   holds the history: nothing recorded, the records kept (resume goes on)
 ///   resume
@@ -36,6 +38,7 @@ struct HistoryRequest
     std::optional<uint64_t> limit;
     std::optional<std::string> stream;
     std::optional<uint64_t> streamLimit;
+    std::optional<std::string> filter;          ///< config: which records are recorded (historyfilter.h); "": all
 };
 
 struct HistoryReply

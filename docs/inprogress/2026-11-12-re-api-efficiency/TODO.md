@@ -58,7 +58,41 @@
   Lua).
 
 ### P2
-- [ ] F5: tape play after `$2A` / pause; play answer reports state and block; `$2A` 48K decision; last-block edge (M).
+- [x] F5: tape play after `$2A` / pause; play answer reports state and block; `$2A` 48K decision; last-block edge (M).
+  As built (2026-11-27, uncommitted on `f5-tape`): reproduced on synthetic TZX images; the cause was not the one
+  guessed. (1) `Tape::Play` on a tape that plays called `StartPlaybackAtCursor`, which restarts the block in flight
+  from its pilot. The loader starts the tape by itself as soon as it listens, so an agent's play sent "to be sure"
+  after the "START TAPE" prompt rewound the block in the middle of the load, the load failed, the loader stopped
+  listening and the watchdog paused the tape in that block's pilot for good (Terramex, the original tape: "paused at
+  block 4" for 15 000 frames). (2) With no loader listening yet, the play did start the tape, and the loader watchdog
+  paused it again 100 frames later with the pilot rewound: the same `paused`, pulse 0 as before, under an answer that
+  said "resumed (in place)" (Terramex, the Quicksilva tape: the selector was still on screen). (3) The `$2A` was
+  inert: "stopped at the `$2A`" was the watchdog's park, which left the cursor on the block without a signal (a
+  resume played through it, but the position read as a tape that did not move, and the ROM trap declines a cursor
+  on such a block). Now: a play leaves a playing tape alone (`already_playing`); a start, a park and the stream
+  never leave the cursor on a block without a signal (`Tape::SkipSignalLessBlocks`, `AdvanceToNextBlock`); TZX `$2A`
+  stops the tape before the next block when the machine is in 48K mode (a 48K model, or `#7FFD` paging locked:
+  `Tape::IsIn48kMode`) and is passed in 128K mode, and a play or the loader's listening reads go on from there (the
+  specification: "the tape will stop only if the machine is a 48K Spectrum"); `$20` with pause 0 is still passed.
+  The play answer is the deck after the call, built once (`Tape::PlayWithReport`, `TapePlayReport`): `result`,
+  `playing`, `state`, `reason` (`end_of_tape`, `stopped`, `queued`, `user`, `loader_quiet`, `parked`, `stop_48k`),
+  `mode_48k`, `position`, `block` (index, kind, control, type, name, bytes), `skipped_blocks`, and the text. It is
+  read under the play's own CPU hold, nothing waits a frame: the watchdog decides 2 to 100 frames later, so the
+  text says that a tape with no loader listening pauses again, and `GET /tape` gives the `reason` afterwards (the
+  pause reason is kept, also across TTD: the spare byte of the tape state). Planes: `POST /tape/play` (fields +
+  `message`), MCP text of `load_software` with `play`, `actions run media.tape` and `invoke_api`, CLI `tape play`
+  (two lines), Lua `ok, report = tape_play()`, Python `tape_play(report=True)`. The last-block edge (Deflektor) was
+  already fixed by `f13cee7da` (an ended tape holds the level of its last edge); the tests now cover `$10`, `$11`
+  and `$14` as the last block and with a `$20` 0 / `$2A` after them. No image under `testdata/` has a `$2A`, a `$20`
+  with pause 0 or a flow block: their pulse streams are unchanged. Tests `TapePlay_Test` (19),
+  `McpTools_Test.LoadSoftware_TapeWithPlay_TextCarriesThePlayAnswer`, live `tools/verification/mcp/test_media.py`
+  (48K stops and resumes, 128K passes, CLI and Lua; the Python part runs on a build with Python automation, the
+  checked one had it off and only compiled the binding). The reported case again, live over MCP (Terramex,
+  the Quicksilva TZX, a 48K at ROM speed): the tape stops at the `$2A` (`paused`, `stop_48k`, block 5), 200 frames
+  after the explorer is chosen the loader has started block 5 by itself (pulse 9678, 4.0 s in), the play sent there
+  answers "Tape is already playing (left as it is)", and the block loads (the game's IM 2 table filled, tape
+  `ended`). Docs: `command-interface.md` "The play answer", the plane documents,
+  [loader-follow design §10](../2026-08-30-fast-tape-loading/loader-follow-design.md).
 - [x] F6: `find_event` exec sentinel hits (S).
   As built (2026-11-19, uncommitted on `find-count`): reproduced. The coverage index answers "may contain" and, with
   no page, matches the same offset in any page, so false candidate frames came back; the exec path replayed only
@@ -166,10 +200,15 @@
 - [x] F9: L1 `root` at a snapshot's first PC (verify first) (S). Verified present 2026-11-24 (the replay's first
   instruction always got `root`), fixed: entry kind `resume` unless the first PC is the reset vector. Test
   `AnalysisL1_Test.CallGraphTailJump`.
-- [ ] S4: history / trace filters, event-only trace (M). Verified 2026-11-24, partly there: the machine port trace
+- [x] S4: history / trace filters, event-only trace (M). Verified 2026-11-24, partly there: the machine port trace
   (`/profiler/porttrace`) is event-only (frame, PC) with record-time filters (port, device, direction, PC range,
-  value) on WebAPI, CLI, Lua, Python. Left: the filter on the MCP `porttrace` action, record-time filters of the
-  device histories (the GS side is filtered on read only), the instruction access trace.
+  value) on WebAPI, CLI, Lua, Python. Record-time filters of the device histories built 2026-11-26: `filter` in the
+  history config on every plane (`side=host out=true`, `port=#B3,#BB pc=#8000-#9FFF`), the records left out counted
+  and neither kept nor streamed (`historyfilter.h`, docs/emulator/design/debugger/device-history.md). The 1.7 GB
+  history of the case was a capture with a stream and no filter, not a ring. Built 2026-11-27: MCP
+  `analyze_performance porttrace` takes `filter` (a preset name or the include / exclude rules, set before the capture)
+  and shows the events in its text; the CPU access trace (`analysis trace`) takes the filter `kinds`, `pc`,
+  `addresses` (`kinds=in,out`: a port trace with each access's frame, T and PC, no instruction stream).
 - [x] V4: counting breakpoints with per-hit frames (with PLAN #6) (M).
   As built (2026-11-19, uncommitted on `find-count`): a breakpoint that only counts (`stop: false`, CLI `--count`)
   records its hits in a bounded `BreakpointHitLog` (`hit_log` N, default 1000, 0 none, at most 100000;

@@ -1151,3 +1151,5 @@ void BreakpointDialog::applyChanges()
     // Nothing to do here for now, as changes are applied immediately
     accept();
 }
+
+#include "moc_breakpointdialog.cpp"

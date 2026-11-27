@@ -15,3 +15,5 @@ void QClickableLabel::mouseDoubleClickEvent(QMouseEvent *event)
     emit doubleClicked();
 }
 
+
+#include "moc_qclickablelabel.cpp"

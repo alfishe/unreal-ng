@@ -285,3 +285,5 @@ bool EditorDocument::Up()
     emit SelectionChanged();
     return true;
 }
+
+#include "moc_editordocument.cpp"

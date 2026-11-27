@@ -58,6 +58,15 @@ struct EspAppHostPorts
     std::function<void(const int16_t* frames, size_t count, uint32_t rate)> audio;
     /// zm_core_t::log lines and runtime diagnostics
     std::function<void(const std::string& line)> log;
+    /// A module's ELF from the firmware's cache (module_open); a zm result. Unset: no module is found
+    std::function<int(const std::string& name, std::vector<uint8_t>& bytes)> moduleBytes;
+    /// data_open: the data file `name` (upper case 8.3) of app `app` the Z80 program registered (MOD_QUERY flag 4
+    /// with a file number): kZmOk with its number at the Z80 and its length, else kZmNotFound. Unset: none
+    std::function<int(const std::string& app, const std::string& name, uint8_t& index, uint32_t& size)> dataLookup;
+    /// core_load: the held FPGA core `name` onto the Tang; kZmOk with the core's LINK VERSION word. Unset: not found
+    std::function<int(const std::string& name, uint32_t& version)> coreLoad;
+    /// core_back (and the app's unload after a core_load): the Tang back to slot 0 (TS-Conf); a zm result
+    std::function<int()> coreBack;
 };
 
 class EspAppHost
@@ -79,12 +88,38 @@ public:
         ZmLinkWrite, ZmSockOpen, ZmSockSend, ZmSockRecv, ZmSockClose, ZmNetResolve, ZmWifiInfo, ZmUiAvailable,
         ZmAppDone, ZmSdList, ZmSdRead, ZmSdWrite, ZmSdOpen, ZmSdPread, ZmSdPwrite, ZmSdClose, ZmSdCreate,
         ZmWifiRssi, ZmSockOpenTls, ZmLinkMedia, ZmHandoffPut, ZmHandoffTake, ZmSd2Open, ZmSd2Read, ZmSd2Stream,
-        ZmSd2Close, ZmLinkBurst, ZmPcmLowLatency,
+        ZmSd2Close, ZmLinkBurst, ZmPcmLowLatency, ZmCodeRam, ZmModuleOpenEx, ZmDataOpen, ZmDataRead, ZmDataClose,
+        ZmLinkReadChecked,
         ZmSlotCount
     };
     /// sizeof(zm_core_t) on the board: three u16, pad, firmware pointer, then the slots
     static constexpr uint32_t kZmCoreSize = 12 + 4 * ZmSlotCount;
-    static constexpr uint16_t kAbiMinor = 16;
+    static constexpr uint16_t kAbiMinor = 21;
+    /// zm_core_t::firmware: the vdac4-A.B.C form apps parse (Quake II wants 0.1.166+), then who made it
+    static constexpr const char* kFirmware = "vdac4-0.1.174-unreal-ng-hle";
+    /// The trap a module's entry returns to (module_open runs it nested in the caller's trap)
+    static constexpr uint32_t kModuleReturnTrap = EspMemory::kZmTrapBase + 4 * ZmSlotCount;
+    /// module_app.hpp kMaxModules (0.1.159)
+    static constexpr int kMaxModules = 8;
+    /// ZM_CODE_RAM_MAX, and what must stay free in internal RAM after the piece (module_app.cpp kCodeRamKeep)
+    static constexpr uint32_t kCodeRamMax = 48u << 10;
+    static constexpr uint32_t kCodeRamKeep = 12u << 10;
+    /// app_data_files.hpp: open data files, the Z80's sector, the block of short reads, the largest request
+    static constexpr int kMaxDataFiles = 8;
+    static constexpr uint32_t kDataSectorBytes = 512;
+    static constexpr uint32_t kDataBlockBytes = 8192;
+    static constexpr uint32_t kDataRequestMax = 32768;
+    /// module_app.cpp remoteFetch: a request and two repeats, 4 s each; sendEvent waits up to 1 s for room
+    static constexpr uint32_t kDataAttempts = 3;
+    static constexpr uint64_t kDataWaitUs = 4'000'000;
+    static constexpr uint64_t kDataEventWaitUs = 1'000'000;
+    /// protocol.hpp kEventDataRead: the ESP asks the Z80 for a piece of a data file
+    static constexpr uint8_t kEventDataRead = 0x6E;
+    /// PSRAM the board's firmware keeps for itself beyond what the HLE takes: 1440 KB, the figure the game's author
+    /// measured (PROGRESS.md 24.11.2026: with it his emulator had 4192 KB free before Qcommon_Init, as the board).
+    /// Here it leaves 4336 KB; 1584 KB gives exactly 4192 but Quake II then runs out of PSRAM loading base2: this
+    /// HLE takes about 220 KB more during Qcommon_Init than his emulator did (quake2.md §8). UNREAL_VDAC4_PSRAM_RESERVE_KB
+    static constexpr uint32_t kDefaultPsramReserveKb = 1440;
 
     EspAppHost(std::unique_ptr<IEspCpu> cpu, EspAppHostPorts ports, uint32_t mhz = kDefaultMhz);
     EspAppHost(const EspAppHost&) = delete;
@@ -113,6 +148,8 @@ public:
     /// A Z80 command in the app's range (handleCommand); replies come through ports.reply
     bool OwnsCommand(uint8_t command) const;
     void Command(uint8_t command, const uint8_t* data, size_t size);
+    /// The app or a module it opened is `name` (a new copy of it makes the next APP_START restart the app)
+    bool UsesModule(const std::string& name) const;
     /// app->command's result of the last finished command
     int LastCommandResult() const { return _lastCommandResult; }
     /// Run the ESP in small steps until the loop task has nothing to do (main / start / commands finished), at
@@ -124,6 +161,29 @@ public:
     /// The media range (link_media), 0..0 when none
     uint8_t MediaFirst() const { return _mediaFirst; }
     uint8_t MediaLast() const { return _mediaLast; }
+    /// A 0x6F piece of a data file from the Z80 ([request][offset LE32][data], module_app.cpp handleDataPiece):
+    /// taken by the data_read waiting for it, else ignored. Between Advance calls
+    void DataPiece(const uint8_t* data, size_t size);
+    /// The firmware's table of data files changed (MOD_QUERY flag 4): the block of short reads is stale
+    void DataFilesChanged();
+    /// The app holds an FPGA core it loaded (core_load), released by core_back or its unload
+    bool CoreLoaded() const { return _app.coreLoaded; }
+
+    /// Data files (data_open / data_read) of the running app, for the automation surfaces
+    struct DataStats
+    {
+        uint32_t openFiles = 0;
+        bool reading = false;        ///< a data_read waits for the Z80 now
+        uint64_t requests = 0;       ///< 0x6E requests answered whole
+        uint64_t repeats = 0;        ///< requests asked again (no answer in 4 s, or the Z80 could not read)
+        uint64_t failures = 0;       ///< data_read calls that failed after three attempts
+        uint64_t pieces = 0;         ///< 0x6F pieces taken
+        uint64_t bytes = 0;          ///< bytes the requests brought
+        uint32_t longestMs = 0;      ///< the slowest request, ESP ms
+    };
+    DataStats GetDataStats() const;
+    /// PSRAM free now (the guest heap), bytes
+    uint32_t PsramFree() const { return _memory.Psram().FreeBytes(); }
 
     /// endregion
 
@@ -186,6 +246,15 @@ public:
     /// The last word read at each LINK address so far: what a replay stopped at a boundary goes on with
     const std::map<uint32_t, uint32_t>& JournalReadMap() const { return _journal.lastRead; }
     void SetJournalReadMap(const std::map<uint32_t, uint32_t>& reads) { _journal.lastRead = reads; }
+    /// Where a replay sends the app's LINK writes, which it drops otherwise (the Tang is restored, not replayed):
+    /// the VDAC4 board's TTD restore feeds them to the Quake II core it computes again from the keyframe. Unset
+    /// (empty functions): dropped
+    void SetReplayLinkSink(std::function<void(uint32_t address, uint32_t value)> write,
+                           std::function<void(uint32_t ftAddress, const uint8_t* words, size_t count)> ftWrite)
+    {
+        _replayLinkWrite = std::move(write);
+        _replayLinkFtWrite = std::move(ftWrite);
+    }
 
     /// endregion
 
@@ -216,8 +285,41 @@ private:
         WaitMutex,     ///< on waitObject
         WaitSignal,    ///< on waitObject, or until wakeUs (timeout)
         WaitPcm,       ///< ring full; retry at wakeUs
+        WaitData,      ///< data_read: a piece from the Z80, room for the request event, or the reads' turn
         HostIdle,      ///< a host task with no call running
         Done,
+    };
+
+    /// data_read of one task: the call's arguments and where its walk over the file stands (readRemote)
+    struct DataRead
+    {
+        enum Phase : uint8_t
+        {
+            None = 0,     ///< not reading
+            Turn,         ///< another task's read runs (reads go one at a time)
+            Next,         ///< take the next part: from the block, or a new request
+            Send,         ///< the request event waits for room in the event queue (up to 1 s)
+            Wait,         ///< the request is out: pieces come, up to 4 s
+        };
+        Phase phase = None;
+        uint8_t file = 0;          ///< handle slot
+        uint32_t offset = 0;
+        uint32_t dest = 0;         ///< guest buffer
+        uint32_t count = 0;
+        uint32_t got = 0;          ///< guest uint32_t* (0: none)
+        uint32_t done = 0;
+        uint32_t attempt = 0;
+        uint64_t sendUs = 0;       ///< when the event first waited for room
+        uint64_t beganUs = 0;      ///< the request's first attempt
+    };
+
+    /// A module_open waiting for the module's entry to return: where its outputs go
+    struct ModuleOpening
+    {
+        uint32_t slot = 0;
+        uint32_t handle = 0;  ///< void** handle
+        uint32_t result = 0;  ///< int* entry_result
+        uint32_t placed = 0;  ///< uint32_t* placed (module_open_ex), 0 if none
     };
 
     struct Task
@@ -242,6 +344,29 @@ private:
         uint32_t pcmAddress = 0;
         uint32_t pcmAccepted = 0;
         uint64_t pcmDeadlineUs = 0;
+        /// module_open calls whose entry runs now (nested in the caller's trap), innermost last
+        std::vector<ModuleOpening> opening;
+        /// data_read in progress (DataReadStep)
+        DataRead data;
+    };
+
+    /// A module the app opened (ModuleApp::LoadedModule)
+    struct ModuleState
+    {
+        bool used = false;
+        std::string name;
+        EspElfImage image;
+        bool inCodeRam = false;
+        uint32_t record = 0;  ///< the loader's esp_elf_t (116 bytes of PSRAM, 0.1.160)
+    };
+
+    /// The app's code_ram piece (ModuleApp::CodeRam): internal SRAM, code runs from its I-bus mirror
+    struct CodeRamState
+    {
+        uint32_t address = 0;  ///< D-bus; 0 = none
+        uint32_t size = 0;
+        uint32_t used = 0;     ///< module code placed so far
+        uint32_t modules = 0;  ///< modules with code in it
     };
 
     struct SyncObject
@@ -265,7 +390,41 @@ private:
         std::vector<uint32_t> allocations;  ///< coreAlloc blocks (header addresses)
         bool done = false;
         bool ftOpened = false;
+        bool coreLoaded = false;   ///< core_load succeeded: the unload sends the Tang back (core_back)
         uint64_t lastCommandUs = 0;
+    };
+
+    /// The data files (app_data_files.cpp AppDataFiles with the module_app.cpp remote reads)
+    struct DataFile
+    {
+        bool used = false;
+        uint8_t index = 0;         ///< the file's number at the Z80 program
+        uint32_t size = 0;
+    };
+    struct DataState
+    {
+        DataFile files[kMaxDataFiles];
+        uint32_t owner = 0;        ///< the task whose data_read runs (0: none)
+        // AppDataRequest: the request in flight
+        bool active = false;
+        bool failed = false;
+        bool complete = false;
+        uint8_t seq = 0;
+        uint8_t index = 0;
+        uint32_t at = 0;           ///< file offset of the request
+        uint32_t count = 0;
+        uint32_t received = 0;
+        bool toBlock = false;      ///< into the block (a short read), else into the guest buffer at `dest`
+        uint32_t dest = 0;
+        uint64_t deadlineUs = 0;
+        // The block of short reads
+        std::vector<uint8_t> block;
+        int blockIndex = -1;
+        uint32_t blockAt = 0;
+        uint32_t blockLength = 0;
+        // Totals for the log line at unload and the state
+        uint64_t requests = 0, repeats = 0, failures = 0, pieces = 0, bytes = 0, ms = 0;
+        uint32_t longestMs = 0;
     };
 
     // Firmware boot: zm_core_t, strings, host tasks
@@ -306,8 +465,28 @@ private:
     bool PcmWriteStep(Task& task);
     void PcmPlay(uint64_t fromUs, uint64_t toUs);
     void FtWrite(uint32_t address, uint32_t words, uint32_t count);
+    /// The time inside the running slice (the trap's caller has used part of it)
+    uint64_t SliceNowUs() const { return _nowUs + _sliceUsedCycles / _mhz; }
+    int DataOpen(uint32_t name, uint32_t file, uint32_t size);
+    /// data_read at its trap: false when the task waits
+    bool DataReadCall(Task& task);
+    /// The walk of a data_read (readRemote with remoteFetch): true when it ended (the return is pending)
+    bool DataReadStep(Task& task);
+    void DataReadFinish(Task& task, bool ok);
+    void DataClose(uint32_t file);
+    void DataCloseAll();
+    int CoreLoad(uint32_t name, uint32_t version);
+    /// The PSRAM the board's firmware holds (UNREAL_VDAC4_PSRAM_RESERVE_KB, default kDefaultPsramReserveKb)
+    static uint32_t PsramReserveBytes();
 
     void Log(const std::string& line);
+    /// module_open / module_open_ex at its trap: load, then run the entry nested (true: the task runs on)
+    bool ModuleOpen(Task& task, bool ex);
+    /// The entry returned to kModuleReturnTrap: the outputs, then module_open returns
+    bool ModuleEntryReturned(Task& task);
+    void ModuleClose(uint32_t handle);
+    void CloseAllModules();
+    int CodeRam(uint32_t bytes, uint32_t granted);
     void LoadApp(const std::string& name, const std::vector<uint8_t>& elf);
     void ForceCleanup();
     /// A host call returned `result`: what its kind does
@@ -327,6 +506,9 @@ private:
         TokRead,         ///< a LINK word unlike the last one read at its address
         TokReadSame,     ///< count of LINK reads giving the last word read at their address
         TokResult,       ///< a port's result, zigzag
+        TokModule,       ///< a module's bytes from the cache: result zigzag, size, bytes
+        TokDataPiece,    ///< a 0x6F piece: size, bytes
+        TokDataChanged,  ///< the firmware's data file table changed
     };
     struct JournalState
     {
@@ -365,12 +547,16 @@ private:
     uint32_t JournalLinkRead(uint32_t address);
     /// A port result: the live one recorded, or the recorded one replayed (`live` is not called then)
     int JournalResult(const std::function<int()>& live);
+    /// The moduleBytes port through the journal
+    int JournalModule(const std::string& name, std::vector<uint8_t>& bytes);
     bool Replaying() const { return _journal.mode == JournalMode::Replay; }
     void InstallPorts();
 
     std::unique_ptr<IEspCpu> _cpu;
     EspAppHostPorts _outer;  ///< the owner's ports
     EspAppHostPorts _ports;  ///< what the host calls: _outer through the journal
+    std::function<void(uint32_t, uint32_t)> _replayLinkWrite;  ///< SetReplayLinkSink
+    std::function<void(uint32_t, const uint8_t*, size_t)> _replayLinkFtWrite;
     uint32_t _mhz;
     EspMemory _memory;
 
@@ -404,6 +590,9 @@ private:
     uint64_t _nextPollUs = 0;
     SyncObject _sync[kMaxSync];
     AppState _app;
+    ModuleState _modules[kMaxModules];
+    CodeRamState _codeRam;
+    DataState _data;
     uint32_t _core = 0;          ///< zm_core_t in guest memory
     uint32_t _commandBuffer = 0; ///< command payload for app->command (8 KB + 16 bytes)
     uint32_t _argvBlock = 0;     ///< argv, name and app pointer for main

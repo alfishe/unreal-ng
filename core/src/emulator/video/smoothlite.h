@@ -14,8 +14,9 @@ namespace smoothmotion
 ///
 /// How it differs from LayerFlow:
 /// - a frame is bit planes of its colours' indices, 64 pixels a word: "these pixels are equal" for a whole shifted
-///   row is a few word operations a plane. So at most 256 colours a picture (the palette is kept from frame to
-///   frame and starts over when it fills);
+///   row is a few word operations a plane. So at most 256 colours a pair of frames (the palette is kept from frame
+///   to frame; when it fills, or holds two planes' worth more colours than the frames kept have, it is compacted to
+///   theirs: a picture asks only which pixels are equal, never an index);
 /// - the block field is not searched anew for every pair: a pair scores zero and the vectors kept from the pairs
 ///   before, and a budget of the search order on the block rows still unexplained, each row from where it stopped.
 ///   A new motion is found over a few pairs. Of the vectors that fit a block equally the slowest wins; blocks tied
@@ -30,8 +31,9 @@ namespace smoothmotion
 ///   is not, the other frame's (a moving layer going under a still one).
 ///
 /// One instance per stream of frames, pairs in the order they are shown: the kept vectors and the search's place
-/// are state. A pair is estimated once, when first asked (by Picture::id); a picture with no id is taken as new at
-/// every call. One thread; the same pictures on every platform (integers only).
+/// are state. A pair is estimated once, when first asked (by Picture::id); the last two pairs are kept, so a pair
+/// asked again after another is the same picture. A pair refused for its colours is not tried again. A picture
+/// with no id is taken as new at every call. One thread; the same pictures on every platform (integers only).
 class LiteFlow
 {
 public:
@@ -55,7 +57,8 @@ public:
     static bool Fits(int width, int height);
 
     /// The picture at weight `w` (0..kOne) between `a` and `b` into `out` (width * height). false, `out` untouched:
-    /// not a pair for it (Fits, or more than kMaxColours colours in the two frames): the caller draws another way
+    /// not a pair for it (Fits, or more than kMaxColours colours in the two frames; such a pair, by its ids, is
+    /// refused at once when asked again): the caller draws another way
     bool Compose(const Picture& a, const Picture& b, int w, uint32_t* out);
 
     /// Forget the frames, the kept vectors and the palette (a seek, another stream)
@@ -67,7 +70,7 @@ public:
         uint64_t rowScores = 0;  ///< block rows scored for a vector, all pairs
         uint64_t packed = 0;     ///< frames turned into planes
         uint64_t refused = 0;    ///< Compose calls that returned false
-        uint64_t palettes = 0;   ///< times the palette started over
+        uint64_t palettes = 0;   ///< times the palette was compacted
     };
     const Stats& GetStats() const;
 

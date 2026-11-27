@@ -100,6 +100,8 @@ Out of scope, first round:
   - `FtThread`: 1 = the Tang / FT812 work of those jobs on a thread of its own, 0 (default) = on the job's thread;
   - `FtDrawThread`: 1 (default) = the FT812's drawing on the eve-emu renderer thread, 0 = where the FT812 runs
     ([eve-async-drawing.md](eve-async-drawing.md));
+  - `FtDrawThreads`: threads drawing the FT812's lines, 1 (default) - 64, 0 = chosen by the host's cores (half of them,
+    1-4) (`EveSetDrawThreads`; env `UNREAL_VDAC4_FT_DRAW_THREADS`; the same picture for any count; Metal Slug measured 2026-11-26: more threads gave no faster frame and 20-50 % more CPU);
   - `EspLatencyMs`: 1-16, default 4: emulated ms the app's outputs reach the firmware after its job (§7.5);
   - `EspBootMs`: ESP boot time after power-on, when it arms the Tang (§5.3), default 400;
   - `EspLog`: app log file, empty = off;
@@ -544,8 +546,9 @@ emulation thread. The answer is the same JSON tree on every plane:
 
 | Block | Keys |
 |---|---|
-| `tang` | `personality` (`ts`, `loading`, `ft`), `armed`, `esp_host`, `ram_g_3mb`, `ft_cfg` |
-| `esp` | `phase` (`off`, `booting`, `running`, `flushing`, `restart_wait`), `ms`, `boots`, `boot_nonce`, `last_step`, `last_error`, `resources`, `clock_restarts`, `clock_offset_us` |
+| `tang` | `personality` (`ts`, `loading`, `ft`, `q2`), `armed`, `esp_host`, `ram_g_3mb`, `ft_cfg`, `q2` (the Quake II core, [quake2.md](quake2.md): `frames`, `latched`, `commands`, `words`, `bad_words`, `bad_command`, `mark`, `width`, `height`) |
+| `esp` | `phase` (`off`, `booting`, `running`, `flushing`, `restart_wait`), `ms`, `boots`, `boot_nonce`, `last_step`, `last_error`, `resources`, `clock_restarts`, `clock_offset_us`, `psram_free`, `cores` (held in the BL616 cache: `name`, `size`, `usercode`) |
+| `data` | the app's data files from the Evo card: `files` (`app`, `name`, `size`, `index`), `open`, `reading`, `requests`, `repeats`, `failures`, `bytes`, `longest_ms` |
 | `app` | `running`, `module`, `name`, `version`, `command_first`, `command_last`, `error` |
 | `link` | `pending_from_z80`, `pending_to_z80`, `send_blocked`, `bad_checksums`, `resyncs`, `dropped_frames` |
 | `packets` | `count`, `recent` (the last 64: `command`, `length`, `ms`) |

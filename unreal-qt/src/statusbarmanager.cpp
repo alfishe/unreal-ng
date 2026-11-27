@@ -693,39 +693,56 @@ void StatusBarManager::updateJoystick(EmulatorContext* context)
 
 void StatusBarManager::updateIde(EmulatorContext* context)
 {
-    // The IDE LED blinks when blocks moved since the last tick; the tooltip
-    // names the board and what each unit holds. Everything comes from
-    // thread-safe sources (the activity counter, the media manager's list):
-    // the units themselves belong to the emulation thread
+    // The storage LED: IDE disks and SD cards (Z-Controller, NeoGS, Next, ...). It blinks when blocks moved since
+    // the last tick; the tooltip names the IDE board, what each unit holds and the SD cards. Everything comes from
+    // thread-safe sources (the activity counters, the media manager's list): the devices themselves belong to the
+    // emulation thread
     IdeController* ide = context ? context->pIdeController : nullptr;
-    if (!ide || !ide->Enabled() || !context->pMediaManager)
+    const bool hasIde = ide && ide->Enabled();
+    QStringList lines;
+    std::vector<SlotInfo> mediaSlots;
+    if (context && context->pMediaManager)
+        mediaSlots = context->pMediaManager->List();
+    if (hasIde)
+    {
+        lines << tr("IDE board: %1").arg(QString::fromLatin1(Config::IdeSchemeName(ide->Scheme())));
+        const int channels = ide->ChannelCount();
+        for (int index = 0; index < channels * AtaChannel::kUnits; index++)
+        {
+            const int channel = index / AtaChannel::kUnits;
+            const int unit = index % AtaChannel::kUnits;
+            const auto info = context->pMediaManager ? context->pMediaManager->Info(IdeUnitSlot::IdFor(channel, unit))
+                                                     : std::nullopt;
+            if (!info)
+                continue;
+            // Two channels (the Sprinter): "primary master" ... "secondary slave"
+            QString position = unit ? tr("slave") : tr("master");
+            if (channels == 2)
+                position = (channel ? tr("secondary") : tr("primary")) + QLatin1Char(' ') + position;
+            const QString kind = info->descriptor.kind == MediaKind::Optical ? tr("CD-ROM") : tr("disk");
+            const QString medium = info->present ? QString::fromStdString(info->source) : tr("empty");
+            lines << QStringLiteral("%1 (%2): %3").arg(position, kind, medium);
+        }
+    }
+    // SD card slots: the ones tagged "sd" (Z-Controller, NeoGS, DivMMC, Next)
+    for (const SlotInfo& info : mediaSlots)
+    {
+        const std::string& id = info.descriptor.id;
+        if (info.detached || std::find(info.tags.begin(), info.tags.end(), "sd") == info.tags.end())
+            continue;
+        const QString medium = info.present ? QString::fromStdString(info.source) : tr("empty");
+        lines << tr("SD card %1: %2").arg(QString::fromStdString(id), medium);
+    }
+    if (lines.isEmpty())
     {
         _hdd->setActive(false);
-        _hdd->setDetail(tr("no IDE board"));
-        _hdd->setLiveToolTip(tr("IDE: this machine has no IDE board ([HDD] Scheme)"));
+        _hdd->setDetail(tr("no IDE or SD"));
+        _hdd->setLiveToolTip(tr("Storage: this machine has no IDE board ([HDD] Scheme) and no SD card"));
         _ideTransfers = 0;
         return;
     }
-
-    QStringList lines;
-    lines << tr("IDE board: %1").arg(QString::fromLatin1(Config::IdeSchemeName(ide->Scheme())));
-    const int channels = ide->ChannelCount();
-    for (int index = 0; index < channels * AtaChannel::kUnits; index++)
-    {
-        const int channel = index / AtaChannel::kUnits;
-        const int unit = index % AtaChannel::kUnits;
-        const auto info = context->pMediaManager->Info(IdeUnitSlot::IdFor(channel, unit));
-        if (!info)
-            continue;
-        // Two channels (the Sprinter): "primary master" ... "secondary slave"
-        QString position = unit ? tr("slave") : tr("master");
-        if (channels == 2)
-            position = (channel ? tr("secondary") : tr("primary")) + QLatin1Char(' ') + position;
-        const QString kind = info->descriptor.kind == MediaKind::Optical ? tr("CD-ROM") : tr("disk");
-        const QString medium = info->present ? QString::fromStdString(info->source) : tr("empty");
-        lines << QStringLiteral("%1 (%2): %3").arg(position, kind, medium);
-    }
-    const uint64_t transfers = ide->Activity();
+    const uint64_t transfers = (hasIde ? ide->Activity() : 0) +
+                               (context ? context->sdCardActivity.load(std::memory_order_relaxed) : 0);
     _hdd->setActive(transfers != _ideTransfers);
     _ideTransfers = transfers;
     _hdd->setDetail(QString());
@@ -887,3 +904,5 @@ void StatusBarManager::applyRzxStyle()
     _rzx->setStyleSheet(QStringLiteral("QLabel { padding: 1px 4px 0 4px; ") + color + open + QStringLiteral(" }"));
 }
 
+
+#include "moc_statusbarmanager.cpp"

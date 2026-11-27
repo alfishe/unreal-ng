@@ -42,6 +42,15 @@ public:
     }
     void Blob(const std::vector<uint8_t>& data) { Blob(data.data(), data.size()); }
     void String(const std::string& text) { Blob(reinterpret_cast<const uint8_t*>(text.data()), text.size()); }
+    /// A blob of zeros after which `then` more bytes (a blob's length) reach a multiple of `alignment` bytes of the
+    /// state: what follows stays at its offset while the parts before change size within the step (TTD stores a
+    /// state as pieces)
+    void AlignBlob(size_t alignment, size_t then = 0)
+    {
+        const size_t pad = (alignment - (_out.size() + 4 + then) % alignment) % alignment;
+        U32(static_cast<uint32_t>(pad));
+        _out.insert(_out.end(), pad, 0);
+    }
 
 private:
     std::vector<uint8_t>& _out;

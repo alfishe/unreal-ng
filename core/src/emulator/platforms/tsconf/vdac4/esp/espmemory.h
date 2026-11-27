@@ -10,8 +10,10 @@
 ///   0x3C000000 + 8 MB   PSRAM, D-bus view (heap_caps MALLOC_CAP_SPIRAM; app ELFs, big buffers)
 ///   0x42000000 + 8 MB   the same PSRAM bytes, I-bus view (code runs here; data reads work too)
 ///   0x3FC88000 + 416 KB internal SRAM (heap_caps MALLOC_CAP_INTERNAL; task stacks, small blocks)
+///   0x40378000 + 416 KB the same SRAM bytes, I-bus view (SRAM1's direct mirror; module code in code_ram runs here)
 ///   0x40000000 + 4 KB   trap page: no bytes; reaching a PC here is a host call
 ///   kEspRomBase         the HLE ROM (newlib, libm, libgcc, shims), a private RW copy
+///   0x600C4000 + 4 KB   EXTMEM (cache control registers), the values the firmware's boot left; apps read them
 ///
 /// The heaps are first fit over a host-side table, addresses 16-byte aligned, so the same calls give the same
 /// addresses on every host (TTD, determinism). heap_caps_malloc with default caps follows the firmware's
@@ -39,6 +41,9 @@ public:
     bool Free(uint32_t address);
     /// Size the block was allocated with (rounded to 16), 0 when not a block start
     uint32_t BlockSize(uint32_t address) const;
+    /// The block at `address` to `size` bytes where it is: smaller always, larger when the space after it is
+    /// free. False: not a block start, or no room to grow
+    bool Resize(uint32_t address, uint32_t size);
     bool Contains(uint32_t address) const { return address >= _base && address - _base < _size; }
     uint32_t FreeBytes() const;
     void Clear();
@@ -60,6 +65,15 @@ public:
     static constexpr uint32_t kPsramSize = 8u << 20;
     static constexpr uint32_t kSramBase = 0x3FC88000;
     static constexpr uint32_t kSramSize = 416u << 10;
+    /// SOC_DIRAM_IRAM_LOW: the I-bus address of kSramBase (SOC_DIRAM_DRAM_LOW)
+    static constexpr uint32_t kSramIbus = 0x40378000;
+    /// EXTMEM register page: DCACHE_CTRL at +0x00, ICACHE_CTRL at +0x60 (ESP32-S3 TRM)
+    static constexpr uint32_t kExtmemBase = 0x600C4000;
+    static constexpr uint32_t kExtmemSize = 0x1000;
+    /// sdkconfig of the firmware: data cache 32 KB, 64-byte lines (0.1.155), enabled
+    static constexpr uint32_t kDcacheCtrl = 0x11;
+    /// instruction cache 16 KB, 8 ways, 32-byte lines, enabled
+    static constexpr uint32_t kIcacheCtrl = 0x0B;
     static constexpr uint32_t kTrapPage = 0x40000000;
     static constexpr uint32_t kTrapPageSize = 0x1000;
     /// zm_core_t function slot i is the trap kZmTrapBase + 4 * i (ROM traps sit below)
@@ -92,6 +106,8 @@ public:
     void HeapCapsFree(uint32_t address);
     /// heap_caps_get_allocated_size
     uint32_t AllocatedSize(uint32_t address) const;
+    /// heap_caps_realloc without a move (EspHeap::Resize in the block's heap)
+    bool Resize(uint32_t address, uint32_t size);
 
     EspHeap& Psram() { return _psramHeap; }
     EspHeap& Sram() { return _sramHeap; }
@@ -101,6 +117,7 @@ public:
     std::vector<uint8_t>& PsramBytes() { return _psram; }
     std::vector<uint8_t>& SramBytes() { return _sram; }
     std::vector<uint8_t>& RomBytes() { return _rom; }
+    std::vector<uint8_t>& ExtmemBytes() { return _extmem; }
 
     bool IsTrap(uint32_t pc) const { return pc >= kTrapPage && pc - kTrapPage < kTrapPageSize; }
 
@@ -108,6 +125,7 @@ private:
     std::vector<uint8_t> _psram;
     std::vector<uint8_t> _sram;
     std::vector<uint8_t> _rom;
+    std::vector<uint8_t> _extmem;
     EspHeap _psramHeap;
     EspHeap _sramHeap;
 };

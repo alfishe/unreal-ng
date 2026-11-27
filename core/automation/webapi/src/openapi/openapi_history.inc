@@ -63,8 +63,13 @@
         schema["properties"]["stream"]["description"] = "A file every record is written to as well (JSON Lines); \"\": none";
         schema["properties"]["stream_limit"]["type"] = "integer";
         schema["properties"]["stream_limit"]["description"] = "Records to the file at most (0: no limit)";
+        schema["properties"]["filter"]["type"] = "string";
+        schema["properties"]["filter"]["description"] =
+            "Which records are recorded at all (kept and streamed): terms field=value[,value|a-b] separated by "
+            "spaces, every term must hold - \"side=host out=true\", \"port=#B3,#BB pc=#8000-#9FFF\". Fields as the "
+            "records show them; \"\": every record";
         config["responses"]["200"]["description"] = "the stats after the change";
-        config["responses"]["400"]["description"] = "a bad mode, or a stream file that cannot be opened";
+        config["responses"]["400"]["description"] = "a bad mode, a filter the device's records do not have, or a stream file that cannot be opened";
         config["responses"]["404"]["description"] = "no such emulator, or the device has no history";
 
         Json::Value& clear = paths["/api/v1/emulator/{id}/history/{device}/clear"]["post"];

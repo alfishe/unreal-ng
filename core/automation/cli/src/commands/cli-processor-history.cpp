@@ -8,7 +8,7 @@
 
 /// region <Device histories>
 
-// history [device [last N] [since=S] | <device> mode <off|ring|capture> [limit=N] [stream=path] [stream_limit=N] | <device>
+// history [device [last N] [since=S] | <device> mode <off|ring|capture> [limit=N] [stream=path] [stream_limit=N] [filter=term ...] | <device>
 // clear]: a thin adapter over HistoryControl (core/src/debugger/history/historycontrol.h)
 
 namespace
@@ -19,9 +19,11 @@ namespace
         "history <device> [N] since=<S>   - the first N records (all by default) numbered after S, each with its\n"
         "                                   seq; next_since is the S of the next read, missed counts the records\n"
         "                                   after S no longer kept, restarted a cursor past the newest (cleared)\n"
-        "history <device> mode <off|ring|capture> [limit=N] [stream=<file>] [stream_limit=N]\n"
+        "history <device> mode <off|ring|capture> [limit=N] [stream=<file>] [stream_limit=N] [filter=<term>]...\n"
         "                                 - off: zero cost; ring: the last N; capture: up to N (0: no limit);\n"
-        "                                   stream: every record to a JSON Lines file as well (stream= stops it)\n"
+        "                                   stream: every record to a JSON Lines file as well (stream= stops it);\n"
+        "                                   filter: only the records every term holds for are recorded, a term\n"
+        "                                   field=value[,value|a-b] (filter=side=host filter=out=true; filter= none)\n"
         "history <device> clear           - drop the records and counts\n"
         "history <device> pause | resume  - hold the history (nothing recorded, the records kept) / go on\n"
         "<device> is the registry id: beta128, zxbus.1, ... (see slots)";
@@ -97,6 +99,8 @@ void CLIProcessor::HandleHistory(const ClientSession& session, const std::vector
                 uint64_t number = 0;
                 if (key == "stream")
                     request.stream = value;
+                else if (key == "filter")  // one term per word: the terms of several words are joined
+                    request.filter = (request.filter && !value.empty() ? *request.filter + " " : std::string()) + value;
                 else if ((key == "limit" || key == "stream_limit") && ParseNumber(value, number))
                     (key == "limit" ? request.limit : request.streamLimit) = number;
                 else

@@ -52,6 +52,10 @@ public:
     //A verb; the answer's JSON in out. title not empty: a refusal shows in a warning box under it
     bool call(const std::string &verb, std::map<std::string, std::string> options, QJsonObject * out = nullptr,
               const QString &title = QString());
+    //The same without waiting (not in ecat): then gets the answer, at once in process, later from a remote
+    //machine (never after this is gone)
+    void call_then(const std::string &verb, std::map<std::string, std::string> options, const QString &title,
+                   std::function<void(bool ok, const QJsonObject &answer)> then);
     //Asked before a delete; the default is a question box (the self-check answers itself)
     std::function<bool(const QString &title, const QString &text)> confirm;
     //A refusal or an answer that moved nothing (warning: a refusal); the default is a message box (the self-check
@@ -74,7 +78,8 @@ public:
     //`address`) of the card's tab in the past: the card's step or run through the history (a run to the cursor not
     //reached in the history says so and moves nothing). False when that is not the case (the main CPU's tab, not in
     //the past, or the card at the history's end: D-3, it steps on live): the window's own step runs
-    bool step_forward(const std::string &kind = "in", unsigned int address = 0);
+    //A remote machine's answer comes after the return: its at_end then runs `live` (the window's own step)
+    bool step_forward(const std::string &kind = "in", unsigned int address = 0, std::function<void()> live = {});
     //What the last move said (the branch button's tooltip)
     const QString &last_result() const { return m_last_result; }
 
@@ -113,12 +118,18 @@ public slots:
 private:
     //A move of the card CPU: the verb with `cpu`; an answer that moved nothing (at_start, at_end, no_hit) is said
     //under title. True when it moved
-    //`at_end` given: an at_end answer is not said but set there (the caller steps on live)
+    //`at_end` given: an at_end answer is not said but calls it (the caller steps on live). A remote machine's
+    //answer comes later: true while it is to come
     bool card_move(const QString &cpu, const std::string &verb, std::map<std::string, std::string> options,
-                   const QString &title, bool * at_end = nullptr);
-    //A moving verb: the window redraws after it. True when it ran
+                   const QString &title, std::function<void()> at_end = {});
+    bool card_moved(const QString &cpu, const QString &title, bool ok, const QJsonObject &answer,
+                    const std::function<void()> &at_end);
+    //A moving verb: the window redraws after it; then gets the answer of one that ran, before the redraw. True
+    //when it ran (or, a remote machine's, while its answer is to come)
     bool move(const std::string &verb, std::map<std::string, std::string> options, const QString &title,
-              QJsonObject * out = nullptr);
+              std::function<void(const QJsonObject &answer)> then = {});
+    //Branch Here's resume, asked again with the user's decision on the media
+    void resume_here(const QString &title, std::map<std::string, std::string> options);
     //The branch of the last list, null when unknown
     const QJsonObject * branch(unsigned int id) const;
     void set_shown(bool shown);

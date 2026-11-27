@@ -46,6 +46,7 @@ public:
     SpiDevice& Spi();
     Vdac4Esp& Esp() { return *_esp; }
     vdac4::EspXtensaRuntime& Runtime() { return *_runtime; }
+    Vdac4Tang& Tang() { return _tang; }
     /// The ESP's sound on the mixer ("VDAC4 ESP" row)
     Vdac4Audio& Audio() { return *_audio; }
     Vdac4FtWorker& FtWorker() { return *_ft; }

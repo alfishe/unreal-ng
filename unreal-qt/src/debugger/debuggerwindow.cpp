@@ -714,7 +714,7 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
 
         // Connect CPU step complete signal for automation-triggered steps (WebAPI, Python, Lua, CLI)
         // Use updateState() instead of onBindingReady() to ensure setZ80State() is called on widgets
-        connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::requestUpdateState);
+        connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::requestStepUpdate);
 
         // Connect frame refresh signal so TTD seek / step-back / step-forward
         // (which rebuild CPU + RAM + chipset state in-place via RestoreCheckpoint
@@ -847,8 +847,11 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
             break;
         case StateRun:
         case StateResumed:  // StateResumed = running after pause, same as StateRun
-            // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON)
-            updateToolbarActions(false, true, false, true, true, true);
+            // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON). A step paused again
+            // before this queued state arrived: the paused state that follows keeps the actions as they are (each
+            // action switched on and off relaid out the toolbar and the window at every stop)
+            if (_speedControlActive || !_emulator || !_emulator->IsPaused())
+                updateToolbarActions(false, true, false, true, true, true);
             // A run of the debugger's own (a card run, a card step) resumes and pauses again before this queued
             // state arrives: the machine paused by then keeps the stop line that run left
             if (!_emulator || !_emulator->IsPaused())
@@ -1169,7 +1172,7 @@ void DebuggerWindow::paintMemoryMetadata()
         _markupLegend->setText(legend);
         _markupLegend->setVisible(!shown.empty());
     }
-    ui->hexView->update();
+    // The view repaints what the metadata changed itself (QHexMetadata::changed)
 }
 
 void DebuggerWindow::onBindingNotReady()
@@ -1244,9 +1247,44 @@ void DebuggerWindow::requestUpdateState()
         Qt::QueuedConnection);
 }
 
+void DebuggerWindow::requestStepUpdate()
+{
+    if (!_updatePending && !_refreshedMark.empty() && stateMark() == _refreshedMark)
+        return;  // the panes show this position: the step was this window's, refreshed when it ended
+    requestUpdateState();
+}
+
+std::vector<uint64_t> DebuggerWindow::stateMark() const
+{
+    std::vector<uint64_t> mark;
+    const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
+    EmulatorContext* context = lease.get();
+    Z80State* z80 = _emulator ? _emulator->GetZ80State() : nullptr;
+    if (!context || !z80)
+        return mark;
+    mark.push_back(context->emulatorState.frame_counter);
+    mark.push_back(z80->t);
+    mark.push_back(z80->Z80Registers::pc);
+    if (context->pMemory)
+        for (uint8_t bank = 0; bank < 4; ++bank)  // a reset or a port write maps other pages at the same PC
+            mark.push_back(context->pMemory->GetPageForBank(bank));
+    for (const DebugCpuId cpu : debuggercpu::Fitted(context))
+    {
+        Z80Registers registers{};
+        if (cpu != DebugCpuId::Main && debuggercpu::Registers(context, cpu, registers))
+        {
+            mark.push_back(registers.pc);
+            mark.push_back(registers.sp);
+            mark.push_back(registers.af);
+        }
+    }
+    return mark;
+}
+
 void DebuggerWindow::updateState()
 {
     _updatePending = false;
+    _refreshedMark.clear();
     // Block refreshes during shutdown to prevent crash
     if (_isClosing)
     {
@@ -1280,6 +1318,7 @@ void DebuggerWindow::updateState()
 
     if (_emulator)
     {
+        _refreshedMark = stateMark();
         // A stop of a card's breakpoint or step brings its tab to the front, once per stop; a card fitted since gets
         // its tab (retargetPanes refreshes the panes when the CPU in front changes)
         if (_cpuTabs)
@@ -1527,7 +1566,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // When emulator is paused:
                 // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(true, false, true, true, true, true);
-                requestUpdateState();  // Safe to update when paused
+                requestStepUpdate();  // Safe to update when paused; once per position
                 break;
         }
     });
@@ -1635,7 +1674,8 @@ void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
     // When a breakpoint is hit:
     // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
     updateToolbarActions(true, false, true, true, true, true);
-    updateState();
+    // A step out or over that stopped at once was refreshed by the click already: once per position
+    requestStepUpdate();
 }
 
 void DebuggerWindow::showStopNotice(const QString& text)
@@ -1652,10 +1692,9 @@ void DebuggerWindow::clearStopBanner()
     _stopBreakpointId = BRK_INVALID;
     if (_stopBanner)
         _stopBanner->setVisible(false);
-    if (_cardStrip)
-        _cardStrip->setVisible(false);
-    if (_mainPositionStrip)
-        _mainPositionStrip->setVisible(false);
+    // The card lines stay: the next stop's refresh or the live line (running, 4 Hz) fills them and shows or hides
+    // each (CardPanes::FillLines). Hidden here, a step over or out hid them and showed them again at its stop: the
+    // window was laid out twice and repainted whole at every such stop
 }
 
 // Called by a stop's refresh (updateState holds the context lease)
@@ -1714,7 +1753,7 @@ void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
     if (_emulator && _emulator->IsPaused())
     {
         // Update debugger state in the main thread
-        dispatchToMainThread([this]() { requestUpdateState(); });
+        dispatchToMainThread([this]() { requestStepUpdate(); });
     }
 }
 
@@ -1742,11 +1781,15 @@ void DebuggerWindow::continueExecution()
         _emulator->Resume(execution::Requester{execution::Origin::Gui, {}});
 
         // When emulator is running:
-        // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
-        updateToolbarActions(false, true, false, true, true, true);
+        // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON). A machine stopped again already (a step
+        // out of a short routine) keeps them: switched off and on, they relaid out the toolbar at that stop
+        if (!_emulator->IsPaused())
+            updateToolbarActions(false, true, false, true, true, true);
 
-        // Force immediate update of the disassembler widget state
-        ui->disassemblerWidget->refresh();
+        // Force immediate update of the disassembler widget state (a machine already stopped again, a step out of
+        // a short routine, gets the whole refresh below)
+        if (!_emulator->IsPaused())
+            ui->disassemblerWidget->refresh();
 
         updateState();
     }
@@ -1891,7 +1934,7 @@ void DebuggerWindow::stepOut()
         }
     }
 
-    updateState();
+    requestStepUpdate();  // continueExecution / stepIn refreshed a machine already stopped
 }
 
 void DebuggerWindow::frameStep()
@@ -2615,15 +2658,22 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
         address, (uint16_t)size, offset, currentAddress);
     ;
 
+    // A stop shows the page again (a step may change memory): the rows whose bytes, highlights or cursor changed are
+    // painted again, not the whole view (QHexView::beginChanges)
+    ui->hexView->beginChanges();
     QByteArray data((const char*)address, size);
     QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
+    QHexDocument* previous = ui->hexView->getDocument();
     ui->hexView->setBaseAddress(offset);  // Set base offset for the whole hex view
     ui->hexView->setDocument(document);
+    if (previous && previous->parent() == ui->hexView)
+        previous->deleteLater();  // the view took it (one per stop): not kept until the window closes
 
     // Note: change offset position only after assigning document to HexView
     // otherwise widget is unaware of the document and where to jump so just skipping the request
     ui->hexView->gotoOffset(currentAddress);  // Position cursor on the byte with offset
     paintMemoryMetadata();
+    ui->hexView->endChanges();
     emit memoryViewChanged();
 }
 
@@ -2837,3 +2887,5 @@ void DebuggerWindow::prepareForShutdown()
 
     qDebug() << "DebuggerWindow::prepareForShutdown() - All child widgets notified";
 }
+
+#include "moc_debuggerwindow.cpp"

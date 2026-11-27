@@ -352,6 +352,7 @@ void SdCardSpi::queueBlock(uint64_t block, int latencyBytes)
     _out.push_back(static_cast<uint8_t>(crc >> 8));
     _out.push_back(static_cast<uint8_t>(crc));
     _blocksRead++;
+    CountActivity();
     if (Observed()) [[unlikely]]
     {
         SdTraceEvent event;
@@ -466,6 +467,7 @@ void SdCardSpi::finishWrite()
     if (ok)
     {
         _blocksWritten++;
+        CountActivity();
         if (_onWrite)
             _onWrite(_writeBlock);
     }
@@ -515,8 +517,15 @@ void SdCardSpi::checkCommandStart(uint8_t index, bool answerPending, bool busyPe
 void SdCardSpi::AttachHistory(EmulatorContext* context, std::function<std::string()> device)
 {
     _historyContext = context;
+    _activity = context != nullptr ? &context->sdCardActivity : nullptr;
     _history = std::make_unique<SdHistory>(context != nullptr ? &context->histories : nullptr, std::move(device),
                                            "SD card commands and blocks", 1024);
+}
+
+void SdCardSpi::CountActivity()
+{
+    if (_activity && !_historyContext->ttdReplayActive)
+        _activity->fetch_add(1, std::memory_order_relaxed);
 }
 
 void SdCardSpi::Emit(const SdTraceEvent& event)

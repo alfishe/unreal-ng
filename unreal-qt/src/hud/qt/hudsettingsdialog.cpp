@@ -390,3 +390,5 @@ void HudSettingsDialog::onResetToDefaults()
         checkbox->blockSignals(false);
     }
 }
+
+#include "moc_hudsettingsdialog.cpp"

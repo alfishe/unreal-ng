@@ -7,6 +7,7 @@
 #include "esp/espapphost.h"
 #include "esp/espxtensaruntime.h"
 #include "vdac4audio.h"
+#include "vdac4bomzh.h"
 #include "vdac4board.h"
 #include "vdac4esp.h"
 #include "vdac4espframes.h"
@@ -53,6 +54,8 @@ const char* PersonalityName(Vdac4Tang::Personality personality)
             return "loading";
         case Vdac4Tang::Personality::Ft:
             return "ft";
+        case Vdac4Tang::Personality::Q2:
+            return "q2";
     }
     return "?";
 }
@@ -90,6 +93,19 @@ void CaptureLive(Vdac4Board& board, const Vdac4Tang& tang, BoardState& state)
     state.espHost = tang.IsEspHost();
     state.ramG3M = tang.IsRamG3M();
     state.ftCfg = tangState.ftCfg;
+    state.q2Latched = tang.Q2LatchedFrames();
+    if (const Vdac4BomzhCore* q2 = tang.Q2Core())
+    {
+        const Vdac4BomzhCore::Stats stats = q2->GetStats();
+        state.q2Frames = stats.frames;
+        state.q2Commands = stats.commands;
+        state.q2Words = stats.words;
+        state.q2BadWords = stats.badWords;
+        state.q2BadCommand = stats.badCommand;
+        state.q2Mark = stats.mark;
+        state.q2Width = stats.width;
+        state.q2Height = stats.height;
+    }
 
     Vdac4Esp& esp = board.Esp();
     state.espPhase = PhaseName(esp.GetPhase());
@@ -100,6 +116,21 @@ void CaptureLive(Vdac4Board& board, const Vdac4Tang& tang, BoardState& state)
     state.lastStep = firmware.LastStep();
     state.lastError = firmware.LastError() ? firmware.LastError() : "";
     state.resources = firmware.ResourceCount();
+    state.cores.clear();
+    for (const Vdac4EspFirmware::HeldCore& core : firmware.HeldCores())
+        state.cores.push_back({core.name, core.size, core.usercode});
+    state.dataFiles.clear();
+    for (const Vdac4EspFirmware::RemoteFile& file : firmware.RemoteFiles())
+        state.dataFiles.push_back({file.app, file.name, file.size, file.index});
+    const vdac4::EspAppHost::DataStats data = board.Runtime().Host().GetDataStats();
+    state.dataOpen = data.openFiles;
+    state.dataReading = data.reading;
+    state.dataRequests = data.requests;
+    state.dataRepeats = data.repeats;
+    state.dataFailures = data.failures;
+    state.dataBytes = data.bytes;
+    state.dataLongestMs = data.longestMs;
+    state.psramFree = board.Runtime().Host().PsramFree();
     state.clockRestarts = board.ClockRestarts();
     state.clockOffsetUs = board.ClockOffsetNs() / 1000;
     state.appRunning = firmware.AppRunning();
@@ -125,6 +156,7 @@ void CaptureLive(Vdac4Board& board, const Vdac4Tang& tang, BoardState& state)
     state.espThread = board.Runtime().Threaded();
     state.ftThread = board.FtWorker().Threaded();
     state.ftDrawThread = tang.DrawingOnThread();
+    state.ftDrawThreads = tang.DrawThreads();
     state.espLatencyMs = board.Runtime().Latency();
 }
 

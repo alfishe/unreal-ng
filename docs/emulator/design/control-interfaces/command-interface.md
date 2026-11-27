@@ -387,7 +387,7 @@ Run control: held by you (mcp, session 0d3e...).
 
 **Machine Identity and Model Creatability** (P0 fixes from `docs/inprogress/2026-09-14-automation-triage-gaps/`):
 - **Parity rule — one source, equal consumers**: machine identity is computed in exactly one place (`EmulatorManager::GetMachineIdentity` in core). WebAPI and CLI serialize that struct directly; MCP forwards the WebAPI payloads verbatim. WebAPI and MCP are equally important automation surfaces — they must always report the same information, and a field added for one is a field added for all.
-- **Every lifecycle response carries machine identity**: `model` (short name), `model_full_name`, `ram_kb`, `video_mode` (null until the screen subsystem exists; e.g. `ATM16`/`Profi 512x240` on builds with extended video support), `speed_multiplier` (live Z80 multiplier, reflects turbo) and `config_folder`. Applies to CLI create/start output, WebAPI `GET /emulator`, `GET /emulator/{id}`, create/switch responses, and the MCP `machine` aspect.
+- **Every lifecycle response carries machine identity**: `model` (short name), `model_full_name`, `ram_kb`, `video_mode` (null until the screen subsystem exists; e.g. `ATM16`/`Profi 512x240` on builds with extended video support), `speed_multiplier` (guest Z80 clock over 3.5 MHz, machine turbo: 4 on TS-Conf at 14 MHz; not the emulation speed, which is the `speed` setting) and `config_folder`. Applies to CLI create/start output, WebAPI `GET /emulator`, `GET /emulator/{id}`, create/switch responses, and the MCP `machine` aspect.
 - **Strict model semantics**: requesting a model the build cannot instantiate (missing port decoder or config folder — e.g. ATM/ZX-Evo/TS-Conf machines on `master`) fails with the reason (unknown model / RAM size not supported / not supported by this build / init failed). No interface silently falls back to a default 48K machine anymore.
 - **WebAPI error shape** (HTTP 400): `{ "error": "Bad Request", "message": "<reason>", "requested_model": "<X>", "available_models_endpoint": "/api/v1/emulator/models" }`.
 - **Model switch validates first**: `POST /emulator/{id}/model` validates the request BEFORE stopping/removing the current instance — a failed switch leaves the caller's machine untouched (previously it was destroyed first).
@@ -1149,7 +1149,7 @@ emulator instance, which the WebSocket `instances` topic announces, so the catal
 | CD audio control: `play` (`track=N [to=M]`, `lba=X frames=N`, `msf=MM:SS:FF end=..`), `pause`, `resume`, `stop`, `volume` (`left= right= route= sotc=`), `mixer` (`volume= mute= solo=`); `drive` = `ide0.slave` / unit / first CD drive. One source: `CdAudioControl` | `cdaudio <verb> [drive] k=v ..` | `POST /cdaudio/{verb}` | `cdaudio(verb, drive, {k=v})` | `cdaudio(verb, drive, k=v)` | `invoke_api` POST `/cdaudio/{verb}` |
 | TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | TS-Conf TSU objects and palette (tile layers, 85 sprites decoded, 256 CRAM cells) | `state tsconf tsu` | `GET /state/tsconf/tsu` | `tsconf_tsu()` | `tsconf_tsu()` | `tsconf_tsu` |
-| TS-Conf **VDAC4 board** (Tang FT812 core + ESP32-S3; the `TSL-VDAC4` model, [design §10.2](../../../inprogress/2026-11-15-tsconf-vdac4/design.md#102-automation-planes)): `tang` (personality ts / loading / ft, armed, esp_host, ram_g_3mb, ft_cfg), `esp` (phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, clock_offset_us), `app` (running, module, name, version, command range, error, `sections`: the running app's loaded sections, ELF address / size / loaded at), `link` (pending bytes, send_blocked, bad_checksums, resyncs, dropped_frames), `packets` (count, the last 64), `audio` (input / output rate, queued, underruns, dropped, sound), `threads` (the ESP app's jobs and the FT work they hand over: esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, job / wait counts and host ms, FT ops / reads / apply and wait ms; [design §7.5](../../../inprogress/2026-11-15-tsconf-vdac4/design.md#75-quantum-model-implemented-jobs)), `log` (the last N ESP lines, default 50, at most 256). Read-only, never parks the emulation thread (polled; no topic); no board = an error with the reason (REST 409). WebSocket: a `call` of the route | `vdac4 state [log N]` / `vdac4 log [N]` | `GET /vdac4/state[?log=N]` | `vdac4_state([log])` | `vdac4_state(log=50)` | tool `vdac4_state` (`log`) |
+| TS-Conf **VDAC4 board** (Tang FT812 core + ESP32-S3; the `TSL-VDAC4` model, [design §10.2](../../../inprogress/2026-11-15-tsconf-vdac4/design.md#102-automation-planes)): `tang` (personality ts / loading / ft / q2, armed, esp_host, ram_g_3mb, ft_cfg, `q2`: the Quake II core's frames, latched pictures, commands, words, bad words / bad_cmd, MARK, picture size; [quake2.md](../../../inprogress/2026-11-15-tsconf-vdac4/quake2.md)), `esp` (phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, clock_offset_us, psram_free, `cores` held in the BL616 cache: name / size / usercode), `data` (the app's data files read from the Evo card: files app / name / size / index, open, reading, requests, repeats, failures, bytes, longest_ms), `app` (running, module, name, version, command range, error, `sections`: the running app's loaded sections, ELF address / size / loaded at), `link` (pending bytes, send_blocked, bad_checksums, resyncs, dropped_frames), `packets` (count, the last 64), `audio` (input / output rate, queued, underruns, dropped, sound), `threads` (the ESP app's jobs and the FT work they hand over: esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, job / wait counts and host ms, FT ops / reads / apply and wait ms; [design §7.5](../../../inprogress/2026-11-15-tsconf-vdac4/design.md#75-quantum-model-implemented-jobs)), `log` (the last N ESP lines, default 50, at most 256). Read-only, never parks the emulation thread (polled; no topic); no board = an error with the reason (REST 409). WebSocket: a `call` of the route | `vdac4 state [log N]` / `vdac4 log [N]` | `GET /vdac4/state[?log=N]` | `vdac4_state([log])` | `vdac4_state(log=50)` | tool `vdac4_state` (`log`) |
 | VDAC4 **ESP memory** (read-only, no pause; the game state a haptic probe `cpu: esp` watches, [haptics.md §5](../../../inprogress/2026-10-17-controller-manager/haptics.md#5-sources-game-events)): `size` bytes (default 16 / CLI 64, at most 4096) at a D-bus / I-bus / SRAM address, or with `app` at an address of the running app's ELF image (mapped through `app.sections`); no board, no app or unmapped = an error with the reason (REST 409 / 400). WebSocket: a `call` of the route | `vdac4 esp-memory <address> [size] [app]` | `GET /vdac4/esp/memory?address=&size=&app=1` | `vdac4_esp_memory(address [, size [, app]])` → {address, size, app, bytes, hex} | `vdac4_esp_memory(address, size=16, app=False)` → bytes | tool `vdac4_esp_memory` (`address`, `size`, `app`) |
 | Sprinter Sp2000 machine (PLD with the configuration module Standard / Game and why it runs, decoder, windows, cells, clock + 21 MHz waits, frame, video summary, accelerator, sound, Z84C15 with wait generator and daisy chain, floppy latch, CMOS / IDE links, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` (summary: PLD, windows, accelerator, sound line) |
 | Sprinter port table (map / DOS / PN5 / direction) | `state sprinter ports map=0 dos=1 rw=w` | `GET /state/sprinter/ports?map=0&dos=1&rw=w` | `sprinter_ports{map=0, dos=1, rw="w"}` | `sprinter_ports(map=0, dos=1, rw="w")` | `sprinter_ports` (current state); `invoke_api` for another map |
@@ -1944,7 +1944,7 @@ module doc is [analysis layers](../../analysis/analysis-layers.md).
 | `analysis findings` | `[list\|add] [kind=] [status=] [range=] [limit=] [format=table\|markdown\|jsonl] [path=]` (add: `claim=`, `evidence=`, `by=`) | L3: the findings register, ids `F1..` in a fixed order, each with a status (observed, inferred, refuted, confirmed) and evidence ([findings](../../analysis/analysis-layers.md#findings-register)); markdown is zx-reaper's `re/findings.md`. 409 before an L1 build. |
 | `analysis review` | `[next\|list\|show\|resolve] [<id>] [ok\|wrong\|skip] [label=] [title=] [comment=] [experiment=]` | L3: the review queue of the findings that need a decision, capped at 40 plus a summary; `next` gives an item's fact sheet (at most 1 KB), `resolve` writes the decision into the register and the draft export ([review queue](../../analysis/analysis-layers.md#review-queue)). |
 | `analysis experiment` | `<spec.json\|{json}> [finding=<id>] [parallel=<n>] [keep_branches=asked\|observed\|all] [run=<id>]` (`spec=`, `path=`) | L3: pokes / registers / input, N frames, checks over memory, the screen, watches and new code, on muted clones from the recording; observed / refuted marks the finding. A spec with `keep_branch` (or `keep_branches`) is replayed afterwards as a TTD branch of this machine (created by `analyzer`, the run id `run`, its memory checks read back: `reproduced`) ([experiment runner](../../analysis/analysis-layers.md#experiment-runner)). |
-| `analysis trace` | `<path> [from_frame=] [from_tinframe=] [to_frame=] [to_tinframe=] [max_cycles=]` | the CPU access trace of a window of the recording: every instruction (frame, T-state, registers) and every fetch, read, write and port access (address, value, T-state) after it, with the memory the window starts from, written to `path` for scripts (format: [access trace](../../analysis/analysis-layers.md#access-trace)); the window defaults to one frame, at most 3000; 409 with no recording or outside it. |
+| `analysis trace` | `<path> [from_frame=] [from_tinframe=] [to_frame=] [to_tinframe=] [max_cycles=] [kinds=in,out] [pc=8000-9FFF] [addresses=4000-5AFF]` (the last three a filter: only these records are written) | the CPU access trace of a window of the recording: every instruction (frame, T-state, registers) and every fetch, read, write and port access (address, value, T-state) after it, with the memory the window starts from, written to `path` for scripts (format: [access trace](../../analysis/analysis-layers.md#access-trace)); the window defaults to one frame, at most 3000; 409 with no recording or outside it. |
 | `analysis cover` | `[budget] [per_branch=] [frames=] [parallel=] [limit=] [ranges=]` | L3: directed coverage: one-sided branches flipped by a held byte or a held key; flips are coverage findings and draft notes ([directed coverage](../../analysis/analysis-layers.md#directed-coverage)). |
 
 All commands take `--json` for the fields. REST / WebSocket `call`: `POST /api/v1/emulator/{id}/analysis/start`
@@ -1954,7 +1954,7 @@ All commands take `--json` for the fields. REST / WebSocket `call`: `POST /api/v
 `POST .../analysis/gallery` `{address?, kind?, scale?, path?, limit?}`, `GET|POST .../analysis/findings`,
 `GET|POST .../analysis/review`, `POST .../analysis/experiment` `{spec, path?, parallel?, finding?, keep_branches?, run?}`,
 `POST .../analysis/cover` `{budget?, per_branch?, frames?, parallel?, limit?, ranges?}`, `POST .../analysis/trace`
-`{path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?}` (every answer
+`{path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?, kinds?, pc?, addresses?}` (every answer
 has `text`, the CLI's lines). MCP: one tool `analysis` {action, level, mode, record, frames, path, wait, address, page,
 what, kind, range, limit, format, ranges, width, scale, op, id, verdict, label, title, comment, by, status, claim,
 evidence, spec, experiment, finding, parallel, keep_branches, run, budget, per_branch, to_tinframe, max_cycles}; `build` waits 20 s by default; `gallery` with an address
@@ -4082,7 +4082,7 @@ Full tape transport, inspection and the offline audio bridge. Playback subcomman
 | :--- | :--- | :--- | :--- | :--- |
 | `tape load <file>` | | `<filename>` | Load a tape into the tape slot: .tap, .tzx, .spc, .sta, .ltp, .zxt (the content decides the format), or a folder built into a tape ([media.md](../../../features/media.md#tapes)). | ✅ Implemented |
 | `tape eject` | | | Eject the tape: it leaves the tape slot, playback stops. While a TTD recording runs it is an event of the recording: it lands at the next frame boundary. | ✅ Implemented |
-| `tape play` | | | Start playback at the consumption cursor, or resume in place after `tape pause`. A tape loaded while TTD records lands at the next frame boundary: a play before that is queued (`Tape playback starts when the tape is in`) and starts with it; `tape stop` drops it. Same on every plane (`Tape::Play`). | ✅ Implemented |
+| `tape play` | | | Play. A tape frozen inside a block resumes in place; a tape that plays is left as it is (the block in flight is not restarted); else playback starts at the consumption cursor, at the first block with a signal from there on (control entries are passed and named). The answer is the deck after the call: see [The play answer](#the-play-answer). A tape loaded while TTD records lands at the next frame boundary: a play before that is queued (`Tape playback starts when the tape is in`) and starts with it; `tape stop` drops it. Same on every plane (`Tape::PlayWithReport`). | ✅ Implemented |
 | `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
 | `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
 | `tape rewind` | | | Rewind to block 0 keeping the image and block catalog loaded. | ✅ Implemented |
@@ -4094,6 +4094,50 @@ Full tape transport, inspection and the offline audio bridge. Playback subcomman
 | `tape import <audio> [opts] -o <out>` | | `--target auto\|tzx\|tap`, `--hysteresis X` | Import WAV/FLAC/MP3 as a .tzx/.tap image (decode + pulse extraction + recognition; `.tap` saves are gated to ROM-standard content). | ✅ Implemented |
 
 **Playback state machine**: `idle` → `playing` → (`paused` → `playing`) → `ended`. The lowercase state strings are identical across all four surfaces (`tape pos`, GET `/tape`, `tape_pos()` in Lua and Python).
+
+#### The play answer
+
+`tape play` answers with what the call did and with the deck as it is after the call. The report is built once in
+the core (`Tape::PlayWithReport`, `TapePlayReport`) and every plane renders it: the CLI prints the two sentences on two
+lines, the WebAPI answers the fields plus `message` (both sentences), the MCP tools put the message into their text
+(`load_software` with `play`, `actions run media.tape`, `invoke_api`), Lua returns `ok, report` and Python returns
+the dict with `tape_play(report=True)`.
+
+| Field | Values |
+| :--- | :--- |
+| `result` | `started` (from the first pulse of the block), `resumed` (in place, inside the block), `already_playing` (nothing changed), `queued` (the tape is on its way), `end_of_tape` (no block with a signal from the cursor on: nothing started), `no_blocks` (no tape: the error answer) |
+| `playing` | `true` when the tape plays after the call |
+| `state` | `idle`, `playing`, `paused`, `ended` |
+| `reason` | Only when it does not play: `end_of_tape`, `stopped` (in the deck, not started), `queued`, `no_tape`, or why it is paused: `user` (a pause request), `loader_quiet` (the loader watchdog froze it inside a block), `parked` (the loader watchdog parked it before the next block), `stop_48k` (a TZX `$2A` block on a machine in 48K mode), `paused` (not known: a state saved by an older build) |
+| `mode_48k` | Whether the machine is in 48K mode, the question a TZX `$2A` block asks |
+| `block_count`, `position` | `position`: `block`, `pulse`, `seconds_into_block`, `block_total_seconds`, as `tape pos` |
+| `block` | The block under the head: `index`, `kind` (`header`, `data`, `custom`, `tone`, `pulse_stream`, `control`), `control` for a control entry (`pause`, `stop`, `stop_48k`, `flow`), `type` and `name` of a header, `bytes` of a byte block. Absent past the last block |
+| `skipped_blocks` | Blocks without a signal the play passed to reach its block |
+| `text` | Both sentences |
+
+Example (the cursor was on a TZX `$2A` block):
+
+```
+Tape playback started, passed block 4 (no signal)
+Tape: playing, block 5 of 6 (data, 36354 bytes), pulse 0, 0.0 of 198.7 s; with no loader listening it pauses again within 100 frames, and a loader that listens starts it by itself
+```
+
+Rules behind the answer:
+
+- **The deck follows the loader.** A tape that plays while no loader listens is paused again by the loader
+  watchdog (inside a block after 50 frames, in a pilot after 100, in the silence after a block after 2), and a loader
+  that listens starts the tape by itself. A play request is rarely needed; when the state after it reads `paused`
+  again, `reason` says who paused it (`tape info`, `GET /tape`).
+- **Play never restarts a block that plays.** A second play in the middle of a load used to rewind the block to its
+  pilot and break the load.
+- **Play never stays on a block without a signal** (a TZX `$20` with pause 0, a `$2A`, a flow entry left in the
+  stream): it starts the next block that has one, and `skipped_blocks` lists what it passed.
+- **TZX `$2A`, "stop the tape if in 48K mode".** When the head passes the block on a machine in 48K mode the tape
+  stops before the next block (`paused`, reason `stop_48k`); the next play, or the loader's next listening reads, go
+  on with that block. In 128K mode the block is passed in no time. 48K mode is: a 48K model, or a machine whose
+  `#7FFD` paging is locked (bit 5: 48 BASIC chosen in the 128K menu, a 48K snapshot), which a program cannot tell
+  from a 48K. An unlocked 128K with the 48K ROM paged in (`USR 0`) is in 128K mode. A play request with the cursor
+  on the `$2A` is not stopped by it. A TZX `$20` with pause 0 ("stop the tape") is passed on every machine.
 
 **Feature cross-references** (see also §7 settings):
 - `setting fast_tape on|off` (feature `fasttape`): ROM loader trap — eligible header/data pairs load instantly.
@@ -4436,7 +4480,7 @@ Module doc: [device-history.md](../debugger/device-history.md) (REST, WebSocket,
 | :--- | :--- | :--- | :--- | :--- |
 | `history` | | | Every device history: device, what it records, mode, limit, written, kept, dropped, the stream | ✅ Implemented |
 | `history <device>` | | `[N] [since=S]` | The device's stats and its newest N records (all by default), oldest first. `since=S`: a cursor, the first N records numbered after S instead, each with its `seq`, and `next_since` (the next read's S), `missed` (records after S no longer kept), `restarted` (S was past the newest: cleared since); a poller pages forward with no gap ([device-history.md](../debugger/device-history.md#reading-after-a-cursor)) | ✅ Implemented |
-| `history <device> mode` | | `<off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N]` | Configure: ring size or capture cap (0: none); `stream=` a file every record goes to as well, empty to stop it. Starts afresh | ✅ Implemented |
+| `history <device> mode` | | `<off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N] [filter=<term>]...` | Configure: ring size or capture cap (0: none); `stream=` a file every record goes to as well, empty to stop it; `filter=` which records are recorded at all, a term `field=value[,value\|a-b]` per word (`filter=side=host filter=out=true`, on the other planes one text `"side=host out=true"`; `filter=` every record; [device history](../debugger/device-history.md)). Starts afresh | ✅ Implemented |
 | `history <device> clear` | | | Drop the records and counts | ✅ Implemented |
 | `history <device> pause` | `resume` | | Hold the history: nothing recorded, the records kept; `resume` goes on | ✅ Implemented |
 

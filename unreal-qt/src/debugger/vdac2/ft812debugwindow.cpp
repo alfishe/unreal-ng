@@ -213,3 +213,5 @@ void Ft812DebugWindow::refresh()
 }
 
 /// endregion
+
+#include "moc_ft812debugwindow.cpp"

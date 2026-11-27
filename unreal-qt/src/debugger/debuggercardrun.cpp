@@ -288,3 +288,5 @@ void DebuggerCardRun::selectCardCpu()
     const DebugCpuId next = at == cards.end() || at + 1 == cards.end() ? cards.front() : *(at + 1);
     _tabs->select(next);
 }
+
+#include "moc_debuggercardrun.cpp"

@@ -2,18 +2,57 @@
 // beam (spec §5.1, §5.2, §6.1-6.3, arch §8.4).
 #include "eve-profile.h"
 #include "eve-render.h"
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <thread>
+#include <vector>
+#if !defined(_WIN32)
+#include <time.h>
+#endif
 
 #include <new>
 
 namespace EveLib
 {
 
+// CPU time of the calling thread (ns): what drawing cost with the time the thread was not running left out (a loaded
+// host preempts it for tens of ms). Wall time where the system has no per-thread clock (Windows). Read once per frame:
+// a read costs microseconds (macOS: a system call)
+uint64_t ThreadCpuNs()
+{
+#if !defined(_WIN32)
+    timespec ts{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0)
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
+#endif
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+struct HostDrawStats
+{
+    // The frame being drawn (the drawing thread only)
+    uint32_t work[kMaxLines] = {};
+    uint64_t cpuMark = 0;  // the publishing thread's CPU time at the previous frame end
+    std::thread::id cpuThread; // ... and that thread (the renderer started or stopped: a new mark)
+    // Published at each frame end (under `lock`)
+    std::mutex lock;
+    EveHostDrawStats last{};
+    uint32_t lineNs[kMaxLines] = {};
+    EveHostDrawStats summary{}; // since EveResetHostDrawStats: frames, sum, max
+    uint32_t maxLineNs[kMaxLines] = {}; // the lines of summary's dearest frame
+};
+
+
 namespace
 {
 
-constexpr uint32_t kHighBitsShift = kBitmapSizeBits;  // _H bits sit above the 9 low bits
-constexpr uint32_t kStrideLowBits = 10;
+constexpr uint32_t kStrideLowBits = kHandleStrideLowBits;
 constexpr uint32_t kVertexFormatMax = 4;              // 1/16 pixel
 constexpr uint32_t kDisplayListIndexMask = 0xFFFF;    // CALL / JUMP destination field
 constexpr uint32_t kWhite = 0xFFFFFF;
@@ -73,16 +112,54 @@ uint32_t LineBudget(const EveChip& chip)
     return budget;
 }
 
-void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLine, bool probe = false)
+// A line worker's own buffers, decoded palettes and handles (DrawLinesParallel)
+struct LineScratch
+{
+    std::unique_ptr<uint8_t[]> color{new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]()};
+    std::unique_ptr<uint8_t[]> stencil{new (std::nothrow) uint8_t[kMaxLineWidth]()};
+    std::unique_ptr<uint8_t[]> tag{new (std::nothrow) uint8_t[kMaxLineWidth]()};
+    std::unique_ptr<uint32_t[]> texels{new (std::nothrow) uint32_t[kMaxLineWidth]()};
+    std::unique_ptr<uint32_t[]> bilinear{new (std::nothrow) uint32_t[kBilinearScratch]()};
+    std::unique_ptr<PaletteCache[]> palettes{new (std::nothrow) PaletteCache[kPaletteCacheEntries]()};
+    uint32_t paletteNext = 0;
+    BitmapHandle handles[kHandleCount] = {};
+    LineRepeat repeat;
+
+    bool Ok() const { return color && stencil && tag && texels && bilinear && palettes && repeat.color; }
+};
+
+void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLine, bool probe = false,
+                LineScratch* scratch = nullptr)
 {
     run.chip = &chip;
     run.y = logicalLine;
     run.width = LineWidth(chip);
-    run.color = probe ? chip.probeColor.get() : chip.lineColor.get();
-    run.stencil = probe ? chip.probeStencil.get() : chip.lineStencil.get();
-    run.tag = probe ? chip.probeTag.get() : chip.lineTag.get();
-    run.texels = chip.lineTexels.get();
-    run.bilinear = chip.lineBilinear.get();
+    if (scratch)
+    {
+        run.color = scratch->color.get();
+        run.stencil = scratch->stencil.get();
+        run.tag = scratch->tag.get();
+        run.texels = scratch->texels.get();
+        run.bilinear = scratch->bilinear.get();
+        run.handles = scratch->handles;
+        run.palettes = scratch->palettes.get();
+        run.paletteNext = &scratch->paletteNext;
+        run.repeat = &scratch->repeat;
+    }
+    else
+    {
+        run.color = probe ? chip.probeColor.get() : chip.lineColor.get();
+        run.stencil = probe ? chip.probeStencil.get() : chip.lineStencil.get();
+        run.tag = probe ? chip.probeTag.get() : chip.lineTag.get();
+        run.texels = chip.lineTexels.get();
+        run.bilinear = chip.lineBilinear.get();
+        run.handles = chip.state.handles;
+        run.palettes = chip.palettes.get();
+        run.paletteNext = &chip.paletteNext;
+        run.repeat = probe || !chip.linePlan->repeat.color ? nullptr : &chip.linePlan->repeat;
+    }
+    run.paletteHit = 0;
+    run.fromPlan = false;
     run.savedCount = 0;
     run.recording = nullptr;
     run.tagLive = probe || logicalLine == RegGet(chip, Reg::TagY);
@@ -112,7 +189,8 @@ void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLin
         std::memset(run.tag, 0, run.width);
 }
 
-void FinishRun(EveChip& chip, const LineRun& run, uint32_t screenLine)
+// `overflowLines`: where an overflowing line is counted (a line worker's count; else the chip's)
+void FinishRun(EveChip& chip, const LineRun& run, uint32_t screenLine, uint32_t* overflowLines = nullptr)
 {
     if constexpr (kContextReset != ContextReset::PerLine)
         chip.state.context = run.ctx;
@@ -125,7 +203,7 @@ void FinishRun(EveChip& chip, const LineRun& run, uint32_t screenLine)
     cost.budget = LineBudget(chip);
     cost.overflow = cost.totalClocks > cost.budget ? 1 : 0;
     if (cost.overflow)
-        ++chip.overflowLines;
+        ++(overflowLines ? *overflowLines : chip.overflowLines);
 }
 
 // Portrait orientations (REG_ROTATE 2, 3, 6, 7): a screen line is a column of the logical
@@ -160,12 +238,17 @@ bool LineInputsUnchanged(const EveChip& chip, const LineKept& k)
 // there: only what drawing it does besides the pixels happens - the handles become what
 // the walk leaves (the recorded walk's), the overflow count counts it. REG_TAG's line is
 // always drawn (REG_TAG_X / Y are not inputs of the other lines).
-bool KeepLine(EveChip& chip, uint32_t screenLine, uint32_t logicalLine)
+bool LineKeepable(const EveChip& chip, uint32_t screenLine, uint32_t logicalLine)
 {
     if constexpr (!kLinePlanUsable)
         return false;
-    if (!chip.lineKeepEnabled || !chip.linePlanEnabled || screenLine >= kMaxLines ||
-        logicalLine == RegGet(chip, Reg::TagY) || !LineInputsUnchanged(chip, chip.lineKept[screenLine]))
+    return chip.lineKeepEnabled && chip.linePlanEnabled && screenLine < kMaxLines &&
+           logicalLine != RegGet(chip, Reg::TagY) && LineInputsUnchanged(chip, chip.lineKept[screenLine]);
+}
+
+bool KeepLine(EveChip& chip, uint32_t screenLine, uint32_t logicalLine)
+{
+    if (!LineKeepable(chip, screenLine, logicalLine))
         return false;
     std::memcpy(chip.state.handles, chip.linePlan->endHandles, sizeof(chip.state.handles));
     if (chip.lineCosts[screenLine].overflow)
@@ -177,12 +260,12 @@ bool KeepLine(EveChip& chip, uint32_t screenLine, uint32_t logicalLine)
 }
 
 // After drawing a line from the recorded walk: the inputs it was drawn with
-void RememberLine(EveChip& chip, uint32_t screenLine)
+void RememberLine(EveChip& chip, uint32_t screenLine, bool fromPlan)
 {
     if (screenLine >= kMaxLines)
         return;
     LineKept& k = chip.lineKept[screenLine];
-    k.valid = chip.lineFromPlan && chip.linePlan->valid;
+    k.valid = fromPlan && chip.linePlan->valid;
     k.ramGChanges = chip.ramGWrites;
     k.drawRegChanges = chip.drawRegChanges;
     k.dlVersion = chip.dlVersion;
@@ -225,8 +308,246 @@ void DrawVisibleLine(EveChip& chip, uint32_t screenLine)
         if (!run.remembered && screenLine < chip.linePlan->lines.size())
             chip.linePlan->lines[screenLine].valid = false;
     }
-    RememberLine(chip, screenLine);
+    RememberLine(chip, screenLine, run.fromPlan);
 }
+
+
+} // namespace
+
+// --- Lines on worker threads (EveSetDrawThreads) ------------------------------------------------
+//
+// While every line replays the recorded walk and the walk leaves the handles as it found them (start handles equal
+// to end handles), a line's drawing reads the chip and writes only what is its own: its pixels in the frame buffer,
+// its cost, its kept-line record, its signature in the plan. Such lines are drawn side by side, each worker with its
+// own line buffers, decoded palettes and handle copy; REG_TAG's line (it sets REG_TAG) and lines past kMaxLines stay
+// on the calling thread. The calling thread draws too: workers that wake late find no lines left, so a batch never
+// waits for a thread the host did not run.
+
+struct LineWorkers
+{
+    std::vector<std::thread> threads;
+    std::vector<std::unique_ptr<LineScratch>> scratch; // [0] the calling thread's, [1 + i] worker i's
+    std::mutex lock;
+    std::condition_variable start;
+    std::condition_variable done;
+    bool stop = false;
+
+    // The batch: published under `lock`; lines are claimed through `cursor` (batch number << 32 | next line), so a
+    // worker that wakes after its batch ended claims nothing of the next one
+    uint64_t batch = 0;
+    EveChip* chip = nullptr;
+    uint32_t last = 0;
+    uint32_t tagLine = UINT32_MAX; // REG_TAG's line: left to the calling thread
+    std::atomic<uint64_t> cursor{0};
+    std::atomic<uint32_t> linesLeft{0};
+    std::atomic<uint32_t> overflow{0};
+};
+
+void LineWorkersDelete::operator()(LineWorkers* workers) const
+{
+    if (!workers)
+        return;
+    {
+        std::lock_guard<std::mutex> guard(workers->lock);
+        workers->stop = true;
+    }
+    workers->start.notify_all();
+    for (std::thread& t : workers->threads)
+        t.join();
+    delete workers;
+}
+
+namespace
+{
+
+void DrawWorkerLine(EveChip& chip, LineScratch& scratch, uint32_t screenLine, uint32_t& overflow)
+{
+    bool mirrorX = false;
+    const uint32_t logicalLine = LogicalLine(chip, screenLine, mirrorX);
+    if (LineKeepable(chip, screenLine, logicalLine))
+    {
+        if (chip.lineCosts[screenLine].overflow)
+            ++overflow;
+        return;
+    }
+    LinePlan& plan = *chip.linePlan;
+    std::memcpy(scratch.handles, plan.startHandles, sizeof(scratch.handles));
+    LineRun run;
+    PrepareRun(chip, run, logicalLine, screenLine == 0, false, &scratch);
+    if (chip.lineKeepEnabled && !run.tagLive)
+        run.keepLine = static_cast<int32_t>(screenLine);
+    ExecuteLine<LineMode::Draw>(run);
+    FinishRun(chip, run, screenLine, &overflow);
+    if (!run.pixelsKept)
+    {
+        OutputLine(chip, screenLine, run.color, run.width, mirrorX);
+        if (!run.remembered && screenLine < plan.lines.size())
+            plan.lines[screenLine].valid = false;
+    }
+    RememberLine(chip, screenLine, run.fromPlan);
+}
+
+// Claims and draws lines of batch `batch` until none is left; true if it drew any
+// Lines are claimed a few at a time: neighbours drawn by one thread repeat each other's texel rows (LineRepeat)
+constexpr uint32_t kClaimLines = 8;
+
+// Claims and draws lines of batch `batch` until none is left
+void DrawClaimedLines(LineWorkers& w, LineScratch& scratch, uint64_t batch, EveChip& chip, uint32_t last,
+                      uint32_t tagLine)
+{
+    HostDrawStats* stats = chip.hostStats.get();
+    for (;;)
+    {
+        uint64_t c = w.cursor.load(std::memory_order_relaxed);
+        uint32_t line, count;
+        do
+        {
+            line = static_cast<uint32_t>(c);
+            if ((c >> 32) != (batch & 0xFFFFFFFFu) || line >= last)
+                return;
+            count = std::min(kClaimLines, last - line);
+        } while (!w.cursor.compare_exchange_weak(c, c + count, std::memory_order_acq_rel, std::memory_order_relaxed));
+        uint32_t overflow = 0;
+        for (uint32_t l = line; l < line + count; ++l)
+        {
+            if (l == tagLine)
+                continue;
+            const auto before = stats ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            DrawWorkerLine(chip, scratch, l, overflow);
+            if (stats)
+                stats->work[l] = static_cast<uint32_t>(std::min<int64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - before).count(),
+                    UINT32_MAX));
+        }
+        // The overflow count is in before the lines are counted done: the calling thread reads it once none is left
+        if (overflow)
+            w.overflow.fetch_add(overflow, std::memory_order_relaxed);
+        if (w.linesLeft.fetch_sub(count, std::memory_order_acq_rel) == count)
+        {
+            std::lock_guard<std::mutex> guard(w.lock);
+            w.done.notify_all();
+        }
+    }
+}
+
+void WorkerLoop(LineWorkers* w, size_t index)
+{
+    uint64_t seen = 0;
+    for (;;)
+    {
+        uint64_t batch;
+        EveChip* chip;
+        uint32_t last, tagLine;
+        {
+            std::unique_lock<std::mutex> guard(w->lock);
+            w->start.wait(guard, [&] { return w->stop || w->batch != seen; });
+            if (w->stop)
+                return;
+            seen = batch = w->batch;
+            chip = w->chip;
+            last = w->last;
+            tagLine = w->tagLine;
+        }
+        if (!chip)
+            continue;
+        DrawClaimedLines(*w, *w->scratch[index], batch, *chip, last, tagLine);
+    }
+}
+
+// The chip's workers as many as it asks for (none: false)
+bool EnsureLineWorkers(EveChip& chip)
+{
+    const uint32_t wanted = chip.drawThreads > 1 ? chip.drawThreads - 1 : 0;
+    if (chip.lineWorkers && chip.lineWorkers->threads.size() == wanted)
+        return wanted > 0;
+    chip.lineWorkers.reset();
+    if (wanted == 0)
+        return false;
+    std::unique_ptr<LineWorkers, LineWorkersDelete> w(new (std::nothrow) LineWorkers());
+    if (!w)
+        return false;
+    for (uint32_t i = 0; i <= wanted; ++i)
+    {
+        w->scratch.emplace_back(new (std::nothrow) LineScratch());
+        if (!w->scratch.back() || !w->scratch.back()->Ok())
+            return false;
+    }
+    for (uint32_t i = 0; i < wanted; ++i)
+        w->threads.emplace_back(WorkerLoop, w.get(), static_cast<size_t>(i + 1));
+    chip.lineWorkers = std::move(w);
+    return true;
+}
+
+// Every line from here replays the plan and leaves the handles as it found them
+bool LinesIndependent(const EveChip& chip)
+{
+#ifdef EVE_PROFILE
+    return false; // the counters are not per thread
+#else
+    if constexpr (!kLinePlanUsable)
+        return false;
+    const LinePlan* plan = chip.linePlan.get();
+    return chip.linePlanEnabled && plan && PlanMatches(chip, *plan) &&
+           std::memcmp(plan->startHandles, plan->endHandles, sizeof(plan->startHandles)) == 0;
+#endif
+}
+
+// Lines drawnLines..last-1 (all below kMaxLines) on the workers and the calling thread
+void DrawLinesParallel(EveChip& chip, uint32_t last)
+{
+    LineWorkers& w = *chip.lineWorkers;
+    LinePlan& plan = *chip.linePlan;
+    if (plan.lines.size() < kMaxLines)
+        plan.lines.resize(kMaxLines);
+    const uint32_t first = chip.drawnLines;
+    // REG_TAG's line: drawn here afterwards (it sets REG_TAG)
+    uint32_t tagLine = UINT32_MAX;
+    for (uint32_t line = first; line < last; ++line)
+    {
+        bool mirrorX = false;
+        if (LogicalLine(chip, line, mirrorX) == RegGet(chip, Reg::TagY))
+        {
+            tagLine = line;
+            break;
+        }
+    }
+    uint64_t batch;
+    {
+        std::lock_guard<std::mutex> guard(w.lock);
+        batch = ++w.batch;
+        w.chip = &chip;
+        w.last = last;
+        w.tagLine = tagLine;
+        w.overflow.store(0, std::memory_order_relaxed);
+        w.linesLeft.store(last - first, std::memory_order_relaxed);
+        w.cursor.store(((batch & 0xFFFFFFFFu) << 32) | first, std::memory_order_release);
+    }
+    w.start.notify_all();
+    DrawClaimedLines(w, *w.scratch[0], batch, chip, last, tagLine);
+    {
+        std::unique_lock<std::mutex> guard(w.lock);
+        w.done.wait(guard, [&] { return w.linesLeft.load(std::memory_order_acquire) == 0; });
+        w.chip = nullptr;
+    }
+    chip.overflowLines += w.overflow.load(std::memory_order_relaxed);
+    chip.parallelLines += last - first;
+    chip.drawnLines = last;
+    if (tagLine != UINT32_MAX)
+    {
+        HostDrawStats* stats = chip.hostStats.get();
+        const auto before = std::chrono::steady_clock::now();
+        DrawVisibleLine(chip, tagLine);
+        if (stats)
+            stats->work[tagLine] = static_cast<uint32_t>(std::min<int64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - before).count(),
+                UINT32_MAX));
+    }
+}
+
+} // namespace
+
+namespace
+{
 
 // --- Execution ----------------------------------------------------------------------------
 
@@ -333,7 +654,7 @@ void RecordStep(LineRun& run, const Vertex& v, bool clear, uint32_t clearMask)
     step.commandWord = run.commandWord;
     if (!clear)
     {
-        step.handle = run.chip->state.handles[v.handle];
+        step.handle = run.handles[v.handle];
         step.rowTest = run.primitive == kPrimBitmaps;
         step.rowsSubpixel = static_cast<int64_t>(HandleHeight(step.handle)) * kSubpixel;
         // Points, lines and rectangles draw only near their vertices (DrawPoint / DrawLine /
@@ -373,14 +694,20 @@ void StartRecording(LineRun& run, LinePlan& plan)
 }
 
 void RememberSteps(LineRun& run, LinePlan& plan);
+void IndexSteps(LinePlan& plan);
 
 void FinishRecording(LineRun& run)
 {
     LinePlan& plan = *run.recording;
-    std::memcpy(plan.endHandles, run.chip->state.handles, sizeof(plan.endHandles));
+    std::memcpy(plan.endHandles, run.handles, sizeof(plan.endHandles));
     plan.commands = run.commands;
     plan.events = run.events;
     ++plan.record;
+    IndexSteps(plan);
+    LinePlan::Recording& kept = plan.history[plan.record % LinePlan::kHistory];
+    kept.record = plan.record;
+    kept.steps = plan.steps;
+    kept.contexts = plan.contexts;
     plan.valid = true;
     run.recording = nullptr;
     RememberSteps(run, plan);
@@ -396,6 +723,74 @@ bool StepReachesLine(const LinePlanStep& s, int64_t lineSubpixel)
         return true;
     const int64_t rely = lineSubpixel - s.v.y;
     return rely >= 0 && rely < s.rowsSubpixel;
+}
+
+constexpr uint32_t kPlanBandShift = 4; // 16 lines per band
+constexpr uint32_t kPlanBands = kMaxLines >> kPlanBandShift;
+
+int64_t FloorDiv(int64_t a, int64_t b)
+{
+    return a >= 0 ? a / b : -((-a + b - 1) / b);
+}
+
+// The logical lines a step may reach, [first, last] (StepReachesLine's tests solved for the line); false: none
+bool StepLines(const LinePlanStep& s, int64_t& first, int64_t& last)
+{
+    // A line y reaches subpixel row y * kSubpixel + kPixelCenter
+    int64_t lo = 0, hi = kMaxLines - 1;
+    if (s.extentTest)
+    {
+        lo = -FloorDiv(-(s.yFirst - kPixelCenter), kSubpixel);  // ceil
+        hi = FloorDiv(s.yLast - kPixelCenter, kSubpixel);
+    }
+    else if (s.rowTest)
+    {
+        lo = -FloorDiv(-(s.v.y - kPixelCenter), kSubpixel);
+        hi = FloorDiv(s.v.y + s.rowsSubpixel - 1 - kPixelCenter, kSubpixel);
+    }
+    first = std::max<int64_t>(lo, 0);
+    last = std::min<int64_t>(hi, kMaxLines - 1);
+    return first <= last;
+}
+
+// LinePlan::bandFirst / bandSteps for the recorded steps
+void IndexSteps(LinePlan& plan)
+{
+    plan.bandFirst.assign(kPlanBands + 1, 0);
+    for (const LinePlanStep& s : plan.steps)
+    {
+        int64_t first, last;
+        if (StepLines(s, first, last))
+            for (int64_t b = first >> kPlanBandShift; b <= (last >> kPlanBandShift); ++b)
+                ++plan.bandFirst[static_cast<size_t>(b) + 1];
+    }
+    for (uint32_t b = 0; b < kPlanBands; ++b)
+        plan.bandFirst[b + 1] += plan.bandFirst[b];
+    plan.bandSteps.resize(plan.bandFirst[kPlanBands]);
+    std::vector<uint32_t> fill(plan.bandFirst.begin(), plan.bandFirst.end() - 1);
+    for (uint32_t i = 0; i < plan.steps.size(); ++i)
+    {
+        int64_t first, last;
+        if (StepLines(plan.steps[i], first, last))
+            for (int64_t b = first >> kPlanBandShift; b <= (last >> kPlanBandShift); ++b)
+                plan.bandSteps[fill[static_cast<size_t>(b)]++] = i;
+    }
+}
+
+// The steps that may reach logical line y, in order
+struct BandSteps
+{
+    const uint32_t* first;
+    const uint32_t* last;
+    const uint32_t* begin() const { return first; }
+    const uint32_t* end() const { return last; }
+};
+
+BandSteps StepsNear(const LinePlan& plan, uint32_t y)
+{
+    const uint32_t band = (y < kMaxLines ? y : kMaxLines - 1) >> kPlanBandShift;
+    const uint32_t* base = plan.bandSteps.data();
+    return {base + plan.bandFirst[band], base + plan.bandFirst[band + 1]};
 }
 
 bool SameVertex(const Vertex& a, const Vertex& b)
@@ -513,14 +908,21 @@ bool KeepLineBySteps(LineRun& run, const LinePlan& plan)
     if (!sig.valid || sig.drawRegChanges != chip.drawRegChanges || sig.outputVersion != chip.outputVersion ||
         (sig.readsAnyMemory && sig.ramGMark != chip.ramGWrites))
         return false;
+    const LinePlan::Recording& then = plan.history[sig.record % LinePlan::kHistory];
+    if (then.record != sig.record)
+        return false;  // drawn from a recording no longer kept
     const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
     size_t k = 0;
-    for (const LinePlanStep& s : plan.steps)
+    for (const uint32_t index : StepsNear(plan, run.y))
     {
+        const LinePlanStep& s = plan.steps[index];
         if (!StepReachesLine(s, lineSubpixel))
             continue;
         const GraphicsContext& c = plan.contexts[s.context];
-        if (k == sig.steps.size() || !SameStep(s, c, sig.steps[k], sig.contexts[k]))
+        if (k == sig.steps.size())
+            return false;
+        const LinePlanStep& old = then.steps[sig.steps[k]];
+        if (!SameStep(s, c, old, then.contexts[old.context]))
             return false;
         if (!sig.readsAnyMemory && !StepReadsUnchanged(chip, s, c, lineSubpixel, sig.ramGMark))
         {
@@ -530,6 +932,8 @@ bool KeepLineBySteps(LineRun& run, const LinePlan& plan)
     }
     return k == sig.steps.size();
 }
+
+void TakeSteps(LineSignature& sig, const LineRun& run, const LinePlan& plan);
 
 // After drawing a line from the plan: what it was drawn from
 void RememberSteps(LineRun& run, LinePlan& plan)
@@ -541,21 +945,9 @@ void RememberSteps(LineRun& run, LinePlan& plan)
     if (plan.lines.size() < kMaxLines)
         plan.lines.resize(kMaxLines);
     LineSignature& sig = plan.lines[static_cast<size_t>(run.keepLine)];
-    sig.steps.clear();
-    sig.contexts.clear();
-    sig.readsAnyMemory = false;
-    const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
-    for (const LinePlanStep& s : plan.steps)
-    {
-        if (!StepReachesLine(s, lineSubpixel))
-            continue;
-        const GraphicsContext& c = plan.contexts[s.context];
-        if (!s.clear && s.primitive == kPrimBitmaps &&
-            (s.handle.format == kFormatText8x8 || s.handle.format == kFormatTextVga || s.handle.format == kFormatBargraph))
-            sig.readsAnyMemory = true;
-        sig.steps.push_back(s);
-        sig.contexts.push_back(c);
-    }
+    // The same recording reaches this line with the same steps (only a recording changes them): only the marks move
+    if (!sig.valid || sig.record != plan.record || sig.y != run.y)
+        TakeSteps(sig, run, plan);
     sig.ramGMark = chip.ramGWrites;
     sig.drawRegChanges = chip.drawRegChanges;
     sig.outputVersion = chip.outputVersion;
@@ -563,13 +955,73 @@ void RememberSteps(LineRun& run, LinePlan& plan)
     sig.valid = true;
 }
 
+void TakeSteps(LineSignature& sig, const LineRun& run, const LinePlan& plan)
+{
+    sig.record = plan.record;
+    sig.y = run.y;
+    sig.steps.clear();
+    sig.readsAnyMemory = false;
+    const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
+    for (const uint32_t index : StepsNear(plan, run.y))
+    {
+        const LinePlanStep& s = plan.steps[index];
+        if (!StepReachesLine(s, lineSubpixel))
+            continue;
+        if (!s.clear && s.primitive == kPrimBitmaps &&
+            (s.handle.format == kFormatText8x8 || s.handle.format == kFormatTextVga || s.handle.format == kFormatBargraph))
+            sig.readsAnyMemory = true;
+        sig.steps.push_back(index);
+    }
+}
+
 void ReplaySteps(LineRun& run, const LinePlan& plan);
+
+// LineRepeat::keys of the line: false when a reaching step depends on the line otherwise (shapes, text, rotated or
+// sheared matrices)
+bool LineKeys(const LineRun& run, const LinePlan& plan, std::vector<int64_t>& keys)
+{
+    keys.clear();
+    const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
+    for (const uint32_t index : StepsNear(plan, run.y))
+    {
+        const LinePlanStep& s = plan.steps[index];
+        if (!StepReachesLine(s, lineSubpixel))
+            continue;
+        const GraphicsContext& c = plan.contexts[s.context];
+        // ScissorSpan's row test
+        const bool rows = !(run.y < c.scissorY || run.y >= static_cast<uint32_t>(c.scissorY) + c.scissorHeight);
+        int64_t row = 0;
+        if (!s.clear)
+        {
+            const BitmapHandle& h = s.handle;
+            if (s.primitive != kPrimBitmaps || h.format == kFormatText8x8 || h.format == kFormatTextVga ||
+                h.format == kFormatBargraph || c.transform[1] != 0 || c.transform[3] != 0)
+                return false;
+            // DrawBitmap's y' with B = D = 0: the whole span samples this row (NEAREST) or these rows and weights
+            const int64_t rely = lineSubpixel - s.v.y;
+            const int64_t sy = ((static_cast<int64_t>(c.transform[4]) * rely) >> kSubpixelShift) + c.transform[5];
+            row = h.filter ? sy : (sy >> kFixedShift);
+        }
+        keys.push_back(index);
+        keys.push_back(rows ? 1 : 0);
+        keys.push_back(row);
+    }
+    return true;
+}
+
+bool SameRepeatInputs(const LineRepeat& r, const LineRun& run, const LinePlan& plan)
+{
+    const EveChip& chip = *run.chip;
+    return r.valid && r.record == plan.record && r.width == run.width && r.ramGWrites == chip.ramGWrites &&
+           r.drawRegChanges == chip.drawRegChanges && r.outputVersion == chip.outputVersion &&
+           r.dlVersion == chip.dlVersion;
+}
 
 void ReplayPlan(LineRun& run, LinePlan& plan)
 {
     if (KeepLineBySteps(run, plan))
     {
-        std::memcpy(run.chip->state.handles, plan.endHandles, sizeof(plan.endHandles));
+        std::memcpy(run.handles, plan.endHandles, sizeof(plan.endHandles));
         run.commands = plan.commands;
         run.events = plan.events;
         run.fillCost = plan.lines[static_cast<size_t>(run.keepLine)].fillCost;
@@ -579,17 +1031,44 @@ void ReplayPlan(LineRun& run, LinePlan& plan)
 #endif
         return;
     }
+    LineRepeat* repeat = run.repeat;
+    const bool keyed = repeat && !run.tagLive && run.chip->lineRepeatEnabled && LineKeys(run, plan, repeat->next);
+    if (keyed && SameRepeatInputs(*repeat, run, plan) && repeat->keys == repeat->next)
+    {
+        std::memcpy(run.color, repeat->color.get(), static_cast<size_t>(run.width) * kChannels);
+        std::memcpy(run.handles, plan.endHandles, sizeof(plan.endHandles));
+        run.commands = plan.commands;
+        run.events = plan.events;
+        run.fillCost = repeat->fillCost;
+        ++repeat->hits;
+        RememberSteps(run, plan);
+        return;
+    }
     ReplaySteps(run, plan);
     RememberSteps(run, plan);
+    if (keyed)
+    {
+        const EveChip& chip = *run.chip;
+        std::swap(repeat->keys, repeat->next);
+        std::memcpy(repeat->color.get(), run.color, static_cast<size_t>(run.width) * kChannels);
+        repeat->valid = true;
+        repeat->record = plan.record;
+        repeat->width = run.width;
+        repeat->ramGWrites = chip.ramGWrites;
+        repeat->drawRegChanges = chip.drawRegChanges;
+        repeat->outputVersion = chip.outputVersion;
+        repeat->dlVersion = chip.dlVersion;
+        repeat->fillCost = run.fillCost;
+    }
 }
 
 void ReplaySteps(LineRun& run, const LinePlan& plan)
 {
-    EveChip& chip = *run.chip;
     const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
     uint32_t context = UINT32_MAX;
-    for (const LinePlanStep& s : plan.steps)
+    for (const uint32_t index : StepsNear(plan, run.y))
     {
+        const LinePlanStep& s = plan.steps[index];
         if (!StepReachesLine(s, lineSubpixel))
             continue; // the drawing's own first test: nothing of it on this line
         if (s.context != context)
@@ -604,13 +1083,13 @@ void ReplaySteps(LineRun& run, const LinePlan& plan)
             ClearLine<LineMode::Draw>(run, s.clearMask);
             continue;
         }
-        chip.state.handles[s.v.handle] = s.handle;
+        run.handles[s.v.handle] = s.handle;
         run.primitive = s.primitive;
         run.vertexCount = s.vertexCount;
         run.previous = s.previous;
         Vertex2<LineMode::Draw>(run, s.v);
     }
-    std::memcpy(chip.state.handles, plan.endHandles, sizeof(plan.endHandles));
+    std::memcpy(run.handles, plan.endHandles, sizeof(plan.endHandles));
     run.commands = plan.commands;
     run.events = plan.events;
 }
@@ -653,7 +1132,7 @@ Flow ExecuteWord(LineRun& run, uint32_t word, uint32_t& target, uint32_t* stack,
         return Flow::Next;
     }
 
-    BitmapHandle& handle = chip.state.handles[ctx.handle];
+    BitmapHandle& handle = run.handles[ctx.handle];
     switch (word >> kOpcodeShift)
     {
     case kOpDisplay:
@@ -858,28 +1337,6 @@ void StatePass(EveChip& chip)
 
 // --- Handles ------------------------------------------------------------------------------------
 
-uint32_t HandleWidth(const BitmapHandle& h)
-{
-    const uint32_t width = h.widthLow | (static_cast<uint32_t>(h.widthHigh) << kHighBitsShift);
-    return width == 0 ? kBitmapSizeFull : width;
-}
-
-uint32_t HandleHeight(const BitmapHandle& h)
-{
-    const uint32_t height = h.heightLow | (static_cast<uint32_t>(h.heightHigh) << kHighBitsShift);
-    return height == 0 ? kBitmapSizeFull : height;
-}
-
-uint32_t HandleStride(const BitmapHandle& h)
-{
-    return h.strideLow | (static_cast<uint32_t>(h.strideHigh) << kStrideLowBits);
-}
-
-uint32_t HandleLayoutHeight(const BitmapHandle& h)
-{
-    return h.layoutHeightLow | (static_cast<uint32_t>(h.layoutHeightHigh) << kHighBitsShift);
-}
-
 void SetHandleFromMetrics(BitmapHandle& h, uint32_t format, uint32_t stride, uint32_t width, uint32_t height,
                           uint32_t source)
 {
@@ -950,7 +1407,7 @@ template <LineMode Mode>
 void ExecuteLine(LineRun& run)
 {
     if constexpr (Mode == LineMode::Draw)
-        run.chip->lineFromPlan = false;
+        run.fromPlan = false;
     if constexpr (Mode == LineMode::Draw && kLinePlanUsable)
     {
         EveChip& chip = *run.chip;
@@ -962,7 +1419,7 @@ void ExecuteLine(LineRun& run)
                 Profile().planReplays++;
 #endif
                 ReplayPlan(run, *chip.linePlan);
-                chip.lineFromPlan = true;
+                run.fromPlan = true;
                 return;
             }
             StartRecording(run, *chip.linePlan);
@@ -999,7 +1456,7 @@ void ExecuteLine(LineRun& run)
         if (run.recording != nullptr)
         {
             FinishRecording(run);
-            run.chip->lineFromPlan = true;
+            run.fromPlan = true;
         }
 }
 
@@ -1119,8 +1576,43 @@ void DrawLinesTo(EveChip& chip, uint32_t due, bool draw)
         chip.drawnLines = due;
         return;
     }
+    if (chip.drawnLines >= due)
+        return; // a catch-up with nothing due: most of them (every bus access catches up)
+    HostDrawStats* stats = chip.hostStats.get();
+    if (!stats)
+    {
+        const uint32_t parallelEnd = due < kMaxLines ? due : kMaxLines;
+        const bool parallel = (chip.drawThreads > 1 || chip.lineWorkers) && EnsureLineWorkers(chip);
+        while (chip.drawnLines < due)
+        {
+            if (parallel && chip.drawnLines + chip.parallelMinLines <= parallelEnd && LinesIndependent(chip))
+                DrawLinesParallel(chip, parallelEnd);
+            else
+                DrawVisibleLine(chip, chip.drawnLines++);
+        }
+        return;
+    }
+    // One clock read per line (wall, about 20 ns against the microseconds a line takes)
+    const uint32_t parallelEnd = due < kMaxLines ? due : kMaxLines;
+    const bool parallel = (chip.drawThreads > 1 || chip.lineWorkers) && EnsureLineWorkers(chip);
+    auto before = std::chrono::steady_clock::now();
     while (chip.drawnLines < due)
-        DrawVisibleLine(chip, chip.drawnLines++);
+    {
+        // The rest of the lines side by side once each replays the plan (the first line after a change records it)
+        if (parallel && chip.drawnLines + chip.parallelMinLines <= parallelEnd && LinesIndependent(chip))
+        {
+            DrawLinesParallel(chip, parallelEnd);
+            before = std::chrono::steady_clock::now();
+            continue;
+        }
+        const uint32_t line = chip.drawnLines++;
+        DrawVisibleLine(chip, line);
+        const auto after = std::chrono::steady_clock::now();
+        if (line < kMaxLines)
+            stats->work[line] = static_cast<uint32_t>(
+                std::min<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(after - before).count(), UINT32_MAX));
+        before = after;
+    }
 }
 
 void FrameStart(EveChip& chip)
@@ -1156,6 +1648,77 @@ void DrawingInvalidate(EveChip& chip)
         s.valid = false;
     AsyncInvalidate(chip);
 }
+
+
+void HostDrawStatsDelete::operator()(HostDrawStats* stats) const
+{
+    delete stats;
+}
+
+std::shared_ptr<HostDrawStats> MakeHostDrawStats()
+{
+    return std::shared_ptr<HostDrawStats>(new (std::nothrow) HostDrawStats(), HostDrawStatsDelete());
+}
+
+namespace
+{
+void PublishHostDrawStats(EveChip& chip, uint32_t lines, bool valid)
+{
+    HostDrawStats* stats = chip.hostStats.get();
+    if (!stats)
+        return;
+    lines = std::min(lines, kMaxLines);
+    uint64_t total = 0;
+    uint64_t worst = 0;
+    uint32_t worstLine = 0;
+    for (uint32_t i = 0; i < lines; ++i)
+    {
+        total += stats->work[i];
+        if (stats->work[i] > worst)
+        {
+            worst = stats->work[i];
+            worstLine = i;
+        }
+    }
+    std::lock_guard<std::mutex> guard(stats->lock);
+    EveHostDrawStats& last = stats->last;
+    last.frame = chip.state.scan.frames;
+    last.valid = valid ? 1 : 0;
+    last.lines = lines;
+    last.totalNs = total;
+    last.worstLine = worstLine;
+    last.worstLineNs = worst;
+    // The drawing thread's CPU time since the previous frame end: the renderer's drawing (it does nothing else), or
+    // everything the emulation thread ran when it draws itself
+    const uint64_t cpuNow = ThreadCpuNs();
+    const bool sameThread = stats->cpuThread == std::this_thread::get_id();
+    last.cpuNs = sameThread && stats->cpuMark && cpuNow > stats->cpuMark ? cpuNow - stats->cpuMark : 0;
+    stats->cpuMark = cpuNow;
+    stats->cpuThread = std::this_thread::get_id();
+    std::memcpy(stats->lineNs, stats->work, lines * sizeof(stats->work[0]));
+    std::memset(stats->work, 0, lines * sizeof(stats->work[0]));
+    if (!valid)
+        return;
+    EveHostDrawStats& sum = stats->summary;
+    ++sum.frames;
+    sum.sumNs += total;
+    sum.cpuNs += last.cpuNs; // summary: CPU time of all the frames
+    if (last.cpuNs > sum.maxCpuNs)
+    {
+        sum.maxCpuNs = last.cpuNs;
+        sum.maxCpuFrame = last.frame;
+    }
+    if (total > sum.maxFrameNs)
+    {
+        sum.maxFrameNs = total;
+        sum.maxFrame = last.frame;
+        sum.lines = lines;
+        sum.worstLine = worstLine;
+        sum.worstLineNs = worst;
+        std::memcpy(stats->maxLineNs, stats->lineNs, lines * sizeof(stats->lineNs[0]));
+    }
+}
+} // namespace
 
 void FoldFrameMetrics(EveChip& chip)
 {
@@ -1194,6 +1757,7 @@ void FoldFrameMetrics(EveChip& chip)
     if (lines < kMetricsLines)
         std::memset(&m.lineClocks[lines], 0, (kMetricsLines - lines) * sizeof(m.lineClocks[0]));
     m.valid = valid ? 1 : 0;
+    PublishHostDrawStats(chip, lines, valid);
 }
 
 uint32_t FrameLinesDue(const EveChip& chip)
@@ -1234,3 +1798,64 @@ bool ProbePixel(const EveChip& chip, uint32_t x, uint32_t y, EvePixelSource& out
 }
 
 } // namespace EveLib
+
+using namespace EveLib;
+
+extern "C" {
+
+size_t EveGetHostDrawStats(const EveChip* chip, EveHostDrawStats* last, EveHostDrawStats* summary, uint32_t* lineNs,
+                           size_t maxLines)
+{
+    HostDrawStats* stats = chip ? chip->hostStats.get() : nullptr;
+    if (!stats)
+    {
+        if (last)
+            *last = EveHostDrawStats{};
+        if (summary)
+            *summary = EveHostDrawStats{};
+        return 0;
+    }
+    std::lock_guard<std::mutex> guard(stats->lock);
+    if (last)
+        *last = stats->last;
+    if (summary)
+        *summary = stats->summary;
+    if (!lineNs)
+        return 0;
+    const size_t n = std::min<size_t>(maxLines, stats->last.lines);
+    std::memcpy(lineNs, stats->lineNs, n * sizeof(lineNs[0]));
+    return n;
+}
+
+size_t EveGetHostDrawMaxLines(const EveChip* chip, uint32_t* lineNs, size_t maxLines)
+{
+    HostDrawStats* stats = chip ? chip->hostStats.get() : nullptr;
+    if (!stats || !lineNs)
+        return 0;
+    std::lock_guard<std::mutex> guard(stats->lock);
+    const size_t n = std::min<size_t>(maxLines, stats->summary.lines);
+    std::memcpy(lineNs, stats->maxLineNs, n * sizeof(lineNs[0]));
+    return n;
+}
+
+uint32_t EveSetDrawThreads(EveChip* chip, uint32_t threads)
+{
+    if (!chip)
+        return 0;
+    constexpr uint32_t kMaxDrawThreads = 64;
+    chip->drawThreads = threads > kMaxDrawThreads ? kMaxDrawThreads : threads;
+    if (chip->drawThreads <= 1 && !chip->asyncDrawing)
+        chip->lineWorkers.reset(); // the renderer's shadow drops its own with the next operation
+    return chip->drawThreads > 1 ? chip->drawThreads : 1;
+}
+
+void EveResetHostDrawStats(EveChip* chip)
+{
+    HostDrawStats* stats = chip ? chip->hostStats.get() : nullptr;
+    if (!stats)
+        return;
+    std::lock_guard<std::mutex> guard(stats->lock);
+    stats->summary = EveHostDrawStats{};
+}
+
+} // extern "C"

@@ -13,6 +13,8 @@
 #   --deck  SSH target of the Deck to install on (UNREAL_DEPLOY_DECK); none: only build and fetch
 #   --out   where the bundle goes (scratch/deploy-steamdeck/UnrealNG-SteamDeck-x86_64.tar.gz)
 #   --no-sync  build what the host's checkout has
+#   --lto   link-time optimisation (UNREAL_LTO=1): a pre-release bundle or one to measure speed on; without it the build
+#           links in a fraction of the time and runs a few percent slower (cmake/Lto.cmake)
 #
 # SSH options (a key, a port) come from ~/.ssh/config, or UNREAL_DEPLOY_SSH="ssh -i <key>" for every ssh / rsync here.
 set -euo pipefail
@@ -22,6 +24,7 @@ dir="${UNREAL_DEPLOY_BUILD_DIR:-}"
 deck="${UNREAL_DEPLOY_DECK:-}"
 out=""
 sync=1
+lto="$( [ "${UNREAL_LTO:-0}" = 1 ] && echo ON || echo OFF )"
 while [ $# -gt 0 ]; do
   case "$1" in
     --host) host="$2"; shift 2 ;;
@@ -29,7 +32,8 @@ while [ $# -gt 0 ]; do
     --deck) deck="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --no-sync) sync=0; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    --lto) lto=ON; shift ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -78,7 +82,7 @@ remote "W=\$PWD; G=\$(cd \"\$(git rev-parse --git-common-dir)\" && pwd); \
       -DUNREAL_BUNDLE_QT=ON -DUNREAL_STREAMDECK=ON -DUNREAL_PACKAGE_BASENAME=UnrealNG-Suite-Linux-x86_64 \
       > build-deck-configure.log 2>&1 || { tail -30 build-deck-configure.log; exit 1; }
     rm -rf build-deck/packages
-    cmake build-deck > build-deck/configure.log 2>&1 || { tail -30 build-deck/configure.log; exit 1; }
+    cmake build-deck -DUNREAL_LTO=$lto > build-deck/configure.log 2>&1 || { tail -30 build-deck/configure.log; exit 1; }
     cmake --build build-deck --target package_suite_linux > build-deck/package-build.log 2>&1 || { tail -30 build-deck/package-build.log; exit 1; }
     bash tools/package-appimage.sh build-deck > build-deck/appimage.log 2>&1 || { tail -30 build-deck/appimage.log; exit 1; }
     install/steamdeck/package.sh build-deck >/dev/null'"

@@ -78,3 +78,9 @@ Measurements [2026-11-22](measurements-2026-11-22-cost-and-quality.md) (cost, th
 reference's windows and decisions are 12 ms a thread); `c-lite` (`lite19`) draws a picture in 0.42-0.81 ms on a quiet
 Deck thread by trace, 1 / 20 to 1 / 45 of the reference's time, at 1.3 times its error on the suite (58.7 against
 43.8; `off` 278.8); the same bits on x86-64 and ARM64.
+
+2026-11-26: the core's `LiteFlow` (`core`) parted from `lite19` outside the suite's content: its palette is compacted
+to the colours of the frames kept instead of starting over when it fills, the last two pairs are kept (a pair asked
+again is the same picture), a pair refused for its colours is not tried again, and the cost pass of that day. On
+the 12 scenes the same pictures, byte for byte (`score.sh`: 57.65, every scene as before): [presenter
+stabilization, section 1.13](../../../docs/inprogress/2026-11-22-presenter-stabilization/README.md).

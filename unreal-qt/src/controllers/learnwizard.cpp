@@ -290,3 +290,5 @@ QString LearnWizard::exportLine() const
 {
     return _export != nullptr ? _export->text() : QString();
 }
+
+#include "moc_learnwizard.cpp"

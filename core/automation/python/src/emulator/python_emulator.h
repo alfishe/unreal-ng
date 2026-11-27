@@ -3536,18 +3536,24 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 return ctx ? ctx->coreState.tapeFilePath : "";
             }, "Get tape file path")
-            .def("tape_play", [](Emulator& self) -> bool {
+            .def("tape_play", [](Emulator& self, bool report) -> py::object {
                 auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTape) return false;
+                if (!ctx || !ctx->pTape) return report ? py::object(py::none()) : py::object(py::bool_(false));
 
                 EmulatorPauseBracket bracket(&self);
 
-                // Parse-once (idempotent); paused -> resume the frozen position
-                // in place, otherwise start at the consumption cursor — the same
+                // Parse-once (idempotent); frozen in a block -> resume in place, playing -> left as it is,
+                // otherwise start at the first block with a signal from the consumption cursor on - the same
                 // semantics as `tape play` / POST /tape/play
                 // A tape still on its way (a load while a TTD recording runs) plays once it lands
-                return ctx->pTape->Play() != TapePlayResult::NoBlocks;
-            }, "Start (or resume in place) tape playback")
+                const TapePlayReport played = ctx->pTape->PlayWithReport();
+                if (!report)
+                    return py::bool_(played.Ok());
+                return StateNodeToPy(played.ToNode());
+            }, "Start (or resume in place) tape playback. Returns True unless there is no tape with loadable "
+               "blocks; with report=True the deck after the call as a dict (result, playing, state, reason, "
+               "position, block, skipped_blocks, text), None without a tape subsystem",
+               py::arg("report") = false)
             .def("tape_stop", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 if (ctx && ctx->pTape) {
@@ -4138,7 +4144,7 @@ namespace PythonBindings
                "dict or a list of dicts, or path='e.json', finding='F12', parallel=N: poke / regs / input, N frames, "
                "checks on a muted clone) | cover (budget=64, per_branch=8, frames=50, ranges=: flip one-sided "
                "branches) | trace (path='pass.uatr', from_frame=F, from_tinframe=T, to_frame=E, "
-               "to_tinframe=U, max_cycles=N: the CPU access trace of a window, written to path). "
+               "to_tinframe=U, max_cycles=N, kinds='in,out', pc='8000-9FFF', addresses='4000-5AFF': the CPU access trace of a window, written to path, the last three a filter). "
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")
@@ -5647,7 +5653,7 @@ namespace PythonBindings
             .def("history_config",
                  [](Emulator& self, const std::string& device, std::optional<std::string> mode,
                     std::optional<uint64_t> limit, std::optional<std::string> stream,
-                    std::optional<uint64_t> streamLimit) -> py::object {
+                    std::optional<uint64_t> streamLimit, std::optional<std::string> filter) -> py::object {
                      HistoryRequest request;
                      request.verb = "config";
                      request.device = device;
@@ -5655,12 +5661,14 @@ namespace PythonBindings
                      request.limit = limit;
                      request.stream = stream;
                      request.streamLimit = streamLimit;
+                     request.filter = filter;
                      return StateNodeToPy(python_history::Run(self, request));
                  },
                  py::arg("device"), py::arg("mode") = py::none(), py::arg("limit") = py::none(),
-                 py::arg("stream") = py::none(), py::arg("stream_limit") = py::none(),
+                 py::arg("stream") = py::none(), py::arg("stream_limit") = py::none(), py::arg("filter") = py::none(),
                  "Configure a device history: mode off / ring / capture, limit (ring size; capture cap, 0 = none), "
-                 "stream (a JSON Lines file, '' = none), stream_limit; omitted fields keep their value")
+                 "stream (a JSON Lines file, '' = none), stream_limit, filter (which records are recorded at all: "
+                 "'side=host out=true', '' = every record); omitted fields keep their value")
             .def("history_clear", [](Emulator& self, const std::string& device) -> py::object {
                 HistoryRequest request;
                 request.verb = "clear";

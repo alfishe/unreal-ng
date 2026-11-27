@@ -392,19 +392,19 @@ what an agent reads):
   the values changed since the last stop; the card strip follows a CPU-tab switch only at the next stop; LW checked
   live only idle (an upload and a module in the Qt test); gs + ms together not run; the LW FX upload counter is not
   in the TTD state.
-- [ ] **P5.6 Later (P1 / P2, on the owner's call):** the twin timeline as a canvas, the log row actions, the Send
+- [x] **P5.6 Later (P1 / P2, on the owner's call; all five landed, closed 2026-11-26):** the twin timeline as a canvas, the log row actions, the Send
   console, the protocol monitor, the analysis tabs (A5.2a). Owner's order 2026-11-23: analysis tabs (landed
   4967cd423), then the Send console (built 2026-11-25, below), then the log row actions (A5.4, built 2026-11-25, below), then the twin timeline. With them
   (4967cd423): the side tab bars of both debuggers scroll instead of widening the window, an arrow at each end, the
   wheel switches tabs (`unreal-qt/src/widgets/tabscrollarrows.h`, `TabScrollArrows.*`).
-  - [x] **Twin timeline phase 1: data on every plane (2026-11-25, uncommitted on `gs-timeline`).** Design §5.4 / §7.2
+  - [x] **Twin timeline phase 1: data on every plane (2026-11-25, landed d62b0a30e).** Design §5.4 / §7.2
     as built, `core/src/debugger/timeline/twintimeline.h`. `ExecRecord` 16 bytes with `t`, INT / NMI / NeoGS clock
     change records; leases (zero cost off); the density ring per frame; REST `GET /debug/timeline` + `POST
     /debug/timeline/arm`, snapshot `pause.timeline` + `pause.positions`, WS paused `positions[]` + state topic
     `debug.timeline` (≤ 10 Hz), CLI `timeline`, Lua / Python `timeline()` / `timeline_arm()`, MCP `inspect_state`
     aspect `timeline`. Tests: `TwinTimeline_Test`, `OpenApiTimelineRoutes_Test`, the hub's positions, the MCP aspect,
     `tools/verification/mcp/test_timeline.py`.
-  - [x] **Twin timeline phase 2, embedded debugger (2026-11-26, uncommitted on `gs-timeline`).** The Qt canvas
+  - [x] **Twin timeline phase 2, embedded debugger (2026-11-26, landed d62b0a30e).** The Qt canvas
     (gui-card-debugger §A5.1, C03) on the phase 1 data: `TwinTimelineView` (`unreal-qt/src/debugger/twintimelineview.h`),
     a full-width strip under the card line (S1, kept, as the S3 line), shown only while a card CPU is fitted. MAIN lane
     on top, the card below, NOW through both, blocks of width ∝ measured T, main's instruction at a card's stop in its
@@ -417,7 +417,7 @@ what an agent reads):
     parking the emulation. Armed (a lease of the view, until released) only while shown; hidden, destroyed or another
     machine: released. Test `TwinTimelineView_Test` (unreal-qt-tests); `UNREAL_TIMELINE_PNG_DIR` saves the C03
     pictures (paused, after a step, a card stop, running; light and dark).
-  - [x] Twin timeline phase 3, eCat debugger (2026-11-26): `debuggers/qt/ecat/dialogs/debugger/twintimeline.{h,cpp}`, a
+  - [x] Twin timeline phase 3, eCat debugger (2026-11-26, landed d62b0a30e): `debuggers/qt/ecat/dialogs/debugger/twintimeline.{h,cpp}`, a
     full-width strip between the toolbar and the main split, shown only with a card CPU; the same lanes, blocks,
     segments, markers, readouts, zoom / pan / recenter, a block click selects that CPU's listing, running density.
     Shim `read_timeline` / `timeline_arm` / `timeline_client`: in process `timeline::Read` / `SetArmed`, remote
@@ -598,6 +598,24 @@ what an agent reads):
     volume field, a bad field refused, #23 done with its reply), in process and --connect.
     Left: a transfer command (#14 and the like) sends only its command bytes, not the block; the send addresses the
     GS slot's card only (no `cpu=ms` on the planes).
+
+### eCat remote mode without waits — landed d34628a90 (2026-11-26)
+
+- [x] The GUI never waits on the network: `Net` in `debuggers/qt/adapter/remotemachine.cpp`. Three lanes; commands
+  in order; the snapshot never fetched while a command is pending; reads stale-while-revalidate; arrivals posted to
+  the GUI thread. Async shim calls `debug_card_run_to_async`, `gs_send_async` and `ttd_call_async`;
+  `debug_link_text` ("Waiting for the emulator: N s", refused commands); `debug_data_serial`. `TtdControls` chains
+  its moves. Synchronous mode for `--self-check`, `--screenshot`, `--measure` and `--list-memory`. Design:
+  [README, Remote mode](../../../debuggers/qt/README.md#remote-mode---connect).
+- [x] Measured with `--gui-gap-check` (`latencycheck.cpp`, `LatencyProxy`), longest GUI event-loop gap. Master:
+  505 ms with no delay, 184 s with answers 300 ms late, 20 s during a 6 s stall. Now: 11 ms, 19 ms and 9 ms.
+  Regression check: the `async connection` block of the connect self-check.
+- Left:
+  - Board actions, profiler and analysis commands answer "sent" before the emulator has answered; a refusal shows
+    only in the state line.
+  - The synchronous wrappers (`debug_card_run_to`, `gs_send`, `ttd_call`) answer "under way" in asynchronous mode.
+    Callers outside the window that need the result use the async calls.
+  - `--gui-gap-check` is not in CI (it needs a live unreal-qt).
 
 ## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), landed (core `3945ca4f3`, UI `a6be6598d`, card tails `61276899f`, F4 and D-3 `e97d71a26`)
 

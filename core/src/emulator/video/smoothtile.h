@@ -11,6 +11,17 @@
 namespace smoothmotion
 {
 
+/// What a video wall's tile runs for the wall's mode: Auto is the cheap interpolation (LiteFlow: many tiles share the
+/// refresh) where the display beats with the machine (SmoothMotionHelps: no rate that is a multiple of the machine's),
+/// and Off where every frame is on screen for the same number of refreshes already (50 or 100 Hz for a 50 Hz
+/// machine: a picture between two frames there is a ghost). Any other mode as it is
+inline Mode WallTileMode(Mode wall, double displayHz, double machineHz)
+{
+    if (wall != Mode::Auto)
+        return wall;
+    return SmoothMotionHelps(false, displayHz, machineHz) ? Mode::InterpolateLite : Mode::Off;
+}
+
 /// Smooth motion for one stream of frames shown among many (a video wall's tile): the frames pulled in order with
 /// their times, the picture for a refresh, the step down when the pictures take too long. No threads of its own:
 /// the wall spreads its tiles over a pool, each tile touched by one thread at a time.
@@ -82,7 +93,9 @@ private:
     };
     Pulled _pulled[SmoothMotion::kFrames];
     size_t _nextPulled = 0;
-    bool _atOnce = false;  ///< low latency: frames go to the screen at once, no picture between them
+    /// The frames come at once (low latency) or not paced to real time (turbo, stepping): no picture between them,
+    /// the newest as it is, the engine fed nothing
+    bool _unpaced = false;
     bool _moving = false;
     uint64_t _lastSerial = 0;  ///< the newest frame pulled
     Stats _stats;

@@ -1925,3 +1925,5 @@ void WindowRecorder::fill(WindowRecordingStatus& out)
         out.slowestFrameMs = static_cast<double>(_writer->slowestFrameUs) / 1000.0;
     }
 }
+
+#include "moc_windowrecorder.cpp"

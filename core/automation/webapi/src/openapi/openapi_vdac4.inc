@@ -36,11 +36,23 @@
         };
 
         Json::Value& tang = block("tang", "The Tang FPGA (FT812-compatible core)");
-        field(tang, "personality", "string", "ts (TS-Conf video), loading (switching), ft (the FT812 core drives the picture)");
+        field(tang, "personality", "string", "ts (TS-Conf video), loading (switching), ft (the FT812 core drives the picture), q2 (the Quake II core from the Evo card shows its own picture)");
         field(tang, "armed", "boolean", "The ESP armed the Tang: the TS personality switches on Evo FT traffic");
         field(tang, "esp_host", "boolean", "FT_CFG ESP_HOST: the ESP drives the FT812");
         field(tang, "ram_g_3mb", "boolean", "FT_CFG RAM_G 3 MB mode");
         field(tang, "ft_cfg", "integer", "The FT_CFG register as written");
+        Json::Value& q2 = tang["properties"]["q2"];
+        q2["type"] = "object";
+        q2["description"] = "The Quake II core (bomzh-3D) while personality is q2; zeros otherwise";
+        field(q2, "frames", "integer", "FRAME commands executed (the core's FRAMES register)");
+        field(q2, "latched", "integer", "Its pictures latched to the screen since core_load");
+        field(q2, "commands", "integer", "Commands executed");
+        field(q2, "words", "integer", "Words the ESP wrote into its command queue");
+        field(q2, "bad_words", "integer", "Words dropped as not a command");
+        field(q2, "bad_command", "boolean", "STATUS bad_cmd (sticky)");
+        field(q2, "mark", "integer", "The MARK register");
+        field(q2, "width", "integer", "The picture width SETUP set");
+        field(q2, "height", "integer", "The picture height SETUP set");
 
         Json::Value& esp = block("esp", "The ESP32-S3 and its firmware");
         field(esp, "phase", "string", "off, booting, running, flushing, restart_wait");
@@ -52,6 +64,31 @@
         field(esp, "resources", "integer", "Resources held in PSRAM");
         field(esp, "clock_restarts", "integer", "Machine resets the ESP's clock stepped over (the ESP keeps running)");
         field(esp, "clock_offset_us", "integer", "How far the ESP's time is ahead of the machine's emulated time, microseconds");
+        field(esp, "psram_free", "integer", "PSRAM bytes an app can still allocate (UNREAL_VDAC4_PSRAM_RESERVE_KB sets the firmware's own share)");
+        Json::Value& cores = esp["properties"]["cores"];
+        cores["type"] = "array";
+        cores["description"] = "FPGA cores the Z80 program sent from the Evo card (MOD_QUERY flag 2), as the BL616 cache holds them";
+        cores["items"]["type"] = "object";
+        field(cores["items"], "name", "string", "Core name (file name without .BIN)");
+        field(cores["items"], "size", "integer", "Bitstream bytes");
+        field(cores["items"], "usercode", "integer", "The VDAC4 mark 0x564434xx (xx: the personality, 0x51 Quake II)");
+
+        Json::Value& data = block("data", "Data files the running app reads from the Evo card through the Z80 program (0x6E requests, 0x6F pieces)");
+        Json::Value& files = data["properties"]["files"];
+        files["type"] = "array";
+        files["description"] = "Files registered with MOD_QUERY flag 4 and a file number";
+        files["items"]["type"] = "object";
+        field(files["items"], "app", "string", "The app's name");
+        field(files["items"], "name", "string", "File name");
+        field(files["items"], "size", "integer", "Bytes");
+        field(files["items"], "index", "integer", "The file's number at the Z80 program");
+        field(data, "open", "integer", "Handles the app holds open");
+        field(data, "reading", "boolean", "A data_read waits for the Z80 now");
+        field(data, "requests", "integer", "Requests answered whole");
+        field(data, "repeats", "integer", "Requests asked again (no answer in 4 s, or the Z80 could not read)");
+        field(data, "failures", "integer", "data_read calls failed after three attempts");
+        field(data, "bytes", "integer", "Bytes the requests brought");
+        field(data, "longest_ms", "integer", "The slowest request, ESP ms");
 
         Json::Value& app = block("app", "The app the ESP runs (for example DOOM)");
         field(app, "running", "boolean", "An app runs");
@@ -99,6 +136,7 @@
         field(threads, "esp_thread", "boolean", "Jobs on the runtime's worker thread ([VDAC4] EspThread)");
         field(threads, "ft_thread", "boolean", "The Tang's work for the jobs on its own thread ([VDAC4] FtThread)");
         field(threads, "ft_draw_thread", "boolean", "The FT812 draws on its renderer thread now ([VDAC4] FtDrawThread)");
+        field(threads, "ft_draw_threads", "integer", "Threads drawing the FT812's lines ([VDAC4] FtDrawThreads, 0 = by the host's cores)");
         field(threads, "esp_latency_ms", "integer", "ms the app's outputs reach the firmware after its job ([VDAC4] EspLatencyMs)");
         field(threads, "esp_jobs", "integer", "Advances run as jobs since power-on");
         field(threads, "esp_threaded_jobs", "integer", "Of them on the worker thread");

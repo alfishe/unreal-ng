@@ -682,3 +682,5 @@ void AppSoundManager::onDeviceFormatChanged()
     _formatChangeTimer.start();
 }
 #endif  // _WIN32
+
+#include "moc_soundmanager.cpp"

@@ -50,6 +50,9 @@ struct Source
         std::vector<uint32_t> pixels;
         bool atOnce;
         uint16_t window;
+        FrameClockSource source = FrameClockSource::Audio;
+        int width = 0;  ///< the geometry served (0: none, as a source without it)
+        int height = 0;
     };
     std::vector<Frame> frames;
     int served = 0;
@@ -72,7 +75,10 @@ struct Source
                     info->serial = f.serial;
                     info->targetNs = f.targetNs;
                     info->atOnce = f.atOnce;
+                    info->source = f.source;
                     info->geometry.screenWindow.x = f.window;
+                    info->geometry.width = static_cast<uint16_t>(f.width);
+                    info->geometry.height = static_cast<uint16_t>(f.height);
                     served++;
                     return true;
                 }
@@ -191,13 +197,14 @@ TEST(SmoothTile_Test, AnotherFrameSizeStartsOver)
 TEST(SmoothTile_Test, TooSlowStepsDownToTheCheapInterpolationThenTheBlend)
 {
     // A refresh of one nanosecond: every interpolated picture takes "most of a refresh"
+    constexpr int STEP = static_cast<int>(SmoothGuard::kWindow * SmoothGuard::kBadWindows);
     Tile tile;
     tile.SetMode(Mode::Interpolate);
     Source source;
     source.Latch(Scroller(0));
     int pictures = 0;
     bool steppedAt = false, slowAt = false;
-    for (int k = 1; k <= 3 * static_cast<int>(SmoothGuard::kWindow) && !slowAt; k++)
+    for (int k = 1; k <= 3 * STEP && !slowAt; k++)
     {
         source.Latch(Scroller(4 * k));
         if (tile.Advance(source.Next(), W, H, source.TargetOf(static_cast<uint64_t>(k)) + PERIOD / 2, 1) ==
@@ -206,7 +213,7 @@ TEST(SmoothTile_Test, TooSlowStepsDownToTheCheapInterpolationThenTheBlend)
         if (tile.GetStats().steppedDown && !steppedAt)
         {
             steppedAt = true;
-            EXPECT_EQ(pictures, static_cast<int>(SmoothGuard::kWindow));
+            EXPECT_EQ(pictures, STEP);
             EXPECT_TRUE(tile.Engine().Lite());
             EXPECT_FALSE(tile.GetStats().tooSlow);
         }
@@ -214,7 +221,7 @@ TEST(SmoothTile_Test, TooSlowStepsDownToTheCheapInterpolationThenTheBlend)
     }
     EXPECT_TRUE(steppedAt);
     ASSERT_TRUE(slowAt);
-    EXPECT_EQ(pictures, 2 * static_cast<int>(SmoothGuard::kWindow));
+    EXPECT_EQ(pictures, 2 * STEP);
     // From now on the blend of the two frames
     const uint64_t blendedBefore = tile.Engine().GetStats().blended;
     source.Latch(Scroller(4000));
@@ -226,6 +233,79 @@ TEST(SmoothTile_Test, TooSlowStepsDownToTheCheapInterpolationThenTheBlend)
     tile.SetMode(Mode::Interpolate);
     EXPECT_FALSE(tile.GetStats().steppedDown);
     EXPECT_FALSE(tile.GetStats().tooSlow);
+}
+
+/// A step down of the tile's own guard is for a while: the cheap interpolation is tried again after the guard's wait,
+/// then the full one after the wait again, each only if in time. The interpolation stayed blended for good
+/// before (the owner's Mac: one stall dropped it to the blend)
+TEST(SmoothTile_Test, ASteppedDownTileTriesTheLevelsAboveAgain)
+{
+    constexpr int STEP = static_cast<int>(SmoothGuard::kWindow * SmoothGuard::kBadWindows);
+    constexpr int64_t HOUR = 3600LL * 1000 * MS;
+    Tile tile;
+    tile.SetMode(Mode::Interpolate);
+    Source source;
+    source.Latch(Scroller(0));
+    int k = 1;
+    // A refresh of one nanosecond: every picture slow, down twice
+    for (; k <= 3 * STEP && !tile.GetStats().tooSlow; k++)
+    {
+        source.Latch(Scroller(4 * k));
+        tile.Advance(source.Next(), W, H, source.TargetOf(static_cast<uint64_t>(k)) + PERIOD / 2, 1);
+    }
+    ASSERT_TRUE(tile.GetStats().tooSlow);
+    const int64_t steppedAt = source.TargetOf(static_cast<uint64_t>(k - 1)) + PERIOD / 2;
+    // The second step down doubled the wait: the blend until then (refreshes with no new frame), the cheap one after
+    const int64_t wait = 2 * SmoothGuard::kFirstRetryNs;
+    tile.Advance(source.Next(), W, H, steppedAt + wait - 1, HOUR);
+    EXPECT_TRUE(tile.GetStats().tooSlow) << "too early";
+    tile.Advance(source.Next(), W, H, steppedAt + wait, HOUR);
+    EXPECT_FALSE(tile.GetStats().tooSlow);
+    EXPECT_TRUE(tile.GetStats().steppedDown);
+    EXPECT_TRUE(tile.Engine().Lite());
+    // The full one after the wait as it stands (each step down doubled it: 40 s), if the cheap one is in time
+    const int64_t upAt = steppedAt + wait;
+    tile.Advance(source.Next(), W, H, upAt + 2 * wait - 1, HOUR);
+    EXPECT_TRUE(tile.GetStats().steppedDown) << "too early";
+    tile.Advance(source.Next(), W, H, upAt + 2 * wait, HOUR);
+    EXPECT_FALSE(tile.GetStats().steppedDown);
+    EXPECT_FALSE(tile.Engine().Lite());
+}
+
+TEST(SmoothTile_Test, LiteOverItsColoursIsDrawnByTheLayersAndStillGuarded)
+{
+    // Frames of over 256 colours (a still band of a colour a pixel over the scroll) are not LiteFlow's pictures:
+    // the tile draws them with LayerFlow, and a slow picture still steps it down to the blend
+    const auto frame = [](int k) {
+        std::vector<uint32_t> f = Scroller(4 * k);
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < W; x++)
+                f[static_cast<size_t>(y) * W + x] = 0xFF100000u + static_cast<uint32_t>(y * W + x);
+        return f;
+    };
+    Tile tile;
+    tile.SetMode(Mode::InterpolateLite);
+    Source source;
+    source.Latch(frame(0));
+    int k = 1;
+    for (; k <= 3; k++)
+    {
+        source.Latch(frame(k));
+        ASSERT_EQ(tile.Advance(source.Next(), W, H, source.TargetOf(static_cast<uint64_t>(k)) + PERIOD / 2, REFRESH),
+                  Tile::Step::Updated);
+    }
+    EXPECT_GT(tile.Engine().GetStats().interpolated, 0u);
+    EXPECT_EQ(tile.Engine().GetStats().lite, 0u);
+    EXPECT_FALSE(tile.GetStats().tooSlow);
+    // A refresh of one nanosecond: every picture is slow
+    const int end = k + 2 * static_cast<int>(SmoothGuard::kWindow * SmoothGuard::kBadWindows);
+    for (; k < end && !tile.GetStats().tooSlow; k++)
+    {
+        source.Latch(frame(k));
+        tile.Advance(source.Next(), W, H, source.TargetOf(static_cast<uint64_t>(k)) + PERIOD / 2, 1);
+    }
+    EXPECT_TRUE(tile.GetStats().tooSlow);
+    EXPECT_EQ(tile.Engine().GetStats().lite, 0u);
 }
 
 TEST(SmoothTile_Test, InTimeNeverStepsDown)
@@ -281,4 +361,79 @@ TEST(SmoothTile_Test, TheWallStepsATileDownToTheFramesAsTheyAre)
     ASSERT_TRUE(blend.StepDown());
     EXPECT_TRUE(blend.GetStats().tooSlow);
     EXPECT_FALSE(blend.GetStats().framesOnly);
+}
+
+/// A video mode switch between the wall's look at the machine's frame size and the frame read: a frame of another
+/// size (its bytes fit the buffer, its rows are not of this width) is left out, never drawn or pushed mis-strided
+TEST(SmoothTile_Test, FrameOfAnotherSizeIsLeftOut)
+{
+    Tile tile;
+    tile.SetMode(Mode::Blend);
+    Source source;
+    source.Latch(Scroller(0));
+    source.frames.back().width = W;
+    source.frames.back().height = H;
+    // The same bytes as a W x H frame, rows twice as wide
+    source.Latch(Scroller(4, 2 * W, H / 2));
+    source.frames.back().width = 2 * W;
+    source.frames.back().height = H / 2;
+    source.Latch(Scroller(8));
+    source.frames.back().width = W;
+    source.frames.back().height = H;
+    ASSERT_EQ(tile.Advance(source.Next(), W, H, source.TargetOf(3), REFRESH), Tile::Step::Updated);
+    EXPECT_EQ(PictureOf(tile), Scroller(8));
+    EXPECT_EQ(tile.GetStats().frames, 2u) << "the 128 x 16 frame left out";
+    EXPECT_EQ(tile.Engine().GetStats().frames, 2u) << "never pushed";
+    EXPECT_EQ(tile.Engine().LastSerial(), 3u);
+    // The gap it left starts the engine over: no picture between frames 1 and 3
+    Tile again;
+    again.SetMode(Mode::Blend);
+    ASSERT_EQ(again.Advance(source.Next(), W, H, source.TargetOf(2), REFRESH), Tile::Step::Updated);
+    EXPECT_EQ(PictureOf(again), Scroller(8));
+    EXPECT_EQ(again.GetStats().between, 0u);
+}
+
+/// Turbo or stepping (frames timed by their latch) and low latency: no picture between the frames, so nothing goes to
+/// the engine (its copies and flicker searches, up to SmoothMotion::kFrames a refresh, only held the wall's pool up);
+/// the newest frame as it is. Paced again: the engine from the frames that come then
+TEST(SmoothTile_Test, TurboFramesGoToNoEngine)
+{
+    Tile tile;
+    tile.SetMode(Mode::InterpolateLite);
+    Source source;
+    for (int k = 0; k < 6; k++)
+    {
+        source.Latch(Scroller(4 * k));
+        source.frames.back().source = FrameClockSource::Latch;
+    }
+    ASSERT_EQ(tile.Advance(source.Next(), W, H, source.TargetOf(1), REFRESH), Tile::Step::Updated);
+    EXPECT_EQ(PictureOf(tile), Scroller(20)) << "the newest, whatever the time asked";
+    EXPECT_EQ(tile.Engine().GetStats().frames, 0u);
+    EXPECT_EQ(tile.GetStats().between, 0u);
+    EXPECT_EQ(tile.Advance(source.Next(), W, H, source.TargetOf(6), REFRESH), Tile::Step::Unchanged);
+
+    // Back to real time
+    source.Latch(Scroller(24));
+    source.Latch(Scroller(28));
+    ASSERT_EQ(tile.Advance(source.Next(), W, H, source.TargetOf(7) + PERIOD / 2, REFRESH), Tile::Step::Updated);
+    EXPECT_EQ(tile.Engine().GetStats().frames, 2u);
+    EXPECT_EQ(tile.Engine().LastSerial(), 8u);
+    EXPECT_EQ(tile.GetStats().between, 1u) << "between the two paced frames";
+}
+
+/// The wall's auto (View > Video Synchronization on the wall): the cheap interpolation where the display beats with
+/// the machine, nothing where every frame is on screen for the same number of refreshes
+TEST(SmoothTile_Test, WallAutoDrawsOnlyWhereTheDisplayBeats)
+{
+    constexpr double PENTAGON = 48.83;
+    EXPECT_EQ(WallTileMode(Mode::Auto, 60.0, PENTAGON), Mode::InterpolateLite);
+    EXPECT_EQ(WallTileMode(Mode::Auto, 75.0, 50.0), Mode::InterpolateLite);
+    EXPECT_EQ(WallTileMode(Mode::Auto, 144.0, 50.0), Mode::Off) << "4 % off three refreshes a frame";
+    EXPECT_EQ(WallTileMode(Mode::Auto, 50.0, PENTAGON), Mode::Off);
+    EXPECT_EQ(WallTileMode(Mode::Auto, 100.0, 50.0), Mode::Off);
+    EXPECT_EQ(WallTileMode(Mode::Auto, 60.0, 60.0), Mode::Off) << "a 60 Hz machine on a 60 Hz display";
+    EXPECT_EQ(WallTileMode(Mode::Auto, 0.0, PENTAGON), Mode::InterpolateLite) << "rates not known yet: on";
+    // Set by hand: as it is
+    EXPECT_EQ(WallTileMode(Mode::Interpolate, 50.0, 50.0), Mode::Interpolate);
+    EXPECT_EQ(WallTileMode(Mode::Blend, 50.0, 50.0), Mode::Blend);
 }

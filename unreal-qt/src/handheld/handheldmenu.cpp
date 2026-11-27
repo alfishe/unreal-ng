@@ -2555,3 +2555,5 @@ void HandheldMenu::keyPressEvent(QKeyEvent* event)
     }
     event->accept();
 }
+
+#include "moc_handheldmenu.cpp"

@@ -440,11 +440,13 @@ class Emulator:
 
     def vdac4_state(self, log: int = 50) -> dict:
         """TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3), the keys of GET /vdac4/state: tang {personality,
-        armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources,
-        clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last,
+        armed, esp_host, ram_g_3mb, ft_cfg, q2 {frames, latched, commands, words, bad_words, bad_command, mark,
+        width, height}}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts,
+        clock_offset_us, psram_free, cores [{name, size, usercode}]}, data {files [{app, name, size, index}], open,
+        reading, requests, repeats, failures, bytes, longest_ms}, app {running, module, name, version, command_first, command_last,
         error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames},
         packets {count, recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns,
-        dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits,
+        dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits,
         esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits,
         ft_owner_wait_ms}, log (the last `log` ESP lines, at most 256). RuntimeError with the reason without
         the board"""
@@ -603,7 +605,7 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     def history_list(self) -> dict: ...
     def history(self, device: str, last: int = 0) -> dict: ...
     def history_config(self, device: str, mode: str = None, limit: int = None, stream: str = None,
-                       stream_limit: int = None) -> dict: ...
+                       stream_limit: int = None, filter: str = None) -> dict: ...  # filter: 'side=host out=true'
     def history_clear(self, device: str) -> dict: ...
     def history_pause(self, device: str, paused: bool = True) -> dict: ...  # hold / go on
 
@@ -717,7 +719,10 @@ emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folde
 emu.tape_eject()                      # the tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-emu.tape_play()    # start at consumption cursor; resumes in place when paused; queued for a tape still landing
+emu.tape_play()    # resumes in place when frozen in a block; a playing tape is left as it is; else starts at the
+                   # first block with a signal from the cursor on; queued for a tape still landing. True unless no tape
+report = emu.tape_play(report=True)  # the deck after the call as a dict: result, playing, state, reason, position,
+                   # block, skipped_blocks, text (command-interface.md "The play answer")
 emu.tape_pause()   # freeze mid-block (idempotent); False when not playing
 emu.tape_stop()    # terminal stop: invalidates the loaded image
 emu.tape_rewind()  # rewind to block 0, image kept

@@ -461,3 +461,5 @@ QVariant TapeBlockTableModel::data(const QModelIndex& index, int role) const
 
     return QVariant();
 }
+
+#include "moc_tapeblocktablemodel.cpp"

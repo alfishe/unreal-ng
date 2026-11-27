@@ -1,4 +1,5 @@
 #include "registerswidget.h"
+#include "debugger/widgetupdates.h"
 
 #include <initializer_list>
 #include <utility>
@@ -499,29 +500,29 @@ void RegistersWidget::refresh()
         else
         {
             ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
-            ui->valT->setToolTip(QString());
+            widgetupdates::SetToolTip(ui->valT, QString());
         }
         // Interrupt mode, the enable flip-flops (set: bold, clear: gray) and where an INT would go
         ui->valINT->setText(QStringLiteral("IM%1").arg(m_z80Registers->im));
         const QString on = QStringLiteral("QLabel { font-weight: bold; }");
         const QString off = QStringLiteral("QLabel { color: #A0A0A0; }");
-        m_iffCells[0]->setStyleSheet(m_z80Registers->iff1 ? on : off);
-        m_iffCells[1]->setStyleSheet(m_z80Registers->iff2 ? on : off);
+        // Restyled only when a flag changes: a style sheet set again relays out and repaints the pane
+        widgetupdates::SetStyleSheet(m_iffCells[0], m_z80Registers->iff1 ? on : off);
+        widgetupdates::SetStyleSheet(m_iffCells[1], m_z80Registers->iff2 ? on : off);
         const uint16_t isr = isrAddress();
         m_isrCell->setText(QStringLiteral("ISR %1").arg(isr, 4, 16, QLatin1Char('0')).toUpper());
-        m_isrCell->setToolTip(m_z80Registers->im == 2
+        widgetupdates::SetToolTip(m_isrCell, m_z80Registers->im == 2
                                   ? tr("IM2: the word at %1FF (the bus floats to FF; a device may drive another "
                                        "vector) - click: show it in the disassembly")
                                         .arg(m_z80Registers->i, 2, 16, QLatin1Char('0'))
                                         .toUpper()
                                   : tr("IM%1: RST #38 - click: show it in the disassembly").arg(m_z80Registers->im));
         for (size_t i = 0; i < m_flagCells.size(); i++)
-            m_flagCells[i]->setStyleSheet((m_z80Registers->f >> (7 - i)) & 1 ? on : off);
+            widgetupdates::SetStyleSheet(m_flagCells[i], (m_z80Registers->f >> (7 - i)) & 1 ? on : off);
         ui->valWZ->setText(QStringLiteral("%1").arg(m_z80Registers->memptr, 4, 16, QLatin1Char('0')).toUpper());
         ui->valHALT->setText(m_z80Registers->halted ? QStringLiteral("yes") : QStringLiteral("no"));
         ui->valFlags->setText(flagString);
-
-        update();
+        // No update() of the whole pane: a cell repaints itself when its text or style changes
     }
 }
 
@@ -588,3 +589,5 @@ void RegistersWidget::prepareForShutdown()
     qDebug() << "RegistersWidget::prepareForShutdown()";
     m_isShuttingDown = true;
 }
+
+#include "moc_registerswidget.cpp"

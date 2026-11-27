@@ -8,6 +8,7 @@
 #include "emulator/platforms/tsconf/vdac4/esp/espapphost.h"
 #include "emulator/platforms/tsconf/vdac4/esp/espxtensaruntime.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4board.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4bomzh.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4esp.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4espstate.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4tang.h"
@@ -62,10 +63,8 @@ uint64_t Word(const uint8_t* at)
 
 /// Runs of zeros and literals; a literal run ends where 32 zero bytes in a row begin (shorter zero gaps stay in
 /// it). Scanned by 8-byte words: a run of 32 zeros holds at least three whole aligned words
-void PutSparse(Vdac4EspStateWriter& w, const std::vector<uint8_t>& memory)
+void PutSparse(Vdac4EspStateWriter& w, const uint8_t* m, size_t size)
 {
-    const uint8_t* m = memory.data();
-    const size_t size = memory.size();
     auto zeroEnd = [&](size_t k) {
         while (k < size && (k & 7) != 0 && m[k] == 0)
             ++k;
@@ -106,6 +105,11 @@ void PutSparse(Vdac4EspStateWriter& w, const std::vector<uint8_t>& memory)
     }
 }
 
+void PutSparse(Vdac4EspStateWriter& w, const std::vector<uint8_t>& memory)
+{
+    PutSparse(w, memory.data(), memory.size());
+}
+
 /// PutSparse's runs into `memory` (`size` bytes). `write` false only checks that they fill it exactly
 bool GetSparse(Vdac4EspStateReader& r, uint8_t* memory, size_t size, bool write)
 {
@@ -131,9 +135,45 @@ bool GetSparse(Vdac4EspStateReader& r, uint8_t* memory, size_t size, bool write)
 constexpr uint32_t kEspMagic = 0x45344456;      // "VD4E"
 constexpr uint32_t kCpuFullMagic = 0x46344456;  // "VD4F": the host now and its memory
 constexpr uint32_t kCpuKeyMagic = 0x4B344456;   // "VD4K": keyframe state + journal (the engine's blob)
+constexpr uint32_t kCpuKey2Magic = 0x4C344456;  // "VD4L": keyframe state + the Quake II core's + journal
 constexpr size_t kEspMaxState = 12u << 20;      // the firmware's resources (7.5 MB at most) and the rest
 constexpr size_t kCpuMaxState = 16u << 20;      // memory 8.7 MB, host state, journal
 constexpr size_t kCpuMaxEngineBlob = 4u << 20;  // the host state (tens of KB), a journal (an APP_START carries its ELF)
+constexpr uint32_t kQ2FullMagic = 0x51344456;   // "VD4Q": the Quake II core's state and its SDRAM
+constexpr size_t kQ2MaxKey = 256u * 1024;       // Vdac4BomzhCore::Save: about 33 KB, a command and a WRITE chunk
+constexpr size_t kQ2MaxEngineBlob = 1u << 20;   // registers and tables (about 33 KB), a picture (at most 3 MB: never)
+constexpr size_t kQ2MaxState = 12u << 20;       // the SDRAM's runs (8 MB and their headers), the blob
+
+/// Vdac4EspCpu's engine blob, read: the ESP's keyframe state, the Quake II core's (empty: not running, or a blob
+/// from before it), the journal since, the hash now, the journal length at the capture before
+struct CpuKeyBlob
+{
+    std::vector<uint8_t> key, q2Key, journal;
+    uint64_t hash = 0;
+    uint64_t prev = 0;
+};
+
+bool ReadCpuKeyBlob(const uint8_t* state, size_t size, CpuKeyBlob& out, size_t maxState)
+{
+    Vdac4EspStateReader r(state, size);
+    const uint32_t magic = r.U32();
+    if (magic != kCpuKeyMagic && magic != kCpuKey2Magic)
+        return false;
+    r.Blob(out.key, maxState);
+    if (magic == kCpuKey2Magic)
+        r.Blob(out.q2Key, kQ2MaxKey);
+    r.Blob(out.journal, maxState);
+    out.hash = r.U64();
+    out.prev = r.AtEnd() ? 0 : r.U64();
+    return r.Ok() && r.AtEnd();
+}
+
+/// The replay point's key: the ESP's keyframe and the core's with it
+uint64_t KeyHash(const std::vector<uint8_t>& key, const std::vector<uint8_t>& q2Key)
+{
+    const uint64_t h = Hash64(key.data(), key.size());
+    return q2Key.empty() ? h : Hash64(q2Key.data(), q2Key.size(), h);
+}
 
 }  // namespace
 
@@ -184,6 +224,7 @@ void TTDVdac4Tang::TTDLoadState(const uint8_t* src)
     const uint8_t personality = r.U8();
     s.personality = personality == 0 ? Vdac4Tang::Personality::Loading
                     : personality == 2 ? Vdac4Tang::Personality::Ft
+                    : personality == 3 ? Vdac4Tang::Personality::Q2
                                        : Vdac4Tang::Personality::Ts;
     s.armed = r.U8();
     s.msel = r.U8();
@@ -386,6 +427,8 @@ void TTDVdac4EspCpu::TTDRecordingStopped()
     _board.Runtime().Host().JournalStop();
     _keyState.clear();
     _keyState.shrink_to_fit();
+    _q2Key.clear();
+    _q2Key.shrink_to_fit();
     _keyDue = true;
 }
 
@@ -420,14 +463,29 @@ void TTDVdac4EspCpu::TTDCaptureBegins(bool rescan)
     vdac4::EspAppHost& host = runtime.Host();
     runtime.WaitIdle();  // a frame end flushed it already; a capture never sees a job running
     ++_sinceKey;
+    // The Quake II core started or stopped, or took a write no replay gives back (the firmware's): a keyframe, so
+    // the core runs, or does not, for the whole span and the span's replay is all its input
+    Vdac4Tang& tang = _board.Tang();
+    const uint64_t q2Epoch = tang.Q2Epoch();
+    const uint64_t q2Outside = tang.Q2OutsideInputs();
+    const bool q2Moved = q2Epoch != _q2Epoch || q2Outside != _q2Outside;
+    _q2Epoch = q2Epoch;
+    _q2Outside = q2Outside;
     // A journal over its limit keys this capture, so the blob carries it no more: whatever one frame sent (an
     // APP_START's ELF of megabytes), the blob stays the host state and at most kJournalLimit of journal
     const bool key = rescan || _keyDue || _keyState.empty() || host.Journal() != vdac4::EspAppHost::JournalMode::Record ||
-                     _sinceKey >= kKeyframeFrames || host.JournalBytes().size() > kJournalLimit;
+                     _sinceKey >= kKeyframeFrames || host.JournalBytes().size() > kJournalLimit || q2Moved;
+    _keyedNow = key;
     if (key)
     {
         host.SaveState(_keyState);
         host.JournalBegin();
+        _q2Key.clear();
+        if (const Vdac4BomzhCore* core = tang.Q2Core())
+        {
+            Vdac4EspStateWriter w(_q2Key);
+            core->Save(w);
+        }
         _sinceKey = 0;
         _keyDue = false;
         ++_stats.keyframes;
@@ -464,15 +522,10 @@ bool TTDVdac4EspCpu::TTDLoadRestoresRegions(const uint8_t* state, size_t size)
     // The load below goes on from a replay point when one has this keyframe and a journal this one begins with:
     // it copies the point's memory whole, so the engine need not decode the keyframe's first
     _regionsLeft = false;
-    Vdac4EspStateReader r(state, size);
-    if (r.U32() != kCpuKeyMagic)
+    CpuKeyBlob blob;
+    if (!ReadCpuKeyBlob(state, size, blob, kCpuMaxState) || blob.key.empty())
         return false;
-    std::vector<uint8_t> key, journal;
-    r.Blob(key, kCpuMaxState);
-    r.Blob(journal, kCpuMaxState);
-    if (!r.Ok() || key.empty())
-        return false;
-    _regionsLeft = FindReplayPoint(Hash64(key.data(), key.size()), journal) != nullptr;
+    _regionsLeft = FindReplayPoint(KeyHash(blob.key, blob.q2Key), blob.journal) != nullptr;
     return _regionsLeft;
 }
 
@@ -487,8 +540,10 @@ bool TTDVdac4EspCpu::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
     state.clear();
     Vdac4EspStateWriter w(state);
-    w.U32(kCpuKeyMagic);
+    // The keyframe's parts first, the journal growing last: a capture stores the pieces of the blob that changed
+    w.U32(kCpuKey2Magic);
     w.Blob(_keyState);
+    w.Blob(_q2Key);
     w.Blob(_board.Runtime().Host().JournalData());
     w.U64(_hashNow);
     w.U64(_journalPrev);
@@ -507,16 +562,13 @@ bool TTDVdac4EspCpu::TTDLoadDiverged(std::string& detail)
 bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
 {
     _loadDivergence.clear();
-    Vdac4EspStateReader r(state, size);
-    if (r.U32() != kCpuKeyMagic)
+    CpuKeyBlob blob;
+    if (!ReadCpuKeyBlob(state, size, blob, kCpuMaxState))
         return false;
-    std::vector<uint8_t> key, journal;
-    r.Blob(key, kCpuMaxState);
-    r.Blob(journal, kCpuMaxState);
-    const uint64_t hash = r.U64();
-    const uint64_t prev = r.AtEnd() ? 0 : r.U64();
-    if (!r.Ok() || !r.AtEnd())
-        return false;
+    std::vector<uint8_t>& key = blob.key;
+    std::vector<uint8_t>& journal = blob.journal;
+    const uint64_t hash = blob.hash;
+    const uint64_t prev = blob.prev;
     const bool regionsLeft = _regionsLeft;
     _regionsLeft = false;
     if (key.empty())
@@ -528,7 +580,39 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
     vdac4::EspAppHost& host = runtime.Host();
     runtime.DropJobs();
     ++_stats.restores;
-    const uint64_t keyHash = Hash64(key.data(), key.size());
+    const uint64_t keyHash = KeyHash(key, blob.q2Key);
+
+    // The Quake II core ran at the keyframe: it goes with the ESP (the Tang, restored first, runs it again), fed the
+    // LINK writes of the replay. The engine restored its SDRAM to the keyframe's (the region moves at keyframes only)
+    Vdac4Tang& tang = _board.Tang();
+    Vdac4BomzhCore* q2 = nullptr;
+    if (!blob.q2Key.empty())
+    {
+        q2 = tang.Q2Core() != nullptr ? tang.Q2Model() : nullptr;
+        if (q2 == nullptr)
+        {
+            ++_stats.divergences;
+            _stats.lastDivergence = _loadDivergence = "the Quake II core of the keyframe does not run";
+        }
+    }
+    struct FeedQ2
+    {
+        vdac4::EspAppHost& host;
+        explicit FeedQ2(vdac4::EspAppHost& h, Vdac4Tang* tang) : host(h)
+        {
+            if (tang == nullptr)
+                return;
+            host.SetReplayLinkSink(
+                [tang](uint32_t address, uint32_t value) { tang->Q2ReplayLinkWrite(address, value); },
+                [tang](uint32_t ftAddress, const uint8_t* words, size_t count) {
+                    tang->Q2ReplayLinkFtWrite(ftAddress, words, count);
+                });
+        }
+        ~FeedQ2() { host.SetReplayLinkSink({}, {}); }
+        FeedQ2(const FeedQ2&) = delete;
+        FeedQ2& operator=(const FeedQ2&) = delete;
+    } feed(host, q2 ? &tang : nullptr);
+
     size_t from = 0;
     if (const ReplayPoint* point = FindReplayPoint(keyHash, journal))
     {
@@ -537,7 +621,15 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
         std::copy(point->psram.begin(), point->psram.end(), memory.PsramBytes().begin());
         std::copy(point->sram.begin(), point->sram.end(), memory.SramBytes().begin());
         std::copy(point->rom.begin(), point->rom.end(), memory.RomBytes().begin());
-        if (host.LoadState(point->state.data(), point->state.size()))
+        bool q2Back = q2 == nullptr;
+        if (q2 != nullptr && point->q2Sdram.size() == Vdac4BomzhCore::kMemoryBytes)
+        {
+            Vdac4EspStateReader r(point->q2State.data(), point->q2State.size());
+            q2Back = q2->Load(r);
+            if (q2Back)
+                std::copy(point->q2Sdram.begin(), point->q2Sdram.end(), q2->Memory());
+        }
+        if (q2Back && host.LoadState(point->state.data(), point->state.size()))
         {
             host.SetJournalReadMap(point->reads);
             from = point->journal.size();
@@ -563,13 +655,22 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
         _stats.lastDivergence = "keyframe state does not load";
         return false;
     }
+    if (from == 0 && q2 != nullptr)
+    {
+        Vdac4EspStateReader r(blob.q2Key.data(), blob.q2Key.size());
+        if (!q2->Load(r) || !r.AtEnd())
+        {
+            ++_stats.divergences;
+            _stats.lastDivergence = _loadDivergence = "the Quake II core's keyframe state does not load";
+        }
+    }
     std::string error;
     bool replayed = true;
     if (prev > from && prev < journal.size())
     {
         replayed = host.JournalReplay(journal.data(), journal.size(), from, prev, error);
         if (replayed)
-            KeepReplayPoint(keyHash, journal.data(), prev);
+            KeepReplayPoint(keyHash, journal.data(), prev, q2 != nullptr);
         from = prev;
     }
     const bool atPoint = from == journal.size();
@@ -585,8 +686,9 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
         _loadDivergence = _stats.lastDivergence;
     }
     else if (!atPoint)
-        KeepReplayPoint(keyHash, journal.data(), journal.size());
+        KeepReplayPoint(keyHash, journal.data(), journal.size(), q2 != nullptr);
     _keyState.swap(key);
+    _q2Key.swap(blob.q2Key);
     _journalLast = journal.size();
     _journalPrev = prev;
     // The next capture is a rescan (the engine's after every restore): a keyframe
@@ -607,7 +709,7 @@ TTDVdac4EspCpu::ReplayPoint* TTDVdac4EspCpu::FindReplayPoint(uint64_t keyHash, c
     return best;
 }
 
-void TTDVdac4EspCpu::KeepReplayPoint(uint64_t keyHash, const uint8_t* journal, size_t size)
+void TTDVdac4EspCpu::KeepReplayPoint(uint64_t keyHash, const uint8_t* journal, size_t size, bool q2)
 {
     ReplayPoint* slot = nullptr;
     for (ReplayPoint& p : _points)
@@ -631,9 +733,177 @@ void TTDVdac4EspCpu::KeepReplayPoint(uint64_t keyHash, const uint8_t* journal, s
     slot->psram.assign(memory.PsramBytes().begin(), memory.PsramBytes().end());
     slot->sram.assign(memory.SramBytes().begin(), memory.SramBytes().end());
     slot->rom.assign(memory.RomBytes().begin(), memory.RomBytes().end());
+    // The Quake II core the replay fed: its state and SDRAM at this point too
+    slot->q2State.clear();
+    slot->q2Sdram.clear();
+    Vdac4BomzhCore* core = q2 ? _board.Tang().Q2Model() : nullptr;
+    if (core != nullptr && core->Memory() != nullptr)
+    {
+        Vdac4EspStateWriter w(slot->q2State);
+        core->Save(w);
+        slot->q2Sdram.assign(core->Memory(), core->Memory() + Vdac4BomzhCore::kMemoryBytes);
+    }
+    else
+    {
+        slot->q2State.shrink_to_fit();
+        slot->q2Sdram.shrink_to_fit();
+    }
     slot->used = ++_pointClock;
 }
 
 /// endregion </Vdac4EspCpu>
+
+/// region <Vdac4Q2>
+
+TTDVdac4Q2::TTDVdac4Q2(Vdac4Tang& tang, const TTDVdac4EspCpu& espCpu) : _tang(tang), _espCpu(espCpu)
+{
+    // The model (and its SDRAM) exists from here on: the region is the same memory for every session
+    if (Vdac4BomzhCore* core = _tang.Q2Model(); core && core->IsReady())
+        _tracker.Bind(core->Memory(), Vdac4BomzhCore::kMemoryBytes);
+}
+
+size_t TTDVdac4Q2::TTDStateSize() const
+{
+    return kQ2MaxState;
+}
+
+bool TTDVdac4Q2::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
+{
+    state.clear();
+    Vdac4EspStateWriter w(state);
+    _tang.SaveQ2(w, Vdac4Tang::Q2Part::Live);
+    return true;
+}
+
+size_t TTDVdac4Q2::TTDStateWithoutRegionsLimit() const
+{
+    return kQ2MaxEngineBlob;
+}
+
+bool TTDVdac4Q2::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
+{
+    // After Vdac4EspCpu: its keyframe and replay gave the core; this checkpoint's Evo side and picture now
+    _loadDivergence.clear();
+    Vdac4EspStateReader r(state, size);
+    bool matches = true;
+    if (!_tang.LoadQ2(r, Vdac4Tang::Q2Part::Live, &matches) || !r.AtEnd())
+        return false;
+    if (!matches)
+        _loadDivergence = "the Quake II core's replay ended at another state";
+    return true;
+}
+
+bool TTDVdac4Q2::TTDLoadDiverged(std::string& detail)
+{
+    if (_loadDivergence.empty())
+        return false;
+    detail = _loadDivergence;
+    _loadDivergence.clear();
+    return true;
+}
+
+void TTDVdac4Q2::TTDSaveStateTo(std::vector<uint8_t>& out) const
+{
+    BeginSized(out);
+    Vdac4EspStateWriter w(out);
+    w.U32(kQ2FullMagic);
+    std::vector<uint8_t> blob;
+    Vdac4EspStateWriter whole(blob);
+    _tang.SaveQ2(whole, Vdac4Tang::Q2Part::Whole);
+    w.Blob(blob);
+    const uint8_t* memory = _tracker.Memory();
+    w.Bool(memory != nullptr);
+    if (memory)
+        PutSparse(w, memory, _tracker.Bytes());
+    EndSized(out);
+}
+
+void TTDVdac4Q2::TTDSaveState(uint8_t* dst) const
+{
+    std::vector<uint8_t> out;
+    TTDSaveStateTo(out);
+    std::memcpy(dst, out.data(), out.size());
+}
+
+void TTDVdac4Q2::TTDLoadState(const uint8_t* src)
+{
+    const uint32_t size = SizedLength(src);
+    if (size < 4 || size > kQ2MaxState)
+        return;
+    Vdac4EspStateReader r(src + 4, size - 4);
+    if (r.U32() != kQ2FullMagic)
+        return;
+    std::vector<uint8_t> blob;
+    if (!r.Blob(blob, kQ2MaxEngineBlob))
+        return;
+    const bool hasMemory = r.Bool();
+    uint8_t* memory = _tracker.Memory();
+    if (!r.Ok() || hasMemory != (memory != nullptr))
+        return;
+    if (memory)
+    {
+        // Checked first: the SDRAM stays as it is if the state does not fit
+        Vdac4EspStateReader check = r;
+        if (!GetSparse(check, memory, _tracker.Bytes(), false) || !check.AtEnd())
+            return;
+        (void)GetSparse(r, memory, _tracker.Bytes(), true);
+        // The memory moved without marks: a recording stores it whole at its next capture (LoadQ2 moves the
+        // Tang's epoch, so that capture is a keyframe of the ESP)
+        _tracker.MarkAll();
+    }
+    else if (!r.AtEnd())
+        return;
+    Vdac4EspStateReader whole(blob.data(), blob.size());
+    (void)_tang.LoadQ2(whole, Vdac4Tang::Q2Part::Whole);
+}
+
+uint64_t TTDVdac4Q2::TTDHashState() const
+{
+    std::vector<uint8_t> blob;
+    Vdac4EspStateWriter w(blob);
+    _tang.SaveQ2(w, Vdac4Tang::Q2Part::Whole);
+    return Hash64(blob.data(), blob.size());
+}
+
+TTDDeviceDescriptor TTDVdac4Q2::TTDDescribe() const
+{
+    TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+    // The Tang's state says whether the core runs; the ESP's keyframe and replay give the core (Vdac4EspCpu restores
+    // after the Tang); this checkpoint's Evo side and picture come last
+    d.restoreAfter.push_back({TTDDeviceType::Vdac4EspCpu, "vdac4espcpu"});
+    return d;
+}
+
+void TTDVdac4Q2::TTDRegions(std::vector<TTDDeviceRegion>& out)
+{
+    if (_tracker.Memory() == nullptr)
+        return;
+    TTDDeviceRegion r;
+    r.desc.id = TTDRegionId::Vdac4Q2Sdram;
+    r.desc.name = "vdac4.q2.sdram";
+    r.desc.ownerType = static_cast<uint16_t>(TTDDeviceType::Vdac4Q2);
+    r.desc.memory = _tracker.Memory();
+    r.desc.bytes = static_cast<uint32_t>(_tracker.Bytes());
+    r.desc.pieces = _tracker.Pieces();
+    r.tracker = &_tracker;
+    out.push_back(r);
+}
+
+void TTDVdac4Q2::TTDBeforeCapture()
+{
+    // The SDRAM moves with the ESP's keyframes: offered whole at one (the engine keeps the pieces that changed),
+    // never in between, where the ESP's replay computes it again
+    if (_armed && _espCpu.LastCaptureKeyed())
+        _tracker.MarkAll();
+}
+
+void TTDVdac4Q2::TTDBeforeRestore()
+{
+    // Between keyframes the SDRAM moved on unmarked, and a restore re-runs it: every piece is restored
+    if (_armed)
+        _tracker.MarkAll();
+}
+
+/// endregion </Vdac4Q2>
 
 }  // namespace ttd

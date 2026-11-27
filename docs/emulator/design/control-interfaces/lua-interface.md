@@ -158,7 +158,10 @@ local ok, why = tape_load("/path/to/game.tap")  -- A tape (.tap/.tzx/.spc/.sta/.
 local ok = tape_eject()                     -- The tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 -- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-tape_play()      -- start at consumption cursor; resumes in place when paused; queued for a tape still landing
+local ok, report = tape_play()  -- resumes in place when frozen in a block; a playing tape is left as it is; else starts
+                 -- at the first block with a signal from the cursor on; queued for a tape still landing.
+                 -- ok: false without a tape. report: the deck after the call (report.result, .playing, .state,
+                 -- .reason, .position.block, .block.kind, .skipped_blocks, .text): command-interface.md "The play answer"
 tape_pause()     -- freeze mid-block (idempotent); false when not playing
 tape_stop()      -- terminal stop: invalidates the loaded image
 tape_rewind()    -- rewind to block 0, image kept
@@ -582,7 +585,7 @@ r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frame
 r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line with its tile graphics pages), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs (the register file #00-#47)
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
-v4 = vdac4_state(20)         -- TS-Conf VDAC4 board: tang {personality, ft_cfg, ...}, esp {phase, boots, last_error, clock_restarts, ...}, app {running, name, version, error, ...}, link, packets {count, recent}, audio {input_rate, underruns, ...}, threads {esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, esp_jobs, esp_wait_ms, ft_ops, ...}, log (last 20 ESP lines; default 50, max 256); {error="..."} without the board
+v4 = vdac4_state(20)         -- TS-Conf VDAC4 board: tang {personality, ft_cfg, ...}, esp {phase, boots, last_error, clock_restarts, ...}, app {running, name, version, error, ...}, link, packets {count, recent}, audio {input_rate, underruns, ...}, threads {esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, esp_jobs, esp_wait_ms, ft_ops, ...}, log (last 20 ESP lines; default 50, max 256); {error="..."} without the board
 m = vdac4_esp_memory(0x3fc8a000, 64, true)  -- the VDAC4 ESP's memory (size default 16, at most 4096; true: an address of the running app's ELF image, as a haptic probe `cpu: esp` takes it): {address, size, app, bytes, hex} or {error}
 sp = sprinter_state()       -- Sprinter Sp2000: pld (module Standard / Game, selected_by, why, game), decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state

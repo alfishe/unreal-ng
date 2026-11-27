@@ -247,3 +247,5 @@ void ReportPane::fillTable(const StateNode* rows, bool live, std::map<QString, Q
     _table->verticalScrollBar()->setValue(scroll);
     _table->setUpdatesEnabled(true);
 }
+
+#include "moc_reportpane.cpp"

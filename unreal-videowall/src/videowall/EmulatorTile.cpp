@@ -389,3 +389,5 @@ QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
         _pictureAspect = aspect;
     return _latchedFrame;
 }
+
+#include "moc_EmulatorTile.cpp"

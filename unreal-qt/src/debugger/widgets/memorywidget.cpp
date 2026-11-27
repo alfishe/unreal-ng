@@ -230,3 +230,5 @@ void MemoryWidget::setFreePageNumber(int viewerSlot, int pageNumber)
         _freeWidgets[viewerSlot]->setPhysicalPage(pageNumber);
     }
 }
+
+#include "moc_memorywidget.cpp"

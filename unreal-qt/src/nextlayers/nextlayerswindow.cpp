@@ -238,3 +238,5 @@ bool NextLayersWindow::eventFilter(QObject* watched, QEvent* event)
         showPixelAt(static_cast<QMouseEvent*>(event)->pos());
     return QWidget::eventFilter(watched, event);
 }
+
+#include "moc_nextlayerswindow.cpp"

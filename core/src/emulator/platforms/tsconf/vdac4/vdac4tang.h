@@ -34,10 +34,15 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <vector>
 
 #include "emulator/platforms/tsconf/evehostcard.h"
 
 class EmulatorContext;
+class Vdac4BomzhCore;
+class Vdac4EspStateWriter;
+class Vdac4EspStateReader;
 
 class Vdac4Tang : public EveHostCard
 {
@@ -53,12 +58,15 @@ public:
     static constexpr uint64_t kTactsPerMs = kRasterHz / 1000;
     /// FT -> TS after this long without Evo FT traffic while M_SEL = 0 (RTL SWITCH_IDLE_MS)
     static constexpr uint32_t kSwitchIdleMs = 500;
+    /// The Quake II core's HDMI frame (60 Hz)
+    static constexpr uint32_t kQ2FramePeriodUs = 16'667;
 
     enum class Personality : uint8_t
     {
         Ts = 1,       ///< slot 0, TS-Conf HDMI core
         Loading = 0,  ///< slot 1 bitstream loading
         Ft = 2,       ///< slot 1, FT812 core
+        Q2 = 3,       ///< a core from the Evo card (core_load "Q2"): the Quake II GPU, its own HDMI picture
     };
 
     /// LINK register addresses (R3 §2)
@@ -83,6 +91,7 @@ public:
     };
 
     Vdac4Tang(EmulatorContext* context, std::function<uint32_t()> rasterInFrame);
+    ~Vdac4Tang() override;
 
     /// region <EveHostCard>
     void PowerOn() override;
@@ -90,6 +99,8 @@ public:
     void Reset() override;
     void OnFrameEnd() override;
     void SetShowing(bool showing) override;
+    /// The ESP job that hosts the FT812 is done with the chip
+    void WaitChipIdle() override { WaitEsp(); }
     size_t TakeIntEdges(uint32_t rasterInFrame, uint32_t* out, size_t max) override;
     void select(bool selected) override;
     uint8_t exchange(uint8_t mosi) override;
@@ -100,6 +111,51 @@ public:
     void LinkWrite(uint32_t address, uint32_t value);
     /// LinkWrite(FT_ADDR, ftAddress), then LinkWrite(FT_DATA, word) for each of `count` words (little-endian bytes)
     void LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count);
+    /// LinkWrite from the ESP firmware itself, not its app (IVdac4TangLink::FirmwareLinkWrite)
+    void FirmwareLinkWrite(uint32_t address, uint32_t value);
+    /// core_load of a core the BL616 holds (its VDAC4 mark `usercode`): the Tang runs it and answers its LINK
+    /// VERSION. kZmOk (0), or -1 when no emulated core has that mark. Only the Quake II core (0x564434'Q') is
+    /// emulated
+    int LoadCore(uint32_t usercode, uint32_t& version);
+    /// tang::backToSlot0: BOOT, then the TS-Conf core runs. True when it does
+    bool CoreBack();
+    /// The Quake II core while it runs (Personality::Q2), else nullptr
+    const Vdac4BomzhCore* Q2Core() const { return _q2; }
+    /// Quake II pictures latched to the Screen since the core was loaded
+    uint64_t Q2LatchedFrames() const { return _q2Latched; }
+    /// The machine frame ends with the ESP settled (Vdac4Board::OnFrameEnd): a new picture of the Quake II core is
+    /// latched now, so the FRAME the ESP sent during the frame end is shown in this frame
+    void PresentFrame() { PresentQ2(); }
+
+    /// region <Quake II core state (TTD)>
+    /// The core's model, made on first use and kept from then on (its SDRAM is a TTD region: the same memory for a
+    /// whole session, whatever core_load / core_back do); null when the SDRAM could not be allocated
+    Vdac4BomzhCore* Q2Model();
+    /// What SaveQ2 writes: Whole, the core's state while it runs (registers, tables, stream, the latched
+    /// picture); Live, all of it but the core's ESP side (Vdac4BomzhCore::SaveEvoSide and a hash of its state
+    /// instead): a TTD checkpoint between the ESP's keyframes, whose replay of the ESP computes the core again.
+    /// Neither holds the SDRAM (Q2Model()->Memory())
+    enum class Q2Part : uint8_t
+    {
+        Whole = 0,
+        Live = 1
+    };
+    void SaveQ2(Vdac4EspStateWriter& out, Q2Part part = Q2Part::Whole) const;
+    /// SaveQ2's bytes, after SetState and the SDRAM (Live: and the ESP's replay): the picture comes back as it
+    /// was latched. False: not such a state (nothing changed). Live: `coreMatches` false when the core's state is
+    /// not the one recorded (its hash differs, or the core does not run)
+    bool LoadQ2(Vdac4EspStateReader& in, Q2Part part = Q2Part::Whole, bool* coreMatches = nullptr);
+    /// Counts the core's starts and stops (core_load, core_back, BOOT, power, a restore): TTD keys the ESP's
+    /// recording at the capture after a change, so the core runs or does not for a whole keyframe span
+    uint64_t Q2Epoch() const { return _q2Epoch; }
+    /// Writes into the running core that are not the ESP app's: the firmware's LINK writes (FirmwareLinkWrite),
+    /// which no replay of the ESP gives back. TTD keys at the capture after a change
+    uint64_t Q2OutsideInputs() const { return _q2Outside; }
+    /// The ESP's TTD journal replay: an app's LINK write into the running core alone (the Tang's own state is
+    /// restored, not replayed); nothing while the core does not run
+    void Q2ReplayLinkWrite(uint32_t address, uint32_t value);
+    void Q2ReplayLinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count);
+    /// endregion
 
     /// region <The ESP's jobs (vdac4board.h)>
     /// The owner's position now, absolute raster tacts (the stamp of an ESP job; a job running meanwhile may have
@@ -139,7 +195,9 @@ public:
         uint32_t scratch = 0;
     };
     const State& GetState() const { return _state; }
-    void SetState(const State& state) { _state = state; }
+    /// The Quake II core's state is not part of it (SaveQ2 / LoadQ2, the TTD device vdac4q2): a state with
+    /// personality Q2 runs the core as it is, its state is loaded next
+    void SetState(const State& state);
 
     static constexpr uint32_t kFtCfgRamG3M = 0x01;
     static constexpr uint32_t kFtCfgNoDither = 0x02;
@@ -152,6 +210,13 @@ private:
     void StartLoading(uint64_t now);
     void EnterFt();
     void EnterTs();
+    /// `fresh`: core_load (the core reset, the black picture latched); else a restore, whose LoadQ2 follows
+    void EnterQ2(bool fresh = true);
+    /// The Quake II core goes (BOOT, power): the Screen's picture back to what the TS / FT personality shows
+    void LeaveQ2();
+    /// A new picture of the Quake II core: latched to the Screen (its own picture while the core runs)
+    void PresentQ2();
+    uint64_t NowMs() const { return Now() / kTactsPerMs; }
     /// RAM_G size from FT_CFG bit 0 (2 MB + ROM fonts, or 3 MB)
     void ApplyRamMode();
     /// An Evo transfer ended in TS personality: does it start the FT core?
@@ -167,7 +232,28 @@ private:
             _waitEsp();
     }
 
+    /// Where _q2Picture came from: what a state needs to bring it back
+    enum class Q2Picture : uint8_t
+    {
+        Black = 0,  ///< the core was loaded, no FRAME latched yet
+        Core = 1,   ///< ShownPicture at _q2PictureSerial: the same as long as the core's ShownSerial is
+        Raw = 2,    ///< neither (a FRAME after the latch inside a frame): its bytes are saved
+    };
+    /// The picture's buffer and size to the Screen (a restore)
+    void ApplyQ2Picture();
+
     State _state;
+    std::unique_ptr<Vdac4BomzhCore> _q2Model;  ///< made on first use, kept (Q2Model)
+    Vdac4BomzhCore* _q2 = nullptr;            ///< the model while the core runs
+    Q2Picture _q2PictureSource = Q2Picture::Black;
+    uint64_t _q2PictureSerial = 0;
+    std::vector<uint8_t> _q2Picture;
+    uint16_t _q2Width = 0;
+    uint16_t _q2Height = 0;
+    uint32_t _q2Frames = 0;     ///< the core's FRAMES as of the last latch
+    uint64_t _q2Latched = 0;
+    uint64_t _q2Epoch = 0;                       ///< Q2Epoch: not state
+    uint64_t _q2Outside = 0;                     ///< Q2OutsideInputs: not state
     bool _espJob = false;
     std::function<void()> _waitEsp;
 };

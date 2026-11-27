@@ -387,3 +387,5 @@ QString GsLwPane::field(const QString& name) const
             return label->text();
     return QString();
 }
+
+#include "moc_gslwpane.cpp"

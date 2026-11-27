@@ -166,3 +166,5 @@ void ShowSymbolReport(QWidget* parent, const QString& title, const SymbolReply& 
         box.setDetailedText(details.join("\n"));
     box.exec();
 }
+
+#include "moc_symbolfiledialogs.cpp"

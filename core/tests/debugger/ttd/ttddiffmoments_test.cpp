@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
@@ -494,13 +495,18 @@ TEST_F(TTDDiffMoments_Test, D12_TheAyRegisterInTheDiffAndOnlyCountersLater)
     SoundCardScope turboSound(TestSound::TurboSound);   // the tests leave the AY socket empty unless asked
     // R0 = #10, R7 = #3E (tone A on), R8 = #0F; then halt forever
     // ld bc,#FFFD; ld a,0; out (c),a; ld b,#BF; ld a,#10; out (c),a; ... ei; halt; jr $-1
-    std::vector<uint8_t> code;
-    for (const auto& [reg, value] : std::vector<std::pair<uint8_t, uint8_t>>{{0, 0x10}, {7, 0x3E}, {8, 0x0F}})
+    // Copied into a vector of the final size: growing it by insert made gcc 13 -O3 report a write past the end of the
+    // new block (-Wstringop-overflow)
+    const std::pair<uint8_t, uint8_t> writes[] = {{0, 0x10}, {7, 0x3E}, {8, 0x0F}};
+    const uint8_t idle[] = {0xFB, 0x76, 0x18, 0xFD};
+    std::vector<uint8_t> code(std::size(writes) * 13 + std::size(idle));
+    auto out = code.begin();
+    for (const auto& [reg, value] : writes)
     {
-        const uint8_t write[] = {0x01, 0xFD, 0xFF, 0x3E, reg, 0xED, 0x79, 0x06, 0xBF, 0x3E, value, 0xED, 0x79};
-        code.insert(code.end(), std::begin(write), std::end(write));
+        const uint8_t write[13] = {0x01, 0xFD, 0xFF, 0x3E, reg, 0xED, 0x79, 0x06, 0xBF, 0x3E, value, 0xED, 0x79};
+        out = std::copy(std::begin(write), std::end(write), out);
     }
-    code.insert(code.end(), {0xFB, 0x76, 0x18, 0xFD});
+    std::copy(std::begin(idle), std::end(idle), out);
     Record(Im2(code), 6);
     const ttd::TTDDiffMomentsResult r = Diff({_frames[0], 0}, {_frames[2], 0}, ttd::kDiffDevices);
     ASSERT_TRUE(r.error.empty()) << r.error;

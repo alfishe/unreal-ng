@@ -472,3 +472,5 @@ void LiveSourceWindow::convert()
     if (!reply.Ok())
         QMessageBox::warning(this, tr("Convert"), QString::fromStdString(reply.message));
 }
+
+#include "moc_livesourcewindow.cpp"

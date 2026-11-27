@@ -4,6 +4,8 @@
 #define DISASSEMBLERWIDGET_H
 
 #include <QAbstractScrollArea>
+#include <QHash>
+#include <QStaticText>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QObject>
@@ -145,8 +147,13 @@ private:
     int charWidth() const;
     int textLeft() const;  ///< x of column 0 after the horizontal scroll
     void updateHorizontalRange();
+    /// `text` laid out once in the view's font: a row's pieces repeat from stop to stop (the rows move, the PC row
+    /// changes), and QPainter::drawText shaped every piece on every paint
+    const QStaticText& laidOut(const QString& text) const;
 
     std::vector<DisassemblyLine> m_lines;
+    mutable QHash<QString, QStaticText> m_texts;  ///< laidOut's, cleared when the font changes or it grows past a limit
+    mutable QString m_textsFont;
     QString m_placeholder;
     int m_hoverLine = -1;
     int m_mnemonicWidth = MNEMONIC_COL_WIDTH;

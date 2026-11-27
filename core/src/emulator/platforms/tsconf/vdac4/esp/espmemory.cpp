@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <string>
 
 #include "esprom.h"
@@ -54,6 +55,27 @@ uint32_t EspHeap::BlockSize(uint32_t address) const
     return it == _used.end() ? 0 : it->second;
 }
 
+bool EspHeap::Resize(uint32_t address, uint32_t size)
+{
+    auto it = _used.find(address);
+    if (it == _used.end())
+        return false;
+    if (size == 0)
+        size = 1;
+    if (size > _size)
+        return false;
+    const uint32_t need = RoundUp(size);
+    if (need > it->second)
+    {
+        const auto next = std::next(it);
+        const uint64_t limit = next != _used.end() ? next->first : static_cast<uint64_t>(_base) + _size;
+        if (static_cast<uint64_t>(address) + need > limit)
+            return false;
+    }
+    it->second = need;
+    return true;
+}
+
 uint32_t EspHeap::FreeBytes() const
 {
     uint32_t used = 0;
@@ -72,7 +94,7 @@ void EspHeap::Clear()
 /// region <EspMemory>
 
 EspMemory::EspMemory()
-    : _psram(kPsramSize), _sram(kSramSize), _rom(kEspRomSize), _psramHeap(kPsramDbus, kPsramSize),
+    : _psram(kPsramSize), _sram(kSramSize), _rom(kEspRomSize), _extmem(kExtmemSize), _psramHeap(kPsramDbus, kPsramSize),
       _sramHeap(kSramBase, kSramSize)
 {
     Reset();
@@ -84,6 +106,9 @@ void EspMemory::Reset()
     std::fill(_sram.begin(), _sram.end(), 0);
     std::fill(_rom.begin(), _rom.end(), 0);
     std::memcpy(_rom.data(), kEspRomImage, kEspRomImageSize);
+    std::fill(_extmem.begin(), _extmem.end(), 0);
+    Write32(kExtmemBase + 0x00, kDcacheCtrl);
+    Write32(kExtmemBase + 0x60, kIcacheCtrl);
     _psramHeap.Clear();
     _sramHeap.Clear();
 }
@@ -104,8 +129,12 @@ uint8_t* EspMemory::Bytes(uint32_t address, uint32_t size)
         return _psram.data() + (address - kPsramIbus);
     if (inside(kSramBase, kSramSize))
         return _sram.data() + (address - kSramBase);
+    if (inside(kSramIbus, kSramSize))
+        return _sram.data() + (address - kSramIbus);
     if (inside(kEspRomBase, kEspRomSize))
         return _rom.data() + (address - kEspRomBase);
+    if (inside(kExtmemBase, kExtmemSize))
+        return _extmem.data() + (address - kExtmemBase);
     return nullptr;
 }
 
@@ -168,6 +197,13 @@ void EspMemory::HeapCapsFree(uint32_t address)
 {
     if (!_psramHeap.Free(address))
         _sramHeap.Free(address);
+}
+
+bool EspMemory::Resize(uint32_t address, uint32_t size)
+{
+    if (_psramHeap.Contains(address))
+        return _psramHeap.Resize(address, size);
+    return _sramHeap.Contains(address) && _sramHeap.Resize(address, size);
 }
 
 uint32_t EspMemory::AllocatedSize(uint32_t address) const

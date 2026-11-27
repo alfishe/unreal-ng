@@ -3,6 +3,7 @@
 
 #include "vdac4espfixture.h"
 
+#include <algorithm>
 #include <string>
 
 using namespace Vdac4EspTest;
@@ -33,7 +34,7 @@ TEST_F(Vdac4EspFirmware_Test, SysInfoAcksThenReportsAndSetsStep8)
     EXPECT_EQ(text.rfind("RAM:", 0), 0u);
     EXPECT_NE(text.find("BOARD:VDAC4-A3.1"), std::string::npos);
     EXPECT_NE(text.find("CORE:SPI+"), std::string::npos);
-    EXPECT_EQ(text.substr(text.size() - 12), "FW:unreal-ng");
+    EXPECT_EQ(text.substr(text.size() - 30), "FW:vdac4-0.1.174-unreal-ng-hle");
     frame = Exchange(0x05, {}, 0x85);
     ASSERT_EQ(frame.data.size(), 1u);
     EXPECT_EQ(frame.data[0], 8);
@@ -322,6 +323,51 @@ TEST_F(Vdac4EspFirmware_Test, TangRegistersThroughTheLink)
     EXPECT_EQ(_tang.registers.count(0x48), 0u);
 }
 
+/// tang_link.cpp link task: the mark in SCRATCH, rewritten within 2 s once a reload (or a Z80 write) wipes it
+TEST_F(Vdac4EspFirmware_Test, LinkWatchKeepsTheMarkInScratch)
+{
+    _tang.registers[0x00] = 0x56444334;
+    _tang.registers[0x04] = 0x03000002;
+    std::vector<std::string> log;
+    _esp->Firmware().SetLog([&log](const std::string& line) { log.push_back(line); });
+    BootAndInit();
+    const uint32_t mark = _tang.registers[0x3C];
+    EXPECT_EQ(mark >> 24, 0x5Cu);
+    // A reloaded bitstream holds 0: left alone before the period, the mark again after it
+    _tang.registers[0x3C] = 0;
+    AdvanceMs(100);
+    EXPECT_EQ(_tang.registers[0x3C], 0u);
+    AdvanceMs(2000);
+    EXPECT_EQ(_tang.registers[0x3C], mark);
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 1u);
+    ASSERT_FALSE(log.empty());
+    EXPECT_EQ(log.back(), "LINK: Tang reloaded (SCRATCH 00000000), core 03 version 0.2");
+    // Still loading (no ID): no reload yet; the ID back - the mark back
+    _tang.registers[0x3C] = 0xCCCCCCCC;
+    _tang.registers[0x00] = 0xCCCCCCCC;
+    AdvanceMs(2100);
+    EXPECT_EQ(_tang.registers[0x3C], 0xCCCCCCCCu);
+    _tang.registers[0x00] = 0x56444334;
+    AdvanceMs(2100);
+    EXPECT_EQ(_tang.registers[0x3C], mark);
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 2u);
+    // A Z80 TANG_WRITE to SCRATCH costs one needless reload, as on the board
+    ASSERT_EQ(Exchange(0x46, {0x3C, 0x00, 1, 1, 2, 3, 4}, 0xC6).data[0], 1);
+    EXPECT_EQ(_tang.registers[0x3C], 0x04030201u);
+    AdvanceMs(2100);
+    EXPECT_EQ(_tang.registers[0x3C], mark);
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 3u);
+    // The watch state goes with the snapshot: armed, so no fresh mark write on the first pass after load
+    std::vector<uint8_t> state;
+    _esp->Save(state);
+    Create();
+    ASSERT_TRUE(_esp->Load(state.data(), state.size()));
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 3u);
+    const int writes = _tang.writes;
+    AdvanceMs(10);
+    EXPECT_EQ(_tang.writes, writes);
+}
+
 /// Save in the middle of a delivery, load into a fresh device, finish the delivery there
 TEST_F(Vdac4EspFirmware_Test, SaveLoadRoundTripMidDelivery)
 {
@@ -355,6 +401,69 @@ TEST_F(Vdac4EspFirmware_Test, SaveLoadRoundTripMidDelivery)
     const uint8_t junk[] = {1, 2, 3};
     EXPECT_FALSE(_esp->Load(junk, sizeof(junk)));
     EXPECT_EQ(_esp->GetPhase(), Vdac4Esp::Phase::Booting);
+}
+
+/// The bytes of a delivery in progress go last, from a 4 KB boundary of the state: TTD stores a state as 4 KB pieces,
+/// so each new piece of the delivery changes only the pieces it lands in. A state of the old layout (the bytes
+/// in the delivery's header, no tail) still loads
+TEST_F(Vdac4EspFirmware_Test, DeliveryBytesGoLastOnAPieceBoundary)
+{
+    BootAndInit();
+    const std::vector<uint8_t> image = BuildElf(1500);
+    ASSERT_EQ(Exchange(0x69, QueryPayload("MID.ELF", static_cast<uint32_t>(image.size()), 3), 0xE9).data[0], 1);
+    std::vector<uint8_t> put = Le32(0);
+    put.insert(put.end(), image.begin(), image.begin() + 1000);
+    ASSERT_EQ(Exchange(0x6A, put, 0xEA).data[0], 1);
+    std::vector<uint8_t> first;
+    _esp->Save(first);
+    put = Le32(1000);
+    put.insert(put.end(), image.begin() + 1000, image.begin() + 1200);
+    ASSERT_EQ(Exchange(0x6A, put, 0xEA).data[0], 1);
+    std::vector<uint8_t> second;
+    _esp->Save(second);
+    ASSERT_GE(first.size(), 1004u);
+    const size_t at = first.size() - 1000;
+    EXPECT_EQ(at % 4096, 0u) << "the delivery's bytes start on a piece boundary";
+    EXPECT_TRUE(std::equal(image.begin(), image.begin() + 1000, first.begin() + static_cast<std::ptrdiff_t>(at)));
+    ASSERT_EQ(second.size(), at + 1200) << "more bytes only append";
+    EXPECT_TRUE(std::equal(image.begin(), image.begin() + 1200, second.begin() + static_cast<std::ptrdiff_t>(at)));
+
+    // The old layout: the bytes after the delivery's header, the alignment and the tail absent
+    std::vector<uint8_t> named = Le32(7);  // the delivery's name and size
+    named.insert(named.end(), {'M', 'I', 'D', '.', 'E', 'L', 'F'});
+    for (uint8_t b : Le32(static_cast<uint32_t>(image.size())))
+        named.push_back(b);
+    const auto found = std::search(first.begin(), first.end(), named.begin(), named.end());
+    ASSERT_NE(found, first.end());
+    const size_t header = static_cast<size_t>(found - first.begin()) + named.size() + 4 + 4 + 1;  // stamp, received, resource
+    ASSERT_EQ(std::vector<uint8_t>(first.begin() + static_cast<std::ptrdiff_t>(header),
+                                   first.begin() + static_cast<std::ptrdiff_t>(header) + 4),
+              Le32(0));
+    // The alignment blob (its length, then zeros) ends where the tail's length starts. Searched from the longest:
+    // a shorter guess would find zeros for its length inside the pad
+    const size_t tail = at - 4;
+    auto isPad = [&](size_t n) {
+        const auto zeros = first.begin() + static_cast<std::ptrdiff_t>(tail - n);
+        return std::vector<uint8_t>(zeros - 4, zeros) == Le32(static_cast<uint32_t>(n)) &&
+               std::all_of(zeros, zeros + static_cast<std::ptrdiff_t>(n), [](uint8_t b) { return b == 0; });
+    };
+    size_t pad = std::min<size_t>(4095, tail - 4);
+    while (pad > 0 && !isPad(pad))
+        --pad;
+    ASSERT_TRUE(isPad(pad));
+    std::vector<uint8_t> old(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(tail - pad - 4));
+    std::vector<uint8_t> bytes = Le32(1000);
+    bytes.insert(bytes.end(), image.begin(), image.begin() + 1000);
+    old.erase(old.begin() + static_cast<std::ptrdiff_t>(header), old.begin() + static_cast<std::ptrdiff_t>(header) + 4);
+    old.insert(old.begin() + static_cast<std::ptrdiff_t>(header), bytes.begin(), bytes.end());
+    Create();
+    ASSERT_TRUE(_esp->Load(old.data(), old.size()));
+    std::vector<uint8_t> again;
+    _esp->Save(again);
+    EXPECT_EQ(again, first) << "the old layout loads the same state";
+    // Cut in the tail: refused
+    Create();
+    EXPECT_FALSE(_esp->Load(first.data(), first.size() - 1));
 }
 
 /// A running app comes back from a saved state through the runtime's LoadState

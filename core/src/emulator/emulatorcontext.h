@@ -333,6 +333,10 @@ public:
     // checks are read from the same thread.
     bool ttdReplayActive = false;
 
+    /// Blocks every SD card of the machine moved (Z-Controller, NeoGS, Next, ...), for the status bar's storage LED:
+    /// host-side, not machine state; a time-travel replay does not count (the LED shows what the machine does now)
+    std::atomic<uint64_t> sdCardActivity{0};
+
     /// A tool's access through the machine's own paths runs (a debugger's port write, PortWrite): memory and port
     /// breakpoints do not fire on it. Set only where nothing else drives the machine (a coherent moment), so a
     /// plain bool; checked behind the breakpoint filters, never on a path without breakpoints

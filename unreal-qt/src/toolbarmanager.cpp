@@ -803,3 +803,5 @@ void ToolBarManager::restoreVisibility()
         _toolBar->update();
     }
 }
+
+#include "moc_toolbarmanager.cpp"

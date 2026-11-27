@@ -388,3 +388,5 @@ void RemoteControlGuard::unlock()
         if (view)
             view->setEditTriggers(previous);
 }
+
+#include "moc_remotecontrolguard.cpp"

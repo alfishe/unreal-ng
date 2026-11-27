@@ -594,3 +594,5 @@ void StreamDeckDialog::refresh()
             }
         }
 }
+
+#include "moc_streamdeckpage.cpp"

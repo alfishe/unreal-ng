@@ -160,6 +160,22 @@ struct Vertex
 
 // A palette decoded for one line (memory does not change while a line is drawn).
 
+// The last line a drawing thread replayed from the plan whose every reaching step depends on the line only through
+// a texel row (axis-aligned bitmaps) and the scissor's rows (eve-dl.cpp LineKeys): a later line with the same keys
+// under the same inputs has the same pixels and cost, so they are copied instead of drawn (a magnified bitmap repeats
+// each texel row over two or more screen lines)
+struct LineRepeat
+{
+    bool valid = false;
+    uint64_t record = 0, ramGWrites = 0, drawRegChanges = 0, outputVersion = 0, dlVersion = 0;
+    uint32_t width = 0;
+    uint64_t fillCost = 0;
+    uint64_t hits = 0;          // lines copied (tests)
+    std::vector<int64_t> keys;  // per reaching step: index, scissor rows hit, texel row (or 1/256 row for BILINEAR)
+    std::vector<int64_t> next;  // the keys of the line being drawn
+    std::unique_ptr<uint8_t[]> color{new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]()};
+};
+
 // One execution of the display list for one line.
 struct LineRun
 {
@@ -171,6 +187,12 @@ struct LineRun
     uint8_t* tag;
     uint32_t* texels;      // scratch: a span's decoded texels (kMaxLineWidth)
     uint32_t* bilinear;    // scratch of a BILINEAR span (kBilinearScratch)
+    BitmapHandle* handles; // the bitmap handles the line reads and sets: the chip's, or a line worker's copy
+    PaletteCache* palettes; // decoded palettes (kPaletteCacheEntries): the chip's, or a line worker's
+    uint32_t* paletteNext;
+    uint32_t paletteHit;   // the palette entry found last (LinePalette looks there first)
+    bool fromPlan;         // drawn from the recorded walk (ExecuteLine)
+    LineRepeat* repeat;    // the drawing thread's last repeatable line; null: none kept (probes)
     GraphicsContext ctx;
     GraphicsContext saved[kContextStackDepth];
     uint32_t savedCount;
@@ -239,8 +261,9 @@ struct LineSignature
     bool readsAnyMemory = false;  // a step whose reads are not bounded (text, bargraph)
     uint64_t ramGMark = 0, drawRegChanges = 0, outputVersion = 0;
     uint64_t fillCost = 0;
-    std::vector<LinePlanStep> steps;
-    std::vector<GraphicsContext> contexts;  // one per step
+    uint64_t record = 0;  // LinePlan::record and the logical line the steps were taken from
+    uint32_t y = 0;
+    std::vector<uint32_t> steps;  // the reaching steps: indices into recording `record` (LinePlan::history)
 };
 
 struct LinePlan
@@ -257,7 +280,22 @@ struct LinePlan
     uint32_t events = 0;
     std::vector<GraphicsContext> contexts;
     std::vector<LinePlanStep> steps;
+    // The steps by band of kPlanBandLines logical lines: those that may reach a line of the band, in order
+    // (bandSteps[bandFirst[b] .. bandFirst[b + 1]]); a line tests these instead of every step (eve-dl.cpp IndexSteps)
+    std::vector<uint32_t> bandFirst;
+    std::vector<uint32_t> bandSteps;
+    // The latest recordings' steps and contexts, at record % kHistory: a line's signature names its steps there, so
+    // a line remembers a few indices instead of copies (a game that changes its list every frame records every frame)
+    struct Recording
+    {
+        uint64_t record = 0;
+        std::vector<GraphicsContext> contexts;
+        std::vector<LinePlanStep> steps;
+    };
+    static constexpr uint32_t kHistory = 4;
+    Recording history[kHistory];
     std::vector<LineSignature> lines;  // per screen line (kMaxLines), kept across recordings
+    LineRepeat repeat;                 // the lines drawn on the chip's own thread (LineRun::repeat)
 };
 
 // --- eve-dl.cpp --------------------------------------------------------------------------------
@@ -265,11 +303,27 @@ struct LinePlan
 void ContextDefaults(GraphicsContext& ctx);
 template <LineMode Mode>
 void ExecuteLine(LineRun& run);
-// Bitmap size of a handle in pixels (0 means 2048).
-uint32_t HandleWidth(const BitmapHandle& h);
-uint32_t HandleHeight(const BitmapHandle& h);
-uint32_t HandleStride(const BitmapHandle& h);
-uint32_t HandleLayoutHeight(const BitmapHandle& h);
+// Bitmap size of a handle in pixels (0 means 2048). Inline: every bitmap span reads them
+constexpr uint32_t kHandleHighBitsShift = kBitmapSizeBits;  // _H bits sit above the 9 low bits
+constexpr uint32_t kHandleStrideLowBits = 10;
+inline uint32_t HandleWidth(const BitmapHandle& h)
+{
+    const uint32_t width = h.widthLow | (static_cast<uint32_t>(h.widthHigh) << kHandleHighBitsShift);
+    return width == 0 ? kBitmapSizeFull : width;
+}
+inline uint32_t HandleHeight(const BitmapHandle& h)
+{
+    const uint32_t height = h.heightLow | (static_cast<uint32_t>(h.heightHigh) << kHandleHighBitsShift);
+    return height == 0 ? kBitmapSizeFull : height;
+}
+inline uint32_t HandleStride(const BitmapHandle& h)
+{
+    return h.strideLow | (static_cast<uint32_t>(h.strideHigh) << kHandleStrideLowBits);
+}
+inline uint32_t HandleLayoutHeight(const BitmapHandle& h)
+{
+    return h.layoutHeightLow | (static_cast<uint32_t>(h.layoutHeightHigh) << kHandleHighBitsShift);
+}
 
 // --- eve-raster.cpp: points, lines, rectangles, edge strips --------------------------------------
 
@@ -320,7 +374,22 @@ void BlendSpan(LineRun& run, int32_t first, const uint32_t* texels, uint32_t cou
 template <LineMode Mode>
 void ClearLine(LineRun& run, uint32_t mask);
 // Pixel range of the line inside the scissor rectangle and the line: [first, last).
-bool ScissorSpan(const LineRun& run, int32_t& first, int32_t& last);
+// Clips [first, last) to the scissor and the line; false when nothing is left (inline: once per span)
+inline bool ScissorSpan(const LineRun& run, int32_t& first, int32_t& last)
+{
+    const GraphicsContext& ctx = run.ctx;
+    if (run.y < ctx.scissorY || run.y >= static_cast<uint32_t>(ctx.scissorY) + ctx.scissorHeight)
+        return false;
+    const int32_t left = ctx.scissorX;
+    const int32_t right = ctx.scissorX + ctx.scissorWidth;
+    first = first > left ? first : left;
+    last = last < right ? last : right;
+    if (first < 0)
+        first = 0;
+    if (last > static_cast<int32_t>(run.width))
+        last = static_cast<int32_t>(run.width);
+    return first < last;
+}
 
 // --- eve-output.cpp --------------------------------------------------------------------------------
 

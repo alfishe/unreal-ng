@@ -19,6 +19,7 @@
 #ifdef ENABLE_CONTROLLERS
 #include "hostcontrols.h"
 #include "router/analog.h"
+#include "ui/activecolors.h"
 #endif
 
 namespace
@@ -71,6 +72,7 @@ QString LampLabel(const std::string& control)
 DeviceTestPanel::DeviceTestPanel(QWidget* parent) : QWidget(parent)
 {
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    KeepActiveColors(this);  // live plots: the same colors when the dialog is not the active window
     // The plots are painted on top; the endpoints and the raw reports are widgets below them
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, kPlot, 4, 2);
@@ -261,9 +263,9 @@ bool DeviceTestPanel::hasStick(const std::string& stick) const
 void DeviceTestPanel::paintStick(QPainter& painter, const QRectF& box, const std::string& stick,
                                  const QString& label) const
 {
-    const QColor text = palette().color(QPalette::WindowText);
-    QColor faint = palette().color(QPalette::Mid);
-    const QColor accent = palette().color(QPalette::Highlight);
+    const QColor text = palette().color(QPalette::Active, QPalette::WindowText);
+    QColor faint = palette().color(QPalette::Active, QPalette::Mid);
+    const QColor accent = palette().color(QPalette::Active, QPalette::Highlight);
     const QPointF centre = box.center();
     const double r = box.width() / 2.0 - 2.0;
     painter.setBrush(Qt::NoBrush);
@@ -287,7 +289,7 @@ void DeviceTestPanel::paintStick(QPainter& painter, const QRectF& box, const std
     painter.drawEllipse(centre, r * options.deadzone, r * options.deadzone);
     const auto travel = [&options](float t) { return options.deadzone + t * (options.saturation - options.deadzone); };
     painter.setBrush(Qt::NoBrush);
-    QColor ring = palette().color(QPalette::Mid);
+    QColor ring = palette().color(QPalette::Active, QPalette::Mid);
     painter.setPen(QPen(ring, 1.0, Qt::DotLine));
     painter.drawEllipse(centre, r * travel(options.on), r * travel(options.on));
     painter.setPen(QPen(ring, 1.0, Qt::DashLine));
@@ -312,7 +314,7 @@ void DeviceTestPanel::paintStick(QPainter& painter, const QRectF& box, const std
     painter.drawText(QRectF(box.left() - 10, box.bottom() + 2, box.width() + 20, 14), Qt::AlignCenter,
                      QString("%1  %2, %3").arg(label).arg(x, 0, 'f', 2).arg(y, 0, 'f', 2));
     // Where the dead zone came from: a profile's binding, or the defaults
-    painter.setPen(palette().color(QPalette::PlaceholderText));
+    painter.setPen(palette().color(QPalette::Active, QPalette::PlaceholderText));
     painter.drawText(QRectF(box.left() - 10, box.bottom() + 16, box.width() + 20, 14), Qt::AlignCenter,
                      tr("dz %1%2").arg(thresholds(stick).deadzone, 0, 'f', 2)
                          .arg(thresholds(stick).fromProfile ? tr(" · profile") : QString()));
@@ -321,9 +323,9 @@ void DeviceTestPanel::paintStick(QPainter& painter, const QRectF& box, const std
 void DeviceTestPanel::paintTrigger(QPainter& painter, const QRectF& box, const std::string& trigger,
                                    const QString& label) const
 {
-    const QColor text = palette().color(QPalette::WindowText);
-    const QColor faint = palette().color(QPalette::Mid);
-    const QColor accent = palette().color(QPalette::Highlight);
+    const QColor text = palette().color(QPalette::Active, QPalette::WindowText);
+    const QColor faint = palette().color(QPalette::Active, QPalette::Mid);
+    const QColor accent = palette().color(QPalette::Active, QPalette::Highlight);
     const float level = std::clamp(value(trigger), 0.0f, 1.0f);
     painter.setPen(QPen(faint, 1.0));
     painter.setBrush(Qt::NoBrush);
@@ -362,10 +364,10 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    const QColor text = palette().color(QPalette::WindowText);
+    const QColor text = palette().color(QPalette::Active, QPalette::WindowText);
     if (_device.empty())
     {
-        painter.setPen(palette().color(QPalette::PlaceholderText));
+        painter.setPen(palette().color(QPalette::Active, QPalette::PlaceholderText));
         painter.drawText(QRect(0, 0, width(), kPlot), Qt::AlignCenter, tr("Select a device to test it"));
         return;
     }
@@ -392,12 +394,12 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
     const double cell = std::clamp(widest + 8.0, 34.0, 84.0);
     const int columns = std::max(1, static_cast<int>((width() - x - 8) / cell));
     int index = 0;
-    const QColor accent = palette().color(QPalette::Highlight);
+    const QColor accent = palette().color(QPalette::Active, QPalette::Highlight);
     for (const auto& [button, on] : lamps())
     {
         const double cx = x + (index % columns) * cell + cell / 2;
         const double cy = top + (index / columns) * 30.0 + 6;
-        painter.setPen(QPen(palette().color(QPalette::Mid), 1.0));
+        painter.setPen(QPen(palette().color(QPalette::Active, QPalette::Mid), 1.0));
         painter.setBrush(on ? accent : Qt::NoBrush);
         painter.drawEllipse(QPointF(cx, cy), kLamp / 2, kLamp / 2);
         painter.setPen(text);
@@ -409,11 +411,13 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
     }
     if (_sticks.empty() && _triggers.empty() && _buttons.empty())
     {
-        painter.setPen(palette().color(QPalette::PlaceholderText));
+        painter.setPen(palette().color(QPalette::Active, QPalette::PlaceholderText));
         painter.drawText(QRectF(x, top, width() - x - 8, kStick), Qt::AlignLeft | Qt::AlignVCenter,
                          tr("The device database lists no controls for this device"));
     }
-    painter.setPen(palette().color(QPalette::PlaceholderText));
+    painter.setPen(palette().color(QPalette::Active, QPalette::PlaceholderText));
     painter.drawText(QRectF(8, kPlot - 18, width() - 16, 16), Qt::AlignLeft | Qt::AlignVCenter,
                      metrics.elidedText(_detail, Qt::ElideRight, width() - 16));
 }
+
+#include "moc_devicetestpanel.cpp"

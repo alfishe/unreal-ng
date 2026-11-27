@@ -320,6 +320,7 @@ private:
     NextFrameSourceFn _nextFrameSource;
     mutable std::mutex _frameSourceMutex;  // Guards _frameSource, _nextFrameSource + _devicePixels across threads
     PresentFrameInfo _shownInfo;           ///< the frame in _latchedFrame
+    uint64_t _latchedContent = 0;          ///< the version of the pixels in _latchedFrame (0: none known)
     uint64_t _uploadedSerial = 0;          ///< its serial in _texture (0: none, or a source without serials)
     int _idleRefreshes = 0;                ///< refreshes in a row with no new frame and none pending
 
@@ -452,6 +453,18 @@ private:
     size_t _smoothFed = 0;
     QImage _smoothFrame;  ///< the picture in _texture
     smoothmotion::SmoothMotion::Result _smoothShown;  ///< what _smoothFrame is made of
+    /// _smoothShown went up from _latchedFrame (a frame plan of the frame in it): _smoothFrame holds no picture
+    bool _smoothShownLatched = false;
+    /// The versions of the frames pushed (PresentFrameInfo::content), by serial: a frame plan of the frame
+    /// _latchedFrame holds in the same version uploads that one, no copy
+    struct PushedContent
+    {
+        uint64_t serial = 0;
+        uint64_t content = 0;
+    };
+    std::array<PushedContent, smoothmotion::SmoothMotion::kFrames> _smoothPushed{};
+    size_t _smoothNextPushed = 0;
+    uint64_t pushedContent(uint64_t serial) const;
     smoothmotion::TraceWriter _smoothTrace;           ///< UNREAL_SMOOTH_TRACE (smoothtrace.h)
     bool _smoothTraced = false;                       ///< UNREAL_SMOOTH_TRACE is set
     bool _smoothUsed = false;     ///< the last updateTexture's picture was smooth motion's
@@ -469,6 +482,13 @@ private:
     bool _smoothTooSlow = false;
     bool _smoothSteppedDown = false;
     SmoothGuard _smoothGuard;
+    /// The guard counts no lates before this (SteadyNowNs): a window not shown yet, hidden or just shown again, a
+    /// presenter just made. The system's display link counts a refresh late while the window is not on screen (seen
+    /// at a start on macOS: every present late for the first seconds, 47 in 20 pictures, then about one a second)
+    int64_t _smoothGuardFromNs = 0;
+    static constexpr int64_t kSmoothGuardSettleNs = 3'000'000'000;
+    void settleSmoothGuard();
+    void retrySmoothStep();
     void noteInterpolated(int64_t drawNs);
     QMetaObject::Connection _screenRateChanged;  ///< the window's screen's refreshRateChanged (watchScreenRate)
     void watchScreenRate();

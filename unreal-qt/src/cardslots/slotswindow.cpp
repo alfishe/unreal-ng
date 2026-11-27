@@ -697,3 +697,5 @@ QString SlotsWindow::mergeOptionsWithDefaults(const std::string& cardId, const s
     }
     return parts.join(" ");
 }
+
+#include "moc_slotswindow.cpp"

@@ -87,6 +87,10 @@ public:
     void StopApp() override;
     int Command(uint8_t command, const uint8_t* data, size_t size) override;
     void Poll(uint32_t nowMs) override;
+    void DataPiece(const uint8_t* data, size_t size) override;
+    void DataFilesChanged() override;
+    /// The app or a module it opened (main thread: after the jobs in flight)
+    bool UsesModule(const std::string& name) const override;
     /// The host's state is not part of the firmware's (Vdac4Esp::Save): TTD keeps it apart, as the device
     /// vdac4-esp-cpu (ttdvdac4.h), restored after the firmware
     void SaveState(std::vector<uint8_t>& out) const override { out.clear(); }

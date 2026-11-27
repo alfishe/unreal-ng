@@ -71,6 +71,16 @@ void EmulatorAPI::vdac4State(const HttpRequestPtr& req, std::function<void(const
     tang["esp_host"] = state.espHost;
     tang["ram_g_3mb"] = state.ramG3M;
     tang["ft_cfg"] = state.ftCfg;
+    Json::Value& q2 = tang["q2"];
+    q2["frames"] = state.q2Frames;
+    q2["latched"] = static_cast<Json::UInt64>(state.q2Latched);
+    q2["commands"] = static_cast<Json::UInt64>(state.q2Commands);
+    q2["words"] = static_cast<Json::UInt64>(state.q2Words);
+    q2["bad_words"] = static_cast<Json::UInt64>(state.q2BadWords);
+    q2["bad_command"] = state.q2BadCommand;
+    q2["mark"] = state.q2Mark;
+    q2["width"] = state.q2Width;
+    q2["height"] = state.q2Height;
     Json::Value& esp = body["esp"];
     esp["phase"] = state.espPhase;
     esp["ms"] = state.espMs;
@@ -81,6 +91,36 @@ void EmulatorAPI::vdac4State(const HttpRequestPtr& req, std::function<void(const
     esp["resources"] = static_cast<Json::UInt64>(state.resources);
     esp["clock_restarts"] = static_cast<Json::UInt64>(state.clockRestarts);
     esp["clock_offset_us"] = static_cast<Json::UInt64>(state.clockOffsetUs);
+    esp["psram_free"] = state.psramFree;
+    Json::Value& cores = esp["cores"];
+    cores = Json::arrayValue;
+    for (const auto& core : state.cores)
+    {
+        Json::Value item;
+        item["name"] = core.name;
+        item["size"] = core.size;
+        item["usercode"] = core.usercode;
+        cores.append(item);
+    }
+    Json::Value& data = body["data"];
+    Json::Value& files = data["files"];
+    files = Json::arrayValue;
+    for (const auto& file : state.dataFiles)
+    {
+        Json::Value item;
+        item["app"] = file.app;
+        item["name"] = file.name;
+        item["size"] = file.size;
+        item["index"] = file.index;
+        files.append(item);
+    }
+    data["open"] = state.dataOpen;
+    data["reading"] = state.dataReading;
+    data["requests"] = static_cast<Json::UInt64>(state.dataRequests);
+    data["repeats"] = static_cast<Json::UInt64>(state.dataRepeats);
+    data["failures"] = static_cast<Json::UInt64>(state.dataFailures);
+    data["bytes"] = static_cast<Json::UInt64>(state.dataBytes);
+    data["longest_ms"] = state.dataLongestMs;
     Json::Value& app = body["app"];
     app["running"] = state.appRunning;
     app["module"] = state.appModule;
@@ -129,6 +169,7 @@ void EmulatorAPI::vdac4State(const HttpRequestPtr& req, std::function<void(const
     threads["esp_thread"] = state.espThread;
     threads["ft_thread"] = state.ftThread;
     threads["ft_draw_thread"] = state.ftDrawThread;
+    threads["ft_draw_threads"] = state.ftDrawThreads;
     threads["esp_latency_ms"] = state.espLatencyMs;
     threads["esp_jobs"] = static_cast<Json::UInt64>(state.espJobs);
     threads["esp_threaded_jobs"] = static_cast<Json::UInt64>(state.espThreadedJobs);

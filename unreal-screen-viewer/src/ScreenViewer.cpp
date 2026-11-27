@@ -459,3 +459,5 @@ void ScreenViewer::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     update();
 }
+
+#include "moc_ScreenViewer.cpp"

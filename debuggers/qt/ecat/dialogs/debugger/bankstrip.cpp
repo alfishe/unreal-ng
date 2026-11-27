@@ -381,3 +381,5 @@ bool BankStrip::event(QEvent *event)
     }
     return QWidget::event(event);
 }
+
+#include "moc_bankstrip.cpp"

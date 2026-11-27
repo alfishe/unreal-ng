@@ -55,6 +55,17 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         tang["esp_host"] = s.espHost;
         tang["ram_g_3mb"] = s.ramG3M;
         tang["ft_cfg"] = s.ftCfg;
+        sol::table q2 = view.create_table();
+        q2["frames"] = s.q2Frames;
+        q2["latched"] = s.q2Latched;
+        q2["commands"] = s.q2Commands;
+        q2["words"] = s.q2Words;
+        q2["bad_words"] = s.q2BadWords;
+        q2["bad_command"] = s.q2BadCommand;
+        q2["mark"] = s.q2Mark;
+        q2["width"] = s.q2Width;
+        q2["height"] = s.q2Height;
+        tang["q2"] = q2;
         t["tang"] = tang;
 
         sol::table esp = view.create_table();
@@ -67,7 +78,39 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         esp["resources"] = s.resources;
         esp["clock_restarts"] = s.clockRestarts;
         esp["clock_offset_us"] = s.clockOffsetUs;
+        esp["psram_free"] = s.psramFree;
+        sol::table cores = view.create_table();
+        for (size_t i = 0; i < s.cores.size(); ++i)
+        {
+            sol::table item = view.create_table();
+            item["name"] = s.cores[i].name;
+            item["size"] = s.cores[i].size;
+            item["usercode"] = s.cores[i].usercode;
+            cores[i + 1] = item;
+        }
+        esp["cores"] = cores;
         t["esp"] = esp;
+
+        sol::table data = view.create_table();
+        sol::table files = view.create_table();
+        for (size_t i = 0; i < s.dataFiles.size(); ++i)
+        {
+            sol::table item = view.create_table();
+            item["app"] = s.dataFiles[i].app;
+            item["name"] = s.dataFiles[i].name;
+            item["size"] = s.dataFiles[i].size;
+            item["index"] = s.dataFiles[i].index;
+            files[i + 1] = item;
+        }
+        data["files"] = files;
+        data["open"] = s.dataOpen;
+        data["reading"] = s.dataReading;
+        data["requests"] = s.dataRequests;
+        data["repeats"] = s.dataRepeats;
+        data["failures"] = s.dataFailures;
+        data["bytes"] = s.dataBytes;
+        data["longest_ms"] = s.dataLongestMs;
+        t["data"] = data;
 
         sol::table app = view.create_table();
         app["running"] = s.appRunning;
@@ -125,6 +168,7 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         threads["esp_thread"] = s.espThread;
         threads["ft_thread"] = s.ftThread;
         threads["ft_draw_thread"] = s.ftDrawThread;
+        threads["ft_draw_threads"] = s.ftDrawThreads;
         threads["esp_latency_ms"] = s.espLatencyMs;
         threads["esp_jobs"] = s.espJobs;
         threads["esp_threaded_jobs"] = s.espThreadedJobs;

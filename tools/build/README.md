@@ -36,12 +36,15 @@ configure output goes to `<build dir>/configure.log` and is shown only if it fai
 `AGENTS.md`, section "Why `build.sh` configures every time". Benchmarks (`-DBENCHMARKS=ON`) still need one manual
 configure, which later runs keep.
 
-**Release builds link with LTO** ([`cmake/Lto.cmake`](../../cmake/Lto.cmake), `ENABLE_LTO`): the emulator's
-per-instruction paths cross translation units, and with LTO a frame of the heavy machines costs 4-11 % less. The
-price is the link: the final link of `core-tests` or `unreal-qt` takes noticeably longer. For a quick edit-build
-loop configure once with `-DENABLE_LTO=OFF` (the next `build.sh` runs keep it). It is off by default on MinGW (the
-link takes over 40 minutes there) and in sanitizer builds. gcc's cross-unit warnings (`-Wodr`) only appear with it:
-a class or an enum that differs between two files is reported at link time.
+**LTO only for release packages and benchmarks** ([`cmake/Lto.cmake`](../../cmake/Lto.cmake), `UNREAL_LTO`, off by
+default; owner decision 2026-11-26). With it the emulator's per-instruction paths inline across translation units and a
+frame of the heavy machines costs 4-11 % less, but every binary's link re-optimizes the whole core (`unreal-qt` took
+3-16 minutes to link). `build.sh`, `test.sh`, the gate builds and CI build without it. On with `-DUNREAL_LTO=ON`: the
+release workflow does it for tag and manual runs (not for its pull-request packaging check, nor for MinGW, where the
+link takes over 40 minutes), a benchmarks build (`-DBENCHMARKS=ON`) has it on by default, and the Steam Deck deploy
+builds with it when run with `UNREAL_LTO=1`. A build directory configured before 2026-11-26 has the old `ENABLE_LTO`
+entry: the next configure drops it and builds without LTO. gcc's cross-unit warnings (`-Wodr`, a class or an enum that
+differs between two files) only appear with LTO, so they show in the release builds.
 
 `build.sh` also runs the **source checks of the CI `lint` job** first
 (`tools/verification/gui-instance-reads.sh`, a fraction of a second). A failure is printed as

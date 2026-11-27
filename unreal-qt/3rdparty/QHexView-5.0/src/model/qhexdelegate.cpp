@@ -61,5 +61,5 @@ bool QHexDelegate::paintSeparator(QPainter* painter, QLineF line,
 
 void QHexDelegate::paint(QPainter* painter, const QHexView* hexview) const {
     Q_UNUSED(hexview);
-    hexview->paint(painter);
+    hexview->paint(painter, QRegion());  // unreal-ng: the whole view
 }

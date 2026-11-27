@@ -442,3 +442,5 @@ void LabelDialog::onAccept()
 
     QDialog::accept();  // Close dialog and signal acceptance
 }
+
+#include "moc_labeldialog.cpp"

@@ -103,3 +103,5 @@ void SurfacesTable::refresh()
         _table->setCellWidget(row, 3, combo);
     }
 }
+
+#include "moc_surfacestable.cpp"

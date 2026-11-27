@@ -98,6 +98,9 @@ env:
   # as a dylib requiring it.
   OPENSSL_VERSION: '3.5.9'
   OPENSSL_SHA256: '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a'
+  # Link-time optimisation for the published packages (tags, manual snapshots); the pull-request packaging check
+  # builds without it (cmake/Lto.cmake, owner 2026-11-26: LTO for releases and benchmarks only). Not on MinGW
+  UNREAL_LTO: ${{ github.event_name == 'pull_request' && 'OFF' || 'ON' }}
   # Enable symbol packaging for rolling snapshots only
   PACKAGE_SYMBOLS: ${{ github.event_name == 'workflow_dispatch' && 'ON' || 'OFF' }}
 
@@ -154,6 +157,7 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DUNREAL_LTO=${{ env.UNREAL_LTO }} \
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
@@ -365,6 +369,7 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DUNREAL_LTO=${{ env.UNREAL_LTO }} \
             -DENABLE_PYTHON_AUTOMATION=OFF \
             -DUNREAL_STREAMDECK=ON \
             -DUNREAL_TUI_SDL_REQUIRED=ON \
@@ -642,6 +647,7 @@ jobs:
             -DUNREAL_TUI_SDL_REQUIRED=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DUNREAL_LTO=${{ env.UNREAL_LTO }} \
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \

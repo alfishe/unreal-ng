@@ -12,6 +12,23 @@ jobs on a worker thread), the board state on every automation plane and time tra
 - [ ] DEMO3D (BL616 3D commands A0-AF): implemented in `eve-vdac4-3d.cpp`, no program to check it with.
 - [ ] TTD tuning, one item at a time with the seek check and an A/B: [ttd-design.md](ttd-design.md) §10.
 - [ ] x86 speed of Zuma: its rounds on .238 ran under foreign load (below); a quiet repeat.
+- [ ] Metal Slug frame cost, in the owner's order (2026-11-26), every step with an A/B and no regression: the FT812
+  (done, below), then the Xtensa JIT (regions chained across CALL / ENTRY / RETW: as many interpreter entries as
+  native ones today), then the TS-Conf side (DramWait, the arbiter, DrawRange, the interrupt catch-up).
+
+- [x] Quake II: time travel for the `q2` personality (2026-11-27): record, seek, step back, branch and session files
+  across `core_load` / `core_back`, exact in the live demo; the SDRAM as a dirty-page region ([quake2.md](quake2.md) §8.1).
+- [x] Quake II recording stream (2026-11-27): the SDRAM only at the ESP CPU's keyframes, the core between them
+  rebuilt from the LINK writes of the ESP journal replay; the demo 278 -> 58 MB/min (SDRAM 27), a session 132 ->
+  43 MB/min, all exact ([ttd-design.md](ttd-design.md) §11, [quake2.md](quake2.md) §8.1). The rest is the ESP's
+  own keyframes (K = 25).
+- [x] ESP firmware state in TTD (2026-11-27): the delivery's bytes go last, from a 4 KB boundary; old states load;
+  the loader run 205 -> 22 MB ([ttd-design.md](ttd-design.md) §10).
+- [ ] Quake II PSRAM: Qcommon_Init takes ~220 KB more PSRAM here than in the author's emulator, so the reserve
+  stays at 1440 KB (4336 KB free before init, board 4192); at 1584 KB base2 runs out of memory ([quake2.md](quake2.md) §8).
+- [x] Quake II: the firmware's LINK watchdog (tang_link.cpp): the `0x5C564434` mark in SCRATCH, checked every 2 s; a
+  foreign value with ID answering logs "LINK: Tang reloaded" and writes the mark again. Q2's `link_diag` at core open
+  still logs `SCRATCH 00000000 BAD` (the fresh bitstream, as on the board); later checks see the mark.
 
 ## Not planned (design §5.2, §7.1)
 
@@ -20,6 +37,20 @@ jobs on a worker thread), the board state on every automation plane and time tra
 - The Tang's renderer omissions, HDMI 1366×768, dithering, frame drops: eve-emu draws the full FT812; cosmetic.
 
 ## Done
+
+- [x] Quake II for ZX Evolution VDAC4 (2026-11-27, [quake2.md](quake2.md)): firmware string
+  `vdac4-0.1.174-unreal-ng-hle`, ABI 1.21 (`data_open` / `data_read` / `data_close` over 0x6E / 0x6F through the Z80
+  program, `link_read_checked`), MOD_QUERY flags 2 (cores into the BL616 cache) and 4 (data files), realloc in
+  place, `core_load` / `core_back`, the bomzh-3D core (vendored C model, `3rdparty/bomzh`) as the Tang personality
+  `q2` with its own 424x240 picture, PSRAM reserve `UNREAL_VDAC4_PSRAM_RESERVE_KB`, state fields on every plane.
+  The demo runs (base2) at the game's own 30-35 fps figure.
+
+- [x] FT812 drawing for Metal Slug (2026-11-26): LinePlan bands and history, index signatures, LineRepeat, palette
+  hits; single-thread replay of a Metal Slug capture 1.73 -> 0.67 s in `EveAdvance`, the same picture hashes for
+  1-4 line threads. `FtDrawThreads` defaults to 1 (owner, after the 1-4 thread A/B: no faster frame, 20-50 % more
+  CPU with more threads); `threads.ft_draw_threads` on every plane. Captures start and stop with the CPU held and the
+  ESP job done with the chip (`Vdac2Control`, `WaitChipIdle`), and the frame a capture starts in is recorded as not
+  drawn: live Metal Slug captures replay with 0 answer, frame-count and picture mismatches.
 
 - [x] Phases 1a-5 of design §11 (R-Type, the image decoders and 3D in code; HMM2 and DEMO3D unchecked, above).
 - [x] Automation: `vdac4 state` / `log`, the ESP app memory, thread counters on CLI, Python, Lua, MCP, REST and

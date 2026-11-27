@@ -48,6 +48,14 @@ public:
         _board._tang.LinkWrite(address, value);
         return true;
     }
+    bool FirmwareLinkWrite(uint32_t address, uint32_t value) override
+    {
+        if (vdac4::EspXtensaRuntime::InJob())
+            return LinkWrite(address, value);  // cannot happen: the firmware runs on the emulation thread
+        Prepare();
+        _board._tang.FirmwareLinkWrite(address, value);
+        return true;
+    }
     bool LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count) override
     {
         if (vdac4::EspXtensaRuntime::InJob())
@@ -58,6 +66,19 @@ public:
         Prepare();
         _board._tang.LinkFtWrite(ftAddress, words, count);
         return true;
+    }
+    int LoadCore(uint32_t usercode, uint32_t& version) override
+    {
+        // Never from a job: the runtime refuses core_load there (kZmBusy)
+        Prepare();
+        return _board._tang.LoadCore(usercode, version);
+    }
+    bool CoreBack() override
+    {
+        if (vdac4::EspXtensaRuntime::InJob())
+            return false;
+        Prepare();
+        return _board._tang.CoreBack();
     }
 
 private:
@@ -160,6 +181,7 @@ Vdac4Board::Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<
     _esp = std::make_unique<Vdac4Esp>(std::move(monotonic), espConfig);
     _esp->SetRuntime(_runtime.get());
     _esp->SetTang(_link.get());
+    _esp->Firmware().SetLog([this](const std::string& line) { Log(line); });
     _esp->Firmware().SetPacketObserver([this](uint8_t command, size_t length, uint32_t nowMs) {
         std::lock_guard<std::mutex> lock(_ringLock);
         ++_packetCount;
@@ -199,6 +221,9 @@ void Vdac4Board::OnFrameEnd()
     // A machine frame ends with the ESP's outputs handed over: no job in flight across a frame boundary (TTD
     // checkpoints, snapshots, the frame-end probes and the published state see a settled ESP)
     _runtime->Flush();
+    // The Quake II core's picture of this frame, the FRAMEs the ESP sent just now included: latched with the ESP
+    // settled, a TTD capture after it finds the picture the core's state gives (no picture bytes in its state)
+    _tang.PresentFrame();
     ApplyJitFeature();
     Publish();
 }

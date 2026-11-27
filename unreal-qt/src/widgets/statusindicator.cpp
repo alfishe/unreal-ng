@@ -81,3 +81,5 @@ void StatusIndicator::mousePressEvent(QMouseEvent* e)
     if (e->button() == Qt::LeftButton)
         emit clicked();
 }
+
+#include "moc_statusindicator.cpp"

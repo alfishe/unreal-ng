@@ -932,7 +932,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                 for (const Json::Value& table : response["tables"])
                                     text += "## " + table["name"].asString() + "\n\n" + table["markdown"].asString() + "\n";
                             }
-                            done(ToolResult::Ok(std::move(text), std::move(response)));
+                            done(ToolResult::Ok(text, std::move(response)));
                             return;
                         }
                         done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(response)));
@@ -1474,15 +1474,12 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                                 done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
                                 return;
                             }
-                            const std::string played = "Loaded tape " + loadedName + " and started playback on " + id;
-                            if (!autostart)
-                            {
-                                ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller, played, done);
-                                return;
-                            }
-                            // Autostart plays the tape as well: LOAD "" waits for it
+                            // The play answer says what the deck does after the call (Tape::PlayWithReport: playing
+                            // or not and why, the block, the position): it goes into the text, an agent may see
+                            // nothing else
+                            const std::string loaded = "Loaded tape " + loadedName + " into " + id;
                             caller.Call("POST", Endpoint(id, "/tape/play"), nullptr,
-                                        [&caller, id, played, done](int playStatus, Json::Value playBody) {
+                                        [&caller, id, loaded, autostart, done](int playStatus, Json::Value playBody) {
                                             if (playStatus < 200 || playStatus >= 300)
                                             {
                                                 done(ToolResult::Error("Tape loaded, playback failed (HTTP " +
@@ -1490,6 +1487,15 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                                                                        DescribeErrorBody(playBody)));
                                                 return;
                                             }
+                                            const std::string message = playBody.get("message", "").asString();
+                                            const std::string played =
+                                                loaded + ". " + (message.empty() ? "Tape playback started" : message);
+                                            if (!autostart)
+                                            {
+                                                done(ToolResult::Ok(played, std::move(playBody)));
+                                                return;
+                                            }
+                                            // Autostart plays the tape as well: LOAD "" waits for it
                                             AutostartTape(caller, id, played, done);
                                         });
                         };
@@ -2219,8 +2225,11 @@ void RegisterControlExecution(ToolRegistry& registry)
                     for (const char* key : {"text", "screen", "stable_frames", "event", "match"})
                         if (args.isMember(key))
                             body[key] = args[key];
-                    for (const char* key : run ? std::initializer_list<const char*>{"max_frames", "breakpoints"}
-                                               : std::initializer_list<const char*>{"label", "then", "once"})
+                    // Named arrays: an initializer_list in each arm of ?: had its backing array end before the loop
+                    // ran (gcc 13 -O3 without LTO sent neither max_frames nor label)
+                    static const std::vector<const char*> kRunKeys{"max_frames", "breakpoints"};
+                    static const std::vector<const char*> kWatchKeys{"label", "then", "once"};
+                    for (const char* key : run ? kRunKeys : kWatchKeys)
                         if (args.isMember(key))
                             body[key] = args[key];
                     const std::string path = Endpoint(id, run ? "/run_until" : "/watches");
@@ -6069,9 +6078,10 @@ void RegisterTypeInput(ToolRegistry& registry)
                     caller.Call("POST", Endpoint(id, "/keyboard/set"), bodyCopy.get(), [bodyCopy, id, done](int status, Json::Value response) {
                         if (status >= 200 && status < 300)
                         {
-                            // The route's message names the keys now held
-                            done(ToolResult::Ok(response.get("message", "Keys set").asString() + " [target " + id + "]",
-                                                std::move(response)));
+                            // The route's message names the keys now held. Read before the move: the order of a
+                            // call's arguments is unspecified (gcc moved the response first: "Keys set")
+                            std::string text = response.get("message", "Keys set").asString() + " [target " + id + "]";
+                            done(ToolResult::Ok(text, std::move(response)));
                             return;
                         }
                         done(ToolResult::Error(status == 0 ? "WebAPI unreachable — is the emulator running with WebAPI enabled (port 8090)?"

@@ -107,6 +107,13 @@ the conversion, `Screen::LatchExternalFrame`, the presented metrics. `ConfigureO
 `TTDPrepareComposedPicture` waits before it converts. Status: `threads.ft_draw_thread` in `vdac4 state` on every
 plane.
 
+The lines of a frame are drawn by several threads (`EveSetDrawThreads`, `Params::drawThreads`): `[VDAC4] FtDrawThreads`
+/ `[VDAC2] FtDrawThreads`, env `UNREAL_VDAC4_FT_DRAW_THREADS` / `UNREAL_VDAC2_FT_DRAW_THREADS`, 1 (default), 0 = half the
+host's cores, 1-4. The picture is the same for any count (eve-replay `--threads` against the single-thread hashes). One is
+the default: on Metal Slug after its load (2026-11-26) the emulation never waited for the FT812 with one thread, a replay
+took the same wall time with 1-4 threads and 20-50 % more CPU with more, and the live drawing peaks were lowest with one.
+Status: `threads.ft_draw_threads` in `vdac4 state` on every plane.
+
 The renderer reads nothing the emulation thread changes meanwhile (TSan, 2026-11-23):
 
 - The callback's `frame` is the frame's `EveCompletedFrames` count. The latch's machine frame number and its

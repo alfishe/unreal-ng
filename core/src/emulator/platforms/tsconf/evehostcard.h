@@ -116,6 +116,7 @@ public:
         uint32_t lineBudgetMargin = 10;          ///< percent, 0..50
         uint32_t model = 0;                      ///< EveModel (0 = EVE_MODEL_FT812)
         bool drawThread = false;                 ///< draw on the library's renderer thread (EveSetAsyncDrawing)
+        uint32_t drawThreads = 1;                ///< threads drawing lines (EveSetDrawThreads); 0: by the host's cores
     };
 
     /// `rasterInFrame` returns the raster tact inside the current frame
@@ -139,6 +140,10 @@ public:
 
     /// The Evo's reset button (nothing by default: the chip has its own reset)
     virtual void Reset() {}
+
+    /// Before the chip is touched off its bus (a capture's start and end): wait until nothing else uses it (the
+    /// VDAC4's ESP job hosting the FT812 on its worker thread). Nothing by default
+    virtual void WaitChipIdle() {}
 
     /// The engine closed its frame: advance to the frame's end, then move the
     /// frame base on
@@ -164,6 +169,8 @@ public:
     uint64_t LatchedFrames() const { return _latchedFrames.load(); }
     /// The chip draws on its renderer thread now (Params::drawThread, not while capturing or in a TTD replay)
     bool DrawingOnThread() const { return _async; }
+    /// Threads drawing the FT812's lines (Params::drawThreads, or the count chosen by the host's cores)
+    uint32_t DrawThreads() const { return _drawThreads; }
 
     /// region <Bus capture (.evr replay stream, vdac2-test-corpus.md §4)>
     /// Start writing everything on the FT812's bus to `path`. On a running
@@ -178,6 +185,8 @@ public:
     /// The bus capture writes a host file: not while time travel replays
     /// history (FR-20; that traffic was captured when it happened)
     bool CaptureLive() const;
+    /// The .evr header's chip model for this card's chip
+    uint32_t CaptureChipModel() const;
     /// endregion
 
     /// region <Line budget metrics (line-budget-metrics.md, line-budget-model.md)>
@@ -338,6 +347,7 @@ private:
     // copy the Screen presents
     bool _showing = false;
     bool _drawing = false;         // the chip was told to draw (EveSetOutput)
+    bool _captureInFlight = false; // a capture started inside the frame now drawn: its picture is not all replayable
     bool _outputSet = false;       // EveSetOutput was called once
     bool _owedFromLoad = false;    // TtdLoadState left the frame's lines owed (until the next advance)
     uint64_t _chipFrames = 0;      // EveCompletedFrames seen last
@@ -349,6 +359,11 @@ private:
     // The drawing on the library's renderer thread: it presents the frames (OnRendererFrame), the buffers
     // above are resized only after it is idle (EveSetOutput waits, ConfigureOutput waits first)
     bool _async = false;
+    uint32_t _drawThreads = 1;
+    /// The renderer's frame ends queued at the previous machine frame end: OnFrameEnd waits for those only, so the
+    /// renderer draws the frames of the machine frame just run while the next one runs (MainLoop::Park settles all)
+    uint64_t _frameEndsAtLastEnd = 0;
+    static void SettleFrames(void* card);
     std::atomic<bool> _asyncPresent{false};  // _showing as of the last output setup, for the renderer
     // Where in the machine's time each FT812 frame ended, by its EveCompletedFrames count: written on the emulation
     // thread before the chip steps that end it (so before the frame end is queued), read by the renderer. The

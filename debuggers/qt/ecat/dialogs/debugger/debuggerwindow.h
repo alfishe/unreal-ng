@@ -99,7 +99,8 @@ public:
     bool toggle_breakpoint_at_cursor();
     //Not in ecat (gs-debugger P5.4): a sound card's CPU run to a moment, the Run to menu's card entries: `until`
     //"cycle" / "main_t" (value: the card cycle / the main CPU's T of the frame), "int", "command". The card in front,
-    //else the first one; the core's message joins the state label. False when not held or without a card
+    //else the first one; the core's message joins the state label when the run has ended (a remote machine's later:
+    //answer is filled only when it ended before the return). False when not held or without a card
     bool card_run_to(const QString &until, uint64_t value, Emulator::CardRunAnswer * answer = nullptr);
     //The card CPU the card actions act on: the one in front, else the first card's; nullptr without a card
     CPU * card_cpu();
@@ -141,6 +142,7 @@ public slots:
 
 private slots:
     void on_debug_event();
+    void follow_data();
     void on_timer();
 
 protected:
@@ -226,6 +228,8 @@ private:
     bool m_keep_front = false;       //The stop of a Step other leaves the tab in front
     TtdControls * m_ttd = nullptr;
     unsigned int m_serial;
+    uint64_t m_data_serial = 0;   //the remote machine's answers the views have read (follow_data)
+    bool m_data_pending = false;
     bool m_paused;
     uint64_t m_stop_serial = 0;
     bool m_online = true;
