@@ -561,19 +561,23 @@ void LuaEmulator::RegisterDiskAndTape(sol::state& lua)
         return ctx ? ctx->coreState.tapeFilePath : "";
     });
 
-    lua.set_function("tape_play", [this]() -> bool {
+    // tape_play() -> ok, report. `ok` as before (false: no tape with loadable blocks); `report` is the deck
+    // after the call (Tape::PlayWithReport: result, playing, state, reason, position, block, skipped_blocks,
+    // text), nil without a machine
+    lua.set_function("tape_play", [this](sol::this_state s) -> std::tuple<bool, sol::object> {
         Emulator* emulator = effectiveEmulator();
-        if (!emulator) return false;
+        if (!emulator) return {false, sol::object(sol::lua_nil)};
         auto* ctx = emulator->GetContext();
-        if (!ctx || !ctx->pTape) return false;
+        if (!ctx || !ctx->pTape) return {false, sol::object(sol::lua_nil)};
 
         EmulatorPauseBracket bracket(emulator);
 
-        // Parse-once (idempotent); paused -> resume the frozen position
-        // in place, otherwise start at the consumption cursor — the same
-        // semantics as `tape play` / POST /tape/play
+        // Parse-once (idempotent); frozen in a block -> resume in place, playing -> left as it is, otherwise
+        // start at the first block with a signal from the consumption cursor on - the same semantics as
+        // `tape play` / POST /tape/play
         // A tape still on its way (a load while a TTD recording runs) plays once it lands
-        return ctx->pTape->Play() != TapePlayResult::NoBlocks;
+        const TapePlayReport report = ctx->pTape->PlayWithReport();
+        return {report.Ok(), StateNodeToLua(s, report.ToNode())};
     });
 
     lua.set_function("tape_stop", [this]() -> bool {

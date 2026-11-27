@@ -320,7 +320,10 @@ LayerFlow made cheaper, an interpolation of its own for the machines LayerFlow i
   again, or the mode was `interpolate-lite` already: the blend (`too_slow`). Both screen widgets
   (`DeviceScreenGLWindow`, `DeviceScreen`). In `DeviceScreenGLWindow` (2026-11-27) a step down is for a while: the
   level above is tried again after 10 s, the wait doubling with each step down up to 5 minutes, and the settings set
-  again start the waits over; no lates count in the first 3 s of a window shown, exposed or given a presenter. One
+  again start the waits over; no lates count in the first 3 s of a window shown, exposed or given a presenter.
+  The software screen (`DeviceScreen`) and a wall tile (`smoothmotion::Tile`, its own guard; the wall's step stays
+  for good) recover the same way (2026-11-27); from the blend the cheap interpolation is tried first, then the full one
+  after the wait as it stands (`SmoothGuard::RetryLater`: before, the full one was never tried again). One
   window was not enough: on a 60 Hz Mac a single stall (another app's GPU work, a start) made 4 presents late at once
   and stepped down for good an interpolation drawn in 1 ms; a start made every present late for its first seconds.
 - `present.smooth.lite`: the interpolated pictures `LiteFlow` drew.
@@ -517,6 +520,8 @@ each with a test that fails without its fix (`core/tests/emulator/video/`). `scr
 | D7 | After a pause, the first frame's picture (weight 255 / 256) shown a refresh early, and the pause counted as cadence periods | `Plan` paired the frames across the pause | `Plan` shows the frame before when two frames are more than `kGapPeriods` (4) periods apart; `Push` adds no periods for such a step | `SmoothMotion_Test.NoMotionAcrossAPause` |
 | D8 | Wall tiles in turbo / stepping pushed every frame (copies and flicker searches, up to eight a refresh) for a picture that is always the frame | `Tile::Advance` treated latch-timed frames as paced | latch-timed or low-latency frames go to no engine, the newest is shown as it is; paced again, the engine starts over | `SmoothTile_Test.TurboFramesGoToNoEngine` |
 | D9 | The effects readout (the dialog's LED) flipped to raw while a screenshot or the shared-memory export read | `MarkServedLocked` set it for any served frame | only the frame the window shows sets it; a served frame sets it only when no window shows one | `FramesByTime_Test.ScreenshotLeavesTheTemporalReadout` |
+| D10 | With ZX DLSS on, smooth motion had no next frame for about half the frames (live: `starved` 165 of 339, 183 interpolated against 398 with DLSS off) | `CopyNextFrame` still cut the newest frames by the effect's whole delay (look-ahead + 1 for the worker), on top of D1's wait: a frame came a latch after its output was in, the frame after the one due only when that one was due | the cut dropped, each frame waits for its own output (`SlotAwaitsOutputLocked`) | `FramesByTime_Test.NextFrameServedOnceItsTemporalOutputIsIn` |
+| D11 | ZX DLSS switched on (and at the start with it on): smooth motion starved for about 3 s (live: 43-49 of 49 frames a second), the picture ahead of its sound meanwhile | the delay steps by the look-ahead (6 frames, the sound with it at the same latch); `FrameClock` carried the step and paid it back at 0.2 ms a frame (10 s for 120 ms) | a change of the effect's delay cuts the frame clock (`FrameTimingInput::cut`): the targets take the new delay at once, a freeze of the step's length | `FramesByTime_Test.TemporalEffectSwitchCutsTheFrameClock` |
 
 The check (Linux, gcc 13, .74): with every fix undone at once, all eleven new tests fail, each at the assertion
 for its defect (frame 5 handed out raw; the picture back from frame 10 to 4; the readout flipped to raw by the
@@ -524,6 +529,19 @@ screenshot; the same version copied again; the guard stepping down for lates fro
 the target cut back, an interpolation across the serial gap and the pause; the misfit frame pushed; turbo frames
 pushed to the engine; `auto` drawing on 50 Hz). With the fixes: the 232 tests of smooth motion, the screen's frames,
 the display rate and the temporal effect pass in both tiers; the screen and tile tests 50 times over.
+
+The live check (2026-11-27, unreal-qt on .20, a 60 Hz display, the host's screen locked: the Metal presenter rests
+while occluded, so `UNREAL_PRESENTER=gl`; driven through the WebAPI by a script in the worktree's `scratch/`, the
+window's `present` and `/video/temporal` sampled every second, every instance muted). Across the Edge (flicker and motion) in `interpolate`, `interpolate-lite`, `blend` and
+`auto`, and Aleste in `interpolate` and `auto`; per run 30 s steady, 30 s with ZX DLSS off / on every 5 s, 40 s
+with the modes switched every 5 s. With D10 and D11 fixed, in every run: `shown_raw`, `late`, `restarts` and
+`present.smooth.behind` 0; every processed frame written; no serial gap among the ~740 frames traced
+(`UNREAL_SMOOTH_TRACE`, 900 refreshes); `starved` 0 over the 30 s steady (before D10: half the frames, before D11:
+92, all in the first 3 s), 6 over the three switches on (two frames each, the delay's step); 1450-1470 interpolated
+(Across the Edge) and 1716-1724 (Aleste) of ~1550 / ~1720 refreshes; the effect processed 48.8-49.8 frames a
+second throughout (Pentagon 48.83 Hz), the samples never more than 1.05 s apart. The frames traced with no color
+outside the 16 ZX ones among mixed ones are the same serials in every run and mode: the content, not a frame
+handed out raw.
 
 Cheap optimizations:
 
@@ -676,6 +694,52 @@ harness asks them, best of 5 interleaved rounds (A and B in turn per scene and r
 gcc -O3 on .74 (x86-64, a shared host under load: single runs spread up to 2x, dotmatrix and sprites best of 12).
 The profile of what is left (sprites): the field search, `Pack`, `Draw`, `Credible` in about equal parts;
 `Confirm` is under 1 %.
+
+### 1.14 Metal: what "a refresh late" counts (2026-11-27)
+
+The owner's Mac (60 Hz, display link, Pentagon 128K on `aleste1.sna`, 48.83 Hz, a World of Warcraft window open)
+showed 1313 of 23187 presents a refresh late in steady state (5.7 %), in blend too (about 1 ms a picture), and in
+interpolate in bursts of 4-5 with seconds of none between. The question: real missed refreshes, an artefact of the
+count, or our own scheduling. Nothing was changed but this section.
+
+**What is counted** (`MetalPresenter::PresentFrame`, `PresentLead::Shown`). On the display link the window asks
+for each present half a refresh before the refresh it is for (`at = pacedRefresh - period / 2`, the refresh taken
+from the link's `targetTimestamp` grid, a lead of a refresh plus the margin ahead). The presented handler compares
+`MTLDrawable.presentedTime` (turned to the steady clock) with that `at`: on time is `period / 2` = 8.33 ms, a refresh
+late 25.0 ms. Late is an error over `period + offset + 1 ms`, the offset being the 5th percentile of the on-time
+errors capped at 3 ms: on this path always the cap (the on-time errors are 8.33 ms), so the line is at 20.67 ms,
+12 ms above on time and 4 ms below a refresh late. No rounding of the 48.83 Hz targets enters it: every present (off
+too) asks for a refresh on the link's grid, not for the frame's own time, and presentedTime jitter of a few ms cannot
+cross the line. A present counted late was shown at least one refresh after the one it asked for.
+
+**The bursts are one hold each.** Metal shows the queued presents in order. A present is handed over 1.3-2.3
+refreshes before its refresh, so when the compositor holds one a refresh, the two queued behind it and the one or two
+handed over before its presented handler reports (at its screen time) are shown a refresh late too: 4-5 counted for
+one hold. The window then leaves a refresh out (`LastLatePresent`, section 1.3 and the frame presenter README,
+section 6.2) and the presents after it are on time again. Each of those presents really was shown a refresh after
+its time (the count is right), but the screen missed one refresh, not five. 1313 lates at 4-5 a hold are about 300
+holds in 386 s, one every 1.3 s.
+
+**Our own scheduling is not short of lead** (.20, link-paced presents from `UNREAL_PRESENT_TRACE`, blend, 1744
+presents): the times asked step by exactly one refresh (1739 of 1744; the rest around a 1 s stall), at a constant
+phase; each present handed over p5 20.1 ms, p50 21.8 ms before its time asked, 28-30 ms before its refresh;
+`nextDrawable` p50 0.07 ms. Off (1422 presents, 48.83 Hz on 60): steps of 1 and 2 refreshes, handed over p5 23.2 ms
+before. A late present handed over this far ahead was held by the system, and the lead rightly does not widen for it
+(`aheadNs >= period`). The earlier measurement on the loaded M1 Ultra (frame presenter README, section 6.2) saw the
+same: the compositor a refresh behind every 3-4 s for 0.1-0.6 s, presents handed over 20-35 ms ahead.
+
+**.20 cannot show screen times now.** Its only display is the Screen Sharing virtual display (3840 x 2160, 60.00 Hz,
+fixed), the console locked and the display asleep: the presenter reports the window occluded and draws nothing.
+With the occlusion check forced off (a local patch, not kept) every present came back with presentedTime 0: 30 s each,
+off 1419 presented / 1419 dropped, blend 1741 / 1741, interpolate 1426 / 1429, 0 shown, so 0 late means nothing
+there. The display link ticks only while the display is awake (`caffeinate -u`, about 25 s), then the timer path
+takes over (interpolate then has no refresh grid and draws nothing). A 1 s `nextDrawable` wait about 5 s after each
+`smooth_motion` change is the asleep display holding the drawables, not seen on a real one.
+
+**Verdict.** No false late is counted and our scheduling hands every present over more than a refresh and a half
+before its refresh: the lates on the owner's Mac are holds of the system (most likely the other GPU load), counted
+4-5 times each by the queue. To confirm: 30 s of `UNREAL_PRESENT_TRACE` per mode on that Mac with the game open and
+closed; the lates' `asked - submitted` (all above a refresh: held) and their run lengths (one hold per run) settle it.
 
 ## 2. Platform by mode, from the code (before the steps)
 

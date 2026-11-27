@@ -719,7 +719,10 @@ emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folde
 emu.tape_eject()                      # the tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-emu.tape_play()    # start at consumption cursor; resumes in place when paused; queued for a tape still landing
+emu.tape_play()    # resumes in place when frozen in a block; a playing tape is left as it is; else starts at the
+                   # first block with a signal from the cursor on; queued for a tape still landing. True unless no tape
+report = emu.tape_play(report=True)  # the deck after the call as a dict: result, playing, state, reason, position,
+                   # block, skipped_blocks, text (command-interface.md "The play answer")
 emu.tape_pause()   # freeze mid-block (idempotent); False when not playing
 emu.tape_stop()    # terminal stop: invalidates the loaded image
 emu.tape_rewind()  # rewind to block 0, image kept

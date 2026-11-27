@@ -6,7 +6,10 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QHeaderView>
-#include <QTreeWidget>
+#include <QAbstractItemModel>
+#include <QItemSelectionModel>
+#include <QPaintEvent>
+#include <QTreeView>
 #include <QVBoxLayout>
 #include <gtest/gtest.h>
 
@@ -27,6 +30,18 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
 
+namespace
+{
+int Rows(QTreeView* list)
+{
+    return list->model()->rowCount();
+}
+QString Text(QTreeView* list, int row, int column)
+{
+    return list->model()->index(row, column).data().toString();
+}
+}  // namespace
+
 TEST(PcHistoryPane_Test, RecordsWhileShownListsInstructionsPicksAnAddress)
 {
     std::shared_ptr<Emulator> emulator =
@@ -45,16 +60,16 @@ TEST(PcHistoryPane_Test, RecordsWhileShownListsInstructionsPicksAnAddress)
     emulator->RunSingleCPUCycle(true);
     emulator->RunSingleCPUCycle(true);
     pane.refresh();
-    auto* list = pane.findChild<QTreeWidget*>();
+    auto* list = pane.findChild<QTreeView*>();
     ASSERT_NE(list, nullptr);
-    ASSERT_EQ(list->topLevelItemCount(), 2);
-    EXPECT_EQ(list->topLevelItem(0)->text(0), "8001");
-    EXPECT_EQ(list->topLevelItem(0)->text(1), "RAM2") << "48K: #8000 is RAM page 2";
-    EXPECT_EQ(list->topLevelItem(0)->text(2), "nop");
+    ASSERT_EQ(Rows(list), 2);
+    EXPECT_EQ(Text(list, 0, 0), "8001");
+    EXPECT_EQ(Text(list, 0, 1), "RAM2") << "48K: #8000 is RAM page 2";
+    EXPECT_EQ(Text(list, 0, 2), "nop");
 
     std::vector<uint16_t> picked;
     QObject::connect(&pane, &PcHistoryPane::addressPicked, [&](uint16_t address) { picked.push_back(address); });
-    list->setCurrentItem(list->topLevelItem(1));
+    list->setCurrentIndex(list->model()->index(1, 0));
     ASSERT_EQ(picked.size(), 1u);
     EXPECT_EQ(picked[0], 0x8000);
 
@@ -77,7 +92,7 @@ TEST(PcHistoryPane_Test, AStopMakesOnlyItsNewRows)
     context->pCore->GetZ80()->pc = 0x8000;
 
     PcHistoryPane pane(emulator);
-    auto* list = pane.findChild<QTreeWidget*>();
+    auto* list = pane.findChild<QTreeView*>();
     ASSERT_NE(list, nullptr);
     EXPECT_EQ(list->header()->sectionResizeMode(0), QHeaderView::Interactive);
     EXPECT_EQ(list->header()->sectionResizeMode(1), QHeaderView::Interactive);
@@ -86,20 +101,19 @@ TEST(PcHistoryPane_Test, AStopMakesOnlyItsNewRows)
     emulator->RunSingleCPUCycle(true);
     emulator->RunSingleCPUCycle(true);
     pane.refresh();
-    ASSERT_EQ(list->topLevelItemCount(), 2);
+    ASSERT_EQ(Rows(list), 2);
     EXPECT_EQ(pane.rowsMade(), 2);
-    QTreeWidgetItem* older = list->topLevelItem(0);
     for (int i = 0; i < 3; ++i)
         emulator->RunSingleCPUCycle(true);
     pane.refresh();
-    ASSERT_EQ(list->topLevelItemCount(), 5);
+    ASSERT_EQ(Rows(list), 5);
     EXPECT_EQ(pane.rowsMade(), 5) << "the stop made its 3 rows, not all 5";
-    EXPECT_EQ(list->topLevelItem(0)->text(0), "8004");
-    EXPECT_EQ(list->topLevelItem(3), older) << "the rows shown before moved down";
-    EXPECT_EQ(list->topLevelItem(4)->text(0), "8000");
+    EXPECT_EQ(Text(list, 0, 0), "8004");
+    EXPECT_EQ(Text(list, 3, 0), "8001") << "the rows shown before moved down";
+    EXPECT_EQ(Text(list, 4, 0), "8000");
     pane.refresh();  // nothing ran
     EXPECT_EQ(pane.rowsMade(), 5);
-    EXPECT_EQ(list->topLevelItemCount(), 5);
+    EXPECT_EQ(Rows(list), 5);
 
     pane.setRecording(false);
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
@@ -123,12 +137,12 @@ TEST(PcHistoryPane_Test, ARefreshNeverWaitsForABusyMachine)
     context->pCore->GetZ80()->pc = 0x8000;
 
     PcHistoryPane pane(emulator);
-    auto* list = pane.findChild<QTreeWidget*>();
+    auto* list = pane.findChild<QTreeView*>();
     ASSERT_NE(list, nullptr);
     pane.setRecording(true);
     emulator->RunSingleCPUCycle(true);
     pane.refresh();
-    ASSERT_EQ(list->topLevelItemCount(), 1);
+    ASSERT_EQ(Rows(list), 1);
     emulator->RunSingleCPUCycle(true);
 
     // Another client holds the machine (eCat's WebAPI read at a coherent moment) until released
@@ -150,22 +164,22 @@ TEST(PcHistoryPane_Test, ARefreshNeverWaitsForABusyMachine)
     const qint64 blocked = clock.elapsed();
     EXPECT_LT(blocked, 20) << "the GUI thread waited " << blocked << " ms for the machine";
     EXPECT_GE(pane.busyReads(), 1);
-    EXPECT_EQ(list->topLevelItemCount(), 1) << "busy: the list shown stays";
+    EXPECT_EQ(Rows(list), 1) << "busy: the list shown stays";
     release = true;
     other.join();
     QElapsedTimer pump;
     pump.start();
-    while (list->topLevelItemCount() != 2 && pump.elapsed() < 1000)
+    while (Rows(list) != 2 && pump.elapsed() < 1000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-    EXPECT_EQ(list->topLevelItemCount(), 2) << "read again once the machine was free";
+    EXPECT_EQ(Rows(list), 2) << "read again once the machine was free";
 
     pane.setRecording(false);
     emulator->Stop();
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
 }
 
-/// A stop reads the newest kProbe entries when they hold all the new ones (and the rows shown continue them); more
-/// instructions than that since the last stop read the whole ring. Either way the list is the newest entries, at most
+/// A stop reads the entries since the rows shown (by the history's total) and kOverlap shown ones that prove they
+/// continue them; the first read, or rows that do not continue, read the whole ring. Either way the list is the newest entries, at most
 /// the ring's capacity. Runtime: a few ms
 TEST(PcHistoryPane_Test, ALongRunBetweenStopsReadsTheWholeRing)
 {
@@ -178,7 +192,7 @@ TEST(PcHistoryPane_Test, ALongRunBetweenStopsReadsTheWholeRing)
     context->pCore->GetZ80()->pc = 0x8000;
 
     PcHistoryPane pane(emulator);
-    auto* list = pane.findChild<QTreeWidget*>();
+    auto* list = pane.findChild<QTreeView*>();
     ASSERT_NE(list, nullptr);
     pane.setRecording(true);
     const auto run = [&](int n) {
@@ -188,26 +202,26 @@ TEST(PcHistoryPane_Test, ALongRunBetweenStopsReadsTheWholeRing)
     };
     const auto address = [](uint32_t at) { return QString("%1").arg(at & 0xFFFF, 4, 16, QChar('0')).toUpper(); };
     run(2);
-    ASSERT_EQ(list->topLevelItemCount(), 2);
-    run(100);  // more than a probe holds
-    ASSERT_EQ(list->topLevelItemCount(), 102);
-    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 101));
-    EXPECT_EQ(list->topLevelItem(101)->text(0), "8000");
+    ASSERT_EQ(Rows(list), 2);
+    run(100);  // 100 new entries
+    ASSERT_EQ(Rows(list), 102);
+    EXPECT_EQ(Text(list, 0, 0), address(0x8000 + 101));
+    EXPECT_EQ(Text(list, 101, 0), "8000");
     EXPECT_EQ(pane.rowsMade(), 102) << "the old rows stay";
-    run(10);  // within a probe
-    ASSERT_EQ(list->topLevelItemCount(), 112);
-    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 111));
-    EXPECT_EQ(list->topLevelItem(111)->text(0), "8000");
+    run(10);
+    ASSERT_EQ(Rows(list), 112);
+    EXPECT_EQ(Text(list, 0, 0), address(0x8000 + 111));
+    EXPECT_EQ(Text(list, 111, 0), "8000");
     EXPECT_EQ(pane.rowsMade(), 112);
     run(1000);  // past the ring's capacity: the oldest leave
-    ASSERT_EQ(list->topLevelItemCount(), static_cast<int>(PcHistory::kCapacity));
-    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 1111));
-    EXPECT_EQ(list->topLevelItem(static_cast<int>(PcHistory::kCapacity) - 1)->text(0),
+    ASSERT_EQ(Rows(list), static_cast<int>(PcHistory::kCapacity));
+    EXPECT_EQ(Text(list, 0, 0), address(0x8000 + 1111));
+    EXPECT_EQ(Text(list, static_cast<int>(PcHistory::kCapacity) - 1, 0),
               address(0x8000 + 1112 - static_cast<uint32_t>(PcHistory::kCapacity)));
     run(5);
-    ASSERT_EQ(list->topLevelItemCount(), static_cast<int>(PcHistory::kCapacity));
-    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 1116));
-    EXPECT_EQ(list->topLevelItem(static_cast<int>(PcHistory::kCapacity) - 1)->text(0),
+    ASSERT_EQ(Rows(list), static_cast<int>(PcHistory::kCapacity));
+    EXPECT_EQ(Text(list, 0, 0), address(0x8000 + 1116));
+    EXPECT_EQ(Text(list, static_cast<int>(PcHistory::kCapacity) - 1, 0),
               address(0x8000 + 1117 - static_cast<uint32_t>(PcHistory::kCapacity)));
 
     pane.setRecording(false);
@@ -259,10 +273,158 @@ TEST(PcHistoryPane_Test, AStopsStatusRelaysOutNothing)
             QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
     }
     EXPECT_EQ(spy.requests, 0) << "a new status text of one line relaid out the window";
-    auto* list = pane->findChild<QTreeWidget*>();
+    auto* list = pane->findChild<QTreeView*>();
     ASSERT_NE(list, nullptr);
-    EXPECT_EQ(list->topLevelItemCount(), 22);
+    EXPECT_EQ(Rows(list), 22);
 
     pane->setRecording(false);
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+}
+
+namespace
+{
+class ViewportPaints : public QObject
+{
+public:
+    QRegion painted;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::Paint)
+            painted += static_cast<QPaintEvent*>(event)->region();
+        return QObject::eventFilter(watched, event);
+    }
+};
+
+void Pump()
+{
+    for (int i = 0; i < 5; i++)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+}
+
+/// The pane shown, `before` instructions recorded and listed
+struct ShownPane
+{
+    std::shared_ptr<Emulator> emulator;
+    QWidget host;
+    PcHistoryPane* pane = nullptr;
+    QTreeView* list = nullptr;
+
+    ShownPane(const char* id, int before)
+    {
+        emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(id, "48K", LoggerLevel::LogError);
+        EmulatorContext* context = emulator->GetContext();
+        for (uint32_t a = 0x8000; a < 0x10000; ++a)
+            context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(a), 0x00);  // NOPs
+        context->pCore->GetZ80()->pc = 0x8000;
+        host.resize(400, 400);
+        auto* layout = new QVBoxLayout(&host);
+        pane = new PcHistoryPane(emulator, &host);
+        layout->addWidget(pane);
+        host.show();
+        pane->setRecording(true);
+        list = pane->findChild<QTreeView*>();
+        if (list)
+            list->clearFocus();  // no focus frame on the current row (it moves with its row, as a repaint shows it)
+        Run(before);
+        if (list)
+            list->selectionModel()->clearCurrentIndex();  // no current row's frame either
+        Pump();
+    }
+    ~ShownPane()
+    {
+        pane->setRecording(false);
+        EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+    }
+    void Run(int n)
+    {
+        for (int i = 0; i < n; ++i)
+            emulator->RunSingleCPUCycle(true);
+        pane->refresh();
+        Pump();
+    }
+    QImage Shot() const { return list->viewport()->grab().toImage(); }
+};
+
+/// The first pixel row where `a` and `b` differ (-1: none), for the failure messages
+int FirstDifferentRow(const QImage& a, const QImage& b)
+{
+    if (a.size() != b.size())
+        return 0;
+    for (int y = 0; y < a.height(); y++)
+        for (int x = 0; x < a.width(); x++)
+            if (a.pixel(x, y) != b.pixel(x, y))
+                return y;
+    return -1;
+}
+
+/// The band of pixel rows [top, top + height) of `image`
+QImage Band(const QImage& image, int top, int height)
+{
+    return image.copy(0, top, image.width(), height);
+}
+
+/// A stop of one instruction, the list filling (rows inserted) or full (the ring turning): the rows shown move down
+/// a row as they were and only the new top row is painted (an item view repaints every row on screen for a row put
+/// at the top, and alternate colours by the row would flip every stripe). Runtime: about 20 ms
+void ExpectOneRowStop(ShownPane& shown)
+{
+    ASSERT_NE(shown.list, nullptr);
+    const int rowHeight = shown.list->sizeHintForRow(0);
+    ASSERT_GT(rowHeight, 0);
+    const int height = shown.list->viewport()->height();
+    ASSERT_GT(height, rowHeight * 8) << "the view shows a few rows";
+    const QImage before = shown.Shot();
+    ViewportPaints spy;
+    shown.list->viewport()->installEventFilter(&spy);
+    shown.Run(1);
+    shown.list->viewport()->removeEventFilter(&spy);
+    EXPECT_LE(spy.painted.boundingRect().height(), 2 * rowHeight)
+        << "a stop of one row painted " << spy.painted.boundingRect().height() << " px of " << height;
+    const QImage after = shown.Shot();
+    const int band = (height / rowHeight - 2) * rowHeight;
+    EXPECT_EQ(FirstDifferentRow(Band(after, rowHeight, band), Band(before, 0, band)), -1)
+        << "the rows shown did not move down a row as they were (their stripes); row height " << rowHeight;
+    // What the moved pixels show is what a full paint of the rows shows
+    shown.list->viewport()->repaint();
+    EXPECT_EQ(FirstDifferentRow(shown.Shot(), after), -1) << "the moved rows differ from the rows painted anew";
+}
+}  // namespace
+
+TEST(PcHistoryPane_Test, AStopPaintsOnlyItsNewRowWhileTheListFills)
+{
+    ShownPane shown("pchistory-pane-fill", 60);
+    ASSERT_EQ(Rows(shown.list), 60);
+    ExpectOneRowStop(shown);
+    EXPECT_EQ(Rows(shown.list), 61);
+    EXPECT_EQ(Text(shown.list, 0, 0), "803C");
+}
+
+TEST(PcHistoryPane_Test, AStopPaintsOnlyItsNewRowOnceTheRingIsFull)
+{
+    ShownPane shown("pchistory-pane-full", static_cast<int>(PcHistory::kCapacity) + 40);
+    ASSERT_EQ(Rows(shown.list), static_cast<int>(PcHistory::kCapacity));
+    ExpectOneRowStop(shown);
+    EXPECT_EQ(Rows(shown.list), static_cast<int>(PcHistory::kCapacity));
+    EXPECT_EQ(Text(shown.list, 0, 0), QString("%1").arg(0x8000 + PcHistory::kCapacity + 40, 4, 16).toUpper());
+}
+
+/// The row picked stays on its entry when a stop's rows come above it, the ring full (its rows turn as data) or not;
+/// it is not a new pick. Runtime: a few ms
+TEST(PcHistoryPane_Test, ThePickedRowFollowsItsEntry)
+{
+    for (const int before : {30, static_cast<int>(PcHistory::kCapacity) + 30})
+    {
+        ShownPane shown(before > 100 ? "pchistory-pane-pick-full" : "pchistory-pane-pick", before);
+        ASSERT_NE(shown.list, nullptr);
+        shown.list->setCurrentIndex(shown.list->model()->index(5, 0));
+        const QString picked = Text(shown.list, 5, 0);
+        int picks = 0;
+        QObject::connect(shown.pane, &PcHistoryPane::addressPicked, [&](uint16_t) { picks++; });
+        shown.Run(3);
+        EXPECT_EQ(shown.list->currentIndex().row(), 8) << before;
+        EXPECT_EQ(Text(shown.list, shown.list->currentIndex().row(), 0), picked) << before;
+        EXPECT_EQ(picks, 0) << "a stop's rows are not a pick";
+    }
 }

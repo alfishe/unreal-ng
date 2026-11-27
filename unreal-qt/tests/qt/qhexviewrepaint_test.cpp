@@ -156,3 +156,33 @@ TEST_F(QHexViewRepaint_Test, AFarJumpInABatchRepaintsTheWholeView)
     PumpIdle();
     EXPECT_TRUE(WholeViewPainted());
 }
+
+/// The rows painted as kept QTextLayouts (QHexView::setRowLayouts, the default) are the pixels the QTextDocument of
+/// upstream's paint made: colours, a comment's underline, the cursor, a selection, the header. Runtime: a few ms
+TEST_F(QHexViewRepaint_Test, TheRowLayoutsPaintWhatTheDocumentPainted)
+{
+    _view.setForeground(0x800, 0x804, QColor(0x00, 0x80, 0x00));
+    _view.setBackground(0x810, 0x818, QColor(255, 255, 0, 100));
+    _view.setComment(0x820, 0x822, QStringLiteral("a note"));
+    _view.setMetadata(0x828, 0x830, QColor(Qt::red), QColor(80, 140, 255, 60), QString());
+    _view.gotoOffset(0x845);
+    const auto grab = [&](bool rowLayouts) {
+        _view.setRowLayouts(rowLayouts);
+        PumpIdle();
+        return _view.viewport()->grab().toImage();
+    };
+    const QImage document = grab(false);
+    const QImage rows = grab(true);
+    ASSERT_FALSE(document.isNull());
+    EXPECT_EQ(rows, document) << "the row layouts painted other pixels than the document";
+    EXPECT_GT(_view.rowPixmapCount(), 0) << "the rows were not kept as pixels";
+    const QImage again = grab(true);  // from the kept rows
+    EXPECT_EQ(again, document);
+
+    // A selection over two rows
+    _view.hexCursor()->move(0x803);
+    _view.hexCursor()->select(0x813);
+    const QImage selectedDocument = grab(false);
+    const QImage selectedRows = grab(true);
+    EXPECT_EQ(selectedRows, selectedDocument) << "a selection painted otherwise";
+}

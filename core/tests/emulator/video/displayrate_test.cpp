@@ -217,9 +217,8 @@ TEST(DisplayRate_Test, SmoothGuardStepsDownOnLateOrSlowPictures)
     // One window of `lates` late presents, all at its start (a stall); the verdict is the window's, not a picture's
     uint64_t late = 100;
     SmoothGuard software;  // no presenter counts: late presents stay 0
-    // slowNs is read only for the first `slow` pictures, none by default; a local (QUICK) may not be a default
-    // argument: gcc and MSVC refuse it
-    auto window = [&](SmoothGuard& g, uint32_t lates, int64_t slowNs = 0, uint32_t slow = 0) {
+    // slowNs defaults to QUICK's value: gcc rejects a local variable in a default argument
+    auto window = [&](SmoothGuard& g, uint32_t lates, int64_t slowNs = 1'000'000, uint32_t slow = 0) {
         bool down = false;
         for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
         {
@@ -327,4 +326,9 @@ TEST(DisplayRate_Test, SmoothGuardTriesTheLevelAboveAgainAfterAWaitThatGrows)
     EXPECT_FALSE(guard.RetryDue(now + SmoothGuard::kMaxRetryNs)) << "the settings set again: nothing to retry";
     guard.SteppedDown(now);
     EXPECT_TRUE(guard.RetryDue(now + SmoothGuard::kFirstRetryNs)) << "the first wait again";
+    // One level up and still below the top: the next one after the wait as it is now, not doubled again
+    now += SmoothGuard::kFirstRetryNs;
+    guard.RetryLater(now);
+    EXPECT_FALSE(guard.RetryDue(now + 2 * SmoothGuard::kFirstRetryNs - 1));
+    EXPECT_TRUE(guard.RetryDue(now + 2 * SmoothGuard::kFirstRetryNs));
 }

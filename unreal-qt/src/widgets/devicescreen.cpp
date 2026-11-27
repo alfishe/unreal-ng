@@ -117,7 +117,7 @@ void DeviceScreen::setFrameSource(ScreenFrames source)
     _smooth.Reset();
     _smooth.SetMode(mode);
     _smooth.SetLite(false);
-    _smoothGuard.Reset();
+    _smoothGuard.StartOver();
     _smoothSteppedDown = _smoothTooSlow = false;
     _smoothShown = {};
     updateVideoSync();
@@ -316,7 +316,25 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
         _smooth.Height() == drawImage->height())
     {
         using Kind = smoothmotion::SmoothMotion::Kind;
-        smoothmotion::SmoothMotion::Result plan = _smooth.Plan(SteadyNowNs());
+        const int64_t nowNs = SteadyNowNs();
+        // A step down is for a while (SmoothGuard::SteppedDown): one level up again when due
+        if ((_smoothTooSlow || _smoothSteppedDown) && _smoothGuard.RetryDue(nowNs))
+        {
+            if (_smoothTooSlow)
+                _smoothTooSlow = false;
+            else
+            {
+                _smoothSteppedDown = false;
+                _smooth.SetLite(false);
+            }
+            _smoothGuard.Reset();
+            if (_smoothSteppedDown)
+                _smoothGuard.RetryLater(nowNs);
+            _smoothShown = {};
+            qInfo() << "DeviceScreen: smooth motion tries"
+                    << (_smooth.Lite() ? "the cheap interpolation" : "the interpolation") << "again";
+        }
+        smoothmotion::SmoothMotion::Result plan = _smooth.Plan(nowNs);
         if (_smoothFrame.size() != drawImage->size())
         {
             _smoothFrame = QImage(drawImage->size(), QImage::Format_RGBX8888);
@@ -349,10 +367,11 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
                 }
                 else
                     _smoothTooSlow = true;
+                _smoothGuard.SteppedDown(nowNs);
                 qWarning() << "DeviceScreen: smooth motion's interpolation is too slow here ("
                            << _smoothGuard.ClosedSlow() << "of its last" << SmoothGuard::kWindow
                            << "pictures drawn in most of a refresh) -"
-                           << (_smoothTooSlow ? "blended from now on" : "the cheap interpolation from now on");
+                           << (_smoothTooSlow ? "blended" : "the cheap interpolation") << "for a while";
             }
         }
         if (ready)

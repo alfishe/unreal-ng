@@ -473,7 +473,7 @@ enum class TapVariantEnum : uint8_t
 | $24 / $25 | Loop start / Loop end | control flow — body repeats `count` times in total; see linearization below |
 | $26 | Select block | v1: treated as Jump to the first branch (logged; all branches listed in a warning); interactive selection out of scope |
 | $27 / $28 | Call sequence / Return | control flow — each called sub-sequence inlined in list order; see linearization below |
-| $2A | Stop tape if 48K | honored when model is 48K: terminal stop marker; else ignored |
+| $2A | Stop tape if 48K | kind `Control`, `control` `stop_48k`, no signal. Decided by the deck when the head passes it: in 48K mode (a 48K model, or `#7FFD` paging locked) the tape stops before the next block and a play or a listening loader goes on from there; else it is passed |
 | $2B | Set signal level | recorded in next block's profile `invertedLevel` |
 | $30–$33 | Text / Message / Archive info / Hardware | image metadata (`title`, `hardwareNote`); no blocks |
 | $35/$5A | Custom info / Glue | skipped, logged once |

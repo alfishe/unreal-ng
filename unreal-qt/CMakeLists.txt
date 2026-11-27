@@ -918,6 +918,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/portwatchdialog.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.h"
+        # The debugger's set-when-changed helpers: a scroll bar that repaints only when its handle moves (§7.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/widgetupdates_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/widgetupdates.h"
         # The disassembly view's row strip: up N then down N shows the same rows (disasm virtual scroll §3.4)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disassemblystrip_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disassemblystrip.cpp"
