@@ -2217,7 +2217,9 @@ Picture) and the Steam Deck client has it as `--view` and a button (router actio
 
 The picture as the unreal-qt window draws it (CRT shader and all, no HUD), the on-screen keyboard lighting the keys the
 machine holds next to it, and the machine's sound, to a full-colour file through ffmpeg (ProRes 4444 `.mov` or H.264
-4:4:4 `.mp4`: a CRT mask a pixel wide survives; on a Mac `hardware=on` uses the project's VideoToolbox encoder instead). The clock is the machine's: one video frame per emulated frame at its
+4:4:4 `.mp4`: a CRT mask a pixel wide survives; on a Mac `hardware=on` uses the project's VideoToolbox encoder instead). On a Mac with the GL window and the hardware encoder at the window's size, the GPU composes each
+file frame straight into the encoder's IOSurface buffer (no read back, no CPU copy); elsewhere (Vulkan, the software
+screen, ffmpeg) the frame is read back and composed on the CPU. The clock is the machine's: one video frame per emulated frame at its
 rate (48.828 fps on a Pentagon), each with the samples it mixed, so picture and sound stay together whatever the host's
 load. A paused machine stepped with `record frames` gets every frame; a running one repeats the picture for frames the
 window skipped. The keyboard and the sound are delayed by the window's present delay (A/V sync, ZX DLSS look-ahead), so

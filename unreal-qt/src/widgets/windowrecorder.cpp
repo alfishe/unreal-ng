@@ -32,11 +32,13 @@
 #include "emulator/video/screen.h"
 #include "osdkeyboard/osdkeyboardwindow.h"
 #include "common/framescaler.h"
+#include "common/threadpool.h"
 #include "common/named_pipe.h"
 #include "ffmpeg_probe.h"
 #ifdef __APPLE__
 #include "common/encoderconfig.h"
 #include "platform/macos/videotoolbox_encoder.h"
+#include "platform/macos/recordingsurfaces.h"
 #endif
 
 namespace
@@ -320,12 +322,16 @@ struct WindowRecorder::Writer
 {
     struct Job
     {
-        QImage picture;   ///< the window's picture (null = a sound-only job)
+        QImage picture;   ///< the window's picture (null and no `frame`: a sound-only job)
+        /// The whole frame the GPU composed in the hardware encoder's own buffer (macOS), instead of `picture`
+        std::shared_ptr<void> frame;
         QImage keyboard;  ///< the keyboard under it (null = none)
         uint32_t repeat = 0;
         uint64_t frameStart = 0;  ///< the picture's first frame in the file (its time: frameStart / fps)
         QByteArray sound;
         double soundTime = 0;     ///< the sound's emulated time in seconds
+
+        bool hasPicture() const { return !picture.isNull() || frame; }
     };
 
     // The file's layout
@@ -350,6 +356,25 @@ struct WindowRecorder::Writer
     std::shared_ptr<NamedPipe> soundPipe;
     std::shared_ptr<QTemporaryDir> soundDir;  ///< the FIFO's private directory (this user's alone), removed with it
     std::atomic<uint64_t> framesDone{0};
+    /// The writer thread's helpers for a frame's rows (made once: three threads started for every frame cost more
+    /// than the rows at 1080p)
+    std::unique_ptr<ThreadPool> rowPool;
+
+    /// `band(part)` for each of kParts parts at once, on the writer thread and its helpers
+    static constexpr int kParts = 4;
+    void inParts(const std::function<void(int)>& band) const
+    {
+        if (!rowPool)
+        {
+            for (int part = 0; part < kParts; ++part)
+                band(part);
+            return;
+        }
+        rowPool->ParallelFor(kParts, kParts, [&](int first, int last) {
+            for (int part = first; part < last; ++part)
+                band(part);
+        });
+    }
 
     // Timings in microseconds since the writer was made (0 = not reached): the status shows where a late start went
     const std::chrono::steady_clock::time_point created = std::chrono::steady_clock::now();
@@ -427,7 +452,7 @@ struct WindowRecorder::Writer
     {
         std::lock_guard<std::mutex> lock(mutex);
         for (auto it = jobs.begin(); it != jobs.end();)
-            if (it->picture.isNull() && !it->sound.isEmpty())
+            if (!it->hasPicture() && !it->sound.isEmpty())
             {
                 into.push_back(std::move(it->sound));
                 it = jobs.erase(it);
@@ -483,16 +508,31 @@ struct WindowRecorder::Writer
         if (width <= 0 || rows <= 0 || picture.width() - width > 4 || picture.height() - rows > 4)
             return false;
         // Rows are independent: a few threads write them at once (the encoder's pixel buffer is shared memory, one
-        // thread does not fill its bandwidth)
+        // thread does not fill its bandwidth). Only the background around the picture is written (the whole frame
+        // filled first wrote a 1080p frame twice)
         // The width in a local: read through the QImage in the loop condition it is reloaded after every store (a
         // uint32_t store may alias the image's fields), which kept the loop scalar. A 4K frame on 4 threads / on one:
         // 5.2 / 16+ ms -> 1.2 / 2 (clang, M1), 12.7 / 29 -> 4.9 / 7.1 (gcc 15), 4.4 / 16.8 -> 2.4 / 3.1 (MSVC)
-        const auto swapRows = [&](int first, int last)
+        const int frameWidth = frame.width();
+        const int frameHeight = frame.height();
+        const uint32_t background = kBackground.rgb();
+        const auto band = [&](int part)
         {
-            for (int y = first; y < last; ++y)
+            const int first = frameHeight * part / kParts;
+            const int last = frameHeight * (part + 1) / kParts;
+            for (int row = first; row < last; ++row)
             {
+                uint32_t* line = reinterpret_cast<uint32_t*>(frame.scanLine(row));
+                const int y = row - y0;
+                if (y < 0 || y >= rows)
+                {
+                    std::fill_n(line, frameWidth, background);
+                    continue;
+                }
+                std::fill_n(line, x0, background);
+                std::fill_n(line + x0 + width, frameWidth - x0 - width, background);
                 const uint32_t* from = reinterpret_cast<const uint32_t*>(picture.constScanLine(fromY + y)) + fromX;
-                uint32_t* to = reinterpret_cast<uint32_t*>(frame.scanLine(y0 + y)) + x0;
+                uint32_t* to = line + x0;
                 for (int x = 0; x < width; ++x)
                 {
                     const uint32_t p = from[x];
@@ -503,20 +543,36 @@ struct WindowRecorder::Writer
                 }
             }
         };
-        constexpr int kParts = 4;
-        std::thread helpers[kParts - 1];
-        for (int part = 1; part < kParts; ++part)
-            helpers[part - 1] = std::thread(swapRows, rows * part / kParts, rows * (part + 1) / kParts);
-        swapRows(0, rows / kParts);
-        for (std::thread& helper : helpers)
-            helper.join();
+        inParts(band);
         return true;
+    }
+
+    /// The frame the GPU composed (background and picture): only the keyboard drawn over it here
+    void drawKeyboardInto(void* pixelBuffer, const QImage& keyboard) const
+    {
+#ifdef __APPLE__
+        uint8_t* data = nullptr;
+        size_t stride = 0;
+        if (keyboard.isNull() || !RecordingSurfaces::LockPixels(pixelBuffer, data, stride))
+            return;
+        {
+            QImage frame(data, size.width(), size.height(), static_cast<qsizetype>(stride),
+                         QImage::Format_ARGB32_Premultiplied);  // B,G,R,A; opaque, so the same bytes
+            QPainter painter(&frame);
+            painter.drawImage(keyboardRect.topLeft(), keyboard);
+        }
+        RecordingSurfaces::UnlockPixels(pixelBuffer);
+#else
+        (void)pixelBuffer;
+        (void)keyboard;
+#endif
     }
 
     void composeInto(QImage& frame, const Job& job) const
     {
-        frame.fill(kBackground);
-        const bool fast = composeFast(frame, job);
+        const bool fast = composeFast(frame, job);  // the background around the picture too
+        if (!fast)
+            frame.fill(kBackground);
         if (fast)
         {
             if (!job.keyboard.isNull())
@@ -541,14 +597,13 @@ struct WindowRecorder::Writer
     /// The composed B,G,R,A frame as NV12 into `out` (width x height Y bytes, then the U,V rows): FrameScaler's
     /// conversion (BT.709 limited), in bands of rows on a few threads as
     /// composeFast does. The frame's sides are even (the layout makes them so)
-    static void ToNv12(const QImage& frame, uint8_t* out)
+    void ToNv12(const QImage& frame, uint8_t* out) const
     {
         const int width = frame.width();
         const int height = frame.height();
         const size_t stride = static_cast<size_t>(frame.bytesPerLine());
         uint8_t* yPlane = out;
         uint8_t* uvPlane = out + static_cast<size_t>(width) * height;
-        constexpr int kParts = 4;
         const auto band = [&](int part)
         {
             const int first = height / 2 * part / kParts * 2;
@@ -558,12 +613,7 @@ struct WindowRecorder::Writer
                                       yPlane + static_cast<size_t>(first) * width, static_cast<size_t>(width),
                                       uvPlane + static_cast<size_t>(first / 2) * width, static_cast<size_t>(width), true);
         };
-        std::thread helpers[kParts - 1];
-        for (int part = 1; part < kParts; ++part)
-            helpers[part - 1] = std::thread(band, part);
-        band(0);
-        for (std::thread& helper : helpers)
-            helper.join();
+        inParts(band);
     }
 
     /// One NV12 frame of transfer nv12 built in place: the background is written once per buffer, then only the
@@ -654,7 +704,6 @@ struct WindowRecorder::Writer
         uint8_t* yAt = yPlane + static_cast<size_t>(screenRect.y()) * stride + screenRect.x();
         uint8_t* uvAt = uvPlane + static_cast<size_t>(screenRect.y() / 2) * stride + screenRect.x();
         const size_t srcStride = static_cast<size_t>(picture.bytesPerLine());
-        constexpr int kParts = 4;
         std::function<void(int)> band;
         if (pw == rw && ph == rh)
         {
@@ -685,12 +734,7 @@ struct WindowRecorder::Writer
                                              rh / 2 * part / kParts, rh / 2 * (part + 1) / kParts);
             };
         }
-        std::thread helpers[kParts - 1];
-        for (int part = 1; part < kParts; ++part)
-            helpers[part - 1] = std::thread(band, part);
-        band(0);
-        for (std::thread& helper : helpers)
-            helper.join();
+        inParts(band);
 
         // The keyboard over the background, as QPainter draws it (its corners are transparent), when it changed
         if (!job.keyboard.isNull() && !SameImage(job.keyboard, out.keyboard))
@@ -749,7 +793,7 @@ struct WindowRecorder::Writer
                     break;
                 job = std::move(jobs.front());
                 jobs.pop_front();
-                if (!job.picture.isNull() && --queuedPictures < kMaxQueuedFrames && wantRetry)
+                if (job.hasPicture() && --queuedPictures < kMaxQueuedFrames && wantRetry)
                 {
                     wantRetry = false;
                     signalRoom = true;
@@ -762,9 +806,19 @@ struct WindowRecorder::Writer
             if (!job.sound.isEmpty())
                 encoder.OnAudioSamples(reinterpret_cast<const int16_t*>(job.sound.constData()),
                                        static_cast<size_t>(job.sound.size()) / sizeof(int16_t), job.soundTime);
-            if (job.picture.isNull())
+            if (!job.hasPicture())
                 continue;
             const int64_t pictureStartUs = sinceCreatedUs();
+            if (job.frame)
+            {
+                // Composed by the GPU in a buffer of the encoder's kind: the keyboard over it, then in as it is
+                drawKeyboardInto(job.frame.get(), job.keyboard);
+                encoder.AppendPixelBuffer(job.frame.get(), static_cast<double>(job.frameStart) / fps);
+                job.frame.reset();  // back to the pool once the encoder is done with it
+                framesDone = job.frameStart + job.repeat;
+                pictureHandled(pictureStartUs, "gpu");
+                continue;
+            }
             FrameTarget target;
             if (encoder.AcquireFrameTarget(static_cast<uint32_t>(size.width()), static_cast<uint32_t>(size.height()),
                                            target) == FrameTargetResult::Ready)
@@ -788,6 +842,7 @@ struct WindowRecorder::Writer
     void run()
     {
         writerStartUs = sinceCreatedUs();
+        rowPool = std::make_unique<ThreadPool>(kParts - 1, "window-recorder-rows");
 #ifdef __APPLE__
         if (native)
         {
@@ -935,7 +990,7 @@ struct WindowRecorder::Writer
                     break;  // closing and drained
                 job = std::move(jobs.front());
                 jobs.pop_front();
-                if (!job.picture.isNull() && --queuedPictures < kMaxQueuedFrames && wantRetry)
+                if (job.hasPicture() && --queuedPictures < kMaxQueuedFrames && wantRetry)
                 {
                     wantRetry = false;
                     signalRoom = true;
@@ -1600,6 +1655,12 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
             sink->pending.push_back(std::move(sound));
         });
     connect(_screen, &DeviceScreenWrapper::refreshed, this, &WindowRecorder::onRefreshed);
+#ifdef __APPLE__
+    // The Mac's own encoder takes frames the GPU window composes in its buffers (no copy through the CPU); the CPU
+    // way stays for the software screen, a hidden window, Vulkan, and the scaled-up (blocky) picture
+    if (_writer->native && _writer->scale == 1)
+        _screen->setRecordingFrame({_writer->size, _writer->screenRect, kBackground});
+#endif
     _capture = _screen->setRecordingCapture(true, _request.pictureHeight);
     fill(out);
     return true;
@@ -1713,22 +1774,19 @@ void WindowRecorder::onRefreshed()
     }
     // The pictures the GPU window captured after its presents (read back without waiting), one per frame it showed,
     // oldest first, each with its frame's number (0: not known)
-    std::vector<QImage> pictures;
-    std::vector<uint64_t> numbers;
+    std::vector<RecordingPicture> pictures;
     if (_capture && _screen)
-        _screen->takeRecordingPictures(pictures, numbers);
+        _screen->takeRecordingPictures(pictures);
     // None twice in a row: the window presents nothing (hidden, minimized; or no GPU window: the software screen),
     // so the picture is drawn here, the frame the window would show now
     _captureMisses = pictures.empty() ? _captureMisses + 1 : 0;
     if (pictures.empty() && (!_capture || _captureMisses > 1))
     {
-        QImage picture;
-        uint64_t number = 0;
+        RecordingPicture picture;
         std::string error;
-        if (!_screen || !_screen->grabRecordingPicture(picture, number, error, _request.pictureHeight))
+        if (!_screen || !_screen->grabRecordingPicture(picture.image, picture.number, error, _request.pictureHeight))
             return;
         pictures.push_back(std::move(picture));
-        numbers.push_back(number);
     }
     for (size_t k = 0; k < pictures.size() && !_unpictured.empty(); ++k)
     {
@@ -1737,7 +1795,8 @@ void WindowRecorder::onRefreshed()
         // counter jumped (a reset, a snapshot, a TTD seek): then it stands for the oldest waiting
         size_t at = 0;
         bool matched = false;
-        if (numbers[k] == 0)
+        const uint64_t shown = pictures[k].number;
+        if (shown == 0)
         {
             const size_t behind = std::min(presentDelay(), _unpictured.size() - 1);
             at = _unpictured.size() - 1 - behind;
@@ -1745,7 +1804,7 @@ void WindowRecorder::onRefreshed()
         }
         else
             for (size_t i = 0; i < _unpictured.size(); ++i)
-                if (_unpictured[i].frame == numbers[k])
+                if (_unpictured[i].frame == shown)
                 {
                     at = i;
                     matched = true;
@@ -1754,7 +1813,7 @@ void WindowRecorder::onRefreshed()
         if (!matched)
         {
             const uint64_t oldest = _unpictured.front().frame;
-            if (numbers[k] < oldest && oldest - numbers[k] <= kStalePictureFrames)
+            if (shown < oldest && oldest - shown <= kStalePictureFrames)
                 continue;  // its frame is in the file already
         }
         if (_frames == 0)
@@ -1769,7 +1828,8 @@ void WindowRecorder::onRefreshed()
         while (_keyboardDelay.size() > 1 && _keyboardDelay[1].first <= number)
             _keyboardDelay.pop_front();
         Writer::Job job;
-        job.picture = std::move(pictures[k]);
+        job.picture = std::move(pictures[k].image);
+        job.frame = std::move(pictures[k].frame);
         if (!_keyboardDelay.empty())
             job.keyboard = _keyboardDelay.front().second;
         job.repeat = static_cast<uint32_t>(at + 1);
