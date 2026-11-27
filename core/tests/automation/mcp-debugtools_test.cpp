@@ -248,6 +248,55 @@ TEST_F(McpDebugTools_Test, AnalyzePerformance_GsPortTraceControlsThroughTheContr
     EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/state/audio/gs/porttrace"), nullptr);
 }
 
+/// porttrace filter: set before the capture starts (a preset name or the rules), named in the text with the events;
+/// a refused rule stops the action before anything is recorded
+TEST_F(McpDebugTools_Test, AnalyzePerformance_PortTraceSetsItsFilterBeforeTheCapture)
+{
+    const std::string base = "/api/v1/emulator/emu-1/profiler/porttrace";
+    Json::Value filterAnswer;
+    filterAnswer["filter"] = "include: [device=AY_FFFD AND dir=OUT]";
+    _caller->routes["POST " + base + "/filter"] = {200, filterAnswer};
+    Json::Value event;
+    event["frame"] = 7;
+    event["pc"] = "0x8010";
+    event["direction"] = "OUT";
+    event["raw_port"] = "0xFFFD";
+    event["value"] = "0x07";
+    event["device"] = "AY_FFFD";
+    Json::Value events;
+    events["events"].append(event);
+    _caller->routes["GET " + base + "/events?limit=32"] = {200, events};
+
+    Json::Value args;
+    args["action"] = "porttrace";
+    args["frames"] = 1;
+    args["filter"]["include"][0]["device"] = "AY_FFFD";
+    args["filter"]["include"][0]["direction"] = "out";
+    const mcp::ToolResult result = Run("analyze_performance", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeCaller::RecordedCall* set = _caller->Last("POST", base + "/filter");
+    ASSERT_NE(set, nullptr);
+    EXPECT_EQ(set->body["include"][0]["device"].asString(), "AY_FFFD");
+    EXPECT_NE(_caller->Last("POST", base + "/start"), nullptr);
+    EXPECT_NE(result.text.find("Filter: include: [device=AY_FFFD AND dir=OUT]"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 7 pc 0x8010 OUT 0xFFFD = 0x07 AY_FFFD"), std::string::npos) << result.text;
+
+    // A preset by its name
+    args["filter"] = "outs-only";
+    ASSERT_FALSE(Run("analyze_performance", args).isError);
+    EXPECT_EQ(_caller->Last("POST", base + "/filter")->body["preset"].asString(), "outs-only");
+
+    // Refused: no capture
+    _caller->calls.clear();
+    Json::Value refusal;
+    refusal["message"] = "Unknown device: AY";
+    _caller->routes["POST " + base + "/filter"] = {400, refusal};
+    const mcp::ToolResult refused = Run("analyze_performance", args);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("Unknown device: AY"), std::string::npos) << refused.text;
+    EXPECT_EQ(_caller->Last("POST", base + "/start"), nullptr);
+}
+
 /// analysis: one tool, the action picks the route; the core answer's text is the tool's text (content[] carries it)
 TEST_F(McpDebugTools_Test, Analysis_ActionsGoToTheirRoutesAndCarryTheText)
 {

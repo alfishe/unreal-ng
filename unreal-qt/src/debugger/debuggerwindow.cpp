@@ -1169,7 +1169,7 @@ void DebuggerWindow::paintMemoryMetadata()
         _markupLegend->setText(legend);
         _markupLegend->setVisible(!shown.empty());
     }
-    ui->hexView->update();
+    // The view repaints what the metadata changed itself (QHexMetadata::changed)
 }
 
 void DebuggerWindow::onBindingNotReady()
@@ -2615,15 +2615,22 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
         address, (uint16_t)size, offset, currentAddress);
     ;
 
+    // A stop shows the page again (a step may change memory): the rows whose bytes, highlights or cursor changed are
+    // painted again, not the whole view (QHexView::beginChanges)
+    ui->hexView->beginChanges();
     QByteArray data((const char*)address, size);
     QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
+    QHexDocument* previous = ui->hexView->getDocument();
     ui->hexView->setBaseAddress(offset);  // Set base offset for the whole hex view
     ui->hexView->setDocument(document);
+    if (previous && previous->parent() == ui->hexView)
+        previous->deleteLater();  // the view took it (one per stop): not kept until the window closes
 
     // Note: change offset position only after assigning document to HexView
     // otherwise widget is unaware of the document and where to jump so just skipping the request
     ui->hexView->gotoOffset(currentAddress);  // Position cursor on the byte with offset
     paintMemoryMetadata();
+    ui->hexView->endChanges();
     emit memoryViewChanged();
 }
 

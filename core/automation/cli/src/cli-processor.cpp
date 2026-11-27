@@ -905,7 +905,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  slots remove <slot> | set <slot> opt=val .. | gs <gs|gs-lw|neogs> | matrix [table]" << NEWLINE;
     oss << "  slots help             - All verbs and flags" << NEWLINE;
     oss << "  history [<device> [N] [since=S]] - Device histories (FDC commands, ...): list, a device's newest N, or the first N after record S" << NEWLINE;
-    oss << "  history <device> mode <off|ring|capture> [limit=N] [stream=<file>] [stream_limit=N] | clear | pause | resume" << NEWLINE;
+    oss << "  history <device> mode <off|ring|capture> [limit=N] [stream=<file>] [stream_limit=N] [filter=<field=value>].. | clear | pause | resume" << NEWLINE;
     oss << NEWLINE;
     oss << "Controllers (joystick connectors and the retro devices in them):" << NEWLINE;
     oss << "  controllers [list]     - Connectors, devices, what is held" << NEWLINE;

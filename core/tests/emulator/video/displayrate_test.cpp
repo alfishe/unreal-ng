@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -213,41 +214,115 @@ TEST(DisplayRate_Test, SmoothGuardStepsDownOnLateOrSlowPictures)
     // In time: no step, window after window
     for (uint32_t i = 0; i < SmoothGuard::kWindow * 3; i++)
         EXPECT_FALSE(guard.Note(100, QUICK, REFRESH)) << i;
-    // The presenter's late presents: kLates of a window
+    // One window of `lates` late presents, all at its start (a stall); the verdict is the window's, not a picture's
     uint64_t late = 100;
-    bool down = false;
-    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
-    {
-        if (i < SmoothGuard::kLates)
-            late++;
-        down = guard.Note(late, QUICK, REFRESH);
-        if (i + 1 < SmoothGuard::kWindow)
-            EXPECT_FALSE(down) << "the verdict is the window's, not a picture's";
-    }
-    EXPECT_TRUE(down);
+    SmoothGuard software;  // no presenter counts: late presents stay 0
+    auto window = [&](SmoothGuard& g, uint32_t lates, int64_t slowNs = QUICK, uint32_t slow = 0) {
+        bool down = false;
+        for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+        {
+            if (i < lates)
+                late++;
+            down = g.Note(&g == &guard ? late : 0, i < slow ? slowNs : QUICK, REFRESH);
+            if (i + 1 < SmoothGuard::kWindow)
+                EXPECT_FALSE(down) << "picture " << i;
+        }
+        return down;
+    };
+    // kLates of a window, kBadWindows windows in a row: down
+    for (uint32_t w = 0; w + 1 < SmoothGuard::kBadWindows; w++)
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates)) << "window " << w;
+    EXPECT_TRUE(window(guard, SmoothGuard::kLates));
     EXPECT_EQ(guard.ClosedLates(), SmoothGuard::kLates);
-    // One less: no step
-    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+    // One stall (the owner's Mac: 4 presents late at once, none for seconds around): no step, however many
+    for (int stall = 0; stall < 5; stall++)
     {
-        if (i + 1 < SmoothGuard::kLates)
-            late++;
-        down = guard.Note(late, QUICK, REFRESH);
+        EXPECT_FALSE(window(guard, 20)) << stall;
+        EXPECT_FALSE(window(guard, 0)) << stall;
+        EXPECT_FALSE(window(guard, 0)) << stall;
     }
-    EXPECT_FALSE(down);
+    // Bad windows broken by a good one start over
+    for (uint32_t w = 0; w + 1 < SmoothGuard::kBadWindows; w++)
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates));
+    EXPECT_FALSE(window(guard, 0));
+    for (uint32_t w = 0; w + 1 < SmoothGuard::kBadWindows; w++)
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates));
+    // One less a window: no step
+    for (uint32_t w = 0; w < SmoothGuard::kBadWindows * 2; w++)
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates - 1));
     // No presenter counts (the software screen): pictures drawn in most of a refresh tell
-    SmoothGuard software;
-    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
-        down = software.Note(0, i < SmoothGuard::kLates ? REFRESH : QUICK, REFRESH);
+    bool down = false;
+    for (uint32_t w = 0; w < SmoothGuard::kBadWindows; w++)
+        down = window(software, 0, REFRESH, SmoothGuard::kLates);
     EXPECT_TRUE(down);
     EXPECT_EQ(software.ClosedSlow(), SmoothGuard::kLates);
     EXPECT_EQ(software.ClosedLates(), 0u);
     // Three quarters of a refresh is still in time
-    for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
-        down = software.Note(0, REFRESH * 3 / 4, REFRESH);
-    EXPECT_FALSE(down);
+    for (uint32_t w = 0; w < SmoothGuard::kBadWindows; w++)
+        EXPECT_FALSE(window(software, 0, REFRESH * 3 / 4, SmoothGuard::kWindow));
     // A presenter set again counts from its number, not from zero
     guard.Reset(5000);
     for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
         down = guard.Note(5000, QUICK, REFRESH);
     EXPECT_FALSE(down);
+}
+
+/// Smooth motion off for a while (turbo, low latency, the temporal blend, another sync step): the presenter's late
+/// presents meanwhile are not the interpolation's pictures. On again, the guard counts from then on: no step down for
+/// lates it never drew
+TEST(DisplayRate_Test, SmoothGuardCountsNoLatesFromWhileSmoothMotionWasOff)
+{
+    constexpr int64_t REFRESH = 16'666'667;
+    constexpr int64_t QUICK = 1'000'000;
+    const auto run = [&](bool tracked) {
+        SmoothGuard guard;
+        guard.Reset(100);
+        for (uint32_t i = 0; i < SmoothGuard::kWindow / 2; i++)
+            EXPECT_FALSE(guard.Note(100, QUICK, REFRESH));
+        // Off: 50 refreshes, the presenter late on many of them (turbo frames presented at once)
+        uint64_t late = 100;
+        for (int refresh = 0; refresh < 50; refresh++)
+        {
+            late += refresh % 5 == 0 ? 1 : 0;
+            if (tracked)
+                guard.Track(false, late);
+        }
+        // On again, every picture in time
+        for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
+        {
+            if (tracked)
+                guard.Track(true, late);
+            EXPECT_FALSE(guard.Note(late, QUICK, REFRESH));
+        }
+        return guard.ClosedLates();  // a window closed with kLates or more counts toward a step down
+    };
+    EXPECT_GE(run(false), SmoothGuard::kLates) << "untracked (the defect): the lates from while it was off count";
+    EXPECT_EQ(run(true), 0u);
+}
+
+/// A step down is tried again after a wait that doubles with each step down, up to its bound; the settings set again
+/// start the waits over. On the owner's Mac a start under load made every present late for its first seconds: the
+/// step down was for good before the waits
+TEST(DisplayRate_Test, SmoothGuardTriesTheLevelAboveAgainAfterAWaitThatGrows)
+{
+    constexpr int64_t S = 1'000'000'000;
+    SmoothGuard guard;
+    EXPECT_FALSE(guard.RetryDue(0)) << "nothing stepped down";
+    int64_t now = 100 * S;
+    int64_t wait = SmoothGuard::kFirstRetryNs;
+    for (int step = 0; step < 8; step++)
+    {
+        guard.SteppedDown(now);
+        EXPECT_FALSE(guard.RetryDue(now + wait - 1)) << "step " << step;
+        EXPECT_TRUE(guard.RetryDue(now + wait)) << "step " << step;
+        EXPECT_FALSE(guard.RetryDue(now + wait + 1)) << "once";
+        now += wait;
+        wait = std::min(wait * 2, SmoothGuard::kMaxRetryNs);
+    }
+    EXPECT_EQ(wait, SmoothGuard::kMaxRetryNs);
+    guard.SteppedDown(now);
+    guard.StartOver();
+    EXPECT_FALSE(guard.RetryDue(now + SmoothGuard::kMaxRetryNs)) << "the settings set again: nothing to retry";
+    guard.SteppedDown(now);
+    EXPECT_TRUE(guard.RetryDue(now + SmoothGuard::kFirstRetryNs)) << "the first wait again";
 }

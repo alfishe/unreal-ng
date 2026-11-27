@@ -7,8 +7,14 @@
 #include <condition_variable>
 #include <functional>
 #include <future>
-#include <sol/sol.hpp>
-#include "emulator/lua_emulator.h"
+// The forward declarations only: sol.hpp and the bindings (lua_emulator.h) stay in the files that use them, so this
+// header costs its includers (the WebAPI, the CLI, the automation core) nothing of the Lua bindings
+#include <sol/forward.hpp>
+
+struct lua_State;
+struct lua_Debug;
+class Emulator;
+class LuaEmulator;
 
 class AutomationLua
 {
@@ -71,7 +77,8 @@ public:
     // Query a Lua expression and return its value as a string
     template<typename T = std::string>
     T eval(const std::string& expression) {
-        return dispatchSync([expression](sol::state& lua) -> T {
+        // A generic lambda: sol::state is complete only where the call is (sol.hpp included there)
+        return dispatchSync([expression](auto& lua) -> T {
             return lua[expression];
         });
     }
@@ -109,28 +116,10 @@ protected:
     static void threadFunc(AutomationLua* lua);
     static void InterruptHook(lua_State* L, lua_Debug* ar);
 
-    void onStart()
-    {
-        // Open some common libraries
-        _lua->open_libraries(sol::lib::base, sol::lib::package);
-        _lua->script("print('AutomationLua::onStart - lua test script executed!\\n');print(_VERSION);");
-    }
-
-    void onFinish()
-    {
-        // Clean up Lua state on the Lua thread (single-threaded ownership)
-        if (_luaEmulator)
-        {
-            delete _luaEmulator;
-            _luaEmulator = nullptr;
-        }
-
-        if (_lua)
-        {
-            delete _lua;
-            _lua = nullptr;
-        }
-    }
+    void onStart();
+    void onFinish();
+    /// Binds the interpreter's emulator (tests: an emulator the manager does not know). On the Lua thread only
+    void BindEmulator(Emulator* emulator);
 
     /// endregion </Handlers>
 };

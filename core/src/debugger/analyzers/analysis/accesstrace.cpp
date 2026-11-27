@@ -80,7 +80,7 @@ private:
     uint64_t _written = 0;
 };
 
-std::vector<uint8_t> HeaderBytes(const AccessTraceSummary& s, uint32_t unitsPerT, uint32_t frameT)
+std::vector<uint8_t> HeaderBytes(const AccessTraceSummary& s, uint32_t unitsPerT, uint32_t frameT, bool filtered)
 {
     std::vector<uint8_t> h;
     auto u16 = [&h](uint16_t v) {
@@ -108,6 +108,7 @@ std::vector<uint8_t> HeaderBytes(const AccessTraceSummary& s, uint32_t unitsPerT
     u64(s.instructions);
     u64(s.cycles);
     h.push_back(s.truncated ? 1 : 0);
+    h.push_back(filtered ? 1 : 0);
     h.resize(kHeaderBytes, 0);
     return h;
 }
@@ -128,6 +129,30 @@ bool ReplayAccessTrace(const TraceBundle& bundle, const AccessTraceOptions& opti
         error = "no file to write the trace to";
         return false;
     }
+    // The filter: the cycle kinds as a table, the ranges as given
+    bool kindOn[256];
+    for (bool& on : kindOn)
+        on = options.kinds.empty();
+    for (const char kind : options.kinds)
+    {
+        if (std::strchr("FRWIOE", kind) == nullptr)
+        {
+            error = std::string("kinds: '") + kind + "' is not one of F, R, W, I, O, E";
+            return false;
+        }
+        kindOn[static_cast<uint8_t>(kind)] = true;
+    }
+    const auto within = [](const std::vector<std::pair<uint16_t, uint16_t>>& ranges, uint16_t value) {
+        if (ranges.empty())
+            return true;
+        for (const auto& [lo, hi] : ranges)
+            if (value >= lo && value <= hi)
+                return true;
+        return false;
+    };
+    const bool filtered = options.Filtered();
+    // With a kind or an address filter an instruction is written with its first kept cycle, not before
+    const bool lazy = !options.kinds.empty() || !options.addressRanges.empty();
     // The clone, seeked to the window's start (replaywindow.h: TTD does the restore and the replay)
     ReplayWindow window;
     if (!window.Open(bundle, "analysis-trace", ttd::TTDTimePoint{options.fromFrame, options.fromTInFrame}, error))
@@ -173,7 +198,7 @@ bool ReplayAccessTrace(const TraceBundle& bundle, const AccessTraceOptions& opti
     out.toTInFrame = endT;
     const uint32_t frameT = window.FrameT();
     const uint32_t unitsPerT = state.TtdTInFrame(1);
-    writer.Bytes(HeaderBytes(out, unitsPerT, frameT).data(), kHeaderBytes);
+    writer.Bytes(HeaderBytes(out, unitsPerT, frameT, filtered).data(), kHeaderBytes);
     std::vector<uint8_t> image(0x10000);
     for (uint8_t bank = 0; bank < 4; ++bank)
         writer.U16(memory->GetPageForBank(bank));
@@ -189,11 +214,16 @@ bool ReplayAccessTrace(const TraceBundle& bundle, const AccessTraceOptions& opti
         uint16_t fetchNext = 0;
         uint8_t fetchLeft = 0;
         uint64_t interrupts = 0;
+        bool pcPasses = true;  ///< the instruction is in the PC ranges
+        bool pending = false;  ///< its record waits for its first kept cycle (a kind or an address filter)
+        uint8_t record[26] = {};
     } cursor;
     cursor.interrupts = z80->interruptsAccepted;
 
     const auto cycle = [&](uint8_t tag, uint16_t address, uint8_t value) {
         if (cursor.done || !cursor.started)
+            return;
+        if (filtered && (!cursor.pcPasses || !kindOn[tag] || !within(options.addressRanges, address)))
             return;
         if (out.cycles >= options.maxCycles)
         {
@@ -204,6 +234,12 @@ bool ReplayAccessTrace(const TraceBundle& bundle, const AccessTraceOptions& opti
         }
         const uint32_t t = static_cast<uint32_t>(z80->t);
         const uint32_t dt = t >= cursor.startT ? t - cursor.startT : t + frameT - cursor.startT;
+        if (cursor.pending)
+        {
+            writer.Bytes(cursor.record, sizeof(cursor.record));
+            ++out.instructions;
+            cursor.pending = false;
+        }
         writer.U8(tag);
         writer.U16(address);
         writer.U8(value);
@@ -250,15 +286,32 @@ bool ReplayAccessTrace(const TraceBundle& bundle, const AccessTraceOptions& opti
         cursor.fetchLeft = DecodeOp(bytes).length;
         cursor.startT = static_cast<uint32_t>(z80->t);
         cursor.started = true;
-        writer.U8('X');
-        writer.U32(static_cast<uint32_t>(frame));
-        writer.U32(tInFrame);
+        cursor.pcPasses = within(options.pcRanges, pc);
+        cursor.pending = false;
+        if (!cursor.pcPasses)
+            return;
+        uint8_t* at = cursor.record;
+        const auto u16 = [&at](uint16_t v) {
+            *at++ = static_cast<uint8_t>(v);
+            *at++ = static_cast<uint8_t>(v >> 8);
+        };
+        *at++ = 'X';
+        u16(static_cast<uint16_t>(frame));
+        u16(static_cast<uint16_t>(frame >> 16));
+        u16(static_cast<uint16_t>(tInFrame));
+        u16(static_cast<uint16_t>(tInFrame >> 16));
         for (const uint16_t v : std::initializer_list<uint16_t>{
                  pc, static_cast<uint16_t>(z80->sp), static_cast<uint16_t>(z80->af), static_cast<uint16_t>(z80->bc),
                  static_cast<uint16_t>(z80->de), static_cast<uint16_t>(z80->hl), static_cast<uint16_t>(z80->ix),
                  static_cast<uint16_t>(z80->iy)})
-            writer.U16(v);
-        writer.U8(static_cast<uint8_t>((interrupted ? 1 : 0) | (z80->halted != 0 ? 2 : 0)));
+            u16(v);
+        *at++ = static_cast<uint8_t>((interrupted ? 1 : 0) | (z80->halted != 0 ? 2 : 0));
+        if (lazy)
+        {
+            cursor.pending = true;
+            return;
+        }
+        writer.Bytes(cursor.record, sizeof(cursor.record));
         ++out.instructions;
     };
     // A bus cycle: a read at the next byte of the instruction is a fetch, the others as the CPU says
@@ -294,7 +347,7 @@ bool ReplayAccessTrace(const TraceBundle& bundle, const AccessTraceOptions& opti
         error = "the analysis instance stopped running at frame " + std::to_string(state.frame_counter);
         return false;
     }
-    if (!writer.Header(HeaderBytes(out, unitsPerT, frameT)))
+    if (!writer.Header(HeaderBytes(out, unitsPerT, frameT, filtered)))
     {
         error = "cannot write " + options.path;
         return false;

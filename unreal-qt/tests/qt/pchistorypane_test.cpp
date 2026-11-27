@@ -7,6 +7,7 @@
 #include <QElapsedTimer>
 #include <QHeaderView>
 #include <QTreeWidget>
+#include <QVBoxLayout>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -160,5 +161,108 @@ TEST(PcHistoryPane_Test, ARefreshNeverWaitsForABusyMachine)
 
     pane.setRecording(false);
     emulator->Stop();
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+}
+
+/// A stop reads the newest kProbe entries when they hold all the new ones (and the rows shown continue them); more
+/// instructions than that since the last stop read the whole ring. Either way the list is the newest entries, at most
+/// the ring's capacity. Runtime: a few ms
+TEST(PcHistoryPane_Test, ALongRunBetweenStopsReadsTheWholeRing)
+{
+    std::shared_ptr<Emulator> emulator =
+        EmulatorManager::GetInstance()->CreateEmulatorWithModel("pchistory-pane-ring", "48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    for (uint32_t a = 0x8000; a < 0x10000; ++a)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(a), 0x00);  // NOPs
+    context->pCore->GetZ80()->pc = 0x8000;
+
+    PcHistoryPane pane(emulator);
+    auto* list = pane.findChild<QTreeWidget*>();
+    ASSERT_NE(list, nullptr);
+    pane.setRecording(true);
+    const auto run = [&](int n) {
+        for (int i = 0; i < n; ++i)
+            emulator->RunSingleCPUCycle(true);
+        pane.refresh();
+    };
+    const auto address = [](uint32_t at) { return QString("%1").arg(at & 0xFFFF, 4, 16, QChar('0')).toUpper(); };
+    run(2);
+    ASSERT_EQ(list->topLevelItemCount(), 2);
+    run(100);  // more than a probe holds
+    ASSERT_EQ(list->topLevelItemCount(), 102);
+    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 101));
+    EXPECT_EQ(list->topLevelItem(101)->text(0), "8000");
+    EXPECT_EQ(pane.rowsMade(), 102) << "the old rows stay";
+    run(10);  // within a probe
+    ASSERT_EQ(list->topLevelItemCount(), 112);
+    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 111));
+    EXPECT_EQ(list->topLevelItem(111)->text(0), "8000");
+    EXPECT_EQ(pane.rowsMade(), 112);
+    run(1000);  // past the ring's capacity: the oldest leave
+    ASSERT_EQ(list->topLevelItemCount(), static_cast<int>(PcHistory::kCapacity));
+    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 1111));
+    EXPECT_EQ(list->topLevelItem(static_cast<int>(PcHistory::kCapacity) - 1)->text(0),
+              address(0x8000 + 1112 - static_cast<uint32_t>(PcHistory::kCapacity)));
+    run(5);
+    ASSERT_EQ(list->topLevelItemCount(), static_cast<int>(PcHistory::kCapacity));
+    EXPECT_EQ(list->topLevelItem(0)->text(0), address(0x8000 + 1116));
+    EXPECT_EQ(list->topLevelItem(static_cast<int>(PcHistory::kCapacity) - 1)->text(0),
+              address(0x8000 + 1117 - static_cast<uint32_t>(PcHistory::kCapacity)));
+
+    pane.setRecording(false);
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+}
+
+/// The status line ("N instructions") changes at every stop; on one line it relays out nothing (a word-wrapping
+/// QLabel relaid out the pane, the side tabs, the splitter and the debugger window, which repainted). Runtime: a few ms
+TEST(PcHistoryPane_Test, AStopsStatusRelaysOutNothing)
+{
+    std::shared_ptr<Emulator> emulator =
+        EmulatorManager::GetInstance()->CreateEmulatorWithModel("pchistory-pane-layout", "48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    for (uint16_t a = 0x8000; a < 0x8100; ++a)
+        context->pMemory->DirectWriteToZ80Memory(a, 0x00);  // NOPs
+    context->pCore->GetZ80()->pc = 0x8000;
+
+    QWidget host;
+    host.resize(400, 300);
+    auto* layout = new QVBoxLayout(&host);
+    auto* pane = new PcHistoryPane(emulator, &host);
+    layout->addWidget(pane);
+    host.show();
+    pane->setRecording(true);
+    emulator->RunSingleCPUCycle(true);
+    pane->refresh();
+    for (int i = 0; i < 5; i++)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+
+    struct LayoutSpy : QObject
+    {
+        int requests = 0;
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (event->type() == QEvent::LayoutRequest)
+                requests++;
+            return QObject::eventFilter(watched, event);
+        }
+    } spy;
+    pane->installEventFilter(&spy);
+    host.installEventFilter(&spy);
+    for (int stop = 0; stop < 3; stop++)
+    {
+        for (int i = 0; i < 7; i++)  // "1 instructions" -> "8 instructions" -> "15 instructions": a new text each
+            emulator->RunSingleCPUCycle(true);
+        pane->refresh();
+        for (int i = 0; i < 3; i++)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+    }
+    EXPECT_EQ(spy.requests, 0) << "a new status text of one line relaid out the window";
+    auto* list = pane->findChild<QTreeWidget*>();
+    ASSERT_NE(list, nullptr);
+    EXPECT_EQ(list->topLevelItemCount(), 22);
+
+    pane->setRecording(false);
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
 }

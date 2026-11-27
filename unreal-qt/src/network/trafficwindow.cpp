@@ -32,6 +32,7 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/traffic/trafficaccess.h"
+#include "ui/activecolors.h"
 
 namespace
 {
@@ -65,6 +66,7 @@ namespace
 TrafficWindow::TrafficWindow(QWidget* parent) : QWidget(parent)
 {
     setWindowTitle(tr("Network traffic"));
+    KeepActiveColors(this);
     setWindowFlags(Qt::Tool);
     resize(900, 620);
     buildUi();

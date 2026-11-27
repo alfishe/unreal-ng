@@ -24,6 +24,8 @@ std::string StatsLine(const Json::Value& h)
         out << " (paused)";
     out << ", written " << h["written"].asUInt64() << ", kept " << h["kept"].asUInt64() << ", dropped "
         << h["dropped"].asUInt64();
+    if (h.isMember("filter"))
+        out << "; filter '" << h["filter"].asString() << "' left out " << h["filtered"].asUInt64();
     if (h["stream"].isObject())
     {
         const Json::Value& s = h["stream"];
@@ -111,6 +113,12 @@ void RegisterDeviceHistory(ToolRegistry& registry)
         "config: a file on the emulator host every record is written to as well (JSON Lines; use scratch/); '' stops it";
     schema["properties"]["stream_limit"]["type"] = "integer";
     schema["properties"]["stream_limit"]["description"] = "config: records to the stream file at most (0 = no limit)";
+    schema["properties"]["filter"]["type"] = "string";
+    schema["properties"]["filter"]["description"] =
+        "config: which records are recorded at all (kept and streamed), so a long capture holds only what is "
+        "studied: terms field=value[,value|a-b] separated by spaces, every term must hold - 'side=host out=true' "
+        "(a GS card: the host's writes, not the firmware's polls), 'port=#B3,#BB pc=#8000-#9FFF'. Fields as the "
+        "records show them; a field the records do not have is refused with the valid ones; '' = every record";
     schema["required"].append("action");
 
     registry.Register(
@@ -169,7 +177,7 @@ void RegisterDeviceHistory(ToolRegistry& registry)
                 {
                     method = "POST";
                     path = Endpoint(idOrError, base + "/" + action);
-                    for (const char* key : {"mode", "limit", "stream", "stream_limit"})
+                    for (const char* key : {"mode", "limit", "stream", "stream_limit", "filter"})
                         if (a.isMember(key))
                             (*body)[key] = a[key];
                     payload = body.get();

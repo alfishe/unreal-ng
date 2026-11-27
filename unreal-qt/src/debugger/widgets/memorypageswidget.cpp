@@ -100,7 +100,6 @@ void MemoryPagesWidget::refresh()
             QLabel* values[] = {page0Value, page1Value, page2Value, page3Value};
             for (uint8_t w = 0; w < 4; w++)
                 values[w]->setText(debuggercpu::CardWindowName(context, m_cpu, w));
-            update();
             return;
         }
         Memory* memory = getMemory();
@@ -115,8 +114,7 @@ void MemoryPagesWidget::refresh()
         page1Value->setText(page1Name);
         page2Value->setText(page2Name);
         page3Value->setText(page3Name);
-
-        update();
+        // No update() of the whole pane: a label repaints itself when its text changes
     }
 }
 

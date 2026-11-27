@@ -172,7 +172,7 @@ const std::vector<MotionField::Vector>& MotionField::SearchOrder(int range)
     return orders.emplace(range, std::move(order)).first->second;
 }
 
-void MotionField::Estimate(const Picture& a, const Picture& b, int range, ThreadPool* pool)
+void MotionField::Estimate(const Picture& a, const Picture& b, int range, ThreadPool* pool, const MotionField* hint)
 {
     _blocksWide = (a.width + kBlock - 1) / kBlock;
     _blocksHigh = (a.height + kBlock - 1) / kBlock;
@@ -222,7 +222,10 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range, Thread
             pass(0, _blocksHigh);
     };
 
-    // Pass 1, per block: the first vector of the search order with the fewest mismatches, at most kAccept
+    // Pass 1, per block: the first vector of the search order with the fewest mismatches, at most kAccept. The
+    // hint's moving vector there, in the range, bounds the fewest first: the search before it stops each vector's
+    // count early (a moving block's motion is far down the order), and the one it finds is the same
+    const bool hinted = hint && hint->_blocksWide == _blocksWide && hint->_blocksHigh == _blocksHigh;
     std::vector<Block> first(count);
     rows([&](int j0, int j1) {
     for (int j = j0; j < j1; j++)
@@ -230,9 +233,26 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range, Thread
         {
             int best = kAccept + 1;
             Vector bestV{};
+            Vector hintV{};
+            int hintBad = -1;
+            if (hinted)
+            {
+                const Block& h = hint->At(i, j);
+                if (h.matched && !(h.v == Vector{}) && std::abs(h.v.x) <= range && std::abs(h.v.y) <= range)
+                {
+                    const int bad = cost(i, j, h.v, kAccept);
+                    if (bad <= kAccept)
+                    {
+                        hintV = h.v;
+                        hintBad = bad;
+                        best = bad + 1;
+                    }
+                }
+            }
             for (const Vector& v : order)
             {
-                const int bad = cost(i, j, v, best - 1);
+                // the hint reached with nothing before it as good: its count is known
+                const int bad = hintBad >= 0 && v == hintV ? hintBad : cost(i, j, v, best - 1);
                 if (bad < best)
                 {
                     best = bad;
@@ -514,11 +534,29 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
         _height = height;
         BuildMask();
     }
-    if (!_frames.empty() && targetNs > _frames.back().targetNs)
+    if (!_frames.empty())
     {
-        _periods.push_back(targetNs - _frames.back().targetNs);
-        if (_periods.size() > 8)
-            _periods.erase(_periods.begin());
+        const Stored& last = _frames.back();
+        // Each frame once: an older one or the same again is no news
+        if (serial <= last.serial)
+            return;
+        // Out of sequence: frames missed (a reader that stalled past the frames the screen holds: the flicker search
+        // would take frames apart for consecutive ones, the motion search would find twice the motion it is made
+        // for), or a time not after the last one (the frame clock cut back: the order by time is not the order by
+        // serial). Start over from this frame
+        if (serial != last.serial + 1 || targetNs <= last.targetNs)
+            Reset();
+    }
+    if (!_frames.empty())
+    {
+        // A gap in time (a pause) is no frame period
+        const int64_t step = targetNs - _frames.back().targetNs;
+        if (step <= kGapPeriods * FramePeriodNs())
+        {
+            _periods.push_back(step);
+            if (_periods.size() > 8)
+                _periods.erase(_periods.begin());
+        }
     }
 
     const size_t size = static_cast<size_t>(width) * height;
@@ -961,11 +999,13 @@ int64_t SmoothMotion::FramePeriodNs() const
     return sorted[sorted.size() / 2];
 }
 
-const MotionField& SmoothMotion::FieldFor(const Stored& a, const Stored& b, int range)
+const MotionField& SmoothMotion::FieldFor(const Stored& a, const Stored& b, int range, const MotionField* keep)
 {
     for (CachedField& cached : _fields)
         if (cached.from == a.serial && cached.to == b.serial && cached.range == range)
             return cached.field;
+    if (&_fields[_nextField].field == keep)
+        _nextField = (_nextField + 1) % 2;
     CachedField& slot = _fields[_nextField];
     _nextField = (_nextField + 1) % 2;
     slot.from = a.serial;
@@ -974,7 +1014,11 @@ const MotionField& SmoothMotion::FieldFor(const Stored& a, const Stored& b, int 
     if (_device && _device->Estimate(a.View(_width, _height), b.View(_width, _height), range, slot.field))
         _stats.onDevice++;
     else
-        slot.field.Estimate(a.View(_width, _height), b.View(_width, _height), range, Pool());
+    {
+        // the other slot's field a hint (any field gives the same one, a pair before or after this one the fastest)
+        const MotionField& other = (&slot == &_fields[0] ? _fields[1] : _fields[0]).field;
+        slot.field.Estimate(a.View(_width, _height), b.View(_width, _height), range, Pool(), &other);
+    }
     _stats.estimates++;
     return slot.field;
 }
@@ -1034,9 +1078,13 @@ SmoothMotion::Result SmoothMotion::Plan(int64_t tNs) const
     if (_mode == Mode::Off || due + 1 >= _frames.size())
         return r;
     const Stored& b = _frames[due + 1];
+    // A pause between the two (the machine stopped, then went on): nothing moved across it, the frame before it
+    // stays until the next one is due
+    if (b.targetNs - a.targetNs > kGapPeriods * FramePeriodNs())
+        return r;
     const int w = WeightAt(tNs, a.targetNs, b.targetNs);
-    const size_t size = static_cast<size_t>(_width) * _height;
-    if (w <= 0 || std::memcmp(a.pixels.data(), b.pixels.data(), size * sizeof(uint32_t)) == 0)
+    // b.changed: the pixels that differ from a (the frame before it: frames are consecutive)
+    if (w <= 0 || b.changed == 0)
         return r;
     // Nothing but flicker
     if (a.flicker >= b.changed)
@@ -1139,7 +1187,8 @@ void SmoothMotion::ComposeLayers(const Stored& p, const Stored& a, const Stored&
                       std::vector<MotionField::Block>(static_cast<size_t>(blocksWide) * blocksHigh, {{}, true}),
                       MotionField::kRangeFrames);
     }
-    const MotionField& next = FieldFor(a, b, MotionField::kRangeFrames);
+    // prev stays: the slot it is in is not the one a new field a -> b takes
+    const MotionField& next = FieldFor(a, b, MotionField::kRangeFrames, prev);
     const Picture pp = p.View(_width, _height), pa = a.View(_width, _height), pb = b.View(_width, _height);
     if (_device && _device->ComposeLayers(pp, pa, pb, *prev, next, w, out))
         _stats.onDevice++;

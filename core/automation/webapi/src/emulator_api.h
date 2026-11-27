@@ -1347,7 +1347,7 @@ public:
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void analysisCover(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
-    // POST trace {path, from_frame, from_tinframe, to_frame, to_tinframe, max_cycles}: the CPU access trace of a
+    // POST trace {path, from_frame, from_tinframe, to_frame, to_tinframe, max_cycles, kinds, pc, addresses}: the CPU access trace of a
     // window of the recording, written to path (accesstrace.h)
     void analysisTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
@@ -2687,3 +2687,8 @@ std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex);
 
 }  // namespace v1
 }  // namespace api
+
+// The route table (initPathRouting: every ADD_METHOD_TO above) and drogon's binders for each method are instantiated
+// once, in emulator_api.cpp. Without this every file of the controller compiled them all again: three quarters of
+// each file's build time, thrown away by the linker
+extern template class drogon::HttpController<api::v1::EmulatorAPI, true>;

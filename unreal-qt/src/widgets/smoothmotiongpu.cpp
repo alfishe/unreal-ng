@@ -23,13 +23,19 @@ static_assert((2 * LayerFlow::kSupportRadius + 1) * (2 * LayerFlow::kSupportRadi
               "Top: a support in 12 bits");
 static_assert(LayerFlow::kMaxVectors < (1u << 19), "Top: a vector index above the support's 12 bits");
 
-/// The texel reads of a fragment of the picture pass at most: per allowed vector its checks (the cover's slowest
-/// rule: every allowed vector and its fit at the sample), then the cover rule's rows (the masks of every candidate and
-/// the row's colours), then carryFirst's samples and their still checks
-constexpr int kLayersReads = static_cast<int>(LayerFlow::kMaxAllowed) * (19 + 3 * static_cast<int>(LayerFlow::kMaxAllowed)) +
-                             (2 * LayerFlow::kSupportRadius + 1) *
-                                 (2 * static_cast<int>(LayerFlow::kMaxAllowed) + 2 * LayerFlow::kSupportRadius + 1) +
-                             8;
+/// The texel reads of a fragment of the picture pass at most (kLayersShader, every helper a read: Vec, Allowed, Fits,
+/// Usable, Support, Score, Balance one each, StillBlock two), the paths it may take one after the other:
+/// - the pixel, its block's info and the cover rule's test of the block's vector: 6;
+/// - per allowed vector the cover's checks: 10, and its slowest rule over every allowed vector: 3 each;
+/// - the pixel's color, then per row of the cover's window every candidate's masks and edge balance (2 each) and the
+///   row's colors (2 r + 1);
+/// - the block's vector: 2; carryFirst: 2, per allowed vector 5, its samples and still checks 9;
+/// - the best score: per allowed vector 5, the sample 2
+constexpr int kLayersAllowed = static_cast<int>(LayerFlow::kMaxAllowed);
+constexpr int kLayersWindow = 2 * LayerFlow::kSupportRadius + 1;
+constexpr int kLayersReads = 6 + kLayersAllowed * (10 + 3 * kLayersAllowed) + 1 +
+                             kLayersWindow * (2 * kLayersAllowed + kLayersWindow) + 2 + (2 + 5 * kLayersAllowed + 9) +
+                             (5 * kLayersAllowed + 2);
 
 /// The constants every fragment shader shares, from the C++ ones, after the version line
 QString ShaderHeader()
@@ -1344,7 +1350,8 @@ bool SmoothMotionGPU::ComposeLayers(const Picture& p, const Picture& a, const Pi
 {
     if (!_device || a.width <= 0 || a.height <= 0 || !out || next.BlocksWide() <= 0)
         return false;
-    const bool ok = ComposeLayersHere(p, a, b, prev, next, w, out);
+    // the CPU's clamp (LayerFlow::Compose): the same picture for a weight past the pair
+    const bool ok = ComposeLayersHere(p, a, b, prev, next, std::clamp(w, 0, smoothmotion::kOne), out);
     GpuEnd();
     return ok;
 }

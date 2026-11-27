@@ -1456,6 +1456,35 @@ the GS slot.
   to 2.5 s; the host ran at load average 95-115 on 20 cores, so the wall times are several times the CPU time (the
   longest single event, a window repaint, 15 ms of CPU). Tests `PcHistoryPane_Test.AStopMakesOnlyItsNewRows`,
   `.ARefreshNeverWaitsForABusyMachine`.
+- **The repaint cost of a stop (2026-11-27).** With the waits gone, a stop (step, step over, step out) still cost the
+  GUI thread 11.7 ms of CPU on average on a quiet host (Pentagon with NeoGS, default panes, offscreen). Measured with a
+  temporary event profiler (per-pane `updateState` scopes, CPU per paint and layout event by widget, panes switched
+  off one at a time): `updateState` itself took 1.6 ms, the rest was repainting and relayout it caused. The memory view
+  (QHexView) laid out all its rows as a `QTextDocument` on every stop (3.6 ms); the PC history list repainted all its
+  rows, and its word-wrapping status `QLabel` ("N instructions", a new text per stop) relaid out the side tabs, the
+  splitter and the window (4.4 ms with the list); the disassembly repainted every row (2 ms); the registers, stack and
+  memory pages repainted whole panes after an explicit `update()` and set the same style sheets again, which repolish.
+  Fixes, the panes look the same:
+  - QHexView (vendored): `beginChanges()` / `endChanges()` around the stop's new document, cursor and metadata; the
+    view compares what each row on screen was painted from (its bytes, metadata, cursor, selection) and repaints only
+    the rows that differ; a scroll of a few rows moves the pixels (`viewport()->scroll`) and paints the new rows; the
+    paint lays out only the exposed rows. A change to the view itself (scroll outside a batch, size, options, focus)
+    still repaints it all. The previous document is deleted (one leaked per stop before);
+  - `DisassemblyView::setLines` repaints only the rows that changed, the paint draws only the exposed rows;
+  - PC history: a status line that relays out only when it needs another number of lines; a cell delegate that draws
+    plain cells as cached `QStaticText` (selected and focused cells still go through the style); a stop reads the
+    newest 64 entries and reads the whole ring only when they do not continue the rows shown;
+  - registers, stack, memory pages: no `update()` after a refresh (the labels repaint themselves), style sheets and
+    tooltips set only when they change (`debugger/widgetupdates.h`).
+
+  Interleaved A/B, 120 stops per run, 3 runs each, same harness, host at load average 60-67 on 20 cores (CPU times
+  inflated by about 1.3x against a quiet host): GUI-thread CPU per stop, timeline off, 15.0-19.4 ms average before,
+  4.0-5.1 ms after (median 14.8-18.7 -> 3.3-3.8 ms); timeline on 15.7-16.4 -> 5.5-6.2 ms (median 15.1-15.6 -> 4.9-5.3);
+  GUI-thread CPU over the run 2.4-2.5 s -> 1.0-1.3 s. The worst stop is still 14-20 ms: a stop that lands in the same
+  event-loop turn as a main-window repaint or a timer, under that load. Left per stop: `updateState` 1.3 ms (the
+  disassembly decode 0.45, the PC history read 0.4), the PC history list repaint 0.55 ms (every row moves down, Qt's
+  item view repaints them all), the memory view 0.5 ms, with the timeline on its read 0.4 ms and paint 0.6 ms. Tests
+  `QHexViewRepaint_Test`, `PcHistoryPane_Test.ALongRunBetweenStopsReadsTheWholeRing`, `.AStopsStatusRelaysOutNothing`.
 
 ### 7.4 External debuggers (A3)
 

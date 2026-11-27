@@ -1,8 +1,10 @@
 #include "disassemblerwidget.h"
+#include "debugger/widgetupdates.h"
 #include "emulator/remotecontrolguard.h"
 
 #include <algorithm>
 #include <cstdlib>
+#include <utility>
 
 #include <QApplication>
 #include <QClipboard>
@@ -90,9 +92,22 @@ DisassemblyView::DisassemblyView(QWidget* parent) : QAbstractScrollArea(parent)
     });
 }
 
+namespace
+{
+/// Two rows that paint the same pixels (the tooltip is not painted)
+bool SamePaint(const DisassemblyLine& a, const DisassemblyLine& b)
+{
+    return a.kind == b.kind && a.address == b.address && a.breakpoint == b.breakpoint && a.pc == b.pc &&
+           a.cursor == b.cursor && a.runTime == b.runTime && a.mark == b.mark && a.bytes == b.bytes &&
+           a.label == b.label && a.mnemonic == b.mnemonic && a.comment == b.comment;
+}
+}  // namespace
+
 void DisassemblyView::setLines(std::vector<DisassemblyLine> lines)
 {
-    m_lines = std::move(lines);
+    const std::vector<DisassemblyLine> before = std::exchange(m_lines, std::move(lines));
+    const int mnemonicWidthBefore = m_mnemonicWidth;
+    const int left = textLeft();
     if (m_hoverLine >= static_cast<int>(m_lines.size()))
         m_hoverLine = -1;
     // The mnemonic column fits the widest mnemonic shown (never cut): the comments start after it
@@ -102,7 +117,18 @@ void DisassemblyView::setLines(std::vector<DisassemblyLine> lines)
             widest = std::max(widest, static_cast<int>(line.mnemonic.size()) + 1);
     m_mnemonicWidth = std::clamp(widest, MNEMONIC_COL_WIDTH, MNEMONIC_COL_MAX);
     updateHorizontalRange();
-    viewport()->update();
+    // Only the rows that changed are painted again: a step mostly moves the PC row, the others stay as they were
+    if (m_mnemonicWidth != mnemonicWidthBefore || textLeft() != left || before.empty())
+    {
+        viewport()->update();
+        return;
+    }
+    const int lh = lineHeight();
+    const int width = viewport()->width();
+    const size_t rows = std::max(before.size(), m_lines.size());
+    for (size_t i = 0; i < rows && static_cast<int>(i) * lh < viewport()->height(); ++i)
+        if (i >= before.size() || i >= m_lines.size() || !SamePaint(before[i], m_lines[i]))
+            viewport()->update(QRect(0, static_cast<int>(i) * lh, width, lh));
 }
 
 void DisassemblyView::setPlaceholder(const QString& text)
@@ -182,11 +208,12 @@ void DisassemblyView::updateHorizontalRange()
     bar->setSingleStep(charWidth());
 }
 
-void DisassemblyView::paintEvent(QPaintEvent*)
+void DisassemblyView::paintEvent(QPaintEvent* event)
 {
     QPainter painter(viewport());
     const QRect area = viewport()->rect();
-    painter.fillRect(area, palette().base());
+    const QRect exposed = event->rect();  // a stop repaints only its changed rows (setLines)
+    painter.fillRect(exposed, palette().base());
     painter.setFont(font());
 
     const QFontMetrics metrics(font());
@@ -215,6 +242,8 @@ void DisassemblyView::paintEvent(QPaintEvent*)
             break;
         const DisassemblyLine& line = m_lines[i];
         const QRect row(0, y, area.width(), lh);
+        if (!row.intersects(exposed))
+            continue;
         if (line.kind != DisassemblyLine::Kind::Label)
         {
             if (line.cursor)
@@ -476,7 +505,7 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     m_stateIndicator->setFrameStyle(QFrame::Panel | QFrame::Raised);
     m_stateIndicator->setAlignment(Qt::AlignCenter);
     m_stateIndicator->setFixedSize(80, 24);
-    m_stateIndicator->setStyleSheet(
+    widgetupdates::SetStyleSheet(m_stateIndicator,
         "QLabel { background-color: #333; color: #0f0; font-weight: bold; border: 1px solid #555; }");
 
     // Create bank indicator label
@@ -1253,7 +1282,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     {
 
         m_stateIndicator->setText("DETACHED");
-        m_stateIndicator->setStyleSheet(
+        widgetupdates::SetStyleSheet(m_stateIndicator,
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
         m_isActive = false;
         return;
@@ -1267,7 +1296,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     {
 
         m_stateIndicator->setText("ACTIVE");
-        m_stateIndicator->setStyleSheet(
+        widgetupdates::SetStyleSheet(m_stateIndicator,
             "QLabel { background-color: #333; color: #0f0; font-weight: bold; border: 1px solid #555; }");
         m_isActive = true;
     }
@@ -1275,7 +1304,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     {
 
         m_stateIndicator->setText("DETACHED");
-        m_stateIndicator->setStyleSheet(
+        widgetupdates::SetStyleSheet(m_stateIndicator,
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
         m_isActive = false;
     }
@@ -1331,7 +1360,7 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
         m_bankIndicator->setText(QString("%1 bank: %2 (%3)")
                                      .arg(debuggercpu::Title(getEmulatorContext(), m_cpu),
                                           debuggercpu::CardWindowName(getEmulatorContext(), m_cpu, window), range));
-        m_bankIndicator->setToolTip(m_bankIndicator->text());
+        widgetupdates::SetToolTip(m_bankIndicator, m_bankIndicator->text());
         return;
     }
 
@@ -1391,7 +1420,7 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
 
     // Update the bank indicator label with both bank name and address range
     m_bankIndicator->setText(QString("Bank: %1 (%2)").arg(QString::fromStdString(bankName), addressRangeStr));
-    m_bankIndicator->setToolTip(m_bankIndicator->text());
+    widgetupdates::SetToolTip(m_bankIndicator, m_bankIndicator->text());
 }
 
 void DisassemblerWidget::updateSignalIndicators()
@@ -1413,7 +1442,7 @@ void DisassemblerWidget::updateSignalIndicators()
         return;
 
     const bool dos = (ctx->emulatorState.flags & CF_TRDOS) != 0;
-    m_dosIndicator->setStyleSheet(dos ? lit : out);
+    widgetupdates::SetStyleSheet(m_dosIndicator, dos ? lit : out);
 
     // The ROM the CPU sees at 0000: its page and title ("48K BASIC", "TR-DOS"); RAM there (Profi CP/M, ATM, +3
     // special paging) is shown as RAM
@@ -1433,14 +1462,14 @@ void DisassemblerWidget::updateSignalIndicators()
         romTip = "RAM in 0000-3FFF";
     }
     m_romIndicator->setText(rom);
-    m_romIndicator->setToolTip(romTip);
-    m_romIndicator->setStyleSheet(shown);
+    widgetupdates::SetToolTip(m_romIndicator, romTip);
+    widgetupdates::SetStyleSheet(m_romIndicator, shown);
 
     Z80* z80 = ctx->pCore ? ctx->pCore->GetZ80() : nullptr;
     const bool nmi = registers->nmi_in_progress;
     const bool intAsserted = z80 && z80->int_pending;
     m_intIndicator->setText(nmi ? "NMI" : "INT");
-    m_intIndicator->setStyleSheet(nmi || intAsserted ? lit : out);
+    widgetupdates::SetStyleSheet(m_intIndicator, nmi || intAsserted ? lit : out);
 }
 
 void DisassemblerWidget::refresh()

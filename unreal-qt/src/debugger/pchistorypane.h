@@ -7,7 +7,7 @@
 #include <QWidget>
 
 class Emulator;
-class QLabel;
+class PcHistoryStatusLine;
 class QTimer;
 class QTreeWidget;
 
@@ -60,6 +60,7 @@ private:
     };
     static constexpr int kRetryMs = 30;
     static constexpr int kRetries = 30;
+    static constexpr size_t kProbe = 64;  ///< the newest entries a stop reads first (PcHistoryPane::read)
     void read();
     void retryLater();
     void setStatus(const QString& text);
@@ -74,6 +75,6 @@ private:
     QTimer* _retry = nullptr;
     std::shared_ptr<Emulator> _emulator;
     bool _recording = false;
-    QLabel* _status = nullptr;
+    PcHistoryStatusLine* _status = nullptr;
     QTreeWidget* _list = nullptr;
 };

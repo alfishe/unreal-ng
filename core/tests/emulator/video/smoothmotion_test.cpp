@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,20 @@ Image Sprite(int width, int height, int sx, int sy)
     for (int y = 0; y < 16; y++)
         for (int x = 0; x < 16; x++)
             img.At(sx + x, sy + y) = PatternAt(x + 1000, y + 1000);
+    return img;
+}
+
+Image DotsImage(int width, int height, int k, bool layered)
+{
+    Image img(width, height);
+    img.pixels = layered ? smoothscenes::Dots(width, height, k, true) : smoothscenes::DotsOverLayers(width, height, k);
+    return img;
+}
+
+Image LayerSceneImage(int width, int height, int k)
+{
+    Image img(width, height);
+    img.pixels = smoothscenes::LayerScene(width, height, k);
     return img;
 }
 
@@ -378,12 +393,27 @@ TEST(SmoothMotion_Test, SameBitsOnEveryCompiler)
     // LayerFlow: the sprite on from a frame before a
     const Image p = Sprite(80, 48, 5, 10);
     const Image layersHalf = Layers(p, a, b, 128), layersThird = Layers(p, a, b, 85);
-    const uint64_t hashes[6] = {Hash(half.pixels),   Hash(third.pixels),      Hash(carry.pixels),
-                                Hash(blend.pixels),  Hash(layersHalf.pixels), Hash(layersThird.pixels)};
-    const uint64_t expected[6] = {4633665985508127287ull, 14177168654969719964ull, 6201765027649431927ull,
-                                  1468177541638179538ull, 11417960969174806894ull, 5351727775212997014ull};
-    for (int i = 0; i < 6; i++)
-        EXPECT_EQ(hashes[i], expected[i]) << "output " << i << ": 0x" << std::hex << hashes[i];
+    // Past the cap (blocks of their own over three layers: Prepare's most matched), the cover rule's worst content
+    // (the aliases rule asks there), and the layers' rules at a size of partial blocks both ways
+    const Image dots0 = DotsImage(128, 96, 0, false), dots1 = DotsImage(128, 96, 1, false),
+                dots2 = DotsImage(128, 96, 2, false);
+    const Image layered0 = DotsImage(96, 64, 0, true), layered1 = DotsImage(96, 64, 1, true),
+                layered2 = DotsImage(96, 64, 2, true);
+    const Image scene0 = LayerSceneImage(101, 77, 0), scene1 = LayerSceneImage(101, 77, 1),
+                scene2 = LayerSceneImage(101, 77, 2);
+    const Image capped = Layers(dots0, dots1, dots2, 85), covered = Layers(layered0, layered1, layered2, 171),
+                sceneHalf = Layers(scene0, scene1, scene2, 128), sceneLate = Layers(scene0, scene1, scene2, 213);
+    constexpr int kOutputs = 10;
+    const uint64_t hashes[kOutputs] = {Hash(half.pixels),     Hash(third.pixels),      Hash(carry.pixels),
+                                       Hash(blend.pixels),    Hash(layersHalf.pixels), Hash(layersThird.pixels),
+                                       Hash(capped.pixels),   Hash(covered.pixels),    Hash(sceneHalf.pixels),
+                                       Hash(sceneLate.pixels)};
+    const uint64_t expected[kOutputs] = {4633665985508127287ull,  14177168654969719964ull, 6201765027649431927ull,
+                                         1468177541638179538ull,  11417960969174806894ull, 5351727775212997014ull,
+                                         10395595453824675437ull, 3110609211070356090ull,  16021839993908373635ull,
+                                         8208756987519209562ull};
+    for (int i = 0; i < kOutputs; i++)
+        EXPECT_EQ(hashes[i], expected[i]) << "output " << i << ": " << hashes[i] << "ull";
 }
 
 namespace
@@ -738,20 +768,99 @@ TEST(SmoothMotion_Test, SizeChangeStartsOver)
     EXPECT_EQ(r.serial, 2u);
 }
 
-namespace
+/// The frame clock cut back (turbo on: a frame timed by its latch, before the last one's sound): the order by time is
+/// not the order by serial any more. The engine starts over from that frame, no pair of a later and an earlier one
+TEST(SmoothMotion_Test, TargetBeforeTheLastStartsOver)
 {
-Image DotsImage(int width, int height, int k, bool layered)
-{
-    Image img(width, height);
-    img.pixels = smoothscenes::Dots(width, height, k, layered);
-    return img;
+    SmoothMotion engine;
+    engine.SetMode(Mode::Blend);
+    const int64_t t0 = 1000 * MS;
+    for (uint64_t k = 0; k < 3; k++)
+    {
+        const Image img = Scroller(64, 32, 4 * static_cast<int>(k), 0, 32);
+        engine.Push(k + 1, t0 + static_cast<int64_t>(k) * PERIOD, img.pixels.data(), img.width, img.height);
+    }
+    ASSERT_EQ(engine.Plan(t0 + PERIOD + PERIOD / 2).kind, SmoothMotion::Kind::Blend);
+    // Frame 4 due 10 ms after frame 2, 30 ms before frame 3
+    const Image back = Scroller(64, 32, 12, 0, 32);
+    engine.Push(4, t0 + PERIOD + PERIOD / 2, back.pixels.data(), back.width, back.height);
+    EXPECT_EQ(engine.LastSerial(), 4u);
+    for (int64_t t = t0; t <= t0 + 3 * PERIOD; t += PERIOD / 4)
+    {
+        const SmoothMotion::Result r = engine.Plan(t);
+        EXPECT_EQ(r.kind, SmoothMotion::Kind::Frame) << "at " << (t - t0) / MS << " ms";
+        EXPECT_EQ(r.serial, 4u) << "at " << (t - t0) / MS << " ms";
+    }
+    // Older or the same serial again: no news
+    engine.Push(3, t0 + 4 * PERIOD, back.pixels.data(), back.width, back.height);
+    engine.Push(4, t0 + 4 * PERIOD, back.pixels.data(), back.width, back.height);
+    EXPECT_EQ(engine.Plan(t0 + 5 * PERIOD).serial, 4u);
+    EXPECT_EQ(engine.GetStats().frames, 4u);
 }
-}  // namespace
+
+/// A reader that stalled past the frames the screen holds misses some: the frames on either side of the gap are not
+/// consecutive (twice the motion the search is made for, a blink two frames apart reads as still or as motion). The
+/// engine starts over from the frame after the gap
+TEST(SmoothMotion_Test, SerialGapStartsOver)
+{
+    SmoothMotion engine;
+    engine.SetMode(Mode::Interpolate);
+    const int64_t t0 = 1000 * MS;
+    for (uint64_t k = 0; k < 4; k++)
+    {
+        const Image img = Scroller(64, 32, 4 * static_cast<int>(k), 0, 32);
+        engine.Push(k + 1, t0 + static_cast<int64_t>(k) * PERIOD, img.pixels.data(), img.width, img.height);
+    }
+    ASSERT_EQ(engine.Plan(t0 + 2 * PERIOD + PERIOD / 2).kind, SmoothMotion::Kind::Interpolate);
+    // Frame 5 missed: frame 6 at its own time, 8 pixels on
+    const Image after = Scroller(64, 32, 20, 0, 32);
+    engine.Push(6, t0 + 5 * PERIOD, after.pixels.data(), after.width, after.height);
+    const SmoothMotion::Result r = engine.Plan(t0 + 4 * PERIOD);
+    EXPECT_EQ(r.kind, SmoothMotion::Kind::Frame) << "no picture across the gap";
+    EXPECT_EQ(r.serial, 6u);
+    // From frame 6 on, the frames in order again
+    const Image next = Scroller(64, 32, 24, 0, 32);
+    engine.Push(7, t0 + 6 * PERIOD, next.pixels.data(), next.width, next.height);
+    EXPECT_EQ(engine.Plan(t0 + 5 * PERIOD + PERIOD / 2).kind, SmoothMotion::Kind::Interpolate);
+}
+
+/// A pause: the first frame after it is due seconds after the last one before it. Nothing moved across the pause: up
+/// to the new frame's time the frame before it stays, no picture of the new one (at a weight of 255 / 256) a
+/// refresh early
+TEST(SmoothMotion_Test, NoMotionAcrossAPause)
+{
+    for (Mode mode : {Mode::Blend, Mode::Interpolate})
+    {
+        SmoothMotion engine;
+        engine.SetMode(mode);
+        const int64_t t0 = 1000 * MS;
+        for (uint64_t k = 0; k < 4; k++)  // t = 0..60 ms
+        {
+            const Image img = Scroller(64, 32, 4 * static_cast<int>(k), 0, 32);
+            engine.Push(k + 1, t0 + static_cast<int64_t>(k) * PERIOD, img.pixels.data(), img.width, img.height);
+        }
+        const int64_t resumed = t0 + 10'000 * MS;
+        const Image img = Scroller(64, 32, 16, 0, 32);
+        engine.Push(5, resumed, img.pixels.data(), img.width, img.height);
+        for (int64_t before : {PERIOD, 2 * MS, MS / 10})
+        {
+            const SmoothMotion::Result r = engine.Plan(resumed - before);
+            EXPECT_EQ(r.kind, SmoothMotion::Kind::Frame) << ModeName(mode) << ", " << before / 1000 << " us before";
+            EXPECT_EQ(r.serial, 4u);
+        }
+        EXPECT_EQ(engine.Plan(resumed).serial, 5u);
+        // The motion after the pause is the frames' again
+        const Image next = Scroller(64, 32, 20, 0, 32);
+        engine.Push(6, resumed + PERIOD, next.pixels.data(), next.width, next.height);
+        EXPECT_NE(engine.Plan(resumed + PERIOD / 2).kind, SmoothMotion::Kind::Frame) << ModeName(mode);
+    }
+}
 
 TEST(SmoothMotion_Test, LayersKeepTheMostMatchedVectorsPastTheCap)
 {
-    // A block a vector of its own: more vectors than kMaxVectors. The common ones stay, then those the most blocks
-    // matched; every block's allowed ones among them, kMaxAllowed at most. Only confirmed vectors count
+    // Every fourth block a vector of its own over three layers: more vectors than kMaxVectors, not a cut. The common
+    // ones stay, then those the most blocks matched; every block's allowed ones among them, kMaxAllowed at most. Only
+    // confirmed vectors count
     const Image p = DotsImage(128, 96, 0, false), a = DotsImage(128, 96, 1, false), b = DotsImage(128, 96, 2, false);
     MotionField prev, next;
     prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
@@ -829,6 +938,213 @@ TEST(SmoothMotion_Test, LayersOnAPoolAreTheCallersBits)
             split.Compose(p.View(), a.View(), b.View(), prev, next, w, many.pixels.data());
             EXPECT_EQ(one.pixels, many.pixels) << "w " << w;
         }
+    }
+}
+
+TEST(SmoothMotion_Test, TheFieldIsTheSameWithAnyHint)
+{
+    // A hint only bounds pass 1's search: the field of the pair after, of another scene, of another size, or none
+    const auto same = [](const MotionField& x, const MotionField& y) {
+        if (x.BlocksWide() != y.BlocksWide() || x.BlocksHigh() != y.BlocksHigh())
+            return false;
+        for (int j = 0; j < x.BlocksHigh(); j++)
+            for (int i = 0; i < x.BlocksWide(); i++)
+                if (x.At(i, j).matched != y.At(i, j).matched || !(x.At(i, j).v == y.At(i, j).v))
+                    return false;
+        return true;
+    };
+    const Image d0 = DotsImage(128, 96, 0, false), d1 = DotsImage(128, 96, 1, false), d2 = DotsImage(128, 96, 2, false);
+    const Image s0 = Scroller(128, 96, 0, 8, 72), s1 = Scroller(128, 96, 3, 8, 72), small = Scroller(64, 48, 0, 8, 32);
+    MotionField after, scroll, other;
+    after.Estimate(d1.View(), d2.View(), MotionField::kRangeFrames);
+    scroll.Estimate(s0.View(), s1.View(), MotionField::kRangePictures);
+    other.Estimate(small.View(), small.View(), MotionField::kRangeFrames);
+    MotionField plain;
+    plain.Estimate(d0.View(), d1.View(), MotionField::kRangeFrames);
+    for (const MotionField* hint : {&after, &scroll, &other, &plain})
+    {
+        MotionField hinted;
+        hinted.Estimate(d0.View(), d1.View(), MotionField::kRangeFrames, nullptr, hint);
+        EXPECT_TRUE(same(hinted, plain));
+    }
+}
+
+TEST(SmoothMotion_Test, LayersOnAPoolAtAnOddSizeAreTheCallersBits)
+{
+    // 101 x 109: a partial block column (BlockCounts' tail, the last block of every row) and a partial last band of
+    // the pixels' split (14 block rows in parts of 2, the last block row 5 pixels high)
+    constexpr int kWidth = 101, kHeight = 109;
+    ThreadPool pool(3, "smooth-test", ThreadPool::Priority::Interactive);
+    LayerFlow alone, split;
+    split.SetPool(&pool);
+    for (int scene = 0; scene < 2; scene++)
+    {
+        SCOPED_TRACE(scene == 0 ? "layer scene" : "dots past the cap");
+        const auto frame = [&](int k) {
+            return scene == 0 ? LayerSceneImage(kWidth, kHeight, k) : DotsImage(kWidth, kHeight, k, false);
+        };
+        const Image p = frame(0), a = frame(1), b = frame(2);
+        MotionField prev, next;
+        prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+        next.Estimate(a.View(), b.View(), MotionField::kRangeFrames, &pool);
+        for (int w : {43, 128, 213})
+        {
+            Image one(kWidth, kHeight), many(kWidth, kHeight);
+            alone.Compose(p.View(), a.View(), b.View(), prev, next, w, one.pixels.data());
+            split.Compose(p.View(), a.View(), b.View(), prev, next, w, many.pixels.data());
+            EXPECT_EQ(one.pixels, many.pixels) << "w " << w;
+        }
+    }
+}
+
+TEST(SmoothMotion_Test, LayersAtTheEndWeightsAreTheFrames)
+{
+    // A weight whose shift rounds to nothing for every vector (|v| <= 8: w <= 15) is frame a, one whose shift is
+    // the whole vector (w >= 241) frame b, bit for bit: every rule samples a at x - shift, or the nearer frame. A
+    // weight past the pair is clamped to it
+    struct Scene
+    {
+        const char* name;
+        std::function<Image(int)> frame;
+    };
+    const Scene scenes[] = {
+        {"layer scene", [](int k) { return LayerSceneImage(96, 64, k); }},
+        {"border stripes",
+         [](int k) {
+             Image img(128, 96);
+             img.pixels = smoothscenes::Border(128, 96, 16, k, false);
+             return img;
+         }},
+        {"dots past the cap", [](int k) { return DotsImage(128, 96, k, false); }},
+    };
+    LayerFlow flow;
+    for (const Scene& scene : scenes)
+    {
+        SCOPED_TRACE(scene.name);
+        const Image p = scene.frame(0), a = scene.frame(1), b = scene.frame(2);
+        MotionField prev, next;
+        prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+        next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+        for (int w : {-50, 0, 1, 15, 241, 255, 256, 400})
+        {
+            Image out(a.width, a.height);
+            flow.Compose(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data());
+            const Image& want = w < kOne / 2 ? a : b;
+            int differ = 0, first = -1;
+            for (size_t q = 0; q < out.pixels.size(); q++)
+                if (out.pixels[q] != want.pixels[q] && differ++ == 0)
+                    first = static_cast<int>(q);
+            EXPECT_EQ(differ, 0) << "w " << w << ": first at " << first % a.width << "," << first / a.width;
+        }
+    }
+}
+
+namespace
+{
+/// The common vectors CommonVectors finds for p, a, b (the fields as the engine estimates them); `moving`: the
+/// blocks of a -> b matched to a moving vector (the scene asks the confirmation something)
+std::vector<MotionField::Vector> CommonOf(const Image& p, const Image& a, const Image& b, int& moving)
+{
+    MotionField prev, next;
+    prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+    next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+    moving = 0;
+    for (int j = 0; j < next.BlocksHigh(); j++)
+        for (int i = 0; i < next.BlocksWide(); i++)
+            moving += next.At(i, j).matched && !(next.At(i, j).v == MotionField::Vector{});
+    return LayerFlow::CommonVectors(prev, next, p.View(), a.View(), b.View());
+}
+
+bool Has(const std::vector<MotionField::Vector>& vectors, MotionField::Vector v)
+{
+    return std::find(vectors.begin(), vectors.end(), v) != vectors.end();
+}
+
+/// Lines of one color each, of `colors` (2 or 8) at random per line (8 values in a block, never 64), `offset` lines
+/// down
+Image Lines(int width, int height, int offset, uint32_t seed, int colors = 8)
+{
+    Image img(width, height);
+    for (int y = 0; y < height; y++)
+    {
+        const uint32_t h = smoothscenes::Hash(9, static_cast<uint32_t>(y - offset + 4096), seed);
+        const uint32_t line = smoothscenes::ZxColor(colors == 2 ? ((h & 1) ? 2 : 5) : static_cast<int>(h & 7), true);
+        for (int x = 0; x < width; x++)
+            img.At(x, y) = line;
+    }
+    return img;
+}
+}  // namespace
+
+TEST(SmoothMotion_Test, LayersConfirmAMovingVectorByDetailOrByThreeFrames)
+{
+    constexpr int kWidth = 96, kHeight = 64;
+    int moving = 0;
+    {
+        // Detail: a texture moving by (3, 0), a pixel of b in every block changed (not carried exactly) and p
+        // unrelated (neither going on nor at rest): confirmed by the blocks' detail alone
+        Image p(kWidth, kHeight), a(kWidth, kHeight), b(kWidth, kHeight);
+        for (int y = 0; y < kHeight; y++)
+            for (int x = 0; x < kWidth; x++)
+            {
+                p.At(x, y) = PatternAt(x + 5000, y);
+                a.At(x, y) = PatternAt(x, y);
+                b.At(x, y) = (x % 8 == 4 && y % 8 == 4) ? 0xFF123456u : PatternAt(x - 3, y);
+            }
+        const auto common = CommonOf(p, a, b, moving);
+        EXPECT_GT(moving, 0);
+        EXPECT_TRUE(Has(common, {3, 0})) << "detailed blocks moving";
+    }
+    {
+        // Lines of one color moving down 3 a frame, going on from p: carried exactly to b, come exactly from p
+        const auto common =
+            CommonOf(Lines(kWidth, kHeight, 0, 1), Lines(kWidth, kHeight, 3, 1), Lines(kWidth, kHeight, 6, 1), moving);
+        EXPECT_GT(moving, 0);
+        EXPECT_TRUE(Has(common, {0, 3})) << "lines going on from p";
+    }
+    {
+        // Lines of two colors new every frame (a tape loader): whatever vector matches a pair does so by chance, never
+        // exactly over three frames
+        const auto common = CommonOf(Lines(kWidth, kHeight, 0, 1, 2), Lines(kWidth, kHeight, 0, 2, 2),
+                                     Lines(kWidth, kHeight, 0, 3, 2), moving);
+        EXPECT_GT(moving, 0) << "the field matches the new lines by chance";
+        EXPECT_EQ(common, std::vector<MotionField::Vector>{MotionField::Vector{}}) << "new lines are no motion";
+    }
+    {
+        // Motion from rest: the lines still from p to a, then moving down 3: carried exactly, came from p in place
+        const auto common =
+            CommonOf(Lines(kWidth, kHeight, 0, 1), Lines(kWidth, kHeight, 0, 1), Lines(kWidth, kHeight, 3, 1), moving);
+        EXPECT_GT(moving, 0);
+        EXPECT_TRUE(Has(common, {0, 3})) << "lines starting from rest";
+    }
+}
+
+TEST(SmoothMotion_Test, LayersScrollByTheWholeRange)
+{
+    // The whole picture scrolled by the search range on both axes, its content at every edge, partial blocks both
+    // ways: the reads reach the padded copies' margins. Exact at w = 1/2 away from the edges the content comes in at
+    constexpr int kWidth = 101, kHeight = 77;
+    LayerFlow flow;
+    for (const MotionField::Vector v : {MotionField::Vector{8, 8}, {-8, -8}, {8, -8}, {-8, 8}})
+    {
+        SCOPED_TRACE(testing::Message() << "by " << v.x << "," << v.y);
+        const auto frame = [&](int k2) {
+            // k2: the frame's number times 2 (the middle between frames at odd k2)
+            Image img(kWidth, kHeight);
+            for (int y = 0; y < kHeight; y++)
+                for (int x = 0; x < kWidth; x++)
+                    img.At(x, y) = PatternAt(x - v.x * k2 / 2 + 64, y - v.y * k2 / 2 + 64);
+            return img;
+        };
+        const Image p = frame(0), a = frame(2), b = frame(4), truth = frame(3);
+        MotionField prev, next;
+        prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+        next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+        Image out(kWidth, kHeight);
+        flow.Compose(p.View(), a.View(), b.View(), prev, next, 128, out.pixels.data());
+        for (int y = 16; y < kHeight - 16; y++)
+            for (int x = 16; x < kWidth - 16; x++)
+                ASSERT_EQ(out.At(x, y), truth.At(x, y)) << x << "," << y;
     }
 }
 

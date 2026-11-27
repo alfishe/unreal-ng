@@ -19,6 +19,7 @@
 #include "_helpers/testwaithelper.h"
 #include "_helpers/ttdcardbench.h"
 #include "automation-lua.h"
+#include <sol/sol.hpp>
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/history/devicehistory.h"
@@ -149,7 +150,7 @@ class BoundLua : public AutomationLua
 public:
     void Bind(Emulator* emulator)
     {
-        dispatchSync([this, emulator](sol::state&) { _luaEmulator->setEmulator(emulator); });
+        dispatchSync([this, emulator](sol::state&) { BindEmulator(emulator); });
     }
 };
 

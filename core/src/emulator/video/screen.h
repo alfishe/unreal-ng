@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <vector>
 
@@ -394,6 +395,11 @@ struct PresentFrameInfo
     uint64_t nextSerial = 0;
     int64_t nextTargetNs = 0;
     float blend = 0.0f;
+    /// The version of the frame's pixels: every write into its slot (the latch, the temporal effect's output) makes
+    /// another one, unique across screens. CopyFrameAt takes it on the way in as the version the caller's buffer
+    /// holds, and copies only another one
+    uint64_t content = 0;
+    bool copied = false;  ///< the pixels were copied (CopyFrameAt: not when the caller held the version already)
 };
 
 /// How the frames' times came out (Screen::GetPresentTimingStats), for the present report
@@ -1059,6 +1065,12 @@ protected:
     // Per slot: the temporal effect's output is in it / a reader was served it
     // (under _presentMutex; "shown" is set by the const reader path)
     bool _presentSlotProcessed[PRESENT_SLOTS] = {};
+    // Per slot: the temporal effect's generation its frame was queued in (0: not queued, the output never comes):
+    // while that generation lasts, the output is still to come (SlotAwaitsOutputLocked)
+    uint64_t _presentSlotQueuedIn[PRESENT_SLOTS] = {};
+    // Per slot: the version of its pixels (PresentFrameInfo::content), new with every write into it
+    uint64_t _presentSlotContent[PRESENT_SLOTS] = {};
+    void NewSlotContentLocked(size_t index);
     mutable bool _presentSlotShown[PRESENT_SLOTS] = {};
     mutable std::atomic<bool> _showingProcessed{false};  // the slot readers get now holds processed output
     zxdlss::FrameReport _presentSlotReport[PRESENT_SLOTS];   // what the effect did to each slot's frame
@@ -1072,8 +1084,16 @@ protected:
     std::vector<uint16_t> _presentPlaneB[PRESENT_SLOTS];
     const uint8_t* PresentedSlotLocked(size_t* index) const;  // the slot CopyPresentedFramebuffer serves: due now
 
+    // Tests: called on the temporal worker before each output is written back (declared before _temporal: the worker
+    // is joined first)
+    std::function<void(uint64_t serial)> _temporalWriteGate;
     // Temporal effects (created on first use: no worker thread otherwise)
     std::unique_ptr<TemporalEffects> _temporal;
+    // The effect the latch queued frames to (under _presentMutex): the readers ask it whether a slot's output is to
+    // come
+    TemporalEffects* _temporalQueued = nullptr;
+    /// The slot's frame went to the temporal effect and its output has not come yet, but will (its generation lasts)
+    bool SlotAwaitsOutputLocked(size_t index) const;
     std::mutex _temporalCreateMutex;
     std::atomic<uint8_t> _temporalDelayFrames{0};  // video delay the effect needs (0 = off)
     int _audioExtraDelayFrames = 0;                // emulation thread: what SoundManager was told
@@ -1210,6 +1230,10 @@ public:
     static constexpr uint8_t kAudioPathDelayFrames = 2;
     static_assert(kAudioPathDelayFrames < kMaxVideoDelayFrames);
 
+    /// Tests: `gate` runs on the temporal worker before each output is written back (it may block, holding the
+    /// output back). Set before the first SetTemporalAlgorithm; released before the screen goes
+    void SetTemporalWriteGateForTest(std::function<void(uint64_t serial)> gate) { _temporalWriteGate = std::move(gate); }
+
     /// The video's delay behind the latch in frames: the audio path's, or more while a temporal effect needs its
     /// look-ahead (the audio is delayed by the difference). Feature `lowlatency`: the look-ahead only (0 without one)
     uint8_t GetEffectivePresentDelayFrames() const
@@ -1255,12 +1279,15 @@ public:
     /// Any thread: the newest frame whose target is at or before `hostNs` (steady clock, ns); the frame a refresh
     /// reaching the screen at `hostNs` shows. `nextDst` (optional, `dstSize` bytes) receives the frame after it, for
     /// blending. Frames latched but not timed yet are never served.
+    /// `info->content` on the way in: the version of the pixels `dst` holds (a previous call's `info->content`); the
+    /// same version is not copied again (`info->copied` false), and the slot is not pinned for it.
     /// @return false when there is no frame or `dstSize` is too small
     bool CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info, uint8_t* nextDst = nullptr);
 
     /// Any thread: the oldest timed frame latched after `afterSerial` (0 = the oldest held), for presenting each
-    /// frame once at its target. A temporal effect's frames come once it wrote them. `markShown` false: a read ahead
-    /// (smooth motion keeps the frames to come), what is on screen stays CopyFrameAt's.
+    /// frame once at its target. A temporal effect's frames come once it wrote them: a frame whose output is still to
+    /// come (the worker behind) is waited for, never handed out raw. `markShown` false: a read ahead (smooth motion
+    /// keeps the frames to come), what is on screen stays CopyFrameAt's.
     /// @return false when there is none yet
     bool CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info,
                        bool markShown = true);

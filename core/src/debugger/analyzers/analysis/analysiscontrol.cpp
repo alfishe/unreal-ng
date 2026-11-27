@@ -109,7 +109,7 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
     static const std::vector<std::string> experiment = {"spec",          "path", "parallel", "finding",
                                                         "keep_branches", "run",  "async"};
     static const std::vector<std::string> trace = {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "path",
-                                                   "max_cycles", "async"};
+                                                   "max_cycles", "kinds",   "pc",       "addresses",   "async"};
     static const std::vector<std::string> cover = {"budget", "per_branch", "frames", "parallel", "limit", "ranges",
                                                    "async"};
     if (action == "start")
@@ -662,6 +662,40 @@ Reply Trace(Emulator& emulator, const Options& options)
     }
     if (const auto it = options.find("max_cycles"); it != options.end() && !ParseCount(it->second, 100000000, trace.maxCycles))
         return Refuse(Error::BadRequest, "max_cycles: the most bus cycles to write, an integer up to 100000000");
+    // The filter: which records are written at all
+    if (const auto it = options.find("kinds"); it != options.end())
+    {
+        static const std::pair<const char*, char> kNames[] = {{"fetch", 'F'}, {"read", 'R'}, {"write", 'W'},
+                                                              {"in", 'I'},    {"out", 'O'},  {"edit", 'E'}};
+        std::string word;
+        std::istringstream words(it->second);
+        while (std::getline(words, word, ','))
+        {
+            std::transform(word.begin(), word.end(), word.begin(), [](unsigned char c) { return std::tolower(c); });
+            word.erase(0, word.find_first_not_of(" \t"));
+            word.erase(word.find_last_not_of(" \t") + 1);
+            char tag = 0;
+            for (const auto& [name, letter] : kNames)
+                if (word == name || (word.size() == 1 && std::toupper(static_cast<unsigned char>(word[0])) == letter))
+                    tag = letter;
+            if (tag == 0)
+                return Refuse(Error::BadRequest, "kinds: '" + word + "' is not one of fetch, read, write, in, out, edit "
+                                                 "(or F, R, W, I, O, E), comma-separated");
+            if (trace.kinds.find(tag) == std::string::npos)
+                trace.kinds += tag;
+        }
+    }
+    for (const char* name : {"pc", "addresses"})
+    {
+        const auto it = options.find(name);
+        if (it == options.end() || it->second.empty())
+            continue;
+        std::vector<ExportRange> ranges;
+        if (!ParseZ80Ranges(it->second, ranges))
+            return Refuse(Error::BadRequest, std::string(name) + ": ranges as 8000-9FFF,C000-C0FF (hex, inclusive)");
+        for (const ExportRange& range : ranges)
+            (std::string(name) == "pc" ? trace.pcRanges : trace.addressRanges).emplace_back(range.start, range.end);
+    }
     const auto pathIt = options.find("path");
     if (pathIt == options.end() || pathIt->second.empty())
         return Refuse(Error::BadRequest, "trace: path, the file on the emulator's host to write the trace to, is required");
@@ -703,12 +737,14 @@ Reply Trace(Emulator& emulator, const Options& options)
     reply.body["ports"] = summary.ports;
     reply.body["bytes"] = summary.bytes;
     reply.body["truncated"] = summary.truncated;
+    reply.body["filtered"] = trace.Filtered();
     reply.text = "access trace " + std::to_string(summary.fromFrame) + ":" + std::to_string(summary.fromTInFrame) + " .. " +
                  std::to_string(summary.toFrame) + ":" + std::to_string(summary.toTInFrame) + ": " +
                  std::to_string(summary.instructions) + " instructions, " + std::to_string(summary.cycles) +
                  " bus cycles (" + std::to_string(summary.fetches) + " fetches, " + std::to_string(summary.reads) +
                  " reads, " + std::to_string(summary.writes) + " writes, " + std::to_string(summary.ports) +
                  " port accesses), " + std::to_string(summary.bytes) + " bytes written to " + trace.path +
+                 (trace.Filtered() ? "; filtered (only the records the filter passes are in the file)" : "") +
                  (summary.truncated ? "; truncated at max_cycles" : "");
     return reply;
 }

@@ -8,11 +8,23 @@
 // A snapshot is taken again when the copy is older than a tick while the machine runs, after any change this
 // debugger makes, and when the emulator says something happened (a stop, a run start, an edit by another client).
 //
+// The GUI thread never waits for the network (the owner's rule: the window never freezes, whatever the network or
+// the emulator does). Every request goes through Net: one worker thread, one keep-alive connection, the requests in
+// the order they were asked, the commands before the reads. A read answers at once from what the worker fetched last
+// (a GET's answer by its path) and asks the worker again when that is stale: after a new snapshot, after a command of
+// this debugger, a second old; a read never answered yet says so (status 0) and the views show a wait. An answer that
+// changes what was kept tells the window (the data listener), which reads its views again. A command (a step, a run,
+// an edit, a breakpoint) is queued and answers at once; its result reaches the window through the snapshot it leads to
+// or, for the commands whose answer matters (a card's run to, a time travel move, a GS send), through a callback on
+// the window's thread. While the worker has waited on one request for more than a moment, the state label says so
+// (Waiting for the emulator) and the window's commands are off; a lost emulator is the waiter's to find (below).
+// Synchronous mode (the self-check: it reads back what it just wrote) waits for each request instead.
+//
 // That "something happened" is a long poll (GET /debug/wait) on a thread of its own with its own connection; it
-// calls the window's listener, as the core's events do in the in-process adapter. Everything else runs on the GUI
-// thread over one keep-alive connection. Every request says it is a debugger's (X-Unreal-Source: debugger): the
-// user's own hands like the GUI, no run-control session - other debuggers and the GUI go on, every client sees the
-// changes; while an automation session holds the machine its changes are refused, as the GUI is locked.
+// calls the window's listener, as the core's events do in the in-process adapter. Every request says it is a
+// debugger's (X-Unreal-Source: debugger): the user's own hands like the GUI, no run-control session - other debuggers
+// and the GUI go on, every client sees the changes; while an automation session holds the machine its changes are
+// refused, as the GUI is locked.
 
 #include "remotemachine.h"
 
@@ -35,6 +47,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <cstdio>
 #include <map>
 #include <mutex>
@@ -50,13 +66,14 @@ using ecatshim::DeviceFieldInfo;
 using ecatshim::DeviceFieldValue;
 
 const char * kRunToGroup = "ecat-run-to";
+const char * kSnapshotRoute = "/debug/snapshot?stack=0&memory=cpu:0:65536";
 const unsigned int kPage = 0x4000;
 const unsigned int kChunk = 0x1000;
 
 //------------------------------------------------------------------- HTTP
 
-// HTTP/1.1 over one keep-alive socket, blocking: the views ask synchronously, and a request to a local emulator
-// answers in well under a millisecond. Not thread-safe: one per thread
+// HTTP/1.1 over one keep-alive socket, blocking: Net's worker threads and the waiter each have their own. Not
+// thread-safe: one per thread
 class Http
 {
 public:
@@ -64,6 +81,8 @@ public:
 
     // While the gate is down every request answers 0 at once (the machine is offline: nothing to ask)
     void set_gate(const std::atomic<bool> * open) { m_gate = open; }
+    // Once set, a request waiting for an answer gives up within a tenth of a second (the debugger closes)
+    void set_abort(const std::atomic<bool> * abort) { m_abort = abort; }
     uint64_t requests() const { return m_requests; }
     uint64_t bytes() const { return m_bytes; }
 
@@ -72,7 +91,7 @@ public:
     {
         if (m_gate && !m_gate->load()) return 0;
         // A kept connection the server has closed fails at once: then once more on a new one
-        for (int attempt = 0; attempt < 2; attempt++) {
+        for (int attempt = 0; attempt < 2 && !aborted(); attempt++) {
             const int status = once(method, path, body, out, timeout_ms);
             if (status != 0) return status;
             m_socket.reset();
@@ -96,10 +115,27 @@ private:
     QString m_host;
     uint16_t m_port;
     const std::atomic<bool> * m_gate = nullptr;
+    const std::atomic<bool> * m_abort = nullptr;
     std::unique_ptr<QTcpSocket> m_socket;
     QByteArray m_buffer;
     uint64_t m_requests = 0;
     uint64_t m_bytes = 0;
+
+    bool aborted() const { return m_abort != nullptr && m_abort->load(); }
+    // Waits for the socket in slices of a tenth of a second, the abort looked at between them
+    bool wait_slices(bool connect, int ms)
+    {
+        QElapsedTimer t;
+        t.start();
+        for (;;) {
+            if (aborted()) return false;
+            const int left = ms - (int)t.elapsed();
+            if (left <= 0) return false;
+            const int slice = std::min(left, 100);
+            if (connect ? m_socket->waitForConnected(slice) : m_socket->waitForReadyRead(slice)) return true;
+            if (m_socket->state() == QAbstractSocket::UnconnectedState) return false;
+        }
+    }
 
     int once(const char * method, const QString &path, const QByteArray &body, QByteArray &out, int timeout_ms)
     {
@@ -109,7 +145,7 @@ private:
             m_socket = std::make_unique<QTcpSocket>();
             m_buffer.clear();
             m_socket->connectToHost(m_host, m_port);
-            if (!m_socket->waitForConnected(std::min(timeout_ms, 2000))) return 0;
+            if (!wait_slices(true, std::min(timeout_ms, 2000))) return 0;
         }
         QByteArray head = QByteArray(method) + ' ' + path.toUtf8() + " HTTP/1.1\r\nHost: " + m_host.toUtf8() + ':' +
                           QByteArray::number(m_port) + "\r\nConnection: keep-alive\r\n";
@@ -122,7 +158,7 @@ private:
 
         auto more = [&]() {
             const int left = timeout_ms - (int)clock.elapsed();
-            if (left <= 0 || !m_socket->waitForReadyRead(left)) return false;
+            if (left <= 0 || !wait_slices(false, left)) return false;
             m_buffer += m_socket->readAll();
             return true;
         };
@@ -173,6 +209,462 @@ private:
         m_bytes += out.size();
         if (close) m_socket.reset();
         return status;
+    }
+};
+
+//------------------------------------------------------------------- the worker
+
+// A read never answered yet: the views take it as a failure and show its message
+const int kPending = -1;
+// A command queued, its answer to come (asynchronous mode)
+const int kQueued = 202;
+const char * kPendingBody = R"({"error":"pending","message":"Waiting for the emulator"})";
+
+// Every request of the views' thread, off it: a few worker threads (lanes), each with its own keep-alive connection.
+// Lane 0 takes the commands (writes and tasks, in the order they came), then the snapshot, then reads; the other
+// lanes take reads only, so that a slow command (a step over runs the machine) holds no read back.
+//
+// A read (a GET, or a POST that only reads) answers at once from what was fetched last for the same request, and is
+// fetched again when that is stale: fetched for an older read generation (a new snapshot), sent before a command the
+// views' thread queued since had ended, older than its age limit, or invalidated. Two asks of the same stale request
+// make one fetch. An answer that changes what was kept, and a command's end, call the arrival handler on the views'
+// thread (one call for all that came since the last). Synchronous mode waits for every request instead (the
+// self-check reads back what it has just written)
+class Net
+{
+public:
+    using Done = std::function<void(int status, const QByteArray &body)>;
+    using Work = std::function<void(Http &)>;
+
+    Net(const QString &host, uint16_t port, int lanes = 3) : m_host(host), m_port(port)
+    {
+        m_context = new QObject();
+        if (QCoreApplication::instance() != nullptr) m_context->moveToThread(QCoreApplication::instance()->thread());
+        m_clock.start();
+        m_lanes.resize((size_t)std::max(1, lanes));
+        for (size_t i = 0; i < m_lanes.size(); i++) {
+            m_lanes[i].thread = QThread::create([this, i]() { lane(i); });
+            m_lanes[i].thread->start();
+        }
+    }
+    ~Net() { close(0); }
+
+    void set_gate(const std::atomic<bool> * open) { m_gate = open; }
+    void set_sync(bool on) { m_sync = on; }
+    bool sync() const { return m_sync; }
+    // The views' thread: what came (answers that changed something, commands' ends) / a command that failed
+    void set_on_arrival(const std::function<void()> &fn) { m_on_arrival = fn; }
+    void set_on_failure(const std::function<void(const QString &)> &fn) { m_on_failure = fn; }
+
+    // The read generation: an answer fetched for an older one is stale
+    void set_generation(uint64_t g)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_generation = g;
+    }
+    // The next ask of this read fetches it again, whatever it was
+    void invalidate(const QString &path, const char * method = "GET", const QByteArray &body = QByteArray())
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_entries[key(method, path, body)].invalid_epoch = ++m_epoch;
+    }
+
+    // A read: the status (kPending: none yet) and the body of the last answer. max_age_ms < 0: no age limit
+    int get(const QString &path, QByteArray &out, int max_age_ms = 1000, const char * method = "GET",
+            const QByteArray &body = QByteArray(), uint64_t * version = nullptr, int timeout_ms = 5000)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        const QString k = key(method, path, body);
+        Entry &e = m_entries[k];
+        if (e.method.isEmpty()) {
+            e.method = method;
+            e.path = path;
+            e.body = body;
+            e.snapshot = path.endsWith(kSnapshotRoute);
+        }
+        e.used = m_clock.elapsed();
+        const bool fetch = !current(e, max_age_ms);
+        if (fetch && !e.queued && !flight_current(e)) {
+            e.timeout = timeout_ms;
+            e.queued = true;
+            m_jobs.push_back(Job{Job::Read, k, e.snapshot ? 1 : 2, nullptr});
+            prune();
+            m_cv.notify_all();
+        }
+        if (fetch && m_sync) {
+            // Wait for the fetch (one queued, or the one in flight)
+            m_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms * 2 + 1000), [&]() { return !e.queued && !e.in_flight; });
+        }
+        if (version) *version = e.version;
+        if (!e.has) {
+            out = kPendingBody;
+            return kPending;
+        }
+        out = e.data;
+        return e.status;
+    }
+    // Whether the last get of this read was answered for the state as it is now (no refetch to come)
+    bool fresh(const QString &path, int max_age_ms = 1000, const char * method = "GET", const QByteArray &body = QByteArray())
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_entries.find(key(method, path, body));
+        return it != m_entries.end() && current(it->second, max_age_ms);
+    }
+
+    // A command: queued (kQueued at once; done on the views' thread when it ends), or in synchronous mode its answer
+    // (done called before the return)
+    int send(const char * method, const QString &path, const QByteArray &body, QByteArray &out, int timeout_ms, Done done)
+    {
+        auto job = std::make_shared<Command>();
+        job->method = method;
+        job->path = path;
+        job->body = body;
+        job->timeout = timeout_ms;
+        job->done = std::move(done);
+        queue(job);
+        if (!m_sync) return kQueued;
+        wait(job);
+        out = job->out;
+        if (job->done) job->done(job->status, job->out);
+        return job->status;
+    }
+    // Requests of their own on lane 0 in the commands' order (a remove and an add under one lock, a read of a seq
+    // just before a write): done on the views' thread after it
+    void task(Work work, std::function<void()> done = {})
+    {
+        auto job = std::make_shared<Command>();
+        job->work = std::move(work);
+        job->task_done = std::move(done);
+        queue(job);
+        if (!m_sync) return;
+        wait(job);
+        if (job->task_done) job->task_done();
+    }
+
+    // The blocking API of Http over the lanes: a GET a read (age limit 1 s), anything else a command (its failure
+    // to the failure handler)
+    int request(const char * method, const QString &path, const QByteArray &body, QByteArray &out, int timeout_ms = 5000)
+    {
+        if (strcmp(method, "GET") == 0) return get(path, out, 1000, "GET", QByteArray(), nullptr, timeout_ms);
+        return send(method, path, body, out, timeout_ms, Done());
+    }
+    QJsonObject json(const char * method, const QString &path, const QJsonObject &body = QJsonObject(), int *status = nullptr,
+                     int timeout_ms = 5000)
+    {
+        QByteArray out;
+        const QByteArray in = (body.isEmpty() && (strcmp(method, "GET") == 0 || strcmp(method, "DELETE") == 0))
+                                  ? QByteArray()
+                                  : QJsonDocument(body).toJson(QJsonDocument::Compact);
+        const int s = request(method, path, in, out, timeout_ms);
+        if (status) *status = s;
+        return QJsonDocument::fromJson(out).object();
+    }
+
+    // Commands queued or running (counted from the views' thread's side: one queued is one until its done ran)
+    uint64_t commands_queued() const { return m_commands_queued.load(); }
+    uint64_t commands_done() const { return m_commands_done.load(); }
+    // How long the oldest request in flight has waited for its answer: reads, commands (0: none)
+    void waiting(int &read_ms, int &command_ms, QString &command) const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        read_ms = command_ms = 0;
+        const qint64 now = m_clock.elapsed();
+        for (const Lane &l : m_lanes) {
+            if (l.since < 0) continue;
+            const int ms = (int)(now - l.since);
+            if (l.command) {
+                if (ms > command_ms) command = l.what;
+                command_ms = std::max(command_ms, ms);
+            } else {
+                read_ms = std::max(read_ms, ms);
+            }
+        }
+    }
+    uint64_t requests() const { return m_requests.load(); }
+    uint64_t bytes() const { return m_bytes.load(); }
+
+    // The commands queued get up to drain_ms to go; then the requests in flight are given up and the lanes end
+    void close(int drain_ms)
+    {
+        if (m_closed.exchange(true)) return;
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            // The reads are for views that are going
+            std::deque<Job> commands;
+            for (const Job &j : m_jobs)
+                if (j.kind == Job::Cmd) commands.push_back(j);
+            m_jobs.swap(commands);
+            if (drain_ms > 0)
+                m_cv.wait_for(lock, std::chrono::milliseconds(drain_ms), [&]() {
+                    if (!m_jobs.empty()) return false;
+                    for (const Lane &l : m_lanes)
+                        if (l.since >= 0 && l.command) return false;
+                    return true;
+                });
+            m_stop = true;
+            m_abort = true;
+            m_cv.notify_all();
+        }
+        for (Lane &l : m_lanes) {
+            l.thread->wait();
+            delete l.thread;
+        }
+        m_lanes.clear();
+        delete m_context;
+        m_context = nullptr;
+    }
+
+private:
+    struct Entry {
+        QByteArray method;
+        QString path;
+        QByteArray body;
+        int timeout = 5000;
+        bool has = false;
+        int status = 0;
+        QByteArray data;
+        uint64_t version = 0;   // one more at every answer that changed it
+        uint64_t generation = 0, writes = 0, epoch = 0;   // as it was when the kept answer was sent
+        qint64 at = 0;          // when it came (m_clock)
+        uint64_t invalid_epoch = 0;
+        bool queued = false, in_flight = false, snapshot = false;
+        uint64_t flight_generation = 0, flight_writes = 0, flight_epoch = 0;
+        qint64 used = 0;
+    };
+    struct Command {
+        QByteArray method;
+        QString path;
+        QByteArray body;
+        int timeout = 5000;
+        Done done;
+        Work work;
+        std::function<void()> task_done;
+        int status = 0;
+        QByteArray out;
+        bool finished = false;
+    };
+    struct Job {
+        enum Kind { Read, Cmd } kind;
+        QString key;
+        int priority = 2;   // 0 a command, 1 the snapshot, 2 a read
+        std::shared_ptr<Command> command;
+    };
+    struct Lane {
+        QThread * thread = nullptr;
+        qint64 since = -1;  // the request in flight's start (m_clock), -1: none
+        bool command = false;
+        QString what;
+    };
+
+    QString m_host;
+    uint16_t m_port;
+    const std::atomic<bool> * m_gate = nullptr;
+    bool m_sync = false;
+    // UNREAL_DEBUGGER_NET_TRACE=1: every request's end on stderr (lane, ms since the start, what, status, time taken)
+    const bool m_trace = qEnvironmentVariableIntValue("UNREAL_DEBUGGER_NET_TRACE") != 0;
+    QObject * m_context = nullptr;
+    std::function<void()> m_on_arrival;
+    std::function<void(const QString &)> m_on_failure;
+    QElapsedTimer m_clock;
+
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
+    std::map<QString, Entry> m_entries;
+    std::deque<Job> m_jobs;
+    std::vector<Lane> m_lanes;
+    uint64_t m_generation = 0;
+    uint64_t m_epoch = 0;
+    uint64_t m_writes_queued = 0;   // commands queued from the views' thread
+    uint64_t m_writes_ended = 0;    // and ended
+    unsigned int m_prune = 0;
+    bool m_stop = false;
+    std::atomic<bool> m_abort{false};
+    std::atomic<bool> m_closed{false};
+    std::atomic<uint64_t> m_commands_queued{0}, m_commands_done{0};
+    std::atomic<uint64_t> m_requests{0}, m_bytes{0};
+
+    // What came for the views' thread: commands ended, an answer that changed something
+    std::vector<std::shared_ptr<Command>> m_ended;
+    bool m_changed = false;
+    std::atomic<bool> m_posted{false};
+
+    static QString key(const char * method, const QString &path, const QByteArray &body)
+    {
+        return QString::fromLatin1(method) + ' ' + path + (body.isEmpty() ? QString() : '\n' + QString::fromUtf8(body));
+    }
+    // The snapshot is what makes a generation: never stale by one
+    bool current(const Entry &e, int max_age_ms) const
+    {
+        return e.has && (e.snapshot || e.generation == m_generation) && e.writes >= m_writes_queued &&
+               e.epoch >= e.invalid_epoch && (max_age_ms < 0 || m_clock.elapsed() - e.at <= max_age_ms);
+    }
+    bool flight_current(const Entry &e) const
+    {
+        return e.in_flight && (e.snapshot || e.flight_generation == m_generation) && e.flight_writes >= m_writes_queued &&
+               e.flight_epoch >= e.invalid_epoch;
+    }
+    // The reads nobody asked for in a minute go (a cursor's old positions)
+    void prune()
+    {
+        if (++m_prune % 256 != 0) return;
+        const qint64 now = m_clock.elapsed();
+        for (auto it = m_entries.begin(); it != m_entries.end();) {
+            if (!it->second.queued && !it->second.in_flight && now - it->second.used > 60000) it = m_entries.erase(it);
+            else ++it;
+        }
+    }
+    void queue(const std::shared_ptr<Command> &job)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_writes_queued++;
+        m_commands_queued++;
+        m_jobs.push_back(Job{Job::Cmd, QString(), 0, job});
+        m_cv.notify_all();
+    }
+    void wait(const std::shared_ptr<Command> &job)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_cv.wait(lock, [&]() { return job->finished || m_stop; });
+    }
+
+    // The next job for a lane: lane 0 the commands first, then the snapshot, then reads; the others reads only, the
+    // snapshot not while a command is queued or runs (it would show the machine before the command)
+    bool take(size_t lane, Job &out)
+    {
+        bool command_busy = false;
+        for (const Lane &l : m_lanes) command_busy = command_busy || (l.since >= 0 && l.command);
+        int best = -1;
+        for (size_t i = 0; i < m_jobs.size(); i++) {
+            const Job &j = m_jobs[i];
+            if (j.kind == Job::Cmd) command_busy = true;
+            if (lane != 0 && j.kind == Job::Cmd) continue;
+            if (j.priority == 1 && (command_busy || (lane != 0 && m_jobs[0].kind == Job::Cmd))) continue;
+            if (best < 0 || j.priority < m_jobs[(size_t)best].priority) best = (int)i;
+            if (j.priority == 0) break;
+        }
+        if (best < 0) return false;
+        out = m_jobs[(size_t)best];
+        m_jobs.erase(m_jobs.begin() + best);
+        return true;
+    }
+
+    void lane(size_t index)
+    {
+        Http http(m_host, m_port);
+        http.set_gate(m_gate);
+        http.set_abort(&m_abort);
+        uint64_t requests = 0, bytes = 0;
+        std::unique_lock<std::mutex> lock(m_mutex);
+        while (!m_stop) {
+            Job job;
+            if (!take(index, job)) {
+                m_cv.wait(lock);
+                continue;
+            }
+            Lane &me = m_lanes[index];
+            me.since = m_clock.elapsed();
+            me.command = job.kind == Job::Cmd;
+            if (job.kind == Job::Cmd) {
+                std::shared_ptr<Command> c = job.command;
+                me.what = c->work ? QString() : c->path.mid(c->path.lastIndexOf('/') + 1).section('?', 0, 0);
+                lock.unlock();
+                if (c->work) c->work(http);
+                else c->status = http.request(c->method.constData(), c->path, c->body, c->out, c->timeout);
+                if (m_trace)
+                    fprintf(stderr, "net %zu %6lld cmd  %s %s -> %d (%lld ms)\n", index, (long long)m_clock.elapsed(),
+                            c->work ? "task" : c->method.constData(), qPrintable(c->path), c->status,
+                            (long long)(m_clock.elapsed() - me.since));
+                lock.lock();
+                c->finished = true;
+                m_writes_ended++;
+                m_ended.push_back(c);
+            } else {
+                auto it = m_entries.find(job.key);
+                if (it == m_entries.end()) {
+                    me.since = -1;
+                    continue;
+                }
+                Entry &e = it->second;
+                e.queued = false;
+                e.in_flight = true;
+                e.flight_generation = m_generation;
+                e.flight_writes = m_writes_ended;
+                e.flight_epoch = m_epoch;
+                const QByteArray method = e.method, body = e.body;
+                const QString path = e.path;
+                const int timeout = e.timeout;
+                lock.unlock();
+                QByteArray out;
+                const int status = http.request(method.constData(), path, body, out, timeout);
+                if (m_trace)
+                    fprintf(stderr, "net %zu %6lld read %s %s -> %d (%lld ms)\n", index, (long long)m_clock.elapsed(),
+                            method.constData(), qPrintable(path), status, (long long)(m_clock.elapsed() - me.since));
+                lock.lock();
+                // Gone meanwhile (pruned): the answer has nobody
+                it = m_entries.find(job.key);
+                if (it != m_entries.end()) {
+                    Entry &f = it->second;
+                    f.in_flight = false;
+                    // No answer keeps the last one there was (the views keep what they show)
+                    if (status != 0 || !f.has) {
+                        if (!f.has || f.status != status || f.data != out) {
+                            f.version++;
+                            m_changed = true;
+                        }
+                        f.has = true;
+                        f.status = status;
+                        f.data = out;
+                    }
+                    // The same bytes still tell something: a snapshot now taken after a command (the window stops
+                    // showing it under way), a read that was shown waiting (the wait is over)
+                    if ((f.snapshot && (f.flight_writes != f.writes || f.flight_epoch != f.epoch)) ||
+                        m_clock.elapsed() - me.since > 1000)
+                        m_changed = true;
+                    f.generation = f.flight_generation;
+                    f.writes = f.flight_writes;
+                    f.epoch = f.flight_epoch;
+                    f.at = m_clock.elapsed();
+                }
+            }
+            me.since = -1;
+            m_requests += http.requests() - requests;
+            m_bytes += http.bytes() - bytes;
+            requests = http.requests();
+            bytes = http.bytes();
+            m_cv.notify_all();
+            if ((m_changed || !m_ended.empty()) && !m_posted.exchange(true) && m_context != nullptr)
+                QMetaObject::invokeMethod(m_context, [this]() { deliver(); }, Qt::QueuedConnection);
+        }
+    }
+
+    // The views' thread: the commands' dones, then the arrival handler
+    void deliver()
+    {
+        std::vector<std::shared_ptr<Command>> ended;
+        bool changed = false;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_posted = false;
+            ended.swap(m_ended);
+            changed = m_changed;
+            m_changed = false;
+        }
+        for (const auto &c : ended) {
+            m_commands_done++;
+            if (m_sync) continue;  // the waiting call ran it
+            if (c->work) {
+                if (c->task_done) c->task_done();
+                continue;
+            }
+            if (c->done) c->done(c->status, c->out);
+            else if ((c->status < 200 || c->status >= 300) && m_on_failure) {
+                const QString message = QJsonDocument::fromJson(c->out).object().value("message").toString();
+                m_on_failure(c->status == 0 ? QString("no answer to %1 %2").arg(QString::fromLatin1(c->method), c->path)
+                                            : QString("%1 %2: %3").arg(QString::fromLatin1(c->method), c->path,
+                                                                        message.isEmpty() ? QString("HTTP %1").arg(c->status) : message));
+            }
+        }
+        if ((changed || !ended.empty()) && m_on_arrival) m_on_arrival();
     }
 };
 
@@ -586,25 +1078,37 @@ public:
     RemoteMachine(const RemoteOptions &o, const QString &id)
         : m_http(QString::fromStdString(o.host), o.port), m_host(QString::fromStdString(o.host)), m_port(o.port),
           m_want(QString::fromStdString(o.emulator)), m_base("/api/v1/emulator/" + id),
-          m_settings("unreal-ng", "unreal-debugger")
+          m_settings("unreal-ng", "unreal-debugger"), m_sync(o.synchronous)
     {
         m_http.set_gate(&m_online);
+        // The build reads everything before the window is there: waiting, whatever the mode
+        m_http.set_sync(true);
+        m_http.set_on_arrival([this]() { arrived(); });
+        m_http.set_on_failure([this](const QString &why) { notice(why); });
         m_wait_base = m_base;
+        m_notice_age.start();
     }
 
     ~RemoteMachine() override
     {
         m_stop = true;
+        m_listener_off = true;
         if (m_waiter) {
             m_waiter->wait();
             delete m_waiter;
         }
-        clear_run_to();
-        // Debug mode as it was before the debugger came
-        if (m_attached) m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", m_debug_before}});
-        // The histories the debugger turned on, off again
-        for (const QString &device : m_histories_ours)
-            m_http.json("POST", m_base + "/history/" + device + "/config", QJsonObject{{"mode", "off"}});
+        // The last commands: the run-to gone, debug mode as it was before the debugger came, the histories the
+        // debugger turned on off again; up to 2 s for them, then the requests in flight are given up
+        const QString base = m_base;
+        const bool attached = m_attached;
+        const std::set<QString> ours = m_histories_ours;
+        m_http.task([this, base, attached, ours](Http &http) {
+            remove_run_to(http, base);
+            if (attached) http.json("PUT", base + "/debugmode", QJsonObject{{"enabled", m_debug_before.load()}});
+            for (const QString &device : ours)
+                http.json("POST", base + "/history/" + device + "/config", QJsonObject{{"mode", "off"}});
+        });
+        m_http.close(2000);
     }
 
     // The devices, as the in-process adapter makes them: the CPU, RAM, ROM, the device memories, state reports
@@ -707,10 +1211,12 @@ public:
         m_seq = m_snap.seq;
         m_waiter = QThread::create([this]() { wait_loop(); });
         m_waiter->start();
+        // From now on the views' thread never waits (unless asked to: the self-check)
+        m_http.set_sync(m_sync);
         return true;
     }
 
-    Http &http() { return m_http; }
+    Net &http() { return m_http; }
 
     // The device catalog, read again when the last read is half a second old: one request a refresh for every
     // entry's summary. Not given (the emulator gone, an error), the last one read stays
@@ -718,9 +1224,8 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_catalog_mutex);
         if (!m_catalog_age.isValid() || m_catalog_age.elapsed() > 500) {
-            int status = 0;
-            const QJsonObject o = m_http.json("GET", m_base + "/state/devices", QJsonObject(), &status);
-            if (status == 200) m_catalog = o;
+            QByteArray out;
+            if (m_http.get(m_base + "/state/devices", out, 500) == 200) m_catalog = QJsonDocument::fromJson(out).object();
             m_catalog_age.start();
         }
         return m_catalog;
@@ -731,9 +1236,8 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_catalog_mutex);
         if (!m_histories_age.isValid() || m_histories_age.elapsed() > 500) {
-            int status = 0;
-            const QJsonObject o = m_http.json("GET", m_base + "/history", QJsonObject(), &status);
-            if (status == 200) m_histories = o;
+            QByteArray out;
+            if (m_http.get(m_base + "/history", out, 500) == 200) m_histories = QJsonDocument::fromJson(out).object();
             m_histories_age.start();
         }
         return m_histories;
@@ -795,6 +1299,7 @@ public:
         const QJsonObject r = m_http.json("POST", m_base + "/debug/boards/" + QString::fromStdString(board) + "/actions/" +
                                                       QString::fromStdString(action), body, &status);
         if (status == 0) return {false, "No answer from the emulator"};
+        if (status == kQueued) return {true, board + " " + action + ": sent"};
         if (status != 200) return {false, r.value("message").toString().toStdString()};
         return {true, board + " " + action + ": " + r.value("status").toString().toStdString()};
     }
@@ -894,6 +1399,7 @@ public:
         const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs/porttrace",
                                           QJsonObject{{"action", QString::fromStdString(action)}}, &status);
         if (status == 0) return {false, "No answer from the emulator"};
+        if (status == kQueued) return {true, "port trace " + action + ": sent"};
         if (status != 200) return {false, r.value("message").toString().toStdString()};
         return {true, "port trace " + action + ": " + r.value("status").toString().toStdString()};
     }
@@ -1013,7 +1519,8 @@ public:
         const QJsonObject r = m_http.json("POST", m_base + "/history/" + device + "/config",
                                           QJsonObject{{"mode", on ? "ring" : "off"}}, &status);
         if (status == 0) return {false, "No answer from the emulator"};
-        if (status != 200) return {false, (r.value("error").toString() + r.value("message").toString()).toStdString()};
+        if (status != 200 && status != kQueued)
+            return {false, (r.value("error").toString() + r.value("message").toString()).toStdString()};
         {
             // The History tab's sources read again at their next look
             std::lock_guard<std::mutex> lock(m_catalog_mutex);
@@ -1050,6 +1557,7 @@ public:
             c.age.start();
             int status = 0;
             const QJsonObject r = m_http.json("GET", m_base + "/labels?active=true&cpu=" + QString::fromStdString(card), QJsonObject(), &status);
+            if (status == kPending) c.age.invalidate();  // asked again at the next look
             if (status == 200)
                 for (const QJsonValue &v : r.value("labels").toArray()) {
                     const QJsonObject l = v.toObject();
@@ -1074,6 +1582,7 @@ public:
                                                      (cpu == "main" ? QString() : "&cpu=" + QString::fromStdString(cpu)),
                                           QJsonObject(), &status);
         std::string label;
+        if (status == kPending) return label;  // not kept: asked again at the next look
         if (status == 200) {
             if (r.value("found").toBool()) {
                 label = r.value("label").toObject().value("name").toString().toStdString();
@@ -1389,6 +1898,7 @@ public:
                                           QJsonObject{{"action", QString::fromStdString("profile_" + action)},
                                                       {"cpu", QString::fromStdString(card)}}, &status);
         if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        if (status == kQueued) return {true, "{}", "sent"};
         const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
         if (status != 200) return {false, json, r.value("message").toString().toStdString()};
         return {true, json, r.value("text").toString().toStdString()};
@@ -1401,6 +1911,7 @@ public:
         int status = 0;
         const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs/analysis", body, &status);
         if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        if (status == kQueued) return {true, "{}", "sent"};
         const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
         if (status != 200) return {false, json, r.value("message").toString().toStdString()};
         return {true, json, r.value("text").toString().toStdString()};
@@ -1421,12 +1932,10 @@ public:
                     QJsonDocument::fromJson(out).object().value("message").toString(QString("HTTP %1").arg(status)).toStdString()};
         return {true, out.toStdString(), std::string()};
     }
-    GsJson send_post(const QJsonObject &request)
+    static GsJson send_answer(int status, const QByteArray &out)
     {
-        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
-        int status = 0;
-        const QJsonObject r = m_http.json("POST", m_base + "/control/audio/gs", request, &status);
         if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const QJsonObject r = QJsonDocument::fromJson(out).object();
         const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
         if (status != 200) return {false, json, r.value("message").toString(QString("HTTP %1").arg(status)).toStdString()};
         return {true, json, r.value("text").toString().toStdString()};
@@ -1434,19 +1943,40 @@ public:
     GsJson gs_send(const std::string &card, int command, std::optional<int> pre, const std::vector<int> &params,
                    std::optional<int> replies) override
     {
-        if (card == "ms") return {false, std::string(), kNoMsSend};
+        auto a = std::make_shared<GsJson>(GsJson{false, std::string(), "The send is under way"});
+        gs_send_async(card, command, pre, params, replies, [a](const GsJson &r) { *a = r; });
+        return *a;
+    }
+    void gs_send_async(const std::string &card, int command, std::optional<int> pre, const std::vector<int> &params,
+                       std::optional<int> replies, const std::function<void(const GsJson &)> &done) override
+    {
+        if (card == "ms") return done({false, std::string(), kNoMsSend});
+        if (!m_online.load()) return done({false, std::string(), "The emulator is not connected"});
         QJsonObject request{{"action", "send"}, {"value", command}, {"wait_ms", 0}};
         if (pre) request.insert("pre", *pre);
         if (replies) request.insert("replies", *replies);
         QJsonArray bytes;
         for (int p : params) bytes.append(p);
         request.insert("params", bytes);
-        return send_post(request);
+        QByteArray out;
+        m_http.send("POST", m_base + "/control/audio/gs", QJsonDocument(request).toJson(QJsonDocument::Compact), out, 5000,
+                    [done](int status, const QByteArray &body) { done(send_answer(status, body)); });
     }
+    // A read: the same request's answer comes from Net while the next is fetched (half a second old at most)
     GsJson gs_conversation(const std::string &card, uint32_t id) override
     {
         if (card == "ms") return {false, std::string(), kNoMsSend};
-        return send_post(QJsonObject{{"action", "conversation"}, {"send_id", (qint64)id}});
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        QByteArray out;
+        const QByteArray body =
+            QJsonDocument(QJsonObject{{"action", "conversation"}, {"send_id", (qint64)id}}).toJson(QJsonDocument::Compact);
+        const int status = m_http.get(m_base + "/control/audio/gs", out, 500, "POST", body);
+        if (status == kPending) {
+            GsJson wait{false, std::string(), "Waiting for the emulator"};
+            wait.busy = true;
+            return wait;
+        }
+        return send_answer(status, out);
     }
 
     // The twin timeline over the WebAPI: GET debug/timeline (no session: a read never blocks another client), the
@@ -1467,8 +1997,14 @@ public:
               << QString("lease_ms=%1").arg(kTimelineLeaseMs) << QString("arm=%1").arg(arm ? "true" : "false")
               << "wait_ms=0";  // a 503 at once rather than the server's wait under this blocking request
         QByteArray out;
-        const int status = m_http.request("GET", m_base + "/debug/timeline?" + parts.join('&'), QByteArray(), out);
+        const int status = m_http.get(m_base + "/debug/timeline?" + parts.join('&'), out, 500);
         if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        if (status == kPending) {
+            // Not read yet: busy, the strip asks again
+            GsJson wait{false, std::string(), "Waiting for the emulator"};
+            wait.busy = true;
+            return wait;
+        }
         const QJsonObject body = QJsonDocument::fromJson(out).object();
         if (status == 404) {
             const QJsonObject na{{"available", false}, {"message", body.value("message").toString(body.value("error").toString())}};
@@ -1490,6 +2026,7 @@ public:
                                           QJsonObject{{"on", on}, {"client", QString::fromStdString(timeline_client())},
                                                       {"lease_ms", (int)kTimelineLeaseMs}}, &status);
         if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        if (status == kQueued) return {true, "{}", std::string()};
         const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
         if (status != 200) return {false, json, r.value("message").toString(r.value("error").toString()).toStdString()};
         return {true, json, std::string()};
@@ -1498,9 +2035,19 @@ public:
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }
+    // Asynchronous mode: a read answers from Net at once, a command says it is under way (ttd_call_async has its
+    // answer)
     TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options) override
     {
-        if (!m_online.load()) return {false, R"({"error":"Service Unavailable","message":"The emulator is not connected"})"};
+        // Shared: an answer that comes later has its own place to go
+        auto a = std::make_shared<TtdAnswer>(TtdAnswer{true, R"({"queued":true,"message":"Under way"})"});
+        ttd_call_async(verb, options, [a](const TtdAnswer &r) { *a = r; });
+        return *a;
+    }
+    void ttd_call_async(const std::string &verb, const std::map<std::string, std::string> &options,
+                        const std::function<void(const TtdAnswer &)> &done) override
+    {
+        if (!m_online.load()) return done({false, R"({"error":"Service Unavailable","message":"The emulator is not connected"})"});
         std::map<std::string, std::string> rest = options;
         auto take = [&rest](const char * key) {
             const auto it = rest.find(key);
@@ -1545,14 +2092,21 @@ public:
                 body.insert(QString::fromStdString(key), QString::fromStdString(value));
         }
         if (!query.isEmpty()) path += "?" + query.join('&');
-        int status = 0;
+        auto answer = [](int status, const QByteArray &out) -> TtdAnswer {
+            if (status == 0) return {false, R"({"error":"Service Unavailable","message":"The emulator did not answer"})"};
+            if (status == kPending) return {false, kPendingBody};
+            const QJsonObject o = QJsonDocument::fromJson(out).object();
+            return {status >= 200 && status < 300, QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString()};
+        };
+        QByteArray out;
+        if (strcmp(method, "GET") == 0) {
+            const int status = m_http.get(path, out);
+            return done(answer(status, out));
+        }
         // A move in time replays up to a frame and a reverse-continue searches the history: as long as a step over
-        const QJsonObject answer = m_http.json(method, path, body, &status, in_query ? 5000 : 15000);
-        if (!in_query) changed();
-        const bool ok = status >= 200 && status < 300;
-        if (status == 0)
-            return {false, R"({"error":"Service Unavailable","message":"The emulator did not answer"})"};
-        return {ok, QJsonDocument(answer).toJson(QJsonDocument::Compact).toStdString()};
+        const QByteArray in = in_query && body.isEmpty() ? QByteArray() : QJsonDocument(body).toJson(QJsonDocument::Compact);
+        m_http.send(method, path, in, out, 15000, [done, answer](int status, const QByteArray &data) { done(answer(status, data)); });
+        run_command();
     }
     std::string debug_offline_text() const override
     {
@@ -1563,20 +2117,54 @@ public:
             .toStdString();
     }
 
-    // The snapshot, taken again when stale: false when the emulator does not answer
+    // The snapshot, asked for again when stale (the views' thread never waits for it: the arrival takes it, in
+    // synchronous mode it is here at the return): false while there is none
     bool fresh()
     {
         adopt();
-        const bool stale = !m_snap.valid || m_dirty.load() || m_snap.seq != m_seq.load() ||
-                           (m_snap.state == "running" && m_age.elapsed() >= 150);
-        if (!stale) return true;
-        m_dirty = false;
+        const bool running = m_snap.state == "running";
+        // Once per cause: an event of the machine (the waiter's seq), a tick of a running machine; our own commands
+        // make the snapshot taken before them stale by themselves (Net)
+        const uint64_t seq = m_seq.load();
+        bool again = false;
+        // None yet (the emulator did not answer): asked again a second later
+        if (!m_snap.valid && (!m_snap_retry.isValid() || m_snap_retry.elapsed() > 1000)) {
+            m_snap_retry.start();
+            again = m_snap_version != 0 || m_http.fresh(snapshot_path(), -1);
+        }
+        if (m_dirty.exchange(false)) again = true;
+        if (m_snap.valid && m_snap.seq != seq && m_snap_asked_seq != seq) {
+            m_snap_asked_seq = seq;
+            again = true;
+        }
+        if (running && m_age.elapsed() >= 150 && m_snap_asked != m_snap_count) {
+            m_snap_asked = m_snap_count;
+            again = true;
+        }
+        if (again) m_http.invalidate(snapshot_path());
         QByteArray out;
-        const int status = m_http.request("GET", m_base + "/debug/snapshot?stack=0&memory=cpu:0:65536", QByteArray(), out);
-        if (status != 200) return m_snap.valid;
+        uint64_t version = 0;
+        const int status = m_http.get(snapshot_path(), out, -1, "GET", QByteArray(), &version);
+        if (status == 200 && version != m_snap_version) {
+            m_snap_version = version;
+            install(out);
+        }
+        return m_snap.valid;
+    }
+    Snapshot &snap()
+    {
+        fresh();
+        return m_snap;
+    }
+    // A change of ours: the next read takes a new snapshot (a command makes it stale in Net already)
+    void changed() { m_dirty = true; }
+    QString snapshot_path() const { return m_base + kSnapshotRoute; }
+    void install(const QByteArray &out)
+    {
         const QJsonObject s = QJsonDocument::fromJson(out).object();
         m_snap.valid = true;
         m_snap.generation++;
+        m_snap_count++;
         m_snap.seq = (uint64_t)s.value("seq").toDouble();
         m_snap.frame = (uint64_t)s.value("time").toObject().value("frame").toDouble();
         m_snap.state = s.value("state").toString();
@@ -1597,18 +2185,55 @@ public:
             m_snap.banks[i].writable = b.value("writable").toBool();
         }
         m_age.restart();
-        return true;
+        // Every read made for the last snapshot is stale now
+        m_http.set_generation(m_snap_count);
     }
-    Snapshot &snap()
+    // What came from Net (the views' thread): the snapshot taken, the reads' generation moved (the views' caches of
+    // a generation read Net again), the window told
+    void arrived()
     {
         fresh();
-        return m_snap;
+        m_snap.generation++;
+        m_data_serial++;
+        if (m_run_pending && m_http.commands_done() >= m_run_mark && m_http.fresh(snapshot_path(), -1)) m_run_pending = false;
+        update_serial();
+        if (!m_listener_off) notify();
     }
-    // A change of ours: the next read takes a new snapshot
-    void changed() { m_dirty = true; }
+    // The window's serial: one more when the stop, the state or the stepping it shows has changed
+    void update_serial()
+    {
+        const QString tuple = QString("%1 %2 %3 %4").arg(m_snap.seq).arg(m_snap.state).arg(m_snap.stop_serial).arg(stepping());
+        if (tuple != m_serial_tuple) {
+            m_serial_tuple = tuple;
+            m_serial_out++;
+        }
+    }
+    bool stepping() const
+    {
+        if (m_sync) return false;
+        int read_ms = 0, command_ms = 0;
+        QString what;
+        m_http.waiting(read_ms, command_ms, what);
+        return m_run_pending || read_ms > 1000;
+    }
+    // A command the emulator refused or did not answer: said after the state for a few seconds
+    void notice(const QString &why)
+    {
+        m_notice = why;
+        m_notice_age.restart();
+        m_data_serial++;
+    }
+    // A run control command queued: the window shows it stepping until a snapshot taken after it has come
+    void run_command()
+    {
+        m_run_pending = !m_sync;
+        m_run_mark = m_http.commands_queued();
+        changed();
+        update_serial();
+    }
 
-    // A suitable emulator the waiter found: this machine is its from now (the views' thread;
-    // the waiter never touches m_base / m_http)
+    // A suitable emulator the waiter found: this machine is its from now (the views' thread; the waiter never
+    // touches m_base / m_http). Its debug mode and history go on as commands
     void adopt()
     {
         QString id;
@@ -1622,17 +2247,17 @@ public:
         m_id = id;
         m_run_to_armed = false;
         breakpoints_changed();
-        {
-            std::lock_guard<std::mutex> lock(m_catalog_mutex);
-            m_catalog_age.invalidate();
-            m_histories_age.invalidate();
-        }
+        m_catalog_age.invalidate();
+        m_histories_age.invalidate();
         m_dirty = true;
         m_online = true;
         if (m_attached) {
-            m_debug_before = m_http.json("GET", m_base + "/debugmode").value("enabled").toBool();
-            m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", true}});
+            const QString base = m_base;
             m_histories_ours.clear();
+            m_http.task([this, base](Http &http) {
+                m_debug_before = http.json("GET", base + "/debugmode").value("enabled").toBool();
+                http.json("PUT", base + "/debugmode", QJsonObject{{"enabled", true}});
+            });
             start_cpu_history();
         }
     }
@@ -1641,21 +2266,45 @@ public:
     // as a snapshot, the machine runs on
     void start_cpu_history()
     {
-        for (const QJsonValue &v : m_http.json("GET", m_base + "/history").value("histories").toArray()) {
-            const QJsonObject h = v.toObject();
-            if (h.value("device").toString() == "cpu" && h.value("mode").toString() == "off") set_history("cpu", true);
-        }
+        // The read and the switch in one task: the answer of the first decides the second
+        const QString base = m_base;
+        auto turned = std::make_shared<bool>(false);
+        m_http.task(
+            [base, turned](Http &http) {
+                for (const QJsonValue &v : http.json("GET", base + "/history").value("histories").toArray()) {
+                    const QJsonObject h = v.toObject();
+                    if (h.value("device").toString() != "cpu" || h.value("mode").toString() != "off") continue;
+                    int status = 0;
+                    http.json("POST", base + "/history/cpu/config", QJsonObject{{"mode", "ring"}}, &status);
+                    *turned = status == 200;
+                }
+            },
+            [this, turned]() {
+                if (*turned) m_histories_ours.insert("cpu");
+                m_histories_age.invalidate();
+            });
     }
     // A history on (a ring) or off; one the debugger turned on it turns off when it goes, one it found on it leaves
     void set_history(const QString &device, bool on)
     {
-        int status = 0;
-        m_http.json("POST", m_base + "/history/" + device + "/config", QJsonObject{{"mode", on ? "ring" : "off"}}, &status);
-        if (status != 200) return;
-        if (on) m_histories_ours.insert(device);
-        else m_histories_ours.erase(device);
-        std::lock_guard<std::mutex> lock(m_catalog_mutex);
-        m_histories_age.invalidate();
+        QByteArray out;
+        m_http.send("POST", m_base + "/history/" + device + "/config",
+                    QJsonDocument(QJsonObject{{"mode", on ? "ring" : "off"}}).toJson(QJsonDocument::Compact), out, 5000,
+                    [this, device, on](int status, const QByteArray &body) {
+                        if (status != 200) {
+                            notice(failure_text("history " + device, status, body));
+                            return;
+                        }
+                        if (on) m_histories_ours.insert(device);
+                        else m_histories_ours.erase(device);
+                        m_histories_age.invalidate();
+                    });
+    }
+    static QString failure_text(const QString &what, int status, const QByteArray &body)
+    {
+        if (status == 0) return what + ": no answer from the emulator";
+        const QJsonObject o = QJsonDocument::fromJson(body).object();
+        return what + ": " + o.value("message").toString(o.value("error").toString(QString("HTTP %1").arg(status)));
     }
 
     // The execution breakpoints of a CPU: main, gs, ms (each card CPU has breakpoints of its own, ?cpu=)
@@ -1723,7 +2372,7 @@ public:
         int status = 0;
         const QJsonObject r = m_http.json("POST", m_base + "/breakpoints", body, &status);
         breakpoints_changed();
-        if (status == 200 || status == 201) return true;
+        if (status == 200 || status == 201 || status == kQueued) return true;
         error = r.value("message").toString().toStdString();
         if (error.empty()) error = "the emulator did not add it (HTTP " + std::to_string(status) + ")";
         return false;
@@ -1733,14 +2382,14 @@ public:
         int status = 0;
         m_http.json("POST", m_base + "/breakpoints/hits/reset?cpu=" + cpu, QJsonObject{{"id", (int)id}}, &status);
         breakpoints_changed();
-        return status == 200;
+        return status == 200 || status == kQueued;
     }
     bool remove_event_breakpoint(const QString &cpu, unsigned int id)
     {
         int status = 0;
         m_http.json("DELETE", m_base + "/breakpoints/" + QString::number(id) + "?cpu=" + cpu, QJsonObject(), &status);
         breakpoints_changed();
-        return status == 200;
+        return status == 200 || status == kQueued;
     }
     bool enable_event_breakpoint(const QString &cpu, unsigned int id, bool on)
     {
@@ -1748,7 +2397,7 @@ public:
         m_http.json("PUT", m_base + "/breakpoints/" + QString::number(id) + (on ? "/enable" : "/disable") + "?cpu=" + cpu,
                     QJsonObject(), &status);
         breakpoints_changed();
-        return status == 200;
+        return status == 200 || status == kQueued;
     }
     RemoteCardZ80 * card(const QString &cpu) const
     {
@@ -1760,9 +2409,13 @@ public:
     void debug_attach(bool on) override
     {
         if (!on) return;
-        if (!m_attached) m_debug_before = m_http.json("GET", m_base + "/debugmode").value("enabled").toBool();
+        const bool first = !m_attached;
         m_attached = true;
-        m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", true}});
+        const QString base = m_base;
+        m_http.task([this, base, first](Http &http) {
+            if (first) m_debug_before = http.json("GET", base + "/debugmode").value("enabled").toBool();
+            http.json("PUT", base + "/debugmode", QJsonObject{{"enabled", true}});
+        });
         start_cpu_history();
         m_cpu->m_debug = ecatshim::DEBUG_BRAKES;
         changed();
@@ -1772,28 +2425,42 @@ public:
         clear_run_to();
         m_http.json("PUT", m_base + "/debug/selected_cpu", QJsonObject{{"cpu", "main"}});
         if (debug_paused()) m_http.json("POST", m_base + "/resume");
-        changed();
+        run_command();
     }
     bool debug_paused() const override
     {
         auto * self = const_cast<RemoteMachine *>(this);
         return self->snap().state == "paused";
     }
-    bool debug_stepping() const override { return false; }
+    bool debug_stepping() const override { return stepping(); }
+    std::string debug_link_text() const override
+    {
+        if (m_sync || !m_online.load()) return std::string();
+        int read_ms = 0, command_ms = 0;
+        QString what;
+        m_http.waiting(read_ms, command_ms, what);
+        if (read_ms > 1000) return QString("Waiting for the emulator: %1 s").arg(read_ms / 1000).toStdString();
+        if (command_ms > 2000)
+            return QString("Waiting for the emulator: %1%2 s").arg(what.isEmpty() ? QString() : what + ", ").arg(command_ms / 1000).toStdString();
+        if (!m_notice.isEmpty() && m_notice_age.elapsed() < 5000) return m_notice.toStdString();
+        return std::string();
+    }
+    uint64_t debug_data_serial() const override { return m_data_serial; }
     void debug_pause() override
     {
         m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", true}});
         m_http.json("POST", m_base + "/pause");
-        changed();
+        run_command();
     }
     void debug_run(bool breakpoints) override
     {
         if (!m_arming_run_to) drop_run_to();
-        // Breakpoints fire only in debug mode: a run without them is a run with it off
+        // Breakpoints fire only in debug mode: a run without them is a run with it off. Paused as the last snapshot
+        // says (the window runs only a machine it shows held: no command of its own is under way)
         m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", breakpoints}});
         m_cpu->m_debug = breakpoints ? ecatshim::DEBUG_BRAKES : ecatshim::DEBUG_OFF;
         if (debug_paused()) m_http.json("POST", m_base + "/resume");
-        changed();
+        run_command();
     }
     // A step of a card's tab is the card's step (?cpu=): the machine runs until it ends (up to 2 s, over / out 5 s)
     void debug_step(ecatshim::CPU * c, unsigned int count) override
@@ -1802,46 +2469,58 @@ public:
         const QString q = step_query(c);
         if (count <= 1) m_http.json("POST", m_base + "/step" + q, QJsonObject(), nullptr, 15000);
         else m_http.json("POST", m_base + "/steps" + q, QJsonObject{{"count", (int)count}}, nullptr, 15000);
-        changed();
+        run_command();
     }
     // Step over / out answer when the machine has stopped (a pool of the WebAPI runs them)
     void debug_step_over(ecatshim::CPU * c) override
     {
         drop_run_to();
         m_http.json("POST", m_base + "/stepover" + step_query(c), QJsonObject(), nullptr, 15000);
-        changed();
+        run_command();
     }
     void debug_step_out(ecatshim::CPU * c) override
     {
         drop_run_to();
         m_http.json("POST", m_base + "/stepout" + step_query(c), QJsonObject(), nullptr, 15000);
-        changed();
+        run_command();
     }
     // A card's run to a moment (POST /card_run_to {cpu, until, value}): it answers when the run has ended (a breakpoint
-    // or 5 s at most)
+    // or 5 s at most). Asynchronous mode: the answer says it is under way, the snapshot shows the stop
     CardRunAnswer debug_card_run_to(ecatshim::CPU * c, const std::string &until, uint64_t value) override
     {
-        CardRunAnswer a;
+        auto a = std::make_shared<CardRunAnswer>();
+        a->ok = true;
+        a->message = "Card run to " + until + ": under way";
+        debug_card_run_to_async(c, until, value, [a](const CardRunAnswer &r) { *a = r; });
+        return *a;
+    }
+    void debug_card_run_to_async(ecatshim::CPU * c, const std::string &until, uint64_t value,
+                                 const std::function<void(const CardRunAnswer &)> &done) override
+    {
         auto * card = dynamic_cast<RemoteCardZ80 *>(c);
         if (card == nullptr) {
+            CardRunAnswer a;
             a.message = "A card run takes a card's CPU (gs, ms)";
-            return a;
+            done(a);
+            return;
         }
         drop_run_to();
-        int status = 0;
-        const QJsonObject r = m_http.json("POST", m_base + "/card_run_to",
-                                          QJsonObject{{"cpu", card->cpu()}, {"until", QString::fromStdString(until)},
-                                                      {"value", (qint64)value}},
-                                          &status, 15000);
-        a.ok = status >= 200 && status < 300;
-        a.message = r.value("message").toString(status == 0 ? QString("No answer from the emulator") : QString()).toStdString();
-        a.hit = r.value("hit").toBool();
-        a.stop_reason = r.value("stop").toObject().value("reason").toString().toStdString();
-        a.card_cycle = r.contains("card_cycle") ? r.value("card_cycle").toInteger() : -1;
-        a.main_t = r.contains("main_t") ? r.value("main_t").toInteger() : -1;
-        a.frame = r.contains("frame") ? r.value("frame").toInteger() : -1;
-        changed();
-        return a;
+        QByteArray out;
+        const QByteArray body = QJsonDocument(QJsonObject{{"cpu", card->cpu()}, {"until", QString::fromStdString(until)},
+                                                          {"value", (qint64)value}}).toJson(QJsonDocument::Compact);
+        m_http.send("POST", m_base + "/card_run_to", body, out, 15000, [done](int status, const QByteArray &data) {
+            const QJsonObject r = QJsonDocument::fromJson(data).object();
+            CardRunAnswer a;
+            a.ok = status >= 200 && status < 300;
+            a.message = r.value("message").toString(status == 0 ? QString("No answer from the emulator") : QString()).toStdString();
+            a.hit = r.value("hit").toBool();
+            a.stop_reason = r.value("stop").toObject().value("reason").toString().toStdString();
+            a.card_cycle = r.contains("card_cycle") ? r.value("card_cycle").toInteger() : -1;
+            a.main_t = r.contains("main_t") ? r.value("main_t").toInteger() : -1;
+            a.frame = r.contains("frame") ? r.value("frame").toInteger() : -1;
+            done(a);
+        });
+        run_command();
     }
     // The tab's CPU shown (GET / PUT /debug/selected_cpu): a card's follows the main CPU's steps of the paused machine
     void debug_select(ecatshim::CPU * c) override
@@ -1859,32 +2538,39 @@ public:
         bool user = false;
         for (const Breakpoint &b : breakpoints(cpu)) user = user || (!b.run_to && b.address == (address & 0xFFFF));
         // Gone at a stop after this run starts (the run start and the stop each move the seq), not at the stop it
-        // was set at, whose answer may come only now
-        {
+        // was set at, whose answer may come only now. A task on the commands' lane: the lock is the worker's to wait
+        // for, never the views' thread's
+        const QString base = m_base;
+        m_http.task([this, base, cpu, user, address](Http &http) {
             // The waiter's removal of an earlier run-to (by group) never lands after this one is set
             std::lock_guard<std::mutex> lock(m_run_to_mutex);
-            if (m_run_to_armed.exchange(false)) remove_run_to(m_http, m_base);
-            if (!user) {
-                m_http.json("POST", m_base + "/breakpoints",
-                            QJsonObject{{"type", "execution"}, {"address", (int)(address & 0xFFFF)}, {"group", kRunToGroup},
-                                        {"note", "run to the cursor"}, {"cpu", cpu}});
-                // The emulator's seq now, not the waiter's: the waiter lags behind the edits just made (each poke and
-                // register write moves the seq), and its answer for them, still paused, would count as the stop of
-                // this run and take the breakpoint away before the run starts. A running machine has no run start
-                // to come: its stop alone moves the seq past the mark
-                int status = 0;
-                const QJsonObject now = m_http.json("GET", m_base + "/debug/wait?timeout_ms=0", QJsonObject(), &status);
-                const uint64_t seq = status == 200 ? (uint64_t)now.value("seq").toDouble() : m_seq.load();
-                m_run_to_seq = (status == 200 && now.value("state").toString() != "paused" && seq > 0) ? seq - 1 : seq;
-                m_run_to_armed = true;
-            }
-        }
+            if (m_run_to_armed.exchange(false)) remove_run_to(http, base);
+            if (user) return;
+            http.json("POST", base + "/breakpoints",
+                      QJsonObject{{"type", "execution"}, {"address", (int)(address & 0xFFFF)}, {"group", kRunToGroup},
+                                  {"note", "run to the cursor"}, {"cpu", cpu}});
+            // The emulator's seq now, not the waiter's: the waiter lags behind the edits just made (each poke and
+            // register write moves the seq), and its answer for them, still paused, would count as the stop of
+            // this run and take the breakpoint away before the run starts. A running machine has no run start
+            // to come: its stop alone moves the seq past the mark
+            int status = 0;
+            const QJsonObject now = http.json("GET", base + "/debug/wait?timeout_ms=0", QJsonObject(), &status);
+            const uint64_t seq = status == 200 ? (uint64_t)now.value("seq").toDouble() : m_seq.load();
+            m_run_to_seq = (status == 200 && now.value("state").toString() != "paused" && seq > 0) ? seq - 1 : seq;
+            m_run_to_armed = true;
+        });
         breakpoints_changed();
         m_arming_run_to = true;
         debug_run(true);
         m_arming_run_to = false;
     }
-    unsigned int debug_serial() const override { return (unsigned int)m_seq.load(); }
+    unsigned int debug_serial() const override
+    {
+        auto * self = const_cast<RemoteMachine *>(this);
+        self->fresh();
+        self->update_serial();
+        return (unsigned int)m_serial_out;
+    }
     ecatshim::CPU * debug_stop_cpu() const override
     {
         // A card's breakpoint or step: its tab
@@ -1940,7 +2626,7 @@ public:
     }
 
 private:
-    Http m_http;
+    Net m_http;
     QString m_host;
     uint16_t m_port;
     QString m_want;    // the emulator asked for (an id or symbolic id); empty: one of the same model
@@ -1975,6 +2661,20 @@ private:
 
     Snapshot m_snap;
     QElapsedTimer m_age;
+    bool m_sync = false;            // the self-check: every request waited for
+    uint64_t m_snap_count = 0;      // snapshots taken (Net's read generation)
+    uint64_t m_snap_asked = ~0ull;  // the snapshot after which a running machine's next was asked for
+    uint64_t m_snap_asked_seq = ~0ull;
+    uint64_t m_snap_version = 0;    // Net's version of the snapshot installed
+    QElapsedTimer m_snap_retry;
+    bool m_run_pending = false;     // a run control command whose snapshot has not come yet
+    uint64_t m_run_mark = 0;
+    uint64_t m_serial_out = 0;
+    QString m_serial_tuple;
+    uint64_t m_data_serial = 0;
+    QString m_notice;
+    QElapsedTimer m_notice_age;
+    std::atomic<bool> m_listener_off{false};
     std::atomic<bool> m_dirty{true};
     std::atomic<uint64_t> m_seq{0};
     std::atomic<uint64_t> m_run_to_seq{0};
@@ -1991,7 +2691,7 @@ private:
     std::map<QString, BreakpointList> m_bps;
     bool m_attached = false;
     std::set<QString> m_histories_ours;  // the histories the debugger turned on: off again when it goes
-    bool m_debug_before = false;
+    std::atomic<bool> m_debug_before{false};
 
     QThread * m_waiter = nullptr;
     std::atomic<bool> m_stop{false};
@@ -2008,12 +2708,18 @@ private:
     // HALT at its address it would stop the run at once)
     void drop_run_to()
     {
-        std::lock_guard<std::mutex> lock(m_run_to_mutex);
-        if (m_run_to_armed.exchange(false)) clear_run_to();
+        // Looked at on the worker: a run-to queued before this is armed by then
+        const QString base = m_base;
+        m_http.task([this, base](Http &http) {
+            std::lock_guard<std::mutex> lock(m_run_to_mutex);
+            if (m_run_to_armed.exchange(false)) remove_run_to(http, base);
+        });
+        breakpoints_changed();
     }
     void clear_run_to()
     {
-        remove_run_to(m_http, m_base);
+        const QString base = m_base;
+        m_http.task([this, base](Http &http) { remove_run_to(http, base); });
         breakpoints_changed();
     }
     // The run-to breakpoints of every CPU (the cards are fixed after build: the waiter reads them too)
@@ -2035,6 +2741,7 @@ private:
     void wait_loop()
     {
         Http wait(m_host, m_port);
+        wait.set_abort(&m_stop);  // the debugger closing: no wait for a stalled emulator's answer
         while (!m_stop) {
             QString base;
             {
@@ -2125,10 +2832,11 @@ unsigned int RemotePages::get_direct(unsigned int a)
     auto &c = m_cache[page];
     if (c.first != gen || c.second.size() != (int)kPage) {
         QByteArray out;
+        // Not read yet (or not given): what was read before stays, else #FF
         if (m_m->http().request("GET", m_m->base() + "/memory/page/" + m_kind + "/" + QString::number(page) +
                                     "?format=binary&length=" + QString::number(kPage),
                                 QByteArray(), out) != 200)
-            out.clear();
+            out = c.second.size() == (int)kPage ? c.second : QByteArray();
         out.resize(kPage, '\xFF');
         c = {gen, out};
     }
@@ -2139,9 +2847,12 @@ void RemotePages::rom_titles()
 {
     const uint64_t seq = m_m->snap().seq;
     if (seq == m_titles_seq) return;
+    int status = 0;
+    const QJsonArray list = m_m->http().json("GET", m_m->base() + "/state/memory/rom", QJsonObject(), &status).value("pages").toArray();
+    // Not read yet: the titles there were stay, asked again at the next look
+    if (status != 200) return;
     m_titles_seq = seq;
     m_titles.assign(m_pages, {});
-    const QJsonArray list = m_m->http().json("GET", m_m->base() + "/state/memory/rom").value("pages").toArray();
     for (const QJsonValue &v : list) {
         const QJsonObject p = v.toObject();
         const unsigned int page = (unsigned int)p.value("page").toInt();
@@ -2186,7 +2897,8 @@ unsigned int RemoteRegion<Base>::get_direct(unsigned int a)
         QByteArray out;
         const QString path = m_m->base() + "/memory/region/" + QUrl::toPercentEncoding(m_region) + "?offset=" +
                              QString::number(chunk * kChunk) + "&length=" + QString::number(kChunk) + "&format=binary";
-        if (m_m->http().request("GET", path, QByteArray(), out) != 200) out.clear();
+        if (m_m->http().request("GET", path, QByteArray(), out) != 200)
+            out = c.second.size() == (int)kChunk ? c.second : QByteArray();
         out.resize(kChunk, '\xFF');
         c = {gen, out};
     }
@@ -2299,7 +3011,7 @@ bool RemoteZ80::poke_mem(unsigned int a, unsigned int v)
     m_m->http().json("PUT", m_m->base() + "/memory/" + QString::number(a & 0xFFFF),
                      QJsonObject{{"data", QJsonArray{(int)(v & 0xFF)}}}, &status);
     m_m->changed();
-    return status == 200;
+    return status == 200 || status == kQueued;
 }
 
 std::vector<ecatshim::AddressWindow> RemoteZ80::get_windows()
@@ -2393,7 +3105,7 @@ bool RemoteZ80::set_flag(const std::string &n, bool value)
     int status = 0;
     m_m->http().json("PUT", m_m->base() + "/registers/F", QJsonObject{{"value", (int)f}}, &status);
     m_m->changed();
-    return status == 200;
+    return status == 200 || status == kQueued;
 }
 
 bool RemoteZ80::stack_address(int i, unsigned int &address)
@@ -2550,7 +3262,7 @@ bool RemoteCardZ80::poke_mem(unsigned int a, unsigned int v)
     m_m->http().json("PUT", route("/memory/" + QString::number(a & 0xFFFF)), QJsonObject{{"data", QJsonArray{(int)(v & 0xFF)}}},
                      &status);
     m_m->changed();
-    return status == 200;
+    return status == 200 || status == kQueued;
 }
 
 // The card's clock: the `gs` report's cpu.frame_cycle (its cycles since it started are not there: the change is
@@ -2591,7 +3303,7 @@ bool RemoteCardZ80::set_flag(const std::string &n, bool value)
     int status = 0;
     m_m->http().json("PUT", route("/registers/F"), QJsonObject{{"value", (int)f}}, &status);
     m_m->changed();
-    return status == 200;
+    return status == 200 || status == kQueued;
 }
 
 bool RemoteCardZ80::stack_address(int i, unsigned int &address)

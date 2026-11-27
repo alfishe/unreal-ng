@@ -727,7 +727,7 @@ its fields and a `text` (the lines the CLI prints and the MCP tool's text). Ever
 | `review` | `op` (`next`, default, `list`, `show`, `resolve`), `id` (a finding `F12` or a naming batch `N3`), `verdict` (`ok`, `wrong`, `skip`), `label`, `title`, `comment`, `kind` (a region kind for the finding's range), `names` (a naming batch's names, JSON), `by`, `experiment` (a spec), `ranges`, `reason` (`all`, `bug`, `conflict`, `unnamed-hot`, `low-confidence`, `unknown`, `entry`, `name`), `offset` (0), `limit` (40) | next / show: `item` {id, reason, state, kind, start, end, claim, confidence; a batch also `subjects` [{at, label, code, entry}]}, `sheet`, `sheet_bytes`, `queue`; list: `items`, `queue` {open, shown, offset, resolved, summary, reason, by_reason, name_subjects, name_capped}; resolve: `finding`, `kind`, `experiments`; a batch: `batch`, `named` [{at, label, title}], `skipped` ([L3 review](#review-queue)) |
 | `experiment` | `spec` (an object or an array of up to 256, as JSON text on the CLI / Lua), `path` (a JSON file), `parallel` (1..8), `finding`, `keep_branches` (`asked`, `observed`, `all`), `run` (the kept branches' run id) | `results` [{id, finding, claim, verdict, error, checks [{key, expect, actual, pass}], hits, new_code, new_ranges, from_frame, frames_run, worker, branch?}], `observed`, `refuted`, `errors`, `workers`, `peak_concurrency`, `seeks`, `micros`, `branches_kept`, `branch_run` ([experiment runner](#experiment-runner)) |
 | `cover` | `budget` (64), `per_branch` (8), `frames` (50), `parallel`, `limit` (200 branches), `ranges` | `candidates`, `tried`, `flipped`, `attempts`, `new_code`, `branches` [{pc, cond, want, tested, address, status, reason, how, attempts, from_frame, new_code, new_ranges}], `workers`, `peak_concurrency`, `micros` ([directed coverage](#directed-coverage)) |
-| `trace` | `path` (required), `from_frame`, `from_tinframe`, `to_frame`, `to_tinframe` (the window; default the frame `from_frame`, at most 3000 frames), `max_cycles` (default 8 000 000) | the window replayed on a muted analysis instance, the trace written to `path`: `path`, `from_frame`, `from_tinframe`, `to_frame`, `to_tinframe`, `instructions`, `cycles`, `fetches`, `reads`, `writes`, `ports`, `bytes`, `truncated` ([access trace](#access-trace)) |
+| `trace` | `path` (required), `from_frame`, `from_tinframe`, `to_frame`, `to_tinframe` (the window; default the frame `from_frame`, at most 3000 frames), `max_cycles` (default 8 000 000), the filter `kinds`, `pc`, `addresses` | the window replayed on a muted analysis instance, the trace written to `path`: `path`, `from_frame`, `from_tinframe`, `to_frame`, `to_tinframe`, `instructions`, `cycles`, `fetches`, `reads`, `writes`, `ports`, `bytes`, `truncated`, `filtered` ([access trace](#access-trace)) |
 | `gallery` | `address` (as `explain`; none: the list), `kind` (`all`, default, `font`, `sprite`, `tile`, `screen`, `level_map`), `scale` (1..8, default 2), `path` (write the PNG there), `limit` (default 200) | the list: `regions` [...], `count`, `truncated`, the text one line per region (range, kind, shape, detector, confidence, title); one region: `region`, `width`, `height`, `frames`, `scale`, `bytes`, `mime_type`, `png` (base64; empty with `path`), `path` ([the gallery](#the-gallery)) |
 
 Refusals: an unknown action or option, a value that does not parse or is out of bounds (400; `build`: `frames` at
@@ -784,6 +784,15 @@ python3 tools/verification/analysis/access_trace.py scratch/pass.uatr --pc EAE3-
 # 1001:20318 EAE9 af=FF6A bc=0000 de=6544 hl=FF00 RDD68=00 RDD69=FF
 # 1001:20334 EAEC af=FF6A bc=0000 de=6544 hl=FF00 RFF00=03
 ```
+
+A **filter** writes only part of the records, so a long window fits a file: `kinds` (comma-separated `fetch`, `read`,
+`write`, `in`, `out`, `edit`), `pc` (ranges of instruction addresses) and `addresses` (ranges of cycle addresses; a port
+for `in` / `out`), ranges as `8000-9FFF,C000-C0FF`. `kinds=in,out` is a port trace with each access's frame, T-state,
+PC and registers and no instruction stream (6 + 26 bytes an access, not 450 KB a frame); `kinds=write
+addresses=4000-5AFF` is every screen write with its instruction. With `kinds` or `addresses` an instruction is in the
+file only with a cycle of its own; with `pc` alone every instruction of the ranges is there with all its cycles. The
+header's byte after `truncated` is 1 for a filtered file, the counts are the written records, and the start memory
+plus the writes is the later memory only when no write was left out.
 
 The H.A.T.E. sprite drawer (`$EAE3`) in one pass of its recording: the registers are each instruction's inputs
 (`LD HL,$FF00` at `$EAE3` shows the old HL, the store after it the new one), the bus cycles follow their
