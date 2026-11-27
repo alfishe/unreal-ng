@@ -162,10 +162,10 @@ public:
     void setRecordingFrame(const RecordingFrameLayout& layout);
     /// The captured pictures not taken yet, oldest first, appended to `out`
     void takeRecordingPictures(std::vector<RecordingPicture>& out);
-    /// The recording's picture drawn now: the GPU window's capture way read at once (the capture on), else
-    /// grabWindowPicture
-    /// grabWindowPicture. `frame`: the emulated frame number of the picture (0: not known)
-    bool grabRecordingPicture(QImage& image, uint64_t& frame, std::string& error, int pictureHeight);
+    /// The recording's picture drawn now: the GPU window's capture way taken at once (the capture on: a frame the
+    /// GPU composed or a picture read back), else grabWindowPicture. `number`: the emulated frame of the picture (0:
+    /// not known)
+    bool grabRecordingPicture(RecordingPicture& picture, std::string& error, int pictureHeight);
 
     /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
     MouseCaptureController* mouseCapture() const { return _mouseCapture; }
