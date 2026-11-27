@@ -10,6 +10,7 @@
 #include "emulator/mainloop.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "common/encoderconfig.h"
 #include "common/filehelper.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediamanager.h"
@@ -73,6 +74,9 @@ int main(int argc, char **argv)
   // Nor session deltas: a composite's writes are saved by writes.save when its emulator goes (D-8); a test that
   // checks that turns it on
   MediaManager::SetSaveOnRelease(false);
+  // Recordings with the defaults (Auto, a plain EncoderConfig) encode in software: the shards opened a GPU session for
+  // each and VideoToolbox refuses past about 20 at once. The tests of the hardware path ask for it
+  EncoderConfig::SetHardwareDefault(false);
   ::testing::InitGoogleTest(&argc, argv);
 
   // The settings folder (FileHelper::GetWritablePath) is this process's scratch folder: files a machine saves there

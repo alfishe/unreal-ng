@@ -404,14 +404,99 @@ void HudOverlay::paintEvent(QPaintEvent* event)
     renderHUD(painter, width(), height(), devicePixelRatio());
 }
 
+bool HudOverlay::MovesWithTime(const HudSnapshot& snap)
+{
+    for (const auto& el : snap.elements)
+        if (el.kind == HudKind::Toast || (el.kind == HudKind::Indicator && el.styleId == "rec"))
+            return true;
+    return false;
+}
+
+bool HudOverlay::prepareLayer(int width, int height, float dpr)
+{
+    const std::shared_ptr<const HudSnapshot> snap = _model ? _model->snapshot() : nullptr;
+    if (!snap || snap->elements.empty())
+    {
+        // Nothing to draw: an empty layer (the last element bounds stay, onModelChanged clears them on screen)
+        if (_layerSnapshot || !_layer.isNull())
+        {
+            _layerSnapshot.reset();
+            _layer = QImage();
+            _layerRect = QRect();
+            ++_layerSerial;
+        }
+        return true;
+    }
+    if (MovesWithTime(*snap))
+        return false;
+
+    const LayerKey key{width, height, dpr, _themeId, _scaleFactor, _toastPosition, _indicatorPosition};
+    if (snap == _layerSnapshot && key == _layerKey)
+        return true;
+
+    // Drawn at the surface's size, then cut to the pixels drawn: a paint blends only those
+    const int pixelWidth = std::max(1, static_cast<int>(std::ceil(width * dpr)));
+    const int pixelHeight = std::max(1, static_cast<int>(std::ceil(height * dpr)));
+    QImage full(pixelWidth, pixelHeight, QImage::Format_ARGB32_Premultiplied);
+    full.fill(Qt::transparent);
+    full.setDevicePixelRatio(dpr);
+    {
+        QPainter painter(&full);
+        drawElements(painter, *snap, width, height, dpr);
+    }
+    int left = pixelWidth, top = pixelHeight, right = -1, bottom = -1;
+    for (int y = 0; y < pixelHeight; ++y)
+    {
+        const auto* row = reinterpret_cast<const QRgb*>(full.constScanLine(y));
+        int first = 0;
+        while (first < pixelWidth && qAlpha(row[first]) == 0)
+            ++first;
+        if (first == pixelWidth)
+            continue;
+        int last = pixelWidth - 1;
+        while (qAlpha(row[last]) == 0)
+            --last;
+        left = std::min(left, first);
+        right = std::max(right, last);
+        top = std::min(top, y);
+        bottom = y;
+    }
+    _layerRect = right < 0 ? QRect() : QRect(QPoint(left, top), QPoint(right, bottom));
+    _layer = _layerRect.isEmpty() ? QImage() : full.copy(_layerRect);
+    _layer.setDevicePixelRatio(dpr);
+    _layerSnapshot = snap;
+    _layerKey = key;
+    ++_layerSerial;
+    return true;
+}
+
 void HudOverlay::renderHUD(QPainter& painter, int width, int height, float dpr)
 {
     if (!_model)
         return;
 
-    auto snap = _model->snapshot();
+    if (prepareLayer(width, height, dpr))
+    {
+        if (_layer.isNull())
+            return;
+        // 1:1 at device pixels: no filtering, the pixels as drawn
+        painter.save();
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        painter.drawImage(QPointF(_layerRect.x() / static_cast<qreal>(dpr), _layerRect.y() / static_cast<qreal>(dpr)),
+                          _layer);
+        painter.restore();
+        return;
+    }
+
+    const auto snap = _model->snapshot();
     if (!snap || snap->elements.empty())
         return;
+    drawElements(painter, *snap, width, height, dpr);
+}
+
+void HudOverlay::drawElements(QPainter& painter, const HudSnapshot& snapshot, int width, int height, float dpr)
+{
+    const HudSnapshot* snap = &snapshot;
 
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);

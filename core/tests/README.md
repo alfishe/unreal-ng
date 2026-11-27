@@ -46,6 +46,7 @@ regression tests: [`docs/testing/sanitizers.md`](../../docs/testing/sanitizers.m
 15. **A test whose outcome depends on a clock, a timer, a real thread race or the kernel is not a unit test**: it goes to the functional suite (`core/tests/functional/`, suite `*_Functional`, `UNREAL_FUNCTIONAL_TESTS=1`, see [The functional suite](#the-functional-suite-_functional)); the deterministic part stays a unit test
 16. **Avoid heavy buffer fills in test paths**: Use value-initialization (`new T[n]()`) or `ZeroInitBuffer` instead of `std::vector::resize(n, 0)` on multi-megabyte POD buffers to prevent 50+ ms per-element scalar loops in Debug builds
 16. **A thread you start may not have run yet**: a test with a second thread waits for it to start and bounds its loop by what *both* sides did, never by one side's count alone (see [Concurrency tests](#concurrency-tests))
+17. **Recordings encode in software unless the test asks for the GPU**: `main()` sets `EncoderConfig::SetHardwareDefault(false)`, so `EncoderAcceleration::Auto` and a plain `EncoderConfig` take libx264 / libx265. The shards of `test-parallel` each opened a GPU session before, and VideoToolbox refuses sessions past about 20 at once ("Error while opening encoder", ffmpeg exit 187). A test of the hardware path says so: `EncoderAcceleration::Hardware`, `config.useHardwareAccel = true`, `EncoderBackend::Native`
 
 ---
 
