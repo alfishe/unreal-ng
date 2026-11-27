@@ -9,12 +9,17 @@
 #include <thread>
 
 #include "devicescreenwrapper.h"
+#include "windowrecorder.h"
 
 namespace
 {
 /// How long a surface thread waits for the GUI thread: a busy GUI (a modal dialog runs its own loop and still serves
 /// this) answers in a frame or two; switching the GPU backend re-creates the screen, still well inside
 constexpr std::chrono::milliseconds kGuiTimeout{3000};
+/// Starting a window recording changes state: a start that answers late still happens, so a short timeout would report
+/// a failure for a recording that then runs ("already being recorded" to every retry). Its slow part, the GPU
+/// encoder's trials, runs before, on the caller's thread (WindowRecorder::PrepareHardwareEncoder)
+constexpr std::chrono::milliseconds kRecordingStartTimeout{30000};
 /// Stopping a window recording waits for ffmpeg to finish the file (WindowRecorder::stop: up to 2 minutes)
 constexpr std::chrono::milliseconds kRecordingStopTimeout{130000};
 
@@ -151,7 +156,8 @@ bool WindowViewProvider::StartWindowRecording(const std::string& emulatorId, con
             }
             return record(RecordAction::Start, &request, status, why);
         };
-    return OnGuiThread(std::move(task), out, error);
+    WindowRecorder::PrepareHardwareEncoder(request);
+    return OnGuiThread(std::move(task), out, error, kRecordingStartTimeout);
 }
 
 bool WindowViewProvider::StopWindowRecording(WindowRecordingStatus& out, std::string& error)

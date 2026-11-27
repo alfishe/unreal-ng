@@ -33,6 +33,8 @@ public:
     static constexpr int64_t kJitterNs = 1'000'000;
     static constexpr int64_t kMaxOffsetNs = 3'000'000;
     static constexpr size_t kOffsetWindow = 64;
+    /// A present shown this long after its time was held by a gap (sleep, a display off), not drawn late
+    static constexpr int64_t kGapNs = 100'000'000;
 
     explicit PresentLead(int64_t startNs) : _marginNs(std::clamp(startNs, kMinNs, kMaxNs)) {}
 
@@ -55,6 +57,10 @@ public:
         if (errorNs > period + OffsetNs() + kJitterNs)
         {
             _late.fetch_add(1, std::memory_order_relaxed);
+            // Shown seconds after its time: the display was asleep or off, the system held the presents (a gap in
+            // time, not a window drawing late). Counted, the margin and the run on time left as they were
+            if (errorNs > kGapNs)
+                return;
             if (present > _lastLate.load(std::memory_order_relaxed))
             {
                 _lastLate.store(present, std::memory_order_relaxed);

@@ -109,6 +109,31 @@ TEST(LinuxPresent_Test, WaylandAndXWaylandAreUnknownWithTheWayOut)
     EXPECT_STREQ(VrrSupportName(VrrSupport::No), "no");
 }
 
+TEST(LinuxPresent_Test, GamescopeTellsItsOwnVrrWhateverQtRunsOn)
+{
+    for (WindowSystem system : {WindowSystem::X11, WindowSystem::XWayland, WindowSystem::Wayland})
+    {
+        VrrInputs in;
+        in.system = system;
+        in.vrrCapable = -1;  // XWayland's RandR has no vrr_capable
+        in.gamescopeCapable = 0;
+        in.gamescopeEnabled = 0;  // the Steam Deck LCD, 2026-11-25
+        VrrDecision d = DecideVrr(in);
+        EXPECT_EQ(d.support, VrrSupport::No);
+        EXPECT_NE(d.reason.find("GAMESCOPE_VRR_CAPABLE 0"), std::string::npos);
+
+        in.gamescopeCapable = 1;  // an external VRR monitor, adaptive sync off in Steam
+        d = DecideVrr(in);
+        EXPECT_EQ(d.support, VrrSupport::No);
+        EXPECT_NE(d.reason.find("adaptive sync is off"), std::string::npos);
+
+        in.gamescopeEnabled = 1;
+        EXPECT_EQ(DecideVrr(in).support, VrrSupport::Yes);
+        in.gamescopeEnabled = -1;  // the preference not published: the connector's word
+        EXPECT_EQ(DecideVrr(in).support, VrrSupport::Yes);
+    }
+}
+
 TEST(LinuxPresent_Test, ThePolicyMeansWhatItMeansOnMacOsAndWindows)
 {
     // vrr: each frame at its time, swap interval 0, whatever the decision (forced)

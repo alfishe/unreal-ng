@@ -11,6 +11,7 @@
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/preset/machinepreset.h>
 #include <emulator/media/modelswitch.h>
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
@@ -742,6 +743,51 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
 
     // Confirm to the user
     session.SendResponse("Emulation resumed. Use 'pause' to suspend execution.");
+}
+
+// HandleLab - a preset machine in one call (MachinePreset, core/src/emulator/preset/machinepreset.h): preset <model> [name=value ...]
+void CLIProcessor::HandleLab(const ClientSession& session, const std::vector<std::string>& args)
+{
+    StateNode arguments;
+    std::string error;
+    if (args.empty() || !MachinePreset::ArgumentsFromWords(args, arguments, error))
+    {
+        session.SendResponse("Error: " + (args.empty() ? std::string("preset needs a model") : error) + NEWLINE +
+                             "Usage: preset <model> [ram=zero|random] [card=<slot>=<card>]... [feature=<name>=on|off]... "
+                             "[muted=on|off] [paused=on|off] [fast_tape=on|off] [take_control=on|off] [replace=on|off] [select=on|off]" +
+                             NEWLINE);
+        return;
+    }
+
+    MachinePresetCaller caller;
+    caller.surface = "cli";
+    caller.holdsControl = [this](Emulator& emulator) { return HoldsControl(emulator.GetContext()); };
+    // A companion acts as the user and takes no session ('session take' refuses it too)
+    if (_companionId.empty())
+    {
+        const std::string peer = PeerAddressOf(session.GetSocket());
+        caller.takeControl = [this, peer](Emulator& emulator, const std::string& client, uint32_t, std::string& sessionId,
+                                          std::string& reason) {
+            // As 'session take' on the new machine: this connection's session (no idle lease; closing the
+            // connection ends it). A session it held on another machine ends
+            const unreal::UUID owner = unreal::UUID::Generate();
+            if (!emulator.GetContext()->TakeRunControl(owner, "cli", &reason, client.empty() ? std::string("cli") : client,
+                                                       std::chrono::milliseconds(0), peer))
+                return false;
+            if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext())
+                _controlEmulator->GetContext()->ReleaseRunControl(_controlSession);
+            _controlSession = owner;
+            _controlEmulator = EmulatorManager::GetInstance()->GetEmulator(emulator.GetId());
+            sessionId = owner.toString();
+            return true;
+        };
+    }
+
+    const MachinePresetReply reply = MachinePreset::Execute(arguments, caller);
+    std::string text = reply.Ok() ? reply.text : "Error: " + reply.message;
+    for (size_t at = text.find('\n'); at != std::string::npos; at = text.find('\n', at + std::string(NEWLINE).size()))
+        text.replace(at, 1, NEWLINE);
+    session.SendResponse(text + NEWLINE);
 }
 
 // HandleCreate - Create emulator without starting

@@ -92,7 +92,7 @@ class Session:
         args = dict(args or {})
         machineless = tool in ('search_api', 'asm_source', 'streamdeck') or (
             tool == 'signature_info' and args.get('action') != 'media') or (
-            tool == 'emulator_manage' and args.get('action') in ('list', 'create', 'list_models', 'server'))
+            tool == 'emulator_manage' and args.get('action') in ('list', 'create', 'preset', 'list_models', 'server'))
         if not machineless:
             args.setdefault('target', 'auto')
         result = Result(self.rpc('tools/call', {'name': tool, 'arguments': args}))
@@ -295,12 +295,24 @@ def _read_ports_file(process, path, stderr_path, binary, seconds=30):
         time.sleep(0.05)
 
 
+def missing_tools(tools, needs):
+    """The entries of `needs` ("tool" or "tool:action") the server's tool list (`Session.tools()`) lacks"""
+    missing = []
+    for need in needs:
+        tool, _, action = need.partition(':')
+        schema = tools.get(tool, {}).get('inputSchema', {})
+        if tool not in tools or (action and action not in schema.get('properties', {}).get('action', {}).get('enum', [])):
+            missing.append(need)
+    return sorted(missing)
+
+
 def launch(binary, port_base, needs=()):
     """Starts unreal-qt offscreen on ports of its own; returns the process once the MCP endpoint answers, its ports
     by name in `process.ports` (webapi, cli, mcp, gdb, dezog, zrcp; `mcp_url(process)` is its MCP endpoint).
     `port_base`: the WebAPI port (the rest +100 ... +500), or 'auto' / None: the emulator picks a free base itself
     (`--port-base auto --ports-file`) and the ports are read from the file it writes.
-    `needs`: MCP tools the caller will use; a binary without one is refused here, not at its first call"""
+    `needs`: MCP tools the caller will use, "tool" or "tool:action" (an action of the tool's `action` enum:
+    'emulator_manage:preset'); a binary without one is refused here, not at its first call"""
     auto = port_base is None or (isinstance(port_base, str) and port_base.strip().lower() == 'auto')
     env = dict(os.environ)
     command = [binary, '-platform', 'offscreen']
@@ -351,7 +363,7 @@ def launch(binary, port_base, needs=()):
     for _ in range(60):
         try:
             session.rpc('ping', timeout=2)
-            missing = sorted(set(needs) - set(session.tools())) if needs else []
+            missing = missing_tools(session.tools(), needs) if needs else []
             if missing:
                 process.kill()
                 raise SystemExit(f"{binary} has no MCP tool {', '.join(missing)}: build current master")

@@ -41,6 +41,10 @@ public:
     // Create a new emulator (without starting)
     ADD_METHOD_TO(EmulatorAPI::createEmulator, "/api/v1/emulator/create", drogon::Post);
 
+    // A preset machine in one call (MachinePreset): created with its cards, features set, muted, started and paused,
+    // run control taken; answers when it is ready
+    ADD_METHOD_TO(EmulatorAPI::createMachinePreset, "/api/v1/emulator/preset", drogon::Post);
+
     // Get emulator details
     ADD_METHOD_TO(EmulatorAPI::getEmulator, "/api/v1/emulator/{id}", drogon::Get);
 
@@ -737,6 +741,7 @@ public:
     
     ADD_METHOD_TO(EmulatorAPI::keyPress, "/api/v1/emulator/{id}/keyboard/press", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyRelease, "/api/v1/emulator/{id}/keyboard/release", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keySet, "/api/v1/emulator/{id}/keyboard/set", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyCombo, "/api/v1/emulator/{id}/keyboard/combo", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyMacro, "/api/v1/emulator/{id}/keyboard/macro", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyType, "/api/v1/emulator/{id}/keyboard/type", drogon::Post);
@@ -918,6 +923,10 @@ public:
     // Create a new emulator
     void createEmulator(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+
+    // A preset machine in one call (core/src/emulator/preset/machinepreset.h)
+    void createMachinePreset(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
 
     // Get emulator details
     void getEmulator(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -2464,6 +2473,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                   const std::string& id) const;
     void keyRelease(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/keyboard/set — body {"keys": ["w", "o"]} (or "w+o"): the complete held-key
+    /// state in one call - these keys held, every other injected key released ([] releases all)
+    void keySet(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                const std::string& id) const;
     void keyCombo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                   const std::string& id) const;
     void keyMacro(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

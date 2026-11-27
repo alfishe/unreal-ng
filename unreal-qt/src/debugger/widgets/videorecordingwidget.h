@@ -205,6 +205,7 @@ private:
     QPointer<WindowRecorder> _windowRecorder;
     std::function<DeviceScreenWrapper*()> _windowScreen;
     bool _windowRecording = false;  ///< the running recording is the window's, not the recording manager's
+    bool _windowStartPending = false;  ///< the GPU encoder's trials run in the background before the window recording starts
 
     // Cached encoder availability (detected in refreshFromContext / onDetectFFmpeg)
     bool _nativeAvailable = false;

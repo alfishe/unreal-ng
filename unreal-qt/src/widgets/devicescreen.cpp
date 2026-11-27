@@ -227,6 +227,7 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
     PictureGeometry geometry;
     uint64_t serial = 0;  ///< the frame's serial (0: the legacy buffer, no serial)
     _preparedSerial = 0;
+    _preparedFrame = 0;
     _preparedTargetNs = 0;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
@@ -249,6 +250,7 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
             _shownClock = info.source;
             _shownAtOnce = info.atOnce;
             _preparedSerial = info.serial;
+            _preparedFrame = info.serial != 0 ? info.geometry.frameNumber : 0;
             _preparedTargetNs = info.targetNs;
             if (_smoothAuto)
             {

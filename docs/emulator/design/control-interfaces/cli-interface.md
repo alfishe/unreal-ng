@@ -166,6 +166,22 @@ Available commands:
   ...
 ```
 
+**Preset machine**: `preset <model> [name=value ...]` makes a ready machine for a reproducible run in one call
+([command-interface.md, Preset machine](command-interface.md#preset-machine)) and prints its effective settings:
+
+```
+> preset 48K card=edge.1=kempston feature=kempstonmouse=off
+Preset machine 6f2c... ready: 48K (48 KB), RAM zero, paused at frame 0 t 3.
+Cards: edge.1 = kempston.
+Features not at their default: fasttape off, kempstonmouse off (asked), turbotape off.
+Sound: master muted. Fast tape: off (fasttape and turbotape off: a tape loads in real machine time).
+Run control: held by you (cli, session 0d3e...).
+```
+
+Words: `ram=zero|random`, `card=<slot>=<card>` and `feature=<name>=on|off` (both repeat; `cards=a=b,c=d`),
+`muted=`, `paused=`, `fast_tape=`, `take_control=`, `replace=` with `on|off`. `take_control` is this connection's
+session, as `session take` (a companion connection takes none). The selection is left alone unless `select=on`.
+
 **The sound card CPU**: `--cpu gs` (`ms`: the MultiSound's) on `registers`, `memory`, `memory info` and `disasm`
 works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
 `disasm --cpu gs`; [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), and on

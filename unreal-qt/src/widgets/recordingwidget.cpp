@@ -11,10 +11,14 @@
 #include <QMessageBox>
 #include <algorithm>
 #include <QElapsedTimer>
+#include <QApplication>
+#include <QPointer>
+#include <thread>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "base/featuremanager.h"
+#include "common/threadhelper.h"
 #include "mainwindow.h"
 #include "recording/src/recordingmanager.h"
 #include "platform_encoder.h"
@@ -876,6 +880,26 @@ bool RecordingWidget::startWindowRecording(const QString& container)
     const WindowRecordingRequest request = MakeWindowRecordingRequest(
         container, plan.videoCodec, !plan.audioCodec.isEmpty(), UiGpuAcceleration(), plan.profile,
         generateOutputPath(container), _settings.backend);
+    if (_windowStartPending)
+        return false;
+    if (!WindowRecorder::HardwareEncoderKnown(request))
+    {
+        // The GPU encoder is found by trial encodes (seconds on Windows): in the background, then the start, so the
+        // window keeps drawing meanwhile
+        _windowStartPending = true;
+        QPointer<RecordingWidget> self(this);
+        std::thread([self, request, container]() {
+            ThreadHelper::setThreadName("window-rec-probe");
+            WindowRecorder::PrepareHardwareEncoder(request);
+            QMetaObject::invokeMethod(qApp, [self, container]() {
+                if (!self)
+                    return;
+                self->_windowStartPending = false;
+                self->startWindowRecording(container);
+            }, Qt::QueuedConnection);
+        }).detach();
+        return false;
+    }
 
     WindowRecordingStatus status;
     std::string error;

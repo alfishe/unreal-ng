@@ -64,6 +64,18 @@ print(string.format("PC = 0x%04X", cpu:get_pc()))
 
 The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**Preset machine** (a ready machine for a reproducible run in one call, `MachinePreset`;
+[command-interface.md, Preset machine](command-interface.md#preset-machine)):
+```lua
+local preset, why = machine_preset{model = "48K", cards = {"edge.1=kempston"}, features = {kempstonmouse = false}}
+if not preset then error(why) end        -- a refusal names the valid values; no instance is left behind
+print(preset.text)                       -- the effective settings, line by line
+print(preset.id, preset.paused, preset.position.frame, preset.cards[1].slot, preset.control.held)
+```
+Defaults: `ram = "zero"`, `muted = true`, `paused = true` (at power-on), `fast_tape = false`,
+`take_control = true` (this script's session, as `take_control()`), `replace = false`. The new machine becomes the
+selected one (a script with no bound instance works on it from then on).
+
 **ZX-Poly** (four synchronized instances of one model, through the same
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```lua

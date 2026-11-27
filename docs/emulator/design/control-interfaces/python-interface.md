@@ -84,6 +84,18 @@ as WebAPI `GET /api/v1/emulator/machines` (with `id`, `current` places that inst
 
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**Preset machine** (a ready machine for a reproducible run in one call, `MachinePreset`;
+[command-interface.md, Preset machine](command-interface.md#preset-machine)):
+```python
+preset = machine_preset("48K", cards=["edge.1=kempston"], features={"kempstonmouse": False})
+print(preset["text"])                    # the effective settings, line by line
+emu = emu_get(preset["id"])              # preset["paused"], preset["position"]["frame"], preset["cards"], preset["control"]["held"]
+```
+Defaults: `ram="zero"`, `muted=True`, `paused=True` (at power-on), `fast_tape=False`, `take_control=True`
+(this script's session, as `emu.take_control()`), `replace=False`. A bad argument raises `ValueError` naming the valid
+values, a refused slot plan / feature / session `RuntimeError`; no instance is left behind. The new machine becomes
+the selected one.
+
 **ZX-Poly** (four synchronized instances of one model, through the same
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```python

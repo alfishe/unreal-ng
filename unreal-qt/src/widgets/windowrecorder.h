@@ -14,6 +14,7 @@
 #include <QPointer>
 #include <QString>
 
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -48,6 +49,13 @@ public:
     bool start(DeviceScreenWrapper* screen, const std::shared_ptr<Emulator>& emulator,
                const WindowRecordingRequest& request, WindowRecordingStatus& out, std::string& error);
     bool stop(WindowRecordingStatus& out, std::string& error);
+    /// The GPU encoder ffmpeg offers is found by trial encodes (ffmpeg started several times: seconds on Windows) and
+    /// remembered. A request that wants one: true once its answer is known (start then runs no trial), always true
+    /// for one that needs no trial
+    static bool HardwareEncoderKnown(const WindowRecordingRequest& request);
+    /// Run those trials here, on the caller's thread (never the GUI's: the window would stop for seconds), so that
+    /// start finds the answer; nothing when it is known or not needed. Thread-safe
+    static void PrepareHardwareEncoder(const WindowRecordingRequest& request);
     /// True while pictures are being taken (false once stopped, even while the file is still being finished)
     bool recording() const;
     /// Never blocks: a stopped recording shows `finalizing` until its file is complete (then `error` if it failed)
@@ -75,12 +83,22 @@ private:
         /// could not mux: "Not yet implemented")
         uint64_t frames = 0;
         std::vector<FrameSound> pending;
+        /// Video sync: the frames the file has a picture for, or dropped before its start (`frames` counted the
+        /// same way). Once the first picture
+        /// is in, the machine waits in the tap while it is maxAhead frames ahead of them: the window's pictures or
+        /// the writer behind slow the machine down to their pace instead of a picture standing for several frames
+        uint64_t pictured = 0;
+        uint64_t maxAhead = 4;  ///< the window's present delay and a slack (onRefreshed sets it)
+        bool synced = false;
+        bool closing = false;  ///< the recording ends: no more waits
+        std::condition_variable advanced;
     };
 
     bool begin(DeviceScreenWrapper* screen, const std::shared_ptr<Emulator>& emulator,
                const WindowRecordingRequest& request, WindowRecordingStatus& out, std::string& error);
     void restoreKeyboard();
-    /// The frames the window's picture trails the emulated one by (the effective present delay)
+    /// The frames the window's picture trails the emulated one by (the effective present delay): where a picture
+    /// with no frame number (the software screen) goes
     size_t presentDelay() const;
     void onRefreshed();
     void fill(WindowRecordingStatus& out);
@@ -112,8 +130,18 @@ private:
     bool _retryQueued = false;
     std::shared_ptr<Sink> _sink;
     uint64_t _tapId = 0;
+    bool _capture = false;  ///< the GPU window captures each new frame it presents (a frame later than a grab)
+    int _captureMisses = 0;  ///< refreshes in a row without a captured picture
     QString _videoPath;     ///< where ffmpeg writes the picture (the file itself without sound)
     QString _soundPath;     ///< the raw sound beside it (s16le stereo), muxed in at stop
-    std::deque<std::vector<int16_t>> _soundDelay;           ///< the frames' sound waiting for their picture
-    std::deque<std::pair<uint64_t, QImage>> _keyboardDelay;  ///< the keyboard by the file's frame count, likewise
+    /// A picture whose frame is at most this many before the oldest waiting is of a frame in the file already
+    static constexpr uint64_t kStalePictureFrames = 8;
+    /// Frames waiting for the file's first picture, at most (the older go with their sound)
+    static constexpr size_t kMaxUnpictured = 50;
+    /// Video sync: the frames the machine may run past the present delay before it waits for the pictures (a
+    /// capture is taken a refresh after its present; a refresh may come late)
+    static constexpr uint64_t kSyncSlackFrames = 4;
+    std::deque<FrameSound> _unpictured;  ///< the frames run and not in the file yet, in order, with their sound
+    uint64_t _covered = 0;               ///< the frames run that are in the file or dropped before its start
+    std::deque<std::pair<uint64_t, QImage>> _keyboardDelay;  ///< the keyboard by the newest frame run then
 };

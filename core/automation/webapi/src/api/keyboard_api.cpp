@@ -291,6 +291,93 @@ void EmulatorAPI::keyRelease(const HttpRequestPtr& req, std::function<void(const
     callback(resp);
 }
 
+/// @brief POST /api/v1/emulator/{id}/keyboard/set
+/// @brief The complete held-key state in one call: {"keys": ["w", "o"]} (or one text, "w+o") holds exactly these
+/// keys and releases every other injected key; {"keys": []} releases all (DebugKeyboardManager::SetHeldKeys)
+void EmulatorAPI::keySet(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                         const std::string& id) const
+{
+    const auto reply = [&callback](HttpStatusCode status, const Json::Value& body) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(status);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    const auto fail = [&reply](HttpStatusCode status, const char* error, const std::string& message) {
+        Json::Value body;
+        body["error"] = error;
+        body["message"] = message;
+        reply(status, body);
+    };
+
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+        return fail(HttpStatusCode::k404NotFound, "Not Found", "Emulator with specified ID not found");
+
+    EmulatorContext* context = emulator->GetContext();
+    if (!context || !context->pDebugManager->GetKeyboardManager())
+        return fail(HttpStatusCode::k500InternalServerError, "Internal Error", "Keyboard manager not available");
+
+    // "keys": a list of names (items may be chords) or one text with the names joined by '+'
+    auto json = req->getJsonObject();
+    std::vector<std::string> names;
+    bool given = false;
+    if (json && json->isMember("keys"))
+    {
+        const Json::Value& keys = (*json)["keys"];
+        if (keys.isString())
+        {
+            // "" and "none" are the empty state; a text is one chord
+            given = true;
+            if (!keys.asString().empty() && keys.asString() != "none")
+                names.push_back(keys.asString());
+        }
+        else if (keys.isArray())
+        {
+            given = true;
+            for (const Json::Value& key : keys)
+            {
+                if (!key.isString())
+                    given = false;
+                else
+                    names.push_back(key.asString());
+            }
+        }
+    }
+    if (!given)
+        return fail(HttpStatusCode::k400BadRequest, "Bad Request",
+                    "Missing 'keys' in request body: a list of key names ([\"w\", \"o\"]; [] releases all) or one "
+                    "text with the names joined by '+' (\"w+o\")");
+
+    std::string refusal;
+    std::vector<std::string> held;
+    switch (context->pDebugManager->GetKeyboardManager()->SetHeldKeys(names, refusal, &held))
+    {
+        case DebugKeyboardManager::SetHeldKeysStatus::Ok:
+            break;
+        case DebugKeyboardManager::SetHeldKeysStatus::UnknownKey:
+            return fail(HttpStatusCode::k400BadRequest, "Bad Request",
+                        refusal + ". Nothing changed. Use GET /api/v1/emulator/{id}/keyboard/keys for valid names");
+        case DebugKeyboardManager::SetHeldKeysStatus::InputOwned:
+        default:
+            return fail(HttpStatusCode::k409Conflict, "Conflict", refusal);
+    }
+
+    Json::Value ret;
+    ret["success"] = true;
+    ret["keys"] = Json::Value(Json::arrayValue);
+    std::string list;
+    for (const std::string& name : held)
+    {
+        ret["keys"].append(name);
+        list += (list.empty() ? "" : ", ") + name;
+    }
+    ret["count"] = static_cast<Json::UInt>(held.size());
+    ret["message"] = held.empty() ? std::string("All injected keys released")
+                                  : "Keys held: " + list + " (every other injected key released)";
+    reply(HttpStatusCode::k200OK, ret);
+}
+
 /// @brief POST /api/v1/emulator/{id}/keyboard/combo
 /// @brief Tap multiple keys simultaneously
 void EmulatorAPI::keyCombo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

@@ -66,6 +66,10 @@ void CLIProcessor::HandleKey(const ClientSession& session, const std::vector<std
     {
         HandleKeyRelease(session, context, args);
     }
+    else if (subcommand == "set")
+    {
+        HandleKeySet(session, context, args);
+    }
     else if (subcommand == "tap")
     {
         HandleKeyTap(session, context, args);
@@ -135,6 +139,7 @@ void CLIProcessor::ShowKeyHelp(const ClientSession& session)
     ss << "Subcommands:" << NEWLINE;
     ss << "  press <key>           - Press and hold a key, or keys together (w+o)" << NEWLINE;
     ss << "  release <key>         - Release a held key or chord" << NEWLINE;
+    ss << "  set <keys>|none       - Hold exactly these keys (w+o, or w o), release every other injected key; none = release all" << NEWLINE;
     ss << "  tap <key> [frames]    - Tap a key or a chord (press, hold, release)" << NEWLINE;
     ss << "  combo <key1> <key2>.. - Tap multiple keys simultaneously" << NEWLINE;
     ss << "  macro <name>          - Execute predefined macro sequence" << NEWLINE;
@@ -155,6 +160,7 @@ void CLIProcessor::ShowKeyHelp(const ClientSession& session)
     ss << "  key tap caps+5         - Tap CAPS+5 (cursor left): keys joined with '+' go down together" << NEWLINE;
     ss << "  key combo caps 5       - The same, the keys as separate words" << NEWLINE;
     ss << "  key combo symbol p     - Tap SYMBOL+P (quote character)" << NEWLINE;
+    ss << "  key set q+p            - Hold Q and P, release whatever else was held (key set none: release all)" << NEWLINE;
     ss << "  key macro e_mode       - Enter Extended mode (E cursor)" << NEWLINE;
     ss << "  key macro format       - Type FORMAT keyword (E-mode + 0)" << NEWLINE;
     ss << "  key type HELLO         - Type 'HELLO' with auto CAPS handling" << NEWLINE;
@@ -217,6 +223,51 @@ void CLIProcessor::HandleKeyRelease(const ClientSession& session, EmulatorContex
     else
         kbdMgr->ReleaseCombo(chord);
     session.SendResponse(std::string("Released: ") + displayName + NEWLINE);
+}
+
+/// key set <k1+k2 | k1 k2 ...> | none: the complete held-key state in one command (DebugKeyboardManager::SetHeldKeys)
+void CLIProcessor::HandleKeySet(const ClientSession& session, EmulatorContext* context,
+                                const std::vector<std::string>& args)
+{
+    if (args.size() < 2)
+    {
+        session.SendResponse(std::string("Error: Missing keys. Usage: key set <key1+key2 | key1 key2 ...> | none "
+                                         "(none releases every injected key)") + NEWLINE);
+        return;
+    }
+
+    DebugKeyboardManager* kbdMgr = context->pDebugManager->GetKeyboardManager();
+    if (!kbdMgr)
+    {
+        session.SendResponse(std::string("Error: Keyboard manager not available.") + NEWLINE);
+        return;
+    }
+
+    // "none" alone is the empty state; otherwise every word is a key or a chord
+    std::vector<std::string> names;
+    std::string only = args[1];
+    std::transform(only.begin(), only.end(), only.begin(), ::tolower);
+    if (!(args.size() == 2 && only == "none"))
+        names.assign(args.begin() + 1, args.end());
+
+    std::string error;
+    std::vector<std::string> held;
+    const DebugKeyboardManager::SetHeldKeysStatus status = kbdMgr->SetHeldKeys(names, error, &held);
+    if (status == DebugKeyboardManager::SetHeldKeysStatus::UnknownKey)
+    {
+        session.SendResponse("Error: " + error + ". Nothing changed. Use 'key list' to see available keys." + NEWLINE);
+        return;
+    }
+    if (status != DebugKeyboardManager::SetHeldKeysStatus::Ok)
+    {
+        session.SendResponse("Error: " + error + NEWLINE);
+        return;
+    }
+
+    std::string list;
+    for (const std::string& name : held)
+        list += (list.empty() ? "" : "+") + name;
+    session.SendResponse((held.empty() ? std::string("Held: none (every injected key released)") : "Held: " + list) + NEWLINE);
 }
 
 void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* context, 

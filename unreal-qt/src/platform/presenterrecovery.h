@@ -78,6 +78,10 @@ public:
         _failures++;
         return Restart(nowNs) ? BeginFailure::Restart : BeginFailure::FallBack;
     }
+    /// The window hidden (occluded, minimized: nothing is presented, BeginFrame is not asked): a run of failures ends
+    /// there. One that began before (a display going to sleep) would else restart the presenter at the first failure
+    /// after the wake, its two seconds long gone
+    void Hidden() { _failingSinceNs = 0; }
     /// Pictures not presented in the run of failures (the last one included)
     uint64_t Failures() const { return _failures; }
     /// When the run of failures started (0: none)

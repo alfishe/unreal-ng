@@ -270,6 +270,106 @@ void DebugKeyboardManager::ReleaseAllKeys()
     }
 }
 
+DebugKeyboardManager::SetHeldKeysStatus DebugKeyboardManager::SetHeldKeys(const std::vector<std::string>& keyNames,
+                                                                          std::string& error,
+                                                                          std::vector<std::string>* heldNames)
+{
+    // Every name is checked before anything changes
+    std::vector<std::string> names;
+    for (const std::string& item : keyNames)
+    {
+        if (!ParseKeyChord(item, names, error))
+            return SetHeldKeysStatus::UnknownKey;
+    }
+    if (IsInputOwnedByJournal())
+    {
+        error = "Live key input is refused while a recording is replayed (TTD history or RZX playback)";
+        return SetHeldKeysStatus::InputOwned;
+    }
+
+    // The wanted keys in the order given, without repeats: ZX keys and PC-only keys ("f1") apart
+    std::vector<ZXKeysEnum> wantedKeys;
+    std::vector<PcKey> wantedPcKeys;
+    std::vector<std::string> wantedNames;
+    for (const std::string& name : names)
+    {
+        const ZXKeysEnum key = ResolveKeyName(name);
+        const PcKey pcKey = key == ZXKEY_NONE ? pckey::FromName(name) : PcKey::None;
+        const bool repeated = key != ZXKEY_NONE
+                                  ? std::find(wantedKeys.begin(), wantedKeys.end(), key) != wantedKeys.end()
+                                  : std::find(wantedPcKeys.begin(), wantedPcKeys.end(), pcKey) != wantedPcKeys.end();
+        if (repeated)
+            continue;
+        if (key != ZXKEY_NONE)
+            wantedKeys.push_back(key);
+        else
+            wantedPcKeys.push_back(pcKey);
+        wantedNames.push_back(name);
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
+    // A pending sequence would press keys of its own after this call. Dropping it releases the keys of its
+    // tap in progress: such a key counts as released below, also when it was held by a press as well
+    const std::set<ZXKeysEnum> tapReleasedKeys(_tapHeldKeys.begin(), _tapHeldKeys.end());
+    const std::set<PcKey> tapReleasedPcKeys(_tapHeldPcKeys.begin(), _tapHeldPcKeys.end());
+    AbortSequence();
+
+    const auto isWanted = [&wantedKeys](ZXKeysEnum key) {
+        return std::find(wantedKeys.begin(), wantedKeys.end(), key) != wantedKeys.end();
+    };
+    const auto isShift = [](ZXKeysEnum key) { return key == ZXKEY_CAPS_SHIFT || key == ZXKEY_SYM_SHIFT; };
+
+    // Release what is held and not wanted: PC keys first, then the matrix keys with the shifts last
+    const std::set<PcKey> heldPcKeys = _directPressedPcKeys;
+    for (PcKey pcKey : heldPcKeys)
+    {
+        if (std::find(wantedPcKeys.begin(), wantedPcKeys.end(), pcKey) != wantedPcKeys.end())
+            continue;
+        _directPressedPcKeys.erase(pcKey);
+        ApplyPcKey(pcKey, /*pressed=*/false);
+    }
+    const std::set<ZXKeysEnum> heldKeys = _directPressedKeys;
+    bool releasedMatrixKey = !tapReleasedKeys.empty();
+    for (const bool shifts : {false, true})
+    {
+        for (ZXKeysEnum key : heldKeys)
+        {
+            if (isShift(key) != shifts || isWanted(key))
+                continue;
+            _directPressedKeys.erase(key);
+            ApplyKey(key, /*pressed=*/false);
+            releasedMatrixKey = true;
+        }
+    }
+
+    // Press what is wanted and not held yet. A key that stays held is closed again on the matrix alone when
+    // something was released: the matrix keeps no press counts, so the release of an extended key ("left" is
+    // Caps Shift + 5) opens a shift that a wanted key still needs
+    for (ZXKeysEnum key : wantedKeys)
+    {
+        if (_directPressedKeys.count(key) > 0 && tapReleasedKeys.count(key) == 0)
+        {
+            if (releasedMatrixKey)
+                ApplyKey(key, /*pressed=*/true, /*derivePcKeys=*/false);
+            continue;
+        }
+        _directPressedKeys.insert(key);
+        ApplyKey(key, /*pressed=*/true);
+    }
+    for (PcKey pcKey : wantedPcKeys)
+    {
+        if (_directPressedPcKeys.count(pcKey) > 0 && tapReleasedPcKeys.count(pcKey) == 0)
+            continue;
+        _directPressedPcKeys.insert(pcKey);
+        ApplyPcKey(pcKey, /*pressed=*/true);
+    }
+
+    if (heldNames)
+        *heldNames = wantedNames;
+    return SetHeldKeysStatus::Ok;
+}
+
 /// endregion </Single Key Operations>
 
 
@@ -279,9 +379,13 @@ void DebugKeyboardManager::PressCombo(const std::vector<ZXKeysEnum>& keys)
 {
     if (!_keyboard)
         return;
-    
+
+    // Held like the keys of PressKey: the status and SetHeldKeys see them
+    const bool track = !IsInputOwnedByJournal();
     for (ZXKeysEnum key : keys)
     {
+        if (track && key != ZXKEY_NONE)
+            _directPressedKeys.insert(key);
         ApplyKey(key, /*pressed=*/true);
     }
 }
@@ -310,8 +414,13 @@ void DebugKeyboardManager::PressCombo(const std::vector<std::string>& keyNames)
             pcKeys.push_back(pcKey);
     }
     PressCombo(keys);
+    const bool track = !IsInputOwnedByJournal();
     for (PcKey pcKey : pcKeys)
+    {
+        if (track)
+            _directPressedPcKeys.insert(pcKey);
         ApplyPcKey(pcKey, /*pressed=*/true);
+    }
 }
 
 void DebugKeyboardManager::ReleaseCombo(const std::vector<ZXKeysEnum>& keys)
@@ -320,8 +429,11 @@ void DebugKeyboardManager::ReleaseCombo(const std::vector<ZXKeysEnum>& keys)
         return;
     
     // Release in reverse order (modifier last)
+    const bool track = !IsInputOwnedByJournal();
     for (auto it = keys.rbegin(); it != keys.rend(); ++it)
     {
+        if (track)
+            _directPressedKeys.erase(*it);
         ApplyKey(*it, /*pressed=*/false);
     }
 }
@@ -345,8 +457,13 @@ void DebugKeyboardManager::ReleaseCombo(const std::vector<std::string>& keyNames
         if (pcKey != PcKey::None)
             pcKeys.push_back(pcKey);
     }
+    const bool track = !IsInputOwnedByJournal();
     for (auto it = pcKeys.rbegin(); it != pcKeys.rend(); ++it)
+    {
+        if (track)
+            _directPressedPcKeys.erase(*it);
         ApplyPcKey(*it, /*pressed=*/false);
+    }
     ReleaseCombo(keys);
 }
 

@@ -116,3 +116,17 @@ TEST(PresenterRecovery_Test, RestartsOutsideTheWindowAreForgotten)
     }
     EXPECT_FALSE(recovery.GlOnly());
 }
+
+TEST(PresenterRecovery_Test, AHiddenWindowEndsTheRunOfFailures)
+{
+    // A display going to sleep: a failure, then the window occluded; minutes later, awake, the next failure starts a
+    // run of its own (before: a restart at once, the run counted from before the sleep)
+    PresenterRecovery recovery;
+    recovery.Created();
+    EXPECT_EQ(recovery.BeginFailed(kSecond, false), Begin::First);
+    recovery.Hidden();
+    EXPECT_EQ(recovery.FailingSinceNs(), 0);
+    EXPECT_EQ(recovery.BeginFailed(600 * kSecond, false), Begin::First);
+    EXPECT_EQ(recovery.BeginFailed(601 * kSecond, false), Begin::Wait);
+    EXPECT_FALSE(recovery.GlOnly());
+}

@@ -108,6 +108,8 @@ public:
     /// The picture as the window draws it (temporal blending, CRT effects) at `pictureHeight` device pixels in the
     /// window's shape: a recording's or a screenshot's own size. Null when no frame is there yet
     QImage renderPicture(int pictureHeight);
+    /// The emulated frame number of the picture drawn last (renderPicture, paint; 0: not known)
+    uint64_t preparedFrameNumber() const { return _preparedFrame; }
 
     void clearDisplayViewport()
     {
@@ -197,6 +199,7 @@ private:
     FrameRateMeter _frameRate;   // the machine's rate from the shown frames' targets
     FrameClockSource _shownClock = FrameClockSource::None;  // the clock that timed the frame drawn last
     uint64_t _preparedSerial = 0;   // the frame preparePicture() took last (0: none, the legacy buffer)
+    uint64_t _preparedFrame = 0;    // its emulated frame number (0: not known)
     int64_t _preparedTargetNs = 0;  // its target: paintEvent times its paint against it
     PaintTiming _paintTiming;   // the new frames' paint times: the report's numbers (no screen times here)
     bool _shownAtOnce = false;  // low-latency video (feature lowlatency) timed it: each frame at once, no smooth motion

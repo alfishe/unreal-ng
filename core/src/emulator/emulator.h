@@ -319,6 +319,8 @@ private:
     execution::ExecutionArbiter _arbiter;
     /// StartAsync submitted the start's Run intent for the Start() its thread runs
     bool _startIntentSubmitted = false;
+    /// StartAsync / StartAsyncPaused: `pauseAs` set queues that pause behind the start's run intent
+    void StartAsyncWithPause(const execution::Requester* pauseAs, const std::string& pauseReason);
     /// The breakpoint cause of each Pause edge, by edge seq: taken at the edge (gate), posted with its broadcast
     std::mutex _edgeCausesMutex;
     std::vector<std::pair<uint64_t, BreakpointStop>> _edgeCauses;
@@ -652,6 +654,11 @@ public:
 
     void Start();
     void StartAsync();
+    /// StartAsync with a pause queued right behind the start's run intent, before the emulation thread exists: the
+    /// loop's first park holds it, so the machine stands at power-on (frame 0, no instruction run) whatever the
+    /// thread's timing. A Pause() issued after StartAsync() returns races the new thread's first park (the machine
+    /// may run a frame first). Wait for the park with PauseAndWait / WaitForPauseConfirmation
+    void StartAsyncPaused(const execution::Requester& requester, const std::string& reason = "pause");
     void Pause();   // a pause with the Internal origin; a surface uses Pause(Requester); a still CPU: CpuHold
     void Resume();  // a run with the Internal origin; a surface uses Resume(Requester)
     /// A pause asked by a surface (execution arbiter intent): GUI, WebAPI, CLI, scripts, GDB, DeZog, TTD. The origin
