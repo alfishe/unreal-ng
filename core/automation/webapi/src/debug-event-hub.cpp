@@ -44,6 +44,14 @@ void AddMainPosition(Json::Value& event, const MainPosition& main)
     if (main.known)
         event["main"] = StateNodeToJson(execution::MainPositionNode(main));
 }
+
+/// Both lanes at the stop (gs-debugger design §7.2): [{cpu main, frame, t, pc}, {cpu gs, units, cycle, clock_hz, pc,
+/// gap_t, ...}]
+void AddPositions(Json::Value& event, const StopPositions& positions, const MainPosition& main)
+{
+    if (positions.known)
+        event["positions"] = StateNodeToJson(execution::PositionsNode(positions, main));
+}
 }  // namespace
 
 DebugEventHub& DebugEventHub::Instance()
@@ -280,6 +288,7 @@ void DebugEventHub::OnStateChange(Message* message)
                 AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
                                     payload->cpuPc);
                 AddMainPosition(event, payload->main);
+                AddPositions(event, payload->positions, payload->main);
             }
             else if (payload->pauseCause == PauseCause::Step)
             {
@@ -288,6 +297,7 @@ void DebugEventHub::OnStateChange(Message* message)
                 event["cpu"] = payload->cpu;
                 event["cpu_pc"] = payload->cpuPc;
                 AddMainPosition(event, payload->main);
+                AddPositions(event, payload->positions, payload->main);
             }
             else
                 event["reason"] = "pause";

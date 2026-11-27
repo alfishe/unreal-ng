@@ -10,12 +10,14 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <cstdio>
+#include <memory>
 
 #include "addressmenu.h"
 #include "debugstyle.h"
@@ -192,6 +194,8 @@ void GsSendView::refresh()
 
 void GsSendView::take(Sent &s, const Emulator::GsJson &answer)
 {
+    //Not read yet (a remote machine's answer to come): as it was
+    if (!answer.ok && answer.busy) return;
     if (!answer.ok) {
         //The driver no longer has it (it keeps its last 16), or the card went
         s.finished = true;
@@ -347,16 +351,33 @@ bool GsSendView::send(QString * error)
     Request r;
     QString why;
     if (!request(r, why)) return refuse(why);
-    //Never waits here: the emulation runs the steps; refresh reads how far it got
-    const Emulator::GsJson answer = e->gs_send(m_card, r.command, r.pre, r.params, r.replies);
-    if (!answer.ok) return refuse(QString::fromStdString(answer.message));
-    m_error.clear();
-    Sent s;
-    s.id = (uint32_t)num(QJsonDocument::fromJson(QByteArray::fromStdString(answer.json)).object(), "id");
-    take(s, answer);
-    m_sent.push_back(std::move(s));
-    if (m_sent.size() > (size_t)kMaxRows) m_sent.erase(m_sent.begin());
-    refresh();
+    //Never waits here: the emulation runs the steps; refresh reads how far it got. The send's id comes with its
+    //answer: at once in process, later from a remote machine (whose views' thread never waits)
+    QPointer<GsSendView> self(this);
+    auto returned = std::make_shared<bool>(false);
+    auto refused = std::make_shared<QString>();
+    e->gs_send_async(m_card, r.command, r.pre, r.params, r.replies, [self, returned, refused](const Emulator::GsJson &answer) {
+        if (self.isNull()) return;
+        if (!answer.ok) {
+            const QString why = QString::fromStdString(answer.message);
+            self->m_error = why;
+            self->m_hint->setText(tr("refused: %1").arg(why));
+            if (!*returned) *refused = why;
+            return;
+        }
+        self->m_error.clear();
+        Sent s;
+        s.id = (uint32_t)num(QJsonDocument::fromJson(QByteArray::fromStdString(answer.json)).object(), "id");
+        self->take(s, answer);
+        self->m_sent.push_back(std::move(s));
+        if (self->m_sent.size() > (size_t)kMaxRows) self->m_sent.erase(self->m_sent.begin());
+        self->refresh();
+    });
+    *returned = true;
+    if (!refused->isEmpty()) {
+        if (error != nullptr) *error = *refused;
+        return false;
+    }
     return true;
 }
 

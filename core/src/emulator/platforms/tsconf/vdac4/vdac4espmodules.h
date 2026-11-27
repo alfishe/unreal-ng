@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,9 @@ public:
     bool Store(const char* name, uint32_t stamp, const uint8_t* data, uint32_t size, const char* busy);
     /// The whole module (size from Find), marked as taken
     bool Read(const char* name, uint8_t* data, uint32_t size);
+    /// Find + Read in one step, for another thread (the ESP runtime's worker: module_open). Every method locks
+    /// the same mutex; a Find pointer is for the thread that changes the cache only
+    bool ReadModule(const char* name, std::vector<uint8_t>& out);
     size_t Count() const;
     static size_t Footprint(size_t size);
     size_t FreeBytes() const;
@@ -74,6 +78,7 @@ private:
     size_t _capacity;
     EspModuleCacheEntry _entries[kMaxEntries];
     uint32_t _clock = 0;
+    mutable std::recursive_mutex _mutex;
 };
 
 struct EspPathEntry

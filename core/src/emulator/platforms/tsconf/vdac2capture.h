@@ -55,7 +55,8 @@ public:
     };
 
     static constexpr uint32_t kHeaderSize = 64;
-    static constexpr uint32_t kChipModel = 812;
+    static constexpr uint32_t kChipModel = 812;       ///< header chip model: an FT812
+    static constexpr uint32_t kChipModelVdac4 = 4;    ///< header chip model: the VDAC4 board's FT812 (EVE_MODEL_VDAC4)
 
     Vdac2Capture() = default;
     ~Vdac2Capture() { Close(_lastClock); }
@@ -64,9 +65,10 @@ public:
     Vdac2Capture& operator=(const Vdac2Capture&) = delete;
 
     /// Start a stream. Without `state` the chip is at power-on at clock 0;
-    /// with it, the stream starts at `clock` with the chip's whole state
+    /// with it, the stream starts at `clock` with the chip's whole state.
+    /// `chipModel`: kChipModel or kChipModelVdac4 (a replay creates that chip)
     bool Open(const std::string& path, uint32_t externalClockHz, const std::vector<uint8_t>& rom,
-              const ChipState* state = nullptr, uint64_t clock = 0);
+              const ChipState* state = nullptr, uint64_t clock = 0, uint32_t chipModel = kChipModel);
     bool IsOpen() const { return _file != nullptr; }
     /// Counters so far, including what is still buffered
     Stats GetStats() const

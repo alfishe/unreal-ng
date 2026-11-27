@@ -444,7 +444,7 @@ class Emulator:
         clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last,
         error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames},
         packets {count, recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns,
-        dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits,
+        dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, ft_draw_threads, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits,
         esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits,
         ft_owner_wait_ms}, log (the last `log` ESP lines, at most 256). RuntimeError with the reason without
         the board"""
@@ -1255,6 +1255,13 @@ emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
 # A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
 # breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 emu.port_out(0x13AF, 0x20)                    # TS-Conf: RAM page 0x20 into window 3
+
+# The GS debugger's twin timeline: main CPU and card CPU on one clock; the call takes the script's lease (until
+# timeline_arm(False)) that arms the histories it reads, so blocks come once the machine ran armed
+tl = emu.timeline(cpu="gs", span=200, recent=32)  # dict {state, armed, cpu, lanes, now {frame, t, gap_t},
+                                                  #  recent {main, gs}, next, markers, density, text}
+print(tl["text"])                                 # NOW, the gap, each lane's blocks (at, width T, PC, instruction)
+emu.timeline_arm(False)                           # release (True, lease_ms=: take it without a read)
 
 # PC history: the newest instructions with their window's page; the first call starts recording
 h = emu.pc_history(depth=16)                  # dict {armed, started_now, total, capacity, entries [{address, kind, page}]}

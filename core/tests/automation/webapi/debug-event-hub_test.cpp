@@ -214,6 +214,46 @@ TEST_F(DebugEventHub_Test, ACardsPauseCarriesTheMainPosition)
     EXPECT_FALSE(events[1].isMember("main")) << "the main CPU's own breakpoint";
 }
 
+/// A breakpoint's pause carries both lanes (gs-debugger design §7.2): main's frame and T, the card's time and the gap
+TEST_F(DebugEventHub_Test, ABreakpointsPauseCarriesBothLanesPositions)
+{
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"a","emulator":")" + std::string(kFirst) + R"("})",
+                       inbox.Sender());
+    auto* payload = new EmulatorStateChangePayload(std::string(kFirst), StatePaused);
+    payload->pauseCause = PauseCause::Breakpoint;
+    payload->breakpointId = 3;
+    payload->address = 0x800B;
+    payload->positions.known = true;
+    payload->positions.frame = 120;
+    payload->positions.mainT = 1000;
+    payload->positions.mainPc = 0x800B;
+    CardLanePosition& lane = payload->positions.cards[0];
+    lane.known = true;
+    lane.pc = 0x026E;
+    lane.units = 23400;
+    lane.cycle = 11700;
+    lane.clockHz = 12000000;
+    lane.unitsPerT = 6.857142857;
+    lane.gapT = 12.5;
+    MessageCenter::DefaultMessageCenter().Post(NC_EMULATOR_STATE_CHANGE, payload, true);
+    ASSERT_TRUE(TestWait::For([&] { return inbox.Events().size() == 1; }, std::chrono::seconds(2)));
+
+    const Json::Value positions = inbox.Events()[0]["positions"];
+    ASSERT_EQ(positions.size(), 2u) << "main and the GS card";
+    EXPECT_EQ(positions[0]["cpu"].asString(), "main");
+    EXPECT_EQ(positions[0]["frame"].asUInt64(), 120u);
+    EXPECT_EQ(positions[0]["t"].asUInt(), 1000u);
+    EXPECT_EQ(positions[0]["pc"].asUInt(), 0x800Bu);
+    EXPECT_EQ(positions[1]["cpu"].asString(), "gs");
+    EXPECT_EQ(positions[1]["pc"].asUInt(), 0x026Eu);
+    EXPECT_EQ(positions[1]["units"].asInt64(), 23400);
+    EXPECT_EQ(positions[1]["cycle"].asInt64(), 11700);
+    EXPECT_EQ(positions[1]["clock_hz"].asUInt(), 12000000u);
+    EXPECT_DOUBLE_EQ(positions[1]["gap_t"].asDouble(), 12.5);
+    EXPECT_DOUBLE_EQ(positions[1]["now_t"].asDouble(), 987.5) << "NOW = main T - gap";
+}
+
 TEST_F(DebugEventHub_Test, UnsubscribeAndClosingStopTheEvents)
 {
     Inbox kept, left, closed;

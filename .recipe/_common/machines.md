@@ -106,6 +106,10 @@ Create response and `GET /emulator/{id}` share the identity fields:
 `model`, `model_full_name`, `ram_kb`, `config_folder`, `video_mode`
 (null before first frame), `speed_multiplier`.
 
+`speed_multiplier` is the guest Z80 clock over 3.5 MHz (`4` on TS-Conf / ZX-Evo at 14 MHz, `1.43` on the Profi in
+hi-res), not how fast the emulation runs. The emulation speed is the `speed` setting:
+`curl -s "$BASE/emulator/$EMU_ID/settings/speed"` (`1` = real time; `PUT` with `{"value": 2}` ... `16`).
+
 ## Per-machine introspection (both transports)
 
 - `GET /emulator/{id}/ports` — the **decoded port map** of this model: one row

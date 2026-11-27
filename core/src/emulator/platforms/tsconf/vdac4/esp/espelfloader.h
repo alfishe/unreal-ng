@@ -77,7 +77,11 @@ struct EspElfImage
     };
 
     EspElfSection sections[SlotCount];
-    uint32_t textBlock = 0;  ///< D-bus PSRAM block of .text
+    uint32_t textBlock = 0;  ///< D-bus PSRAM block of .text (or the code_ram room it was placed in)
+    /// .text lies in a room the caller lent (code_ram, ABI 1.19): not freed with the image
+    bool textBorrowed = false;
+    /// I-bus minus D-bus address of .text: kEspIbusOffset in PSRAM, the room's own offset when borrowed
+    uint32_t textBusOffset = 0x42000000u - 0x3C000000u;
     uint32_t dataBlock = 0;  ///< D-bus PSRAM block of the rest (0 if none)
     uint32_t entry = 0;      ///< main(), on the I-bus
     uint32_t relocations = 0;
@@ -92,13 +96,22 @@ struct EspElfImage
 /// I-bus minus D-bus address of the same PSRAM byte (SOC_IROM_LOW - SOC_DROM_LOW)
 inline constexpr uint32_t kEspIbusOffset = 0x42000000u - 0x3C000000u;
 
+/// Where .text may go instead of a PSRAM block (esp_elf_t text_room, VDAC4 0.1.157): used when .text fits
+struct EspElfTextRoom
+{
+    uint32_t address = 0;    ///< D-bus address
+    uint32_t size = 0;
+    uint32_t busOffset = 0;  ///< I-bus minus D-bus address there
+};
+
 /// The firmware's image check (elfImageProblem); nullptr when the image is fine
 const char* EspElfImageProblem(const uint8_t* data, size_t size);
 
 /// Load and relocate. On failure the blocks are released and `error` says why
-bool EspElfLoad(const uint8_t* data, size_t size, IEspElfHost& host, EspElfImage& image, std::string& error);
+bool EspElfLoad(const uint8_t* data, size_t size, IEspElfHost& host, EspElfImage& image, std::string& error,
+                const EspElfTextRoom* room = nullptr);
 
-/// Release the image's blocks (esp_elf_deinit)
+/// Release the image's blocks (esp_elf_deinit); a borrowed .text room stays the lender's
 void EspElfUnload(IEspElfHost& host, EspElfImage& image);
 
 }  // namespace vdac4

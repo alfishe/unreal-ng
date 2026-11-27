@@ -557,15 +557,29 @@ TEST(DeviceHistory_Test, CompiledFiltersAgreeWithTheRenderedRecords)
     for (int i = 0; i < 12; i++)
     {
         ExecRecord r;
-        r.frame = static_cast<uint64_t>(i / 3);
+        r.frame = static_cast<uint32_t>(i / 3);
+        r.t = static_cast<uint32_t>(i * 1000);
         r.pc = static_cast<uint16_t>(0x4000 * (i % 4) + i);
         r.kind = static_cast<uint8_t>(i % 4 == 3 ? 0xFF : i % 4);
         r.page = static_cast<uint8_t>(i);
         r.idle = i == 5 ? 40 : 0;
         exec.push_back(r);
     }
+    for (uint8_t event : { ExecRecord::kInt, ExecRecord::kNmi, ExecRecord::kClock })
+    {
+        ExecRecord r;
+        r.frame = 2;
+        r.t = 5000;
+        r.pc = 0x8000;
+        r.kind = event;
+        r.page = 12;
+        r.idle = 10000000;
+        exec.push_back(r);
+    }
     ExpectCompiledAsRendered(exec, { "kind=ram", "kind=rom,none", "pc=#4000-#7FFF", "page=2-6 kind=cache",
-                                     "idle_iterations=40", "frame=1 kind=ram,rom" });
+                                     "idle_iterations=40", "frame=1 kind=ram,rom", "event=int,nmi", "t=2000-5000",
+                                     "event=clock_change clock_hz=10000000", "from_hz=12000000", "page=12",
+                                     "pc=#8000" });
 }
 
 /// endregion </Record-time filter>

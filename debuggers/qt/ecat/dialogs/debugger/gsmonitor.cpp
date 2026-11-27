@@ -6,6 +6,7 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QBrush>
+#include <QPointer>
 #include <QClipboard>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <memory>
 
 #include "addressmenu.h"
 #include "debugstyle.h"
@@ -663,17 +665,33 @@ bool GsMonitorView::run_row_action(RowAction action, int row, unsigned int byte,
             said = tr("No time-travel recording");
             break;
         }
-        const Emulator::TtdAnswer a = e->ttd_call("seek", {{"frame", std::to_string(frame)}, {"tinframe", std::to_string(t * m_ttd_units)}});
-        const QJsonObject o = QJsonDocument::fromJson(QByteArray::fromStdString(a.json)).object();
-        if (!a.ok)
-            said = o.value("message").toString(tr("The emulator did not answer."));
-        else if (o.contains("reached") && !o.value("reached").toBool())
-            said = o.value("message").toString(tr("The seek did not reach the row's moment"));
-        else {
-            said = tr("At frame %1, T %2").arg(frame).arg(t);
-            ok = true;
-            emit moved();
-        }
+        //The seek's answer: at once in process, later from a remote machine (the line says it is under way till then)
+        QPointer<GsMonitorView> self(this);
+        auto returned = std::make_shared<bool>(false);
+        auto result = std::make_shared<std::pair<bool, QString>>(false, tr("Seeking frame %1, T %2...").arg(frame).arg(t));
+        e->ttd_call_async("seek", {{"frame", std::to_string(frame)}, {"tinframe", std::to_string(t * m_ttd_units)}},
+                          [self, returned, result, frame, t](const Emulator::TtdAnswer &a) {
+                              const QJsonObject o = QJsonDocument::fromJson(QByteArray::fromStdString(a.json)).object();
+                              bool reached = false;
+                              QString line;
+                              if (!a.ok)
+                                  line = o.value("message").toString(tr("The emulator did not answer."));
+                              else if (o.contains("reached") && !o.value("reached").toBool())
+                                  line = o.value("message").toString(tr("The seek did not reach the row's moment"));
+                              else {
+                                  line = tr("At frame %1, T %2").arg(frame).arg(t);
+                                  reached = true;
+                              }
+                              *result = {reached, line};
+                              if (!*returned || self.isNull()) return;
+                              self->m_action->setText(line);
+                              self->m_action->setVisible(true);
+                              if (reached) emit self->moved();
+                          });
+        *returned = true;
+        said = result->second;
+        ok = result->first;
+        if (ok) emit moved();
         break;
     }
     case RowAction::Copy:

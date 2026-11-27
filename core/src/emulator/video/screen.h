@@ -1152,6 +1152,8 @@ protected:
     std::atomic<bool> _externalActive{false};  // read by GUI threads (descriptor, present delay)
     FramebufferDescriptor _external;
     uint32_t _externalFramePeriodUs = 0;
+    void (*_externalSettle)(void* owner) = nullptr;  // SetExternalSettle (emulation thread)
+    void* _externalSettleOwner = nullptr;
     /// The monitor's current picture and its geometry (the external picture while one is active); emulation
     /// thread, or a thread that knows it is parked
     bool CaptureCurrentFrame(FrameSnapshot& out) const;
@@ -1367,6 +1369,13 @@ public:
     };
     using ExternalFill = void (*)(void* context, uint8_t* slot, size_t bytes);
     bool LatchExternalFrame(ExternalFill fill, void* context, const ExternalFrameStamp* stamp = nullptr);
+    /// An owner that finishes its frames on a thread of its own (the FT812 renderer) and may be a machine frame
+    /// behind: `settle` returns once every frame it owes is latched. SettleExternalFrames calls it where the
+    /// picture must be the machine's own (MainLoop::Park: a pause, a command, the end of run_frames). Emulation
+    /// thread; a null `settle` clears it (only for the same owner)
+    using ExternalSettle = void (*)(void* owner);
+    void SetExternalSettle(ExternalSettle settle, void* owner);
+    void SettleExternalFrames();
     /// endregion
 
     /// Display viewport for cropping framebuffer to display

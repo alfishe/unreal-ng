@@ -8,6 +8,10 @@
 //   unreal-debugger --connect 127.0.0.1:8090 [--emulator id]   a running emulator (unreal-qt) through its WebAPI;
 //                                           --self-check, --measure and --screenshot work on it too
 //   unreal-debugger --zoom 1.5 [...]      the window's scale (Ctrl+= / Ctrl+- / Ctrl+0, Ctrl + the wheel)
+//   unreal-debugger --self-check --timeline-shots DIR   also saves the twin timeline paused and running as PNGs
+//   unreal-debugger --connect ... --gui-gap-check [--gap-latency-ms 300] [--gap-stall-ms 6000] [--gap-limit-ms 50]
+//                                         the GUI thread's longest stall through a proxy that delays, then stalls,
+//                                         the emulator's answers (latencycheck.h); exit code 2 on a failure
 //
 // Run from the build's bin/ directory (the core finds data/ there). A small screen window shows the machine; the
 // debugger is ecat's DebuggerWindow as it is, over the adapter of adapter/unrealmachine.cpp (the core in this
@@ -43,6 +47,7 @@
 #include <QProgressDialog>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QThread>
 #include <QTimer>
 #include <QTableWidget>
 #include <QClipboard>
@@ -52,6 +57,7 @@
 #include <QTreeWidgetItemIterator>
 #include <QToolBar>
 #include <QToolButton>
+#include <QWheelEvent>
 #include <QWidget>
 
 #ifdef _WIN32
@@ -67,12 +73,14 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 #include <ctime>
 
 #include "debuggercontrol.h"
 #include "guicontrol/host.h"
 #include "guicontrol/windowbinding.h"
+#include "latencycheck.h"
 #include "remotemachine.h"
 #include "unrealmachine.h"
 #include "dialogs/debugger/addressmenu.h"
@@ -85,6 +93,7 @@
 #include "dialogs/debugger/gsprofiling.h"
 #include "dialogs/debugger/gssend.h"
 #include "dialogs/debugger/ttdcontrols.h"
+#include "dialogs/debugger/twintimeline.h"
 #include "dialogs/debugger/memoryview.h"
 #include "dialogs/debugger/nextviews.h"
 #include "dialogs/debugger/pagedmemory.h"
@@ -1847,6 +1856,243 @@ void gs_profiling_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU 
     side->setCurrentWidget(was);
 }
 
+// The twin timeline (gui-card-debugger A5.1, C03): the strip under the toolbar with a card CPU, hidden without one;
+// it holds the timeline's lease while shown and lets it go when hidden. Paused, after a host program's two OUTs:
+// blocks on both lanes, NOW, the host port markers; a step moves NOW by the JR's 12 T. The wheel, a drag and a
+// double-click move the view; zoomed out the blocks merge; a click on a block shows that CPU's listing. Running: the
+// density per frame, the main lane counting the GS port accesses. --timeline-shots DIR saves the strip paused and
+// running (timeline-paused.png, timeline-running.png, timeline-window.png)
+QString g_timeline_shots;
+
+void timeline_check(ecatshim::Emulator * m, QWidget * window, ecatshim::CPU * cpu, const std::function<void(bool, const char *)> &check)
+{
+    auto * dw = dynamic_cast<DebuggerWindow *>(window);
+    TwinTimeline * tl = dw != nullptr ? dw->timeline() : nullptr;
+    check(tl != nullptr, "timeline: the strip is there");
+    if (tl == nullptr) return;
+    QApplication::processEvents();
+    const bool card_cpu = dw->cpus().size() > 1;
+    auto placed = [dw, tl]() {
+        DisasmView * code = dw->current_code();
+        const int panes_top = code != nullptr ? code->mapTo(dw, QPoint(0, 0)).y() : dw->height();
+        QToolBar * toolbar = dw->findChild<QToolBar *>();
+        return toolbar != nullptr && tl->y() >= toolbar->geometry().bottom() && tl->geometry().bottom() < panes_top &&
+               tl->width() >= dw->width() - 12;
+    };
+    QAction * show = dw->timeline_action();
+    check(show != nullptr && show->isCheckable(), "timeline: its switch (GS timeline) is there");
+    if (show == nullptr) return;
+    if (!card_cpu) {
+        check(!tl->isVisible() && tl->node().isEmpty() && !tl->armed() && !show->isVisible(),
+              "timeline: hidden without a card CPU, nothing read or armed");
+        return;
+    }
+    // Opt-in: off by default (a setup that never set it), hidden while off, nothing read or armed
+    const std::string stored = m->read_setup("Debugger", "show_gs_timeline", "");
+    const bool was_on = show->isChecked();
+    check(!stored.empty() || !was_on, "timeline: the switch is off by default");
+    show->setChecked(false);
+    QApplication::processEvents();
+    const int reads_off = tl->reads();
+    tl->refresh();
+    const bool off_ok = !tl->isVisible() && !tl->armed() && tl->reads() == reads_off;
+    {
+        const ecatshim::Emulator::GsJson r = m->read_timeline(std::string(), 60, 8, 1, false);
+        const QJsonObject n = r.ok ? QJsonDocument::fromJson(QByteArray::fromStdString(r.json)).object() : QJsonObject();
+        bool mine = false;
+        for (const QJsonValue &v : n.value("leases").toArray())
+            if (v.toObject().value("owner").toString().toStdString() == m->timeline_client()) mine = true;
+        check(off_ok && !mine, "timeline: off: hidden, not armed, nothing read");
+    }
+    show->setChecked(true);
+    QApplication::processEvents();
+    check(tl->isVisible() && placed() && m->read_setup("Debugger", "show_gs_timeline", "") == "1",
+          "timeline: on: shown with a card CPU, full width under the toolbar");
+    const std::string client = m->timeline_client();
+    auto read_only = [m]() {
+        const ecatshim::Emulator::GsJson r = m->read_timeline(std::string(), 60, 8, 1, false);
+        return r.ok ? QJsonDocument::fromJson(QByteArray::fromStdString(r.json)).object() : QJsonObject();
+    };
+    auto leased = [&read_only, &client]() {
+        for (const QJsonValue &v : read_only().value("leases").toArray())
+            if (v.toObject().value("owner").toString().toStdString() == client) return true;
+        return false;
+    };
+    check(!client.empty() && leased() && tl->armed(), "timeline: armed while shown (the lease is this client's)");
+
+    m->debug_run(true);
+    m->debug_pause();
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    // The host's program at #8000, put back afterwards
+    std::vector<std::pair<unsigned int, unsigned int>> host_bytes;
+    for (unsigned int i = 0; i < 0x20; i++) host_bytes.emplace_back(0x8000 + i, cpu->peek_mem(0x8000 + i));
+    const std::vector<std::string> names = {"PC", "AF", "BC", "DE", "HL", "IFF1", "IFF2"};
+    std::map<std::string, unsigned int> host_regs;
+    for (const std::string &n : names) host_regs[n] = reg(cpu, n);
+    // DI : LD BC,#00B3 : LD A,#3F : OUT (C),A : LD C,#BB : LD A,#2A : OUT (C),A : JR $
+    const std::vector<uint8_t> program = {0xF3, 0x01, 0xB3, 0x00, 0x3E, 0x3F, 0xED, 0x79, 0x0E, 0xBB, 0x3E, 0x2A, 0xED, 0x79, 0x18, 0xFE};
+    for (size_t i = 0; i < program.size(); i++) cpu->poke_mem(0x8000 + (unsigned int)i, program[i]);
+    cpu->set_context_value("PC", 0x8000);
+    m->debug_run_to(cpu, 0x800E);
+    const bool ran = wait_for([m, cpu]() { return m->debug_paused() && !m->debug_stepping() && reg(cpu, "PC") == 0x800E; }, 3000);
+    QApplication::processEvents();
+    tl->set_view(0, TwinTimeline::kDefaultSpan);
+    tl->refresh();
+    const QJsonObject n0 = tl->node();
+    check(ran && tl->paused_detail() && tl->block_count("main") > 0 && tl->block_count("card") > 0,
+          "timeline: paused: blocks on both lanes");
+    printf("  (main %d blocks, card %d blocks, %d markers; %s)\n", tl->block_count("main"), tl->block_count("card"),
+           tl->marker_count(QString()), n0.value("text").toString().section('\n', 0, 2).replace('\n', " / ").toUtf8().constData());
+    const QJsonObject now0 = n0.value("now").toObject();
+    check(now0.contains("t") && now0.contains("frame") && tl->now_x() > tl->width() / 8 && tl->now_x() < tl->width() * 7 / 8 &&
+              tl->center() == 0.0,
+          "timeline: NOW, the view centred on it");
+    check(tl->marker_count("host_port") >= 2, "timeline: the host's two OUTs as host port markers");
+    for (const QJsonValue &v : n0.value("markers").toArray())
+        printf("  (marker %s %s at %.1f: %s)\n", v.toObject().value("lane").toString().toUtf8().constData(),
+               v.toObject().value("kind").toString().toUtf8().constData(), v.toObject().value("at").toDouble(),
+               v.toObject().value("text").toString().toUtf8().constData());
+    if (!g_timeline_shots.isEmpty()) {
+        QDir().mkpath(g_timeline_shots);
+        tl->grab().save(g_timeline_shots + "/timeline-paused.png");
+        dw->grab().save(g_timeline_shots + "/timeline-window.png");
+    }
+
+    // A step: the JR $ (12 T) the newest main block, NOW 12 T later
+    const QJsonArray main0 = n0.value("recent").toObject().value("main").toArray();
+    m->debug_step(cpu);
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    QApplication::processEvents();
+    tl->refresh();
+    const QJsonObject n1 = tl->node();
+    const QJsonArray main1 = n1.value("recent").toObject().value("main").toArray();
+    const QJsonObject now1 = n1.value("now").toObject();
+    const double moved = (now1.value("main_t").toDouble() - now0.value("main_t").toDouble()) +
+                         (now1.value("main_frame").toDouble() - now0.value("main_frame").toDouble()) *
+                             n1.value("window").toObject().value("frame_t").toDouble();
+    const QJsonObject newest = main1.isEmpty() ? QJsonObject() : main1.last().toObject();
+    check(!main0.isEmpty() && moved == 12 && newest.value("pc").toInt() == 0x800E && newest.value("duration_t").toDouble() == 12,
+          "timeline: after a step NOW moves 12 T, the JR the newest main block");
+    printf("  (moved %.0f T; newest main #%04X %s %.0f T)\n", moved, newest.value("pc").toInt(),
+           newest.value("text").toString().toUtf8().constData(), newest.value("duration_t").toDouble());
+
+    // A card's breakpoint: the main CPU parks with the card, inside its instruction when the card's moment falls
+    // there; the strip splits that instruction into its bus cycles (none at an instruction boundary)
+    {
+        ecatshim::CPU * card = dw->card_cpu();
+        int inside = 0, stops = 0;
+        // The host polls the status port (each IN #BB brings the card up to it): DI : LD BC,#00BB : L: IN A,(C) : JR L.
+        // A breakpoint at the card's PC: the card meets it inside one of main's INs, which parks there
+        const uint8_t poll[] = {0xF3, 0x01, 0xBB, 0x00, 0xED, 0x78, 0x18, 0xFC};
+        for (size_t i = 0; i < sizeof(poll); i++) cpu->poke_mem(0x8000 + (unsigned int)i, poll[i]);
+        cpu->set_context_value("PC", 0x8000);
+        dw->select_cpu(cpu);
+        for (; card != nullptr && stops < 4 && inside == 0; stops++) {
+            const unsigned int at = card->get_pc();
+            const bool had = card->has_breakpoint(at);
+            if (!had) card->add_breakpoint(at);
+            m->debug_run(true);
+            if (!wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000)) m->debug_pause();
+            wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+            if (!had) card->remove_breakpoint(at);
+            QApplication::processEvents();
+            tl->refresh();
+            const QJsonObject main = tl->node().value("position").toObject().value("main").toObject();
+            if (!main.value("on_boundary").toBool() && main.value("elapsed_t").toDouble() > 0)
+                inside = main.value("bus_cycles").toArray().size();
+        }
+        check(card != nullptr && tl->segment_count() == inside && tl->block_count("card") > 0,
+              "timeline: a card's stop: the main instruction's bus cycles as segments when inside one");
+        printf("  (%d card stops; %d bus cycles; %s)\n", stops, inside,
+               tl->node().value("position").toObject().value("main_text").toString().toUtf8().constData());
+        if (!g_timeline_shots.isEmpty()) tl->grab().save(g_timeline_shots + "/timeline-card-stop.png");
+        dw->select_cpu(cpu);
+        // Back to the host program's end for the checks below: out of the card's stop first (run, pause)
+        m->debug_run(true);
+        m->debug_pause();
+        wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+        for (size_t i = 0; i < program.size(); i++) cpu->poke_mem(0x8000 + (unsigned int)i, program[i]);
+        cpu->set_context_value("PC", 0x800E);
+        m->debug_step(cpu);
+        wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+        tl->refresh();
+    }
+
+    // The view: the wheel zooms in around the pointer, a drag pans, a double-click recenters
+    tl->set_view(0, TwinTimeline::kDefaultSpan);
+    const QPoint at_now(tl->now_x(), tl->height() / 2);
+    {
+        QWheelEvent wheel(QPointF(at_now), QPointF(tl->mapToGlobal(at_now)), QPoint(), QPoint(0, 120), Qt::NoButton,
+                          Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(tl, &wheel);
+    }
+    const double zoomed = tl->span();
+    send_mouse(tl, QEvent::MouseButtonPress, at_now);
+    {
+        QMouseEvent move(QEvent::MouseMove, QPointF(at_now + QPoint(80, 0)), QPointF(tl->mapToGlobal(at_now + QPoint(80, 0))),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tl, &move);
+    }
+    send_mouse(tl, QEvent::MouseButtonRelease, at_now + QPoint(80, 0));
+    const double panned = tl->center();
+    send_mouse(tl, QEvent::MouseButtonDblClick, at_now);
+    check(zoomed < TwinTimeline::kDefaultSpan && panned < 0 && tl->center() == 0.0 && tl->span() == zoomed,
+          "timeline: the wheel zooms, a drag pans, a double-click recenters");
+    printf("  (span %.0f -> %.1f; centre after the drag %.1f T)\n", TwinTimeline::kDefaultSpan, zoomed, panned);
+    tl->set_view(0, 5000);
+    wait_for([tl]() { return tl->merged("card"); }, 1000);
+    const bool merged = tl->merged("card");
+    tl->set_view(0, TwinTimeline::kDefaultSpan);
+    tl->refresh();
+    check(merged && !tl->merged("main"), "timeline: zoomed out the card's blocks merge; at ± 60 T they are blocks");
+
+    // A click on a block: that CPU's listing
+    tl->grab();
+    ecatshim::CPU * card = dw->card_cpu();
+    send_mouse(tl, QEvent::MouseButtonPress, tl->block_point("card"));
+    send_mouse(tl, QEvent::MouseButtonRelease, tl->block_point("card"));
+    const bool to_card = dw->current_cpu() == card;
+    send_mouse(tl, QEvent::MouseButtonPress, tl->block_point("main"));
+    send_mouse(tl, QEvent::MouseButtonRelease, tl->block_point("main"));
+    const bool to_main = dw->current_cpu() == cpu && dw->current_code() != nullptr &&
+                         dw->current_code()->cursor_address() >= 0x8000 && dw->current_code()->cursor_address() <= 0x800E;
+    check(to_card && to_main, "timeline: a click on a block shows that CPU's listing at it");
+
+    // Running: the density per frame (the main lane the GS port accesses: a command every two frames)
+    // DI : LD BC,#00BB : LD A,#01 : L: OUT (C),A : LD D,40 : W: DJNZ W : DEC D : JR NZ,W : JR L
+    const uint8_t loop[] = {0xF3, 0x01, 0xBB, 0x00, 0x3E, 0x01, 0xED, 0x79, 0x16, 0x28, 0x10, 0xFE, 0x15, 0x20, 0xFB, 0x18, 0xF5};
+    for (size_t i = 0; i < sizeof(loop); i++) cpu->poke_mem(0x8000 + (unsigned int)i, loop[i]);
+    cpu->set_context_value("PC", 0x8000);
+    m->debug_run(true);
+    auto accesses = [tl]() {
+        int n = 0;
+        for (const QJsonValue &v : tl->node().value("density").toArray())
+            n += v.toObject().value("main").toObject().value("accesses").toInt();
+        return n;
+    };
+    const bool dense = wait_for([&]() { return !tl->paused_detail() && tl->density_count() >= 5 && accesses() > 0; }, 8000);
+    check(dense, "timeline: running: the density per frame, GS port accesses on the main lane");
+    printf("  (%d ticks, %d accesses; %s)\n", tl->density_count(), accesses(), tl->node().value("text").toString().toUtf8().constData());
+    check(leased(), "timeline: still armed while running");
+    if (!g_timeline_shots.isEmpty()) tl->grab().save(g_timeline_shots + "/timeline-running.png");
+    tl->hide();
+    const bool released = !leased() && !tl->armed();
+    tl->show();
+    QApplication::processEvents();
+    check(released && leased() && tl->armed(), "timeline: released when hidden, taken again when shown");
+
+    m->debug_pause();
+    wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    for (const auto &b : host_bytes) cpu->poke_mem(b.first, b.second);
+    for (const std::string &n : names)
+        if (host_regs[n] != ~0u) cpu->set_context_value(n, host_regs[n]);
+    QApplication::processEvents();
+    printf("  (timeline reads %d, busy and tried again %d)\n", tl->reads(), tl->busy_reads());
+    show->setChecked(was_on);  // the user's setting as it was
+    if (stored.empty()) m->write_setup("Debugger", "show_gs_timeline", "0");
+    QApplication::processEvents();
+}
+
 int self_check(ecatshim::Emulator * m, QWidget * window)
 {
     int failed = 0;
@@ -2242,6 +2488,7 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
     gs_send_check(m, window, check);
     gs_analysis_check(m, window, cpu, check);
     gs_profiling_check(m, window, cpu, check);
+    timeline_check(m, window, cpu, check);
 
     // Event breakpoints (gs-debugger P5.3): the card's side on the card CPU, the host's side on the main CPU, added
     // through the shim, listed with their CPU (in the breakpoint list too), switched off, removed
@@ -2613,7 +2860,9 @@ int main(int argc, char * argv[])
     parser.addOption(measureOpt);
     parser.addOption(shotOpt);
     QCommandLineOption checkOpt("self-check", "Drive the debugger API through the window's operations, report, exit");
+    QCommandLineOption timelineShotsOpt("timeline-shots", "With --self-check: save the twin timeline paused and running as PNGs in this folder", "dir");
     parser.addOption(checkOpt);
+    parser.addOption(timelineShotsOpt);
     QCommandLineOption listOpt("list-memory", "Print the dump tabs and the \"+\" menu the window builds, exit");
     parser.addOption(listOpt);
     QCommandLineOption connectOpt("connect", "A running emulator's WebAPI instead of a machine of its own", "host:port");
@@ -2622,8 +2871,17 @@ int main(int argc, char * argv[])
     QCommandLineOption emulatorOpt("emulator", "With --connect: the emulator's id or symbolic id (default: the first)", "id");
     parser.addOption(connectOpt);
     parser.addOption(emulatorOpt);
+    QCommandLineOption gapOpt("gui-gap-check", "With --connect: the GUI thread's longest stall while the emulator's answers come late, then not at all");
+    QCommandLineOption gapLatencyOpt("gap-latency-ms", "With --gui-gap-check: the latency added to each answer", "ms", "300");
+    QCommandLineOption gapStallOpt("gap-stall-ms", "With --gui-gap-check: how long the connection stalls", "ms", "6000");
+    QCommandLineOption gapLimitOpt("gap-limit-ms", "With --gui-gap-check: a longer stall of the GUI thread is a failure (0: none)", "ms", "0");
+    parser.addOption(gapOpt);
+    parser.addOption(gapLatencyOpt);
+    parser.addOption(gapStallOpt);
+    parser.addOption(gapLimitOpt);
     parser.addPositionalArgument("file", "Snapshot, tape or disk to load");
     parser.process(app);
+    g_timeline_shots = parser.value(timelineShotsOpt);
 
     MachineOptions options;
     options.model = parser.value(modelOpt).toStdString();
@@ -2632,7 +2890,9 @@ int main(int argc, char * argv[])
 
     std::string error;
     const bool remote = parser.isSet(connectOpt);
+    std::unique_ptr<LatencyProxy> proxy;  // gone after the machine, whose last requests go through it
     std::unique_ptr<ecatshim::Emulator> machine;
+    RemoteOptions remote_options;         // as asked (the async part of the connect self-check connects again)
     if (remote) {
         RemoteOptions ro;
         const QString where = parser.value(connectOpt);
@@ -2640,6 +2900,16 @@ int main(int argc, char * argv[])
         ro.host = (colon > 0 ? where.left(colon) : where).toStdString();
         if (colon > 0) ro.port = (uint16_t)where.mid(colon + 1).toUInt();
         ro.emulator = parser.value(emulatorOpt).toStdString();
+        remote_options = ro;
+        // The checks and measurements read back what they have just done: every request waited for. The window
+        // itself never waits for the network
+        ro.synchronous = parser.isSet(checkOpt) || parser.isSet(shotOpt) || parser.isSet(measureOpt) || parser.isSet(listOpt);
+        if (parser.isSet(gapOpt)) {
+            // Every connection of the debugger through the proxy, which delays and stalls on the check's command
+            proxy = std::make_unique<LatencyProxy>(QString::fromStdString(ro.host), ro.port);
+            ro.host = "127.0.0.1";
+            ro.port = proxy->port();
+        }
         machine = CreateRemoteMachine(ro, error);
         if (!machine && !parser.isSet(listOpt)) {
             //No suitable emulator yet: a normal course, the debugger waits for one (a look a second), nothing logged
@@ -2649,13 +2919,38 @@ int main(int argc, char * argv[])
                                     "Quit", 0, 0);
             waiting.setWindowTitle("unreal-debugger");
             waiting.setMinimumDuration(0);
+            // Each look on a thread of its own, one at a time: the dialog answers while the emulator does not
+            std::mutex found_mutex;
+            std::unique_ptr<ecatshim::Emulator> found;
+            QThread * look = nullptr;
             QTimer retry;
             QObject::connect(&retry, &QTimer::timeout, [&]() {
-                machine = CreateRemoteMachine(ro, error);
-                if (machine) waiting.accept();
+                {
+                    std::lock_guard<std::mutex> lock(found_mutex);
+                    if (found) {
+                        waiting.accept();
+                        return;
+                    }
+                }
+                if (look != nullptr && !look->isFinished()) return;
+                delete look;
+                look = QThread::create([&]() {
+                    std::string why;
+                    std::unique_ptr<ecatshim::Emulator> m = CreateRemoteMachine(ro, why);
+                    std::lock_guard<std::mutex> lock(found_mutex);
+                    found = std::move(m);
+                });
+                look->start();
             });
             retry.start(1000);
-            if (waiting.exec() != QDialog::Accepted || !machine) return 0;
+            const int answer = waiting.exec();
+            retry.stop();
+            if (look != nullptr) {
+                look->wait();
+                delete look;
+            }
+            machine = std::move(found);
+            if (answer != QDialog::Accepted || !machine) return 0;
         }
         options.model = "remote";
         options.card = where.toStdString();
@@ -2769,6 +3064,21 @@ int main(int argc, char * argv[])
     dbg->show();
     const std::unique_ptr<guicontrol::Host> gui = start_gui_control(static_cast<DebuggerWindow *>(dbg), machine.get(), remote);
 
+    if (parser.isSet(gapOpt) && proxy) {
+        setvbuf(stdout, nullptr, _IONBF, 0);
+        QTimer::singleShot(0, [&]() {
+            GapCheckOptions o;
+            o.latency_ms = parser.value(gapLatencyOpt).toInt();
+            o.stall_ms = parser.value(gapStallOpt).toInt();
+            o.limit_ms = parser.value(gapLimitOpt).toDouble();
+            wait_for([]() { return false; }, 1000);  // the window's first reads
+            const int failed = GuiGapCheck(machine.get(), static_cast<DebuggerWindow *>(dbg), proxy.get(), o);
+            printf("gui-gap-check: %s\n", failed ? "FAILED" : "all passed");
+            dbg->close();
+            QApplication::exit(failed ? 2 : 0);
+        });
+    }
+
     if (parser.isSet(checkOpt)) {
         // Qt's own file dialogs: the check answers them, a native one it cannot reach
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
@@ -2777,7 +3087,13 @@ int main(int argc, char * argv[])
             // After the boot (200 frames, 4 s of the machine's time): the ROM's menu, interrupts on
             ecatshim::Emulator * m = machine.get();
             wait_for([m]() { return machine_frames(m) >= 200; }, 30000);
-            const int failed = self_check(m, dbg);
+            int failed = self_check(m, dbg);
+            // Connected: the window's own connection never waits on the views' thread (a second one, asynchronous,
+            // through a proxy that delays and stalls it)
+            if (remote) {
+                printf("async connection\n");
+                failed += AsyncRemoteCheck(remote_options.host, remote_options.port, RemoteMachineId(m));
+            }
             QDir(scratch_dir()).removeRecursively();  // this process's files only
             printf("self-check: %s\n", failed ? "FAILED" : "all passed");
             fflush(stdout);

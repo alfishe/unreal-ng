@@ -28,6 +28,7 @@ add_library(unreal-debugger-views STATIC
     ${ECAT_DIR}/dialogs/debugger/registersview.cpp
     ${ECAT_DIR}/dialogs/debugger/sideviews.cpp
     ${ECAT_DIR}/dialogs/debugger/ttdcontrols.cpp
+    ${ECAT_DIR}/dialogs/debugger/twintimeline.cpp
     ${ECAT_DIR}/emulator/disasm_buffer.cpp
     # unreal-qt's tab bars that scroll (an arrow at each end, the wheel switches tabs): Qt only
     ${CMAKE_SOURCE_DIR}/unreal-qt/src/widgets/tabscrollarrows.cpp
@@ -61,7 +62,7 @@ set_target_properties(unreal-debugger-plane PROPERTIES AUTOMOC ON)
 target_include_directories(unreal-debugger-plane PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/guiplane)
 target_link_libraries(unreal-debugger-plane PUBLIC unreal-debugger-views guicontrol-widgets)
 
-add_executable(unreal-debugger main.cpp resources/ecat.qrc)
+add_executable(unreal-debugger main.cpp latencycheck.cpp resources/ecat.qrc)
 set_target_properties(unreal-debugger PROPERTIES AUTOMOC ON AUTORCC ON RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 target_link_libraries(unreal-debugger PRIVATE unreal-debugger-plane unreal-debugger-adapter Qt6::Widgets)
 add_dependencies(unreal-debugger runtime-data)

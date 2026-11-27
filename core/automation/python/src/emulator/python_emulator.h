@@ -14,6 +14,7 @@
 #include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -2496,6 +2497,38 @@ namespace PythonBindings
                 if (!error.empty())
                     throw std::runtime_error(error);
             }, "Start (empty) or stop the PC history", py::arg("on"))
+            .def("timeline", [](Emulator& self, const std::string& cpu, double span, unsigned recent,
+                                unsigned leaseMs) -> py::object {
+                timeline::Query query;
+                query.cpu = cpu;
+                query.spanT = span;
+                query.recent = recent;
+                query.client = "python";
+                query.leaseMs = leaseMs;
+                timeline::Reply reply;
+                {
+                    py::gil_scoped_release release;  // a paused read waits for a coherent moment
+                    reply = timeline::Read(&self, query);
+                }
+                if (reply.status == 503)
+                    throw std::runtime_error(reply.error);
+                if (reply.status != 200)
+                    throw py::value_error(reply.error);
+                return StateNodeToPy(reply.body);
+            }, "The GS debugger's twin timeline (gs-debugger design §5.4): the main CPU and a sound card's CPU on one "
+               "clock -> dict {state, armed, cpu, lanes, now {frame, t, gap_t}, position, window, recent {main, gs}, "
+               "next, markers, density, text}; paused: the blocks (pc, at, duration_t, kind, text) around NOW; running: "
+               "the density per frame. A call takes or renews the script's lease (lease_ms; 0: until "
+               "timeline_arm(False)), arming the histories it reads",
+               py::arg("cpu") = "", py::arg("span") = timeline::kDefaultSpanT, py::arg("recent") = 64,
+               py::arg("lease_ms") = 0)
+            .def("timeline_arm", [](Emulator& self, bool on, unsigned leaseMs) -> py::object {
+                const timeline::Reply reply = timeline::SetArmed(&self, "python", on, leaseMs);
+                if (reply.status != 200)
+                    throw std::runtime_error(reply.error);
+                return StateNodeToPy(reply.body);
+            }, "Take (lease_ms; 0: until released) or end the script's twin timeline lease -> dict {armed, started_now, "
+               "leases}", py::arg("on"), py::arg("lease_ms") = 0)
             .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory,
                                       unsigned pchist) -> py::object {
                 DebugSnapshot::Options options;

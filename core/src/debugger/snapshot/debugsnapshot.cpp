@@ -9,6 +9,7 @@
 #include "debugger/watch/framewatch.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/disassembler/disassemblywindow.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
@@ -322,6 +323,20 @@ StateNode Capture(Emulator* emulator, const Options& options)
     node["cpu"] = std::string("z80");
     node["state"] = StateName(emulator);
     node["pause"] = PauseNode(emulator);
+    if (emulator->IsPaused())
+    {
+        // Both lanes as they stand (gs-debugger design §7.2) and, with a card CPU fitted, the twin timeline at this
+        // moment (twintimeline.h: blocks only while a client holds its lease)
+        StateNode& pause = node["pause"];
+        const Emulator::DebugStop stop = emulator->LastStop();
+        MainPosition main;  // no temporary of it: g++ 14 (z80mcycles.h)
+        if (emulator->IsParkedInsideCardRun())
+            main = stop.breakpoint.main;
+        pause["positions"] = execution::PositionsNode(emulator->StopPositionsNow(), main);
+        DebugCpuId card = DebugCpuId::GS;
+        if (timeline::CardCpuOf(context, "", card))
+            pause["timeline"] = timeline::BuildNow(*emulator, timeline::Query{});
+    }
     node["consistency"] = std::string();
     node["regs"] = Registers(context);
     Z80State previous;

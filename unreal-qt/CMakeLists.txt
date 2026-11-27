@@ -394,7 +394,7 @@ if (APPLE)
     # sample-rate changes (AppSoundManager nominal-rate watch)
     # Metal, QuartzCore, IOSurface, OpenGL: the native presenter (GL draws into IOSurfaces, CAMetalLayer shows them)
     set(common_libraries iconv "-framework CoreAudio" "-framework AppKit" "-framework Metal" "-framework QuartzCore"
-        "-framework IOSurface" "-framework OpenGL")
+        "-framework IOSurface" "-framework OpenGL" "-framework CoreVideo")
     find_package(Threads REQUIRED)
 elseif (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)
@@ -948,6 +948,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsmonitorpane.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gssendpane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gssendpane.h"
+        # The twin timeline strip: both CPUs on one clock (gs-debugger TODO P5.6 phase 2, A5.1)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/twintimelineview_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/twintimelineview.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/twintimelineview.h"
         # The analysis tabs: objects, dispatch, unknown commands, writers (gs-debugger TODO P5.6, A5.2a)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsanalysispane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/gsanalysispane.h"

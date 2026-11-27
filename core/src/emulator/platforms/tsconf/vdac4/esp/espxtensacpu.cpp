@@ -102,6 +102,7 @@ public:
     }
 
     uint32_t Arg(int index) override { return _cpu.Arg(index); }
+    uint32_t StackPointer() override { return _cpu.Ar(1); }
     void ReturnFromTrap(uint32_t a2, uint32_t a3) override { _cpu.ReturnFromTrap(a2, a3); }
 
     void BeginCall(uint32_t pc, const uint32_t* args, int count, uint32_t stackPointer, uint32_t sentinel) override

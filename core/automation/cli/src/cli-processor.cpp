@@ -127,6 +127,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
                         {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
                         {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
+                        {"timeline", &CLIProcessor::HandleTimeline},     // The GS debugger's twin timeline (twintimeline.h)
                         {"selected-cpu", &CLIProcessor::HandleSelectedCpu},  // The CPU front-ends show (CpuView::SetSelected)
                         {"board", &CLIProcessor::HandleBoard},  // Device boards (DebugBoards)
                         {"boards", &CLIProcessor::HandleBoard},
@@ -728,6 +729,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  next nextreg <reg> <value> [nextreg|port|internal] - ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it); `next dma|video|palette|ports|nextreg|copper|sprites` read the reports; `next pixel <x> <y> [sx]` says which layer draws a pixel of the last frame and why; `next layer-capture [on|off]` switches the per-layer record (images: `capture screen --layer=ula|layer2|tilemap|sprites|ids`)" << NEWLINE;
     oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
     oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
+    oss << "  timeline [gs|ms] [span=T] [recent=N] [json] | timeline on [lease_ms] | timeline off - Twin timeline: main "
+           "and a sound card's CPU on one clock (blocks, NOW, next, markers; running: density per frame)" << NEWLINE;
     oss << "  selected-cpu [main|gs|ms] - The CPU the front-ends show; a card shown follows the main CPU's steps" << NEWLINE;
     oss << "  board [list] | board <id> [values] | board <id> <action> [arg] - Device boards (gs, neogs, neogs_dma, "
            "neogs_sd, neogs_mp3, neogs_flash); neogs_sd insert <image|folder> / eject, neogs_flash save" << NEWLINE;

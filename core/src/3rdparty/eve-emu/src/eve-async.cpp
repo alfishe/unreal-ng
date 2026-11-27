@@ -74,6 +74,7 @@ struct Op
     bool romBlank = false;
     bool bitmapFastPath = true, rasterSpanFill = true, linePlanEnabled = true, lineKeepEnabled = true;
     uint32_t lineBudgetMargin = 0;
+    uint32_t drawThreads = 0, parallelMinLines = 0;
     std::vector<uint32_t> pages;   // RAM_G pages changed since the previous operation
     std::vector<uint8_t> pageBytes;
     bool hasList = false;          // the active display list follows
@@ -106,6 +107,9 @@ struct AsyncDrawing
     std::deque<std::unique_ptr<Op>> queue;
     std::vector<std::unique_ptr<Op>> free;
     uint32_t framesQueued = 0;
+    // Frame ends queued and drawn since the renderer started, counted (under `lock`): EveFramesBarrierTo
+    uint64_t frameEndsQueued = 0;
+    uint64_t frameEndsDrawn = 0;
     // Operations queued and applied, counted (under `lock`); the frames barrier's REG_TAG is the shadow's after
     // operation `tagMark` (0: none asked), taken by the renderer when it gets there
     uint64_t opsQueued = 0;
@@ -181,6 +185,8 @@ void CaptureInputs(EveChip& chip, AsyncDrawing& a, Op& op)
     op.linePlanEnabled = chip.linePlanEnabled;
     op.lineKeepEnabled = chip.lineKeepEnabled;
     op.lineBudgetMargin = chip.lineBudgetMargin;
+    op.drawThreads = chip.drawThreads;
+    op.parallelMinLines = chip.parallelMinLines;
 
     op.sync = a.syncPending;
     a.syncPending = 0;
@@ -242,7 +248,10 @@ void Queue(AsyncDrawing& a, std::unique_ptr<Op> op)
         a.done.wait(guard, room);
     }
     if (frameEnd)
+    {
         ++a.framesQueued;
+        ++a.frameEndsQueued;
+    }
     ++a.opsQueued;
     a.queue.push_back(std::move(op));
     if (frameEnd || a.queue.size() >= kWakeOps)
@@ -316,6 +325,8 @@ void ApplyInputs(EveChip& s, const Op& op)
     s.linePlanEnabled = op.linePlanEnabled;
     s.lineKeepEnabled = op.lineKeepEnabled;
     s.lineBudgetMargin = op.lineBudgetMargin;
+    s.drawThreads = op.drawThreads;
+    s.parallelMinLines = op.parallelMinLines;
     ApplyPages(s, op);
     if (op.hasList)
         std::memcpy(ActiveDlRegion(s).base, op.list, kRamDlSize);
@@ -386,7 +397,10 @@ void RendererLoop(AsyncDrawing* a)
             std::lock_guard<std::mutex> guard(a->lock);
             a->busy = false;
             if (op->kind == OpKind::FrameEnd)
+            {
                 --a->framesQueued;
+                ++a->frameEndsDrawn;
+            }
             if (!op->ahead)
                 a->tagSeen = RegGet(*a->shadow, Reg::Tag);
             if (++a->opsApplied == a->tagMark)
@@ -474,13 +488,18 @@ void AsyncSyncTag(EveChip& chip)
 
 void AsyncFramesBarrier(EveChip& chip)
 {
+    AsyncFramesBarrierTo(chip, UINT64_MAX);
+}
+
+void AsyncFramesBarrierTo(EveChip& chip, uint64_t frameEnds)
+{
     AsyncDrawing* a = chip.async.get();
     if (!a || !chip.asyncDrawing || std::this_thread::get_id() == a->rendererId)
         return;
     AsyncResolveTag(chip); // the last barrier's: the renderer is past it once it is past the frames after it
     std::unique_lock<std::mutex> guard(a->lock);
     WakeRenderer(*a);
-    a->done.wait(guard, [&] { return a->framesQueued == 0; });
+    a->done.wait(guard, [&] { return a->framesQueued == 0 || a->frameEndsDrawn >= frameEnds; });
     if (a->opsApplied == a->opsQueued)
     {
         // The renderer drew everything: REG_TAG now, as the full barrier takes it
@@ -575,6 +594,7 @@ int EveSetAsyncDrawing(EveChip* chip, int on, EveFrameCallback onFrame, void* us
         if (!a->shadow)
             return 1;
         a->shadow->vdac4State = chip->vdac4State;
+        a->shadow->hostStats = chip->hostStats; // the renderer measures for the owner
         try
         {
             a->thread = std::thread(RendererLoop, a.get());
@@ -610,6 +630,20 @@ void EveDrawingBarrier(EveChip* chip)
 void EveFramesBarrier(EveChip* chip)
 {
     AsyncFramesBarrier(*chip);
+}
+
+void EveFramesBarrierTo(EveChip* chip, uint64_t frameEnds)
+{
+    AsyncFramesBarrierTo(*chip, frameEnds);
+}
+
+uint64_t EveQueuedFrameEnds(const EveChip* chip)
+{
+    const AsyncDrawing* a = chip->async.get();
+    if (!a || !chip->asyncDrawing)
+        return 0;
+    std::lock_guard<std::mutex> guard(const_cast<std::mutex&>(a->lock));
+    return a->frameEndsQueued;
 }
 
 } // extern "C"

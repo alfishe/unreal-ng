@@ -22,6 +22,37 @@ and is adapted freely.
 The views and the adapter never share a translation unit: ecat's Emulator / CPU / Memory (namespace `ecatshim`) and
 the core's classes of the same names would clash.
 
+## Twin timeline
+
+With a sound card's CPU (GS, NeoGS, the ZX-MultiSound's GS) a full-width strip sits between the toolbar and the
+panes: the twin timeline ([gui-card-debugger](../../docs/inprogress/2026-09-28-debugger-model/gui-card-debugger.md)
+A5.1, C03; [gs-debugger design](../../docs/inprogress/2026-09-27-gs-debugger/design.md) §5.4, §7.2). It is opt-in:
+the toolbar's checkable **GS timeline** (shown only with a card CPU), off by default and kept in the setup
+(`Debugger/show_gs_timeline`); off, the strip is hidden, nothing is read and the timeline is not armed. Without a card
+CPU (no card, the lightweight player) it is hidden. Both CPUs on one clock, main T relative to NOW:
+
+| Row | Paused | Running |
+|-----|--------|---------|
+| MAIN | the recent main instructions as blocks, width = their measured T; the current instruction's bus cycles (`OCF 4`, `OD 3`, `IO 4`) when a card's stop parked the main CPU inside one; the next instruction outlined; ● breakpoint, ⇄ host port access (`OUT #BB <- #2A at #800A`), INT / NMI above the lane | the GS port accesses per frame, stacked: commands, data writes, data reads, status polls |
+| NOW | the axis (± T), the NOW line; `T 34,995.6 · frame 412 · gap 0.4 T` (the gap only when not zero, also a dashed line in the main lane) | the frames read |
+| CARD | the card's blocks on the main clock (exact in card cycles: the tooltip gives them and the clock); the next instruction outlined; INT / NMI and the NeoGS ◆ clock change (`12.0→24.0 MHz at cycle 118,400`) below the lane | busy (tinted) over idle steps per frame, interrupts as a mark on top |
+
+Each lane's readout is on the right (`6.6 / 11 T · 60% · port write`, `cycle 119,985 · 12.0 MHz`; running: `1.0 GS
+port accesses / frame`, `busy 12% · 1.0 INT / frame`). Every element has its tooltip. The wheel zooms around the
+pointer (± 60 T at first, 4 to 100,000 T); zoomed out, a lane whose blocks are under 4 px merges them into a density
+bar. A drag pans, a double-click recenters on NOW, a click on a block shows that CPU's listing at it. With two cards
+the card lane follows the card CPU in front.
+
+It reads the core's node (`timeline::Read`; `Emulator::read_timeline` in the shim; over the WebAPI
+`GET /debug/timeline?cpu=&span=&recent=&density=&client=&lease_ms=&arm=&wait_ms=0`, no session) at every stop and,
+running, every `live_card_ms` (250 ms in this process, 1 s over the WebAPI): a running machine is never paused for
+it. A paused read never waits for the machine (`waitMs` / `wait_ms` 0): when another client holds it for a moment or
+its stop is not parked yet, the last picture stays and the read is tried again every 40 ms (at most 25 times). The
+histories the timeline needs record only while a client holds its lease: the strip takes it when shown, renews it
+every 5 s and releases it when hidden, when the window closes and when the connection is lost (client
+`ecat-<pid>`; in this process until released, over the WebAPI a 15 s lease that runs out by itself, `POST
+/debug/timeline/arm`).
+
 ## Card tabs
 
 With a sound card fitted the side tabs add GS log, GS protocol, GS monitor, GS send, GS firmware, GS hardware and GS stats (the catalog
@@ -255,6 +286,63 @@ machine first leaves the card's run, up to the next main CPU instruction). The c
 the card position. A move in time or a pause keeps the tab in front (only a processor's own stop, a breakpoint or
 a step, brings its tab forward).
 
+## Remote mode (`--connect`)
+
+The views call the shim API synchronously and never wait on the network: `adapter/remotemachine.cpp` answers every
+call from what it has and fetches the rest in the background (`Net`).
+
+- **Lanes.** Three threads, each with its own keep-alive connection. Lane 0 runs the commands (run control, writes,
+  TTD moves) in order, then the snapshot (`GET debug/snapshot`: state, registers, the CPU's 64 KB), then reads; the
+  other lanes take reads only. The snapshot is never fetched while a command is queued or runs, so a stop is
+  never shown from before the command that made it. No thread per request.
+- **Reads** (`Net::get`): a cache keyed by method, path and body, stale while it revalidates. An answer is current
+  while it belongs to the snapshot generation in place, no command was queued after it was asked, nothing
+  invalidated it, and it is not older than its maximum age (1 s by default, 500 ms for the timeline, conversation,
+  catalog and histories). A stale read returns what it had and queues one fetch (deduplicated). A read with no
+  answer yet returns `kPending`; the views keep what they show (pages, regions, labels).
+- **Commands** (`Net::send`, `Net::task`): queued, `kQueued` at once; their `done` runs on the GUI thread. A
+  refused command without a `done` shows in the state line for 5 s (`debug_link_text`). Run control marks the
+  machine *under way* (`debug_stepping`) until a snapshot taken after the command has arrived.
+- **Arrivals.** What came (a changed answer, a snapshot taken after a command, a read that had waited, a command's
+  end) is posted to the GUI thread as one call: the snapshot is installed, the generation moves, and the window
+  repaints its views (`follow_data`, coalesced to 30 ms while paused).
+- **Waiting.** A read waiting over 1 s or a command over 2 s shows as `Waiting for the emulator: N s` in the state
+  line; run control is disabled while a step is under way. A stalled emulator is waited for, never declared gone
+  while it holds the connection; one that is gone is looked for again once a second (the connect retry on its own
+  thread), never started by the debugger.
+- **Asynchronous shim calls** (`debug_card_run_to_async`, `gs_send_async`, `ttd_call_async`): the answer comes later
+  on the GUI thread; in process at once. The callers guard themselves with `QPointer`. TTD moves (`TtdControls`)
+  chain their follow-ups: Branch Here's seek, resume and media question; a card step at the history's end steps on
+  live once its answer has come.
+- **Run-to.** `debug_run_to` / `drop_run_to` / `clear_run_to` run as tasks on lane 0 under `m_run_to_mutex`, in
+  order with the other commands; the stop's sequence mark is unchanged.
+- **Synchronous mode** (`RemoteOptions::synchronous`): every call waits for its answer, as before. Used by
+  `--self-check`, `--screenshot`, `--measure` and `--list-memory`, which read back what they have just written.
+- **Closing.** The last commands (run-to removed, debug mode and histories restored) get up to 2 s, then the requests
+  in flight are aborted (checked every 100 ms), the waiter's long poll too.
+
+`UNREAL_DEBUGGER_NET_TRACE=1` prints each request's end on stderr (lane, time, request, status, duration).
+
+Checks:
+
+- `--self-check` with `--connect`: its last block, `async connection`, opens a second, asynchronous connection
+  through `LatencyProxy` (`latencycheck.cpp`). It delays answers by 300 ms and then stalls them. The block checks
+  that no shim call takes 20 ms or more, that a stall shows as a wait, that the machine is held again afterwards,
+  and that closing a stalled connection ends in bounded time.
+- `--gui-gap-check [--gap-latency-ms 300] [--gap-stall-ms 6000] [--gap-limit-ms 0]` with `--connect`: the window
+  over the same proxy. It presses pause, step, step over, step out, run and pause with no delay, with the delay,
+  during a stall and after it. Each phase prints the longest gap of the GUI event loop (a 1 ms timer) and the GUI
+  thread's CPU time in that gap. With a limit given, the check fails above it.
+
+Measured on an M3 Ultra (load 30-80 from other sessions), master versus this design, longest event-loop gap:
+
+| Phase | master | async |
+|-------|--------|-------|
+| no delay | 505 ms | 11 ms |
+| answers +300 ms | 184 s (one pause) | 19 ms |
+| stalled 6 s | 20 s (then "Waiting for <id>") | 9 ms |
+| after the stall | 1.1 s | 12 ms |
+
 ## Run
 
 ```text
@@ -262,9 +350,11 @@ unreal-debugger [--model PENTAGON] [--card neogs|gs|gs-lw|multisound | --no-gs] 
 unreal-debugger --connect 127.0.0.1:8090 [--emulator id]   a running emulator (unreal-qt) through its WebAPI
 unreal-debugger --zoom 1.5                                  the window's scale (Ctrl+= / Ctrl+- / Ctrl+0)
 unreal-debugger --self-check                                the debugger API and the window's editors; exit 2 on a failure
+unreal-debugger --self-check --timeline-shots DIR          also saves the twin timeline paused and running as PNGs
 unreal-debugger --screenshot out.png                        stop, step, breakpoint; saves the window and exits
 unreal-debugger --list-memory                               the dump tabs and the "+" menu the window builds
 unreal-debugger --measure 10                                frames/s and CPU: screen only, debug mode, window
+unreal-debugger --connect ... --gui-gap-check               the GUI event loop's longest gap, delayed and stalled
 ```
 
 Run from the build's `bin/` (the core finds `data/` there; in the macOS package, `UnrealNG.app/Contents/Resources`).

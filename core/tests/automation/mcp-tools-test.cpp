@@ -1610,6 +1610,31 @@ TEST_F(McpTools_Test, InspectState_PcHistoryAspect)
     EXPECT_NE(result.text.find("[pchist] 1 of 7: C000 ram32"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_TimelineAspect)
+{
+    Json::Value node;
+    node["available"] = true;
+    node["state"] = "paused";
+    node["text"] = "MAIN  #800B in a,(#bb)\nNOW   frame 120 · T 987.5 · gap 12.5 T";
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/timeline?client=mcp&cpu=gs"] = {200, node};
+    Json::Value args;
+    args["aspects"].append("timeline");
+    args["cpu"] = "gs";
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[timeline]\nMAIN  #800B"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("gap 12.5 T"), std::string::npos) << "the agent reads the text" << result.text;
+
+    // No card fitted: the route's message
+    Json::Value missing;
+    missing["error"] = "Not Found";
+    missing["message"] = "no card CPU 'ms'";
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/timeline?client=mcp&cpu=ms"] = {404, missing};
+    args["cpu"] = "ms";
+    result = RunTool(*_registry, "inspect_state", args, *_caller);
+    EXPECT_NE(result.text.find("[timeline] unavailable: no card CPU 'ms'"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
 {
     _caller->routes["GET /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};
@@ -3054,6 +3079,7 @@ TEST_F(McpTools_Test, Vdac4State_GetsStateAndSummarizes)
     reply["audio"]["underruns"] = 3;
     reply["threads"]["esp_thread"] = true;
     reply["threads"]["ft_draw_thread"] = true;
+    reply["threads"]["ft_draw_threads"] = 4;
     reply["threads"]["esp_latency_ms"] = 4;
     reply["threads"]["esp_jobs"] = 2000;
     for (int i = 0; i < 12; ++i)
@@ -3071,7 +3097,7 @@ TEST_F(McpTools_Test, Vdac4State_GetsStateAndSummarizes)
     EXPECT_NE(result.text.find("running \"DOOM\" 1.2 (doom.zm)"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("11025 Hz -> 48000 Hz"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("underruns 3"), std::string::npos) << result.text;
-    EXPECT_NE(result.text.find("ESP jobs on a worker, FT work inline, FT drawing on its renderer thread, latency 4 ms; 2000 jobs"), std::string::npos)
+    EXPECT_NE(result.text.find("ESP jobs on a worker, FT work inline, FT drawing on its renderer thread in 4 line threads, latency 4 ms; 2000 jobs"), std::string::npos)
         << result.text;
     // the text keeps the last 10 lines, structuredContent all 12
     EXPECT_NE(result.text.find("Log (last 10 of 12)"), std::string::npos) << result.text;

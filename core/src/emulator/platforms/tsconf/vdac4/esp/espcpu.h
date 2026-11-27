@@ -64,6 +64,8 @@ public:
 
     /// At a trap: argument word `index` as the callee sees it (windowed ABI, stack words past the sixth)
     virtual uint32_t Arg(int index) = 0;
+    /// At a trap: the caller's stack pointer (a1)
+    virtual uint32_t StackPointer() = 0;
     /// At a trap: return like the callee's RETW would, a2 (and a3) to the caller
     virtual void ReturnFromTrap(uint32_t a2, uint32_t a3 = 0) = 0;
     /// Start a CALL8-style call of `pc` with `args`, the stack at `stackPointer`, returning into `sentinel` (a

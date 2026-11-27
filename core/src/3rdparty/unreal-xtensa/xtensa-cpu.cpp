@@ -701,6 +701,60 @@ void Cpu::ReturnFromTrap(uint32_t a2, uint32_t a3)
     state_.pc = (state_.pc & 0xC0000000u) | (ra & 0x3FFFFFFFu);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// External registers (ERI): the LX7 performance monitor, 2 counters
+
+namespace
+{
+constexpr uint32_t kEriPmg = 0x101000;
+constexpr uint32_t kEriPm0 = 0x101080;
+constexpr uint32_t kEriPmCtrl0 = 0x101100;
+constexpr uint32_t kPmSelectInsn = 2;
+}  // namespace
+
+bool Cpu::PmCounting(int i) const
+{
+    return (state_.pmg & 1u) != 0 && ((state_.pmCtrl[i] >> 8) & 0x1Fu) == kPmSelectInsn;
+}
+
+void Cpu::PmFold(uint64_t now)
+{
+    for (int i = 0; i < 2; ++i)
+    {
+        if (PmCounting(i))
+            state_.pm[i] += static_cast<uint32_t>(now - state_.pmFrom[i]);
+        state_.pmFrom[i] = now;
+    }
+}
+
+uint32_t Cpu::EriRead(uint32_t address, uint64_t now)
+{
+    if (address == kEriPmg)
+        return state_.pmg;
+    for (uint32_t i = 0; i < 2; ++i)
+    {
+        if (address == kEriPm0 + 4 * i)
+            return state_.pm[i] + (PmCounting(static_cast<int>(i)) ? static_cast<uint32_t>(now - state_.pmFrom[i]) : 0u);
+        if (address == kEriPmCtrl0 + 4 * i)
+            return state_.pmCtrl[i];
+    }
+    return 0;
+}
+
+void Cpu::EriWrite(uint32_t address, uint32_t value, uint64_t now)
+{
+    PmFold(now);
+    if (address == kEriPmg)
+        state_.pmg = value & 1u;
+    for (uint32_t i = 0; i < 2; ++i)
+    {
+        if (address == kEriPm0 + 4 * i)
+            state_.pm[i] = value;
+        else if (address == kEriPmCtrl0 + 4 * i)
+            state_.pmCtrl[i] = value;
+    }
+}
+
 void Cpu::EnterTrapFrame(uint32_t sp)
 {
     const uint32_t n = state_.callKind & 3;
@@ -1815,7 +1869,17 @@ dispatch:
             CASE(Rfwu)
             CASE(Rfi)
             CASE(Rer)
-            CASE(Wer) STOP(StopReason::Privileged);
+            {
+                const uint64_t now = st.ccount + executed + static_cast<uint64_t>(ip - begin) + handlerCycles_;
+                RA = EriRead(RB, now);
+                NEXT;
+            }
+            CASE(Wer)
+            {
+                const uint64_t now = st.ccount + executed + static_cast<uint64_t>(ip - begin) + handlerCycles_;
+                EriWrite(RB, RA, now);
+                NEXT;
+            }
             CASE(DivnS)
             CASE(ConstS)
             CASE(Div0S)

@@ -39,6 +39,7 @@
 #include "debugger/labels/labelmanager.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/targets/gscardtarget.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdsession.h"
 #include "emulator/actions/actionregistry.h"
@@ -793,7 +794,8 @@ public:
         std::vector<unsigned int> r;
         m_emu->GetContext()->histories.With("cpu", [&r](history::IDeviceHistory &h) {
             if (auto * exec = dynamic_cast<history::DeviceHistory<ExecRecord> *>(&h))
-                for (const ExecRecord &e : exec->Snapshot(256)) r.push_back(e.pc);
+                for (const ExecRecord &e : exec->Snapshot(256))
+                    if (!e.IsEvent()) r.push_back(e.pc);  // INT / NMI records are not instructions
         });
         return r;
     }
@@ -894,7 +896,8 @@ public:
             if (!h->Configure(history::Config{.mode = history::Mode::Ring}, error)) return r;
             m_history_ours = h->Device();
         }
-        for (const ExecRecord &e : h->Snapshot(256)) r.push_back(e.pc);
+        for (const ExecRecord &e : h->Snapshot(256))
+            if (!e.IsEvent()) r.push_back(e.pc);  // INT / NMI / clock-change records are not instructions
         return r;
     }
     // The history this CPU switched on ("" none): the machine turns it off when it goes
@@ -2041,6 +2044,50 @@ private:
         EmulatorContext * ctx = lease.get();
         if (ctx == nullptr) return {false, std::string(), "The machine is gone"};
         return send_answer(GSConversationRead(ctx, id));
+    }
+
+    // The twin timeline in process: the core's read (twintimeline.h) on this thread under a lease of the context; a
+    // paused machine's detail at a coherent moment, a running one's published density (never a pause). The strip's
+    // lease lasts until it releases it (the window's hide and close): a process that ends takes it along
+    std::string timeline_client() const override
+    {
+        return "ecat-" + std::to_string(QCoreApplication::applicationPid());
+    }
+    GsJson read_timeline(const std::string &card, double span_t, unsigned int recent, unsigned int density, bool arm) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        if (lease.get() == nullptr) return {false, std::string(), "The machine is gone"};
+        timeline::Query query;
+        query.cpu = card;
+        query.spanT = span_t;
+        query.recent = recent;
+        query.density = density;
+        query.client = timeline_client();
+        query.leaseMs = 0;
+        query.arm = arm;
+        query.waitMs = 0;  // the GUI thread: one try, a busy machine is read again later (never a wait)
+        const timeline::Reply r = timeline::Read(m_emu.get(), query);
+        if (r.status == 503) {
+            GsJson busy{false, std::string(), r.error};
+            busy.busy = true;
+            return busy;
+        }
+        if (r.status == 404) {
+            StateNode na = StateNode::Object();
+            na["available"] = false;
+            na["message"] = r.error;
+            return {true, StateNodeToJsonText(na), std::string()};
+        }
+        if (r.status != 200) return {false, std::string(), r.error};
+        return {true, StateNodeToJsonText(r.body), std::string()};
+    }
+    GsJson timeline_arm(bool on) override
+    {
+        const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+        if (lease.get() == nullptr) return {false, std::string(), "The machine is gone"};
+        const timeline::Reply r = timeline::SetArmed(m_emu.get(), timeline_client(), on, 0);
+        if (r.status != 200) return {false, std::string(), r.error};
+        return {true, StateNodeToJsonText(r.body), std::string()};
     }
 
     // Time travel in process: the verb on the machine's context (the views follow through the window, which reads

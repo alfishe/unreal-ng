@@ -41,6 +41,15 @@ void GSCardProfiler::Clear()
     _published = GSProfileSnapshot();
 }
 
+bool GSCardProfiler::LastActivity(GSProfileActivity& out) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_published.activity.empty())
+        return false;
+    out = _published.activity.back();
+    return true;
+}
+
 GSProfileSnapshot GSCardProfiler::Snapshot() const
 {
     GSProfileSnapshot copy;

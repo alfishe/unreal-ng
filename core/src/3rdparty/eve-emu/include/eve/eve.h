@@ -122,6 +122,13 @@ void EveDrawingBarrier(EveChip* chip);
    EveDrawingBarrier: the renderer keeps the tag of this point, the chip takes it when its
    register is read (a host read, EvePeek, EveGetRegion of "REG") */
 void EveFramesBarrier(EveChip* chip);
+/* EveFramesBarrier up to a point: wait until the renderer has finished the first `frameEnds` frames queued since
+   asynchronous drawing started (EveQueuedFrameEnds at some earlier moment), not the ones queued after. A host that
+   runs a frame of its own between the call and its barrier lets the renderer draw that much behind (the frame it
+   presents is one host frame late) instead of waiting for it every frame. REG_TAG as after EveFramesBarrier. */
+void EveFramesBarrierTo(EveChip* chip, uint64_t frameEnds);
+/* Frame ends queued for the renderer since asynchronous drawing started (0 when off) */
+uint64_t EveQueuedFrameEnds(const EveChip* chip);
 
 /* --- State ------------------------------------------------------------------------- */
 
@@ -219,6 +226,40 @@ void EveGetLineCost(const EveChip* chip, uint32_t line, EveLineCost* out);
 /* The metrics of the last completed frame; lineClocks (may be NULL) receives the cost of up to
  * maxLines lines, saturated at 65535. Returns the number of line costs written. */
 size_t EveGetFrameMetrics(const EveChip* chip, EveFrameMetrics* out, uint16_t* lineClocks, size_t maxLines);
+
+/* What drawing cost the host (wall time on the thread that draws: the renderer, or the caller's), not chip state:
+ * never saved or restored, differs run to run. `last`: the last completed frame (valid = 1 when it was drawn), its
+ * total, its worst line; `summary` (may be NULL): frames, sumNs, maxFrameNs, maxFrame since EveResetHostDrawStats.
+ * lineNs (may be NULL) receives up to maxLines line times of `last`. Returns the number of line times written. */
+typedef struct EveHostDrawStats
+{
+    uint64_t frame;       /* REG_FRAMES of `last` */
+    uint32_t valid;
+    uint32_t lines;       /* summary: the dearest frame's */
+    uint64_t totalNs;     /* the lines of the frame */
+    uint32_t worstLine;
+    uint64_t worstLineNs;
+    uint64_t frames;      /* summary: drawn frames counted */
+    uint64_t sumNs;       /* summary: their totals */
+    uint64_t maxFrameNs;  /* summary: the dearest frame */
+    uint64_t maxFrame;    /* summary: its REG_FRAMES */
+    uint64_t cpuNs;       /* the drawing thread's CPU time since the previous frame end (summary: all frames); the
+                             renderer's (EveSetAsyncDrawing): drawing only; the emulation thread's: all it ran.
+                             Line workers (EveSetDrawThreads) not counted. Wall time on Windows */
+    uint64_t maxCpuNs;    /* summary: the frame that took the most CPU */
+    uint64_t maxCpuFrame;
+} EveHostDrawStats;
+size_t EveGetHostDrawStats(const EveChip* chip, EveHostDrawStats* last, EveHostDrawStats* summary, uint32_t* lineNs,
+                           size_t maxLines);
+/* The line times of the summary's dearest frame (summary.lines of them; summary.worstLine / worstLineNs: its worst) */
+size_t EveGetHostDrawMaxLines(const EveChip* chip, uint32_t* lineNs, size_t maxLines);
+void EveResetHostDrawStats(EveChip* chip);
+
+/* Lines drawn by `threads` threads, the drawing thread included (0, 1: that thread alone; at most 64). Lines that
+ * replay the display list's recorded walk are spread over the others; the picture, REG_TAG, the line costs and the
+ * metrics are the same as on one thread. With the renderer on (EveSetAsyncDrawing) the renderer's lines. A host
+ * setting, not chip state (never saved). Returns the count in effect. */
+uint32_t EveSetDrawThreads(EveChip* chip, uint32_t threads);
 /* The frame in flight: visible lines the scan has passed so far, as of the last catch-up
  * (EveSetOutput catches up). Lines 0..n-1 of EveGetLineCost belong to this frame: valid
  * when drawn and measured, not valid when passed without drawing; lines from n on still

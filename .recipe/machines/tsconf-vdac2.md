@@ -171,6 +171,30 @@ an overflow looks like: [line-budget-model.md](../../docs/inprogress/2026-10-01-
 - The cost model's absolute numbers are TO VERIFY on a card (line overhead, bilinear
   and primitive fill rates): right for comparing frames and finding heavy lines.
 
+## Replaying a capture: the FT812's drawing alone (eve-replay)
+
+A capture replays without the machine, so the FT812's drawing can be timed, profiled and checked picture by picture
+after a renderer change. `eve-replay` comes from the vendored library (`core/src/3rdparty/eve-emu/tools/replay/`,
+off in unreal-ng's build); build it standalone:
+
+```bash
+cmake -S core/src/3rdparty/eve-emu -B scratch/eve-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DEVE_BUILD_TOOLS=ON -DEVE_BUILD_TESTS=OFF
+ninja -C scratch/eve-build eve-replay
+E=scratch/eve-build/eve-replay
+$E scratch/game.evr --quiet --hashes scratch/ref.txt     # reference: one "frame hash" line per FT812 frame
+$E scratch/game.evr --quiet --threads 8 --hashes scratch/t8.txt && cmp scratch/ref.txt scratch/t8.txt
+$E scratch/game.evr --no-hash --quiet --threads 1         # timing: "time: ... s wall (... s in EveAdvance)"
+```
+
+- The chip model comes from the capture header (VDAC4 captures replay as `EVE_MODEL_VDAC4`).
+- `--threads N` draws lines side by side (`EveSetDrawThreads`); the picture hashes must not change with N.
+- Time on an idle machine: on a loaded host (load average far above the core count) the runs differ by 2x. A
+  remote build host works: copy the library folder and the capture to your own scratch folder there.
+- Profile with `sample <pid> 2 -file scratch/s.txt` while it runs (top of stack: `DrawBitmapFast`, the blends).
+- The emulator's own setting: `[VDAC2]`/`[VDAC4] FtDrawThreads` (1 by default, 0 = half the cores, at most 4), env
+  `UNREAL_VDAC2_FT_DRAW_THREADS` / `UNREAL_VDAC4_FT_DRAW_THREADS` (docs/emulator/environment-variables.md).
+
 ## Pitfalls
 
 - **One capture at a time:** a new start finishes the running capture.

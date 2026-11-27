@@ -579,7 +579,7 @@ Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), 
 | `monitor video.present` | The GUI window's way to the screen: presenter, policy, VRR, the video sync step, refresh, smooth motion in effect, the display rate switch's state and reason |
 | `monitor controllers.devices` | The host input devices: one line per device (id, name, battery, notice); `--json` the value the topic pushes |
 | `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
-| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `debug.cpuprofile` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `debug.cpuprofile` / `debug.timeline` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
 | `monitor <name> --json` | The reply every plane returns |
 
 ```
@@ -621,6 +621,7 @@ reference: [command-interface.md](./command-interface.md).
 | `bkey <key\|any> [press\|release\|both]` | Keyboard breakpoint: the first keyboard read that sees the key change (`--hits`, `--group`, a note). `bpnote <id> [text]` sets a note; `--group G` on any `bp*` command puts a new breakpoint in a group. |
 | `find <pattern>` | Search memory for a byte pattern, `??` = any byte (`--space cpu\|ram\|ram5\|rom2\|cache0\|<region>`, `--mask`, `--from`, `--to`, `--align`, `--max`). |
 | `out <port> <value>` | A debugger's port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border): no breakpoints, no device waits, a TTD tool edit; paused, stopped or running. Numbers: `0x13AF`, `#13AF`, `13AFh` or decimal. |
+| `timeline [gs\|ms] [span=T] [recent=N] [json]` / `timeline on [lease_ms]\|off` | The GS debugger's twin timeline (main CPU and card CPU on one clock): paused, NOW and the gap, each lane's recent blocks (`at`, width in T, PC, instruction) and the markers; running, the density per frame. The first read arms it until `timeline off`; `json` prints the node. |
 | `pchist [depth]` / `pchist on\|off` | PC history: the newest instructions the CPU started, each with its window's page (`C000  ram32`), newest first; the first read starts recording; `debug-snapshot --pchist N` adds it to a snapshot. |
 | `debug-wait [since] [--timeout ms]` | Wait until something a debugger shows changes (a stop, a run start, a tool edit) or the timeout (default 10000 ms, at most 60000) passes: `Changed: seq 43, paused at breakpoint #3 (8000)` or `No change: seq 42, running`. |
 | `debug-snapshot` | One coherent debugger snapshot: registers, pages, time, code, stack, memory (`--disasm N`, `--stack N`, `--memory space:addr:len`, repeatable). |

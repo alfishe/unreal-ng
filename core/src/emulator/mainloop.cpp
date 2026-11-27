@@ -18,6 +18,7 @@
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/watch/framewatch.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
@@ -294,6 +295,10 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
     // Observers of a parked machine read the device cores in step with the CPU
     if (_soundManager)
         _soundManager->catchUpDeferredCores();
+    // ... and the picture: a card that draws on a thread of its own finishes the frames it owes (the FT812 renderer
+    // runs a machine frame behind while the machine runs)
+    if (_context->pScreen)
+        _context->pScreen->SettleExternalFrames();
     if (emulator->IsPaused())
     {
         emulator->NoteDebugChange();  // a stop the debugger snapshot's seq counts
@@ -577,6 +582,10 @@ void MainLoop::CompleteFrame()
         framewatch::Manager* watches = _context->pDebugManager->GetFrameWatches();
         if (watches && watches->Armed())
             watches->OnFrameEnd(_state->frame_counter);
+        // The twin timeline's density (debugger/timeline/twintimeline.h): each card's frame, while a client holds it
+        timeline::Timeline* twin = _context->pDebugManager->GetTimeline();
+        if (twin && twin->Armed()) [[unlikely]]
+            twin->OnFrameEnd(_state->frame_counter);
     }
 }
 

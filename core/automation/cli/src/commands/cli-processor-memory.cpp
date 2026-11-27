@@ -6,6 +6,8 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/timeline/twintimeline.h"
+#include "emulator/state/statenodejson.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -1990,6 +1992,92 @@ void CLIProcessor::HandlePcHistory(const ClientSession& session, const std::vect
         ss << "  " << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << entry.find("address")->i
            << "  " << entry.find("kind")->s << std::dec << entry.find("page")->i << NEWLINE;
     session.SendResponse(ss.str());
+}
+
+// HandleTimeline - timeline [gs|ms] [span=T] [recent=N] [json] | timeline on [lease_ms] | timeline off: the GS
+// debugger's twin timeline (core timeline::Read, the WebAPI GET /debug/timeline). A read holds the CLI's lease until
+// `timeline off` (no timeout: a console session asks when it wants)
+void CLIProcessor::HandleTimeline(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    const std::string usage =
+        "Usage: timeline [gs|ms] [span=T] [recent=N] [json] | timeline on [lease_ms] | timeline off" + std::string(NEWLINE);
+    if (!args.empty() && (args[0] == "on" || args[0] == "off"))
+    {
+        uint32_t leaseMs = 0;
+        try
+        {
+            if (args.size() > 1)
+                leaseMs = static_cast<uint32_t>(std::stoul(args[1]));
+        }
+        catch (const std::exception&)
+        {
+            session.SendResponse(usage);
+            return;
+        }
+        const timeline::Reply reply = timeline::SetArmed(emulator.get(), "cli", args[0] == "on", leaseMs);
+        if (reply.status != 200)
+        {
+            session.SendResponse("timeline: " + reply.error + NEWLINE);
+            return;
+        }
+        session.SendResponse(std::string("Timeline ") + (reply.body.find("armed")->b ? "armed" : "off") + NEWLINE);
+        return;
+    }
+    timeline::Query query;
+    query.client = "cli";
+    query.leaseMs = 0;
+    bool json = false;
+    try
+    {
+        for (const std::string& arg : args)
+        {
+            if (arg == "json")
+                json = true;
+            else if (arg.rfind("span=", 0) == 0)
+                query.spanT = std::stod(arg.substr(5));
+            else if (arg.rfind("recent=", 0) == 0)
+                query.recent = std::stoul(arg.substr(7));
+            else if (arg == "gs" || arg == "ms")
+                query.cpu = arg;
+            else
+            {
+                session.SendResponse(usage);
+                return;
+            }
+        }
+    }
+    catch (const std::exception&)
+    {
+        session.SendResponse(usage);
+        return;
+    }
+    const timeline::Reply reply = timeline::Read(emulator.get(), query);
+    if (reply.status != 200)
+    {
+        session.SendResponse("timeline: " + reply.error + NEWLINE);
+        return;
+    }
+    if (json)
+    {
+        session.SendResponse(StateNodeToJsonText(reply.body) + NEWLINE);
+        return;
+    }
+    std::string text = timeline::TextOf(reply.body);
+    std::string out;
+    for (char c : text)
+    {
+        if (c == '\n')
+            out += NEWLINE;
+        else
+            out += c;
+    }
+    session.SendResponse(out + NEWLINE);
 }
 
 // HandleDebugWait - debug-wait [since] [--timeout ms]: long-poll on the debugger snapshot's seq (core

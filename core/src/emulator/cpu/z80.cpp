@@ -1269,6 +1269,9 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         const bool nmiPending = _nmi_pending_count > 0;
         const bool useSource = (work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource;
         const bool deviceInt = (work & EmulatorContext::kStepWorkDeviceInt) && _deviceIntLines;
+        // The acknowledge's start and the address it interrupts: the execution history's INT / NMI record
+        const uint32_t tBefore = t;
+        const uint16_t pcBefore = pc;
         const bool accepted = (!useSource && !deviceInt && InterruptsIdle())
                                   ? false
                                   : ProcessInterruptsSelect(useSource, deviceInt, _intWraps, _intStart, _intEnd);
@@ -1278,6 +1281,8 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
                 result.nmiAccepted = true;
             else
                 result.intAccepted = true;
+            if ((work & EmulatorContext::kStepWorkExecHistory) && _context->pDebugManager) [[unlikely]]
+                _context->pDebugManager->GetPcHistory()->RecordInterrupt(nmiPending, pcBefore, tBefore);
         }
         else
         {
@@ -1285,7 +1290,7 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
             // and its window's page
             if ((work & (EmulatorContext::kStepWorkPcHistory | EmulatorContext::kStepWorkExecHistory)) &&
                 _context->pDebugManager) [[unlikely]]
-                _context->pDebugManager->GetPcHistory()->Record(pc);
+                _context->pDebugManager->GetPcHistory()->Record(pc, t);
             if ((work & EmulatorContext::kStepWorkEngine) && _engine)
             {
                 // CPU-LIBRARY-MIGRATION(step-routing): the machine runs on its own engine (Z80::SetEngine)

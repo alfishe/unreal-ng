@@ -2020,13 +2020,98 @@ void DeviceScreenGLWindow::setRecordingCapture(bool enabled, int pictureHeight)
 {
     _recordCapture = enabled;
     _recordHeight = pictureHeight;
-    _recordPending.clear();
     _recordSerial = 0;
-    if (!enabled && _recordTarget && makeCurrent())
+    if (!enabled)
+        _recordFrame = {};
+    const bool release = !enabled && (_recordTarget
+#ifdef __APPLE__
+                                      || _recordSurfaces
+#endif
+                                     );
+    if ((!_recordPending.empty() || release) && isValid() && makeCurrent())
     {
-        _recordTarget.reset();  // a GL texture goes with its context current
+        for (PendingCapture& capture : _recordPending)
+            dropCapture(capture);
+        if (!enabled)
+        {
+            _recordTarget.reset();  // a GL texture goes with its context current
+            _recordSource.reset();
+#ifdef __APPLE__
+            if (_recordSurfaces)
+                _recordSurfaces->Release();
+            _recordSurfaces.reset();
+#endif
+        }
         doneCurrent();
     }
+    _recordPending.clear();
+}
+
+void DeviceScreenGLWindow::setRecordingFrame(const RecordingFrameLayout& layout)
+{
+    _recordFrame = layout;
+}
+
+void DeviceScreenGLWindow::dropCapture(PendingCapture& capture)
+{
+#ifdef __APPLE__
+    if (_recordSurfaces && capture.composed.slot >= 0)
+        _recordSurfaces->Drop(capture.composed);
+#endif
+    (void)capture;  // a read in a slot is simply started again over
+}
+
+bool DeviceScreenGLWindow::composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot)
+{
+#ifdef __APPLE__
+    static_assert(RecordingSurfaces::kSlots == gpu::Device::kReadSlots, "one capture per read slot");
+    if (_recordFrame.size.isEmpty() || !_gpu || _gpu->GetBackend() != gpu::Device::Backend::GL || !_recordTarget)
+        return false;
+    if (!_recordSurfaces)
+        _recordSurfaces = std::make_unique<RecordingSurfaces>();
+    if (!_recordSurfaces->Configure(_recordFrame.size.width(), _recordFrame.size.height()))
+        return false;
+    // The picture where the CPU way puts it (WindowRecorder::Writer::composeInto): a few pixels off its place,
+    // centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept
+    const QRect place = _recordFrame.screenRect;
+    QRect from(QPoint(0, 0), kept);  // rows from the top
+    QRect to;
+    bool linear = false;
+    if (std::abs(kept.width() - place.width()) <= 4 && std::abs(kept.height() - place.height()) <= 4)
+    {
+        const int left = place.x() + (place.width() - kept.width()) / 2;
+        const int top = place.y() + (place.height() - kept.height()) / 2;
+        to = QRect(left, top, kept.width(), kept.height()).intersected(QRect(QPoint(0, 0), _recordFrame.size));
+        from = QRect(to.x() - left, to.y() - top, to.width(), to.height());
+    }
+    else
+    {
+        to = QRect(place.topLeft(), kept.scaled(place.size(), Qt::KeepAspectRatio));
+        linear = true;
+    }
+    if (to.isEmpty() || from.isEmpty())
+        return false;
+    const int fromGl[4] = {rect.x + from.x(), rect.y + kept.height() - from.y() - from.height(), from.width(),
+                           from.height()};
+    const int toRows[4] = {to.x(), to.y(), to.width(), to.height()};
+    const QColor color = _recordFrame.background;
+    const float background[3] = {static_cast<float>(color.redF()), static_cast<float>(color.greenF()),
+                                 static_cast<float>(color.blueF())};
+    PendingCapture capture;
+    if (!_recordSurfaces->Compose(slot, static_cast<gpu::GlDevice&>(*_gpu).FramebufferId(*_recordTarget), fromGl,
+                                  toRows, linear, background, capture.composed))
+        return false;
+    capture.slot = slot;
+    capture.size = kept;
+    capture.frame = shownFrameNumber();
+    _recordPending.push_back(std::move(capture));
+    return true;
+#else
+    (void)rect;
+    (void)kept;
+    (void)slot;
+    return false;
+#endif
 }
 
 bool DeviceScreenGLWindow::drawRecordingPicture(gpu::Rect& rect, QSize& kept)
@@ -2047,6 +2132,27 @@ bool DeviceScreenGLWindow::drawRecordingPicture(gpu::Rect& rect, QSize& kept)
     {
         _renderPicture = {};
         return false;
+    }
+    // Smooth motion's picture is the display's, between two frames: the recording draws the frame due itself (the
+    // latched one, whose number the picture carries) in the texture's place, and as the CPU-side frame the CRT
+    // composition grades
+    const bool frameItself = _shownFrame == &_smoothFrame && !_latchedFrame.isNull() &&
+                             _latchedFrame.format() == QImage::Format_RGBA8888;
+    if (frameItself)
+    {
+        const int w = _latchedFrame.width();
+        const int h = _latchedFrame.height();
+        if (!_recordSource || _recordSource->Width() != w || _recordSource->Height() != h)
+            _recordSource = _gpu->CreateTexture(w, h, gpu::Format::RGBA8);
+        if (!_recordSource)
+        {
+            _renderPicture = {};
+            return false;
+        }
+        _gpu->Upload(*_recordSource, {0, 0, w, h}, _latchedFrame.constBits(),
+                     static_cast<int>(_latchedFrame.bytesPerLine() / 4));
+        std::swap(_texture, _recordSource);
+        _shownFrame = &_latchedFrame;  // the CRT composition reads its pixels on the CPU (grade, prepare)
     }
     _renderingImage = true;
     const uint32_t windowCount = _slangRunner ? _slangRunner->frameCount() : 0;
@@ -2070,6 +2176,11 @@ bool DeviceScreenGLWindow::drawRecordingPicture(gpu::Rect& rect, QSize& kept)
     if (_slangRunner)
         _slangRunner->setFrameCount(windowCount);
     _renderingImage = false;
+    if (frameItself)
+    {
+        std::swap(_texture, _recordSource);
+        _shownFrame = &_smoothFrame;
+    }
     _renderPicture = {};
     // GL rows: the picture's rectangle counted from the bottom
     rect = {picture.x(), pixels.height() - picture.y() - picture.height(), picture.width(), picture.height()};
@@ -2093,10 +2204,19 @@ void DeviceScreenGLWindow::captureForRecording()
     if (!drawRecordingPicture(rect, kept))
         return;
     if (_recordPending.size() >= static_cast<size_t>(gpu::Device::kReadSlots))
-        _recordPending.pop_front();  // not taken (the GUI busy elsewhere): its slot is the one started now
-    if (_gpu->BeginRead(_recordSlot, *_recordTarget, rect, true))
     {
-        _recordPending.push_back({_recordSlot, kept, shownFrameNumber()});
+        dropCapture(_recordPending.front());  // not taken (the GUI busy elsewhere): its slot is the one started now
+        _recordPending.pop_front();
+    }
+    if (composeRecordingFrame(rect, kept, _recordSlot))
+        _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
+    else if (_gpu->BeginRead(_recordSlot, *_recordTarget, rect, true))
+    {
+        PendingCapture capture;
+        capture.slot = _recordSlot;
+        capture.size = kept;
+        capture.frame = shownFrameNumber();
+        _recordPending.push_back(std::move(capture));
         _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
     }
 }
@@ -2132,18 +2252,31 @@ bool DeviceScreenGLWindow::grabRecordingPicture(QImage& out, uint64_t& frame)
     return read;
 }
 
-void DeviceScreenGLWindow::takeRecordingPictures(std::vector<QImage>& out, std::vector<uint64_t>& frames)
+void DeviceScreenGLWindow::takeRecordingPictures(std::vector<RecordingPicture>& out)
 {
     if (_recordPending.empty() || !_gpu || !makeCurrent())
         return;
-    for (const PendingCapture& capture : _recordPending)
+    for (PendingCapture& capture : _recordPending)
     {
+#ifdef __APPLE__
+        if (_recordSurfaces && capture.composed.slot >= 0)
+        {
+            RecordingPicture picture;
+            picture.frame = _recordSurfaces->Finish(capture.composed);
+            picture.number = capture.frame;
+            if (picture.frame)
+                out.push_back(std::move(picture));
+            continue;
+        }
+#endif
         QImage image(capture.size, QImage::Format_ARGB32);  // B,G,R,A bytes on a little-endian host
         if (!image.isNull() &&
             _gpu->FinishRead(capture.slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), true))
         {
-            out.push_back(std::move(image));
-            frames.push_back(capture.frame);
+            RecordingPicture picture;
+            picture.image = std::move(image);
+            picture.number = capture.frame;
+            out.push_back(std::move(picture));
         }
     }
     _recordPending.clear();

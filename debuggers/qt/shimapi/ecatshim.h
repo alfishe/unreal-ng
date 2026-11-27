@@ -310,6 +310,14 @@ public:
         a.message = "This machine has no card run";
         return a;
     }
+    // The same without waiting for the end (not in ecat): done gets the answer on the views' thread, later or (in
+    // process, a remote machine in synchronous mode) before the return. A remote machine never waits on the views'
+    // thread
+    virtual void debug_card_run_to_async(CPU * c, const std::string &until, uint64_t value,
+                                         const std::function<void(const CardRunAnswer &)> &done)
+    {
+        done(debug_card_run_to(c, until, value));
+    }
     // The CPU of the tab shown: a card's follows the main CPU's steps of the paused machine (its state at the main
     // CPU's moment); the main CPU's ends that
     virtual void debug_select(CPU * c) { (void)c; }
@@ -328,6 +336,12 @@ public:
     virtual bool debug_online() const { return true; }
     // The status text while offline ("Waiting for PENTAGON at 127.0.0.1:8090")
     virtual std::string debug_offline_text() const { return std::string(); }
+    // A remote machine's link while online (not in ecat): "" while it answers in time, else what the window says
+    // after its state ("Waiting for the emulator: 3 s"; a refused command's reason for a few seconds)
+    virtual std::string debug_link_text() const { return std::string(); }
+    // One more whenever answers came that change what the views show (not in ecat: a remote machine reads in the
+    // background; the listener is called then too); the views read again while it moves
+    virtual uint64_t debug_data_serial() const { return 0; }
 
     virtual std::string read_setup(const std::string &section, const std::string &key, const std::string &def) = 0;
     virtual void write_setup(const std::string &section, const std::string &key, const std::string &value) = 0;
@@ -652,6 +666,7 @@ public:
         bool ok = false;               // answered; false: `message` why (no connection, a bad parameter)
         std::string json;              // the report, or the control's answer
         std::string message;           // the control's text, or why not
+        bool busy = false;             // not answered now: the machine was busy (a 503), try again a little later
     };
     virtual GsJson read_gs_report(const std::string &report, const std::map<std::string, std::string> &query)
     {
@@ -702,6 +717,12 @@ public:
         (void)replies;
         return {false, std::string(), "This machine has no GS send"};
     }
+    // The same, the answer to done on the views' thread (later from a remote machine; see debug_card_run_to_async)
+    virtual void gs_send_async(const std::string &card, int command, std::optional<int> pre, const std::vector<int> &params,
+                               std::optional<int> replies, const std::function<void(const GsJson &)> &done)
+    {
+        done(gs_send(card, command, pre, params, replies));
+    }
     // A send by its id, as `gs_send` answers it (how far it got). GSConversationRead; over the WebAPI POST
     // control/audio/gs {action: conversation, send_id}
     virtual GsJson gs_conversation(const std::string &card, uint32_t id)
@@ -711,12 +732,46 @@ public:
         return {false, std::string(), "This machine has no GS send"};
     }
 
+    // The twin timeline (not in ecat; gui-card-debugger A5.1, gs-debugger design §5.4, §7.2): both CPUs on one clock
+    // around the shared moment NOW. One read of the core's node (twintimeline.h) as JSON text: paused, the blocks of
+    // each lane, NOW, the next instructions, the markers; running, the density per frame (never a pause). `card` "gs"
+    // / "ms" ("" the first card CPU), `span_t` the window (± main T around NOW), `recent` the blocks per lane at most,
+    // `density` the frames at most; `arm` the read takes or renews this client's lease (the histories the timeline
+    // reads record only while one is held). In process timeline::Read under a lease of the context; over the WebAPI
+    // GET debug/timeline?cpu=&span=&recent=&density=&client=&lease_ms=&arm=. A machine without the card CPU answers
+    // ok with `available` false and the core's `message` (the WebAPI's 404 turned into that)
+    virtual GsJson read_timeline(const std::string &card, double span_t, unsigned int recent, unsigned int density, bool arm)
+    {
+        (void)card;
+        (void)span_t;
+        (void)recent;
+        (void)density;
+        (void)arm;
+        return {false, std::string(), "This machine has no twin timeline"};
+    }
+    // This client's lease on (renewed) or released. In process a lease until released; over the WebAPI a lease that
+    // runs out by itself when not renewed (the strip renews it while shown), POST debug/timeline/arm {on, client,
+    // lease_ms}. The body: {armed, started_now, leases}
+    virtual GsJson timeline_arm(bool on)
+    {
+        (void)on;
+        return {false, std::string(), "This machine has no twin timeline"};
+    }
+    // The owner name of this client's lease ("ecat-<pid>"): the leases list of a read names it
+    virtual std::string timeline_client() const { return std::string(); }
+
     virtual bool ttd_supported() const { return false; }
     virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
     {
         (void)verb;
         (void)options;
         return {false, R"({"error":"Not Implemented","message":"This machine has no time travel"})"};
+    }
+    // The same, the answer to done on the views' thread (later from a remote machine; see debug_card_run_to_async)
+    virtual void ttd_call_async(const std::string &verb, const std::map<std::string, std::string> &options,
+                                const std::function<void(const TtdAnswer &)> &done)
+    {
+        done(ttd_call(verb, options));
     }
 };
 
