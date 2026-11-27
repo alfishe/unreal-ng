@@ -158,8 +158,9 @@ void main() {
 }
 )";
 
-/// The window recording's picture into the encoder's frame (macOS: composeRecordingFrame), as it is
-[[maybe_unused]] const char* const kRecordCopyFragment = R"(
+/// The window recording's picture copied as it is: into the encoder's frame (macOS: composeRecordingFrame), into its
+/// blocks before a smooth scale (packRecordingPlanes too)
+const char* const kRecordCopyFragment = R"(
 #version 330
 uniform sampler2D source;
 in vec2 texCoord;
@@ -169,11 +170,12 @@ void main() {
 }
 )";
 
-/// The window recording's picture as NV12 bytes (packRecordingNv12): the target's texel (col, row) holds the Y of
-/// pixels 4 col .. 4 col + 3 of row `row` (row < height), else U,V of chroma columns 2 col and 2 col + 1 of chroma
-/// row `row - height`. FrameScaler::PackedToNv12's integer arithmetic (BT.709, limited range, the chroma of a 2x2
-/// block's average): a picture sampled texel for texel gives its bytes
-const char* const kRecordNv12Fragment = R"(
+/// The window recording's picture as NV12 or YUV444 bytes (packRecordingPlanes): the target's texel (col, row) holds
+/// the Y of pixels 4 col .. 4 col + 3 of row `row` (row < height); then NV12: U,V of chroma columns 2 col and
+/// 2 col + 1 of chroma row `row - height`; YUV444: U, then V of those pixels on rows height .. 3 height.
+/// FrameScaler::PackedToNv12 / PackedToYuv's integer arithmetic (BT.709, limited range; NV12's chroma of a 2x2 block's
+/// average): a picture sampled texel for texel gives their bytes
+const char* const kRecordPlanesFragment = R"(
 #version 330
 uniform sampler2D source;
 uniform vec2 origin;      // the texture coordinate of the place's top left corner
@@ -181,30 +183,45 @@ uniform vec2 stepPx;      // per pixel of the place
 uniform ivec4 inside;     // the picture in the place: x0, y0, x1, y1 (pixels, rows from the top)
 uniform ivec3 background; // 0..255
 uniform int height;       // the place's rows
+uniform int full;         // 1: YUV444, else NV12
 out vec4 color;
 ivec3 Pixel(int x, int y) {
     if (x < inside.x || y < inside.y || x >= inside.z || y >= inside.w)
         return background;
     return ivec3(texture(source, origin + (vec2(x, y) + 0.5) * stepPx).rgb * 255.0 + 0.5);
 }
+float Byte(int v) {
+    return float(clamp(v, 0, 255)) / 255.0;
+}
 float Luma(ivec3 p) {
-    return float(clamp(((47 * p.r + 157 * p.g + 16 * p.b + 128) >> 8) + 16, 0, 255)) / 255.0;
+    return Byte(((47 * p.r + 157 * p.g + 16 * p.b + 128) >> 8) + 16);
+}
+int U(ivec3 p) {
+    return ((112 * p.b - 26 * p.r - 86 * p.g + 128) >> 8) + 128;
+}
+int V(ivec3 p) {
+    return ((112 * p.r - 102 * p.g - 10 * p.b + 128) >> 8) + 128;
 }
 vec2 Chroma(int cx, int cy) {
     ivec3 s = (Pixel(cx, cy) + Pixel(cx + 1, cy) + Pixel(cx, cy + 1) + Pixel(cx + 1, cy + 1)) >> 2;
-    int u = ((112 * s.b - 26 * s.r - 86 * s.g + 128) >> 8) + 128;
-    int v = ((112 * s.r - 102 * s.g - 10 * s.b + 128) >> 8) + 128;
-    return vec2(float(clamp(u, 0, 255)), float(clamp(v, 0, 255))) / 255.0;
+    return vec2(Byte(U(s)), Byte(V(s)));
 }
 void main() {
     int col = int(gl_FragCoord.x);
     int row = int(gl_FragCoord.y);
+    int x = col * 4;
     if (row < height) {
-        int x = col * 4;
         color = vec4(Luma(Pixel(x, row)), Luma(Pixel(x + 1, row)), Luma(Pixel(x + 2, row)), Luma(Pixel(x + 3, row)));
+    } else if (full != 0) {
+        int y = (row - height) % height;
+        ivec3 p0 = Pixel(x, y), p1 = Pixel(x + 1, y), p2 = Pixel(x + 2, y), p3 = Pixel(x + 3, y);
+        if (row < 2 * height)
+            color = vec4(Byte(U(p0)), Byte(U(p1)), Byte(U(p2)), Byte(U(p3)));
+        else
+            color = vec4(Byte(V(p0)), Byte(V(p1)), Byte(V(p2)), Byte(V(p3)));
     } else {
         int cy = (row - height) * 2;
-        color = vec4(Chroma(col * 4, cy), Chroma(col * 4 + 2, cy));
+        color = vec4(Chroma(x, cy), Chroma(x + 2, cy));
     }
 }
 )";
@@ -373,9 +390,10 @@ void DeviceScreenGLWindow::releaseGLObjects()
     _slangRunner.reset();
     _gpuTimes.Release(false);
     _hudTexture.reset();
+    _hudTextureSerial = 0;
     _hudProgram.reset();
     _recordCopyProgram.reset();
-    _recordNv12Program.reset();
+    _recordPlanesProgram.reset();
     _frameTarget = nullptr;
     dropPresenter();  // its GL objects in this context; Vulkan: its swapchain, before the device and the surface
     _gpu.reset();
@@ -2212,7 +2230,7 @@ void DeviceScreenGLWindow::setRecordingCapture(bool enabled, int pictureHeight)
         {
             _recordTarget.reset();  // a GL texture goes with its context current
             _recordScaled.reset();
-            _recordNv12.reset();
+            _recordPlanes.reset();
             _recordSource.reset();
 #ifdef __APPLE__
             if (_recordSurfaces)
@@ -2242,8 +2260,8 @@ void DeviceScreenGLWindow::dropCapture(PendingCapture& capture)
 bool DeviceScreenGLWindow::composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot)
 {
 #ifdef __APPLE__
-    if (_recordFrame.size.isEmpty() || _recordFrame.nv12 || !_gpu || _gpu->GetBackend() != gpu::Device::Backend::GL ||
-        !_recordTarget)
+    if (_recordFrame.size.isEmpty() || _recordFrame.planes != RecordingFrameLayout::Planes::None || !_gpu ||
+        _gpu->GetBackend() != gpu::Device::Backend::GL || !_recordTarget)
         return false;
     if (!_recordSurfaces)
         _recordSurfaces = std::make_unique<RecordingSurfaces>();
@@ -2355,81 +2373,119 @@ bool DeviceScreenGLWindow::composeRecordingFrame(const gpu::Rect& rect, const QS
 #endif
 }
 
-bool DeviceScreenGLWindow::packRecordingNv12(const gpu::Rect& rect, const QSize& kept, QSize& image)
+bool DeviceScreenGLWindow::packRecordingPlanes(const gpu::Rect& rect, const QSize& kept, QSize& image)
 {
-    if (!_recordFrame.nv12 || _recordFrame.size.isEmpty() || !_gpu || !_recordTarget || kept.isEmpty())
+    using Planes = RecordingFrameLayout::Planes;
+    if (_recordFrame.planes == Planes::None || _recordFrame.size.isEmpty() || !_gpu || !_recordTarget || kept.isEmpty())
         return false;
+    const bool full = _recordFrame.planes == Planes::Yuv444;
     const QRect place = _recordFrame.screenRect;
-    if (place.isEmpty() || ((place.width() | place.height()) & 1) != 0)
+    if (place.isEmpty() || (!full && ((place.width() | place.height()) & 1) != 0))
         return false;
     // The picture where the CPU way puts it in its place (composeNv12 / composeInto): in scale x scale blocks; a few
-    // pixels off, centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept (not
-    // in blocks: that stays the CPU's)
+    // pixels off, centered as it is (the extra edge cut); else scaled into the place's corner, its aspect kept (the
+    // blocks made first, then the whole scaled smooth: the CPU way's order, the CRT mask stays sharp)
     const int scale = std::clamp(_recordFrame.scale, 1, 4);
     const QSize picture = kept * scale;
-    const float w = static_cast<float>(_recordTarget->Width());
-    const float h = static_cast<float>(_recordTarget->Height());
-    // A pixel of the picture (from its top left) is (rect.x + px / sx, rect.y + kept.h - py / sy) in the target's
-    // GL texels: its texture coordinate goes from the picture's top left corner
-    float originX = static_cast<float>(rect.x) / w;
-    float originY = static_cast<float>(rect.y + kept.height()) / h;
-    float stepX = 1.0f / (w * static_cast<float>(scale));
-    float stepY = -1.0f / (h * static_cast<float>(scale));
+    const bool linear =
+        std::abs(picture.width() - place.width()) > 4 || std::abs(picture.height() - place.height()) > 4;
     QRect inside;
-    bool linear = false;
-    if (std::abs(picture.width() - place.width()) <= 4 && std::abs(picture.height() - place.height()) <= 4)
+    if (linear)
+        inside = QRect(QPoint(0, 0), picture.scaled(place.size(), Qt::KeepAspectRatio));
+    else
+        inside = QRect(QPoint((place.width() - picture.width()) / 2, (place.height() - picture.height()) / 2), picture)
+                     .intersected(QRect(QPoint(0, 0), place.size()));
+    if (inside.isEmpty())
+        return false;
+    // The source: the drawn picture, a texel per `scale` pixels; scaled smooth, the blocks drawn first (nearest)
+    gpu::Texture* source = _recordTarget.get();
+    gpu::Rect from = rect;
+    int texelPixels = scale;
+    if (linear && scale > 1)
     {
-        const int left = (place.width() - picture.width()) / 2;
-        const int top = (place.height() - picture.height()) / 2;
-        inside = QRect(QPoint(left, top), picture).intersected(QRect(QPoint(0, 0), place.size()));
-        originX -= static_cast<float>(left) * stepX;
-        originY -= static_cast<float>(top) * stepY;
+        if (!_recordCopyProgram)
+        {
+            std::string log;
+            _recordCopyProgram = _gpu->CreateProgram(CRT_VERTEX_SHADER, kRecordCopyFragment, log);
+            if (!_recordCopyProgram)
+            {
+                qWarning() << "DeviceScreenGLWindow: the recording copy program failed:" << QString::fromStdString(log);
+                return false;
+            }
+        }
+        if (!_recordScaled || _recordScaled->Width() != picture.width() || _recordScaled->Height() != picture.height())
+            _recordScaled = _gpu->CreateTexture(picture.width(), picture.height(), gpu::Format::RGBA8);
+        if (!_recordScaled)
+            return false;
+        const float tw = static_cast<float>(_recordTarget->Width());
+        const float th = static_cast<float>(_recordTarget->Height());
+        _recordCopyProgram->SetTexture("source", _recordTarget.get(), {});
+        // Texture to texture, GL rows both: the quad's top corners (texRect.xy) take the source's top rows
+        _recordCopyProgram->SetFloat4("texRect", static_cast<float>(rect.x) / tw,
+                                      static_cast<float>(rect.y + rect.height) / th,
+                                      static_cast<float>(rect.x + rect.width) / tw, static_cast<float>(rect.y) / th);
+        gpu::DrawState blocks;
+        blocks.viewport = {0, 0, picture.width(), picture.height()};
+        _gpu->Draw(*_recordCopyProgram, *_recordScaled, blocks);
+        _recordCopyProgram->SetTexture("source", nullptr);
+        source = _recordScaled.get();
+        from = {0, 0, picture.width(), picture.height()};
+        texelPixels = 1;
+    }
+    const float w = static_cast<float>(source->Width());
+    const float h = static_cast<float>(source->Height());
+    // A pixel of the picture (from its top left) is (from.x + px / n, from.y + from.h - py / n) in the source's GL
+    // texels (n: pixels per texel): its texture coordinate goes from the picture's top left corner, then per pixel of
+    // the place (scaled: the picture's pixels per the place's)
+    float stepX = 1.0f / (w * static_cast<float>(texelPixels));
+    float stepY = -1.0f / (h * static_cast<float>(texelPixels));
+    float originX = static_cast<float>(from.x) / w;
+    float originY = static_cast<float>(from.y + from.height) / h;
+    if (linear)
+    {
+        stepX *= static_cast<float>(picture.width()) / static_cast<float>(inside.width());
+        stepY *= static_cast<float>(picture.height()) / static_cast<float>(inside.height());
     }
     else
     {
-        if (scale > 1)
-            return false;
-        inside = QRect(QPoint(0, 0), picture.scaled(place.size(), Qt::KeepAspectRatio));
-        if (inside.isEmpty())
-            return false;
-        stepX *= static_cast<float>(kept.width()) / static_cast<float>(inside.width());
-        stepY *= static_cast<float>(kept.height()) / static_cast<float>(inside.height());
-        linear = true;
+        originX -= static_cast<float>((place.width() - picture.width()) / 2) * stepX;
+        originY -= static_cast<float>((place.height() - picture.height()) / 2) * stepY;
     }
-    if (!_recordNv12Program)
+    if (!_recordPlanesProgram)
     {
         std::string log;
-        _recordNv12Program = _gpu->CreateProgram(CRT_VERTEX_SHADER, kRecordNv12Fragment, log);
-        if (!_recordNv12Program)
+        _recordPlanesProgram = _gpu->CreateProgram(CRT_VERTEX_SHADER, kRecordPlanesFragment, log);
+        if (!_recordPlanesProgram)
         {
-            qWarning() << "DeviceScreenGLWindow: the recording NV12 program failed:" << QString::fromStdString(log);
-            _recordFrame.nv12 = false;  // the pictures as they are from now on
+            qWarning() << "DeviceScreenGLWindow: the recording planes program failed:" << QString::fromStdString(log);
+            _recordFrame.planes = Planes::None;  // the pictures as they are from now on
             return false;
         }
     }
     const int texels = (place.width() + 3) / 4;
-    const int rows = place.height() * 3 / 2;
-    if (!_recordNv12 || _recordNv12->Width() != texels || _recordNv12->Height() != rows)
-        _recordNv12 = _gpu->CreateTexture(texels, rows, gpu::Format::RGBA8);
-    if (!_recordNv12)
+    const int rows = full ? place.height() * 3 : place.height() * 3 / 2;
+    if (!_recordPlanes || _recordPlanes->Width() != texels || _recordPlanes->Height() != rows)
+        _recordPlanes = _gpu->CreateTexture(texels, rows, gpu::Format::RGBA8);
+    if (!_recordPlanes)
         return false;
     gpu::Sampler sampler;
     sampler.filter = linear ? gpu::Filter::Linear : gpu::Filter::Nearest;
     const QColor color = _recordFrame.background;
     const int32_t background[3] = {color.red(), color.green(), color.blue()};
-    gpu::Program& p = *_recordNv12Program;
-    p.SetTexture("source", _recordTarget.get(), sampler);
+    gpu::Program& p = *_recordPlanesProgram;
+    p.SetTexture("source", source, sampler);
     p.SetFloat2("origin", originX, originY);
     p.SetFloat2("stepPx", stepX, stepY);
     p.SetInt4("inside", inside.left(), inside.top(), inside.left() + inside.width(), inside.top() + inside.height());
     p.SetInts("background", background, 3);
     p.SetInt("height", place.height());
+    p.SetInt("full", full ? 1 : 0);
     p.SetFloat4("texRect", 0.0f, 0.0f, 1.0f, 1.0f);
     gpu::DrawState state;
     state.viewport = {0, 0, texels, rows};
-    _gpu->Draw(p, *_recordNv12, state);
+    _gpu->Draw(p, *_recordPlanes, state);
     p.SetTexture("source", nullptr);
-    // The bytes: the place's width (the texels' last few may pass it), its rows and half as many again
+    // The bytes: the place's width (the texels' last few may pass it; the image's rows are as long), the planes' rows
     image = QSize(place.width(), rows);
     return true;
 }
@@ -2528,17 +2584,17 @@ void DeviceScreenGLWindow::captureForRecording()
         dropCapture(_recordPending.front());  // not taken (the GUI busy elsewhere): its slot is the one started now
         _recordPending.pop_front();
     }
-    QSize nv12;
+    QSize planes;
     if (composeRecordingFrame(rect, kept, _recordSlot))
         _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
-    else if (packRecordingNv12(rect, kept, nv12)
-                 ? _gpu->BeginRead(_recordSlot, *_recordNv12, {0, 0, _recordNv12->Width(), _recordNv12->Height()})
+    else if (packRecordingPlanes(rect, kept, planes)
+                 ? _gpu->BeginRead(_recordSlot, *_recordPlanes, {0, 0, _recordPlanes->Width(), _recordPlanes->Height()})
                  : _gpu->BeginRead(_recordSlot, *_recordTarget, rect, true))
     {
         PendingCapture capture;
         capture.slot = _recordSlot;
-        capture.nv12 = !nv12.isEmpty();
-        capture.size = capture.nv12 ? nv12 : kept;
+        capture.planes = !planes.isEmpty();
+        capture.size = capture.planes ? planes : kept;
         capture.frame = shownFrameNumber();
         _recordPending.push_back(std::move(capture));
         _recordSlot = (_recordSlot + 1) % gpu::Device::kReadSlots;
@@ -2574,11 +2630,11 @@ bool DeviceScreenGLWindow::grabRecordingPicture(RecordingPicture& out)
             read = out.frame != nullptr;
 #endif
         }
-        else if (QSize nv12; slot >= 0 && packRecordingNv12(rect, kept, nv12))
+        else if (QSize planes; slot >= 0 && packRecordingPlanes(rect, kept, planes))
         {
-            QImage image(nv12, QImage::Format_Grayscale8);
+            QImage image(planes, QImage::Format_Grayscale8);
             read = !image.isNull() &&
-                   _gpu->BeginRead(slot, *_recordNv12, {0, 0, _recordNv12->Width(), _recordNv12->Height()}) &&
+                   _gpu->BeginRead(slot, *_recordPlanes, {0, 0, _recordPlanes->Width(), _recordPlanes->Height()}) &&
                    _gpu->FinishRead(slot, image.bits(), static_cast<size_t>(image.bytesPerLine()), false);
             if (read)
             {
@@ -2619,10 +2675,10 @@ void DeviceScreenGLWindow::takeRecordingPictures(std::vector<RecordingPicture>& 
             continue;
         }
 #endif
-        // B,G,R,A bytes on a little-endian host; NV12's rows as the texels hold them (GL's row 0: the top one)
-        QImage image(capture.size, capture.nv12 ? QImage::Format_Grayscale8 : QImage::Format_ARGB32);
+        // B,G,R,A bytes on a little-endian host; the planes' rows as the texels hold them (GL's row 0: the top one)
+        QImage image(capture.size, capture.planes ? QImage::Format_Grayscale8 : QImage::Format_ARGB32);
         if (!image.isNull() && _gpu->FinishRead(capture.slot, image.bits(), static_cast<size_t>(image.bytesPerLine()),
-                                                !capture.nv12))
+                                                !capture.planes))
         {
             RecordingPicture picture;
             picture.image = std::move(image);
@@ -3060,23 +3116,37 @@ void DeviceScreenGLWindow::drawHudOverTarget(gpu::Texture& target, int surfaceWi
             return;
         }
     }
-    if (_hudImage.width() != surfaceWidth || _hudImage.height() != surfaceHeight)
-        _hudImage = QImage(surfaceWidth, surfaceHeight, QImage::Format_RGBA8888_Premultiplied);
-    _hudImage.fill(Qt::transparent);
-    _hudImage.setDevicePixelRatio(dpr);
-    {
-        QPainter painter(&_hudImage);
-        if (_hudOverlay && _hudOverlay->isVisible())
-            _hudOverlay->renderHUD(painter, width(), height(), dpr);
-        if (_overlayPainter)
-            _overlayPainter(painter, width(), height());
-    }
-    if (!_hudTexture || _hudTexture->Width() != surfaceWidth || _hudTexture->Height() != surfaceHeight)
-        _hudTexture = _gpu->CreateTexture(surfaceWidth, surfaceHeight, gpu::Format::RGBA8);
-    if (!_hudTexture)
+    // A HUD that does not move with time (HudOverlay::prepareLayer) and no other overlay: the texture uploaded for its
+    // layer stays until the layer changes, an empty one is not drawn; otherwise painted and uploaded on every frame
+    const bool hudShown = _hudOverlay && _hudOverlay->isVisible();
+    const bool hudStill =
+        !_overlayPainter && hudShown && _hudOverlay->prepareLayer(width(), height(), static_cast<float>(dpr));
+    if (hudStill && _hudOverlay->layerEmpty())
         return;
-    _gpu->Upload(*_hudTexture, {0, 0, surfaceWidth, surfaceHeight}, _hudImage.constBits(),
-                 static_cast<int>(_hudImage.bytesPerLine() / 4));
+    const bool sameSize = _hudTexture && _hudTexture->Width() == surfaceWidth && _hudTexture->Height() == surfaceHeight;
+    if (!hudStill || !sameSize || _hudTextureSerial != _hudOverlay->layerSerial())
+    {
+        if (_hudImage.width() != surfaceWidth || _hudImage.height() != surfaceHeight)
+            _hudImage = QImage(surfaceWidth, surfaceHeight, QImage::Format_RGBA8888_Premultiplied);
+        _hudImage.fill(Qt::transparent);
+        _hudImage.setDevicePixelRatio(dpr);
+        {
+            QPainter painter(&_hudImage);
+            if (hudShown)
+                _hudOverlay->renderHUD(painter, width(), height(), static_cast<float>(dpr));
+            if (_overlayPainter)
+                _overlayPainter(painter, width(), height());
+        }
+        if (!sameSize)
+            _hudTexture = _gpu->CreateTexture(surfaceWidth, surfaceHeight, gpu::Format::RGBA8);
+        _hudTextureSerial = 0;
+        if (!_hudTexture)
+            return;
+        _gpu->Upload(*_hudTexture, {0, 0, surfaceWidth, surfaceHeight}, _hudImage.constBits(),
+                     static_cast<int>(_hudImage.bytesPerLine() / 4));
+        if (hudStill)
+            _hudTextureSerial = _hudOverlay->layerSerial();
+    }
     _hudProgram->SetTexture("hud", _hudTexture.get());
     _hudProgram->SetInt("height", surfaceHeight);
     _hudProgram->SetFloat4("texRect", 0.0f, 0.0f, 1.0f, 1.0f);

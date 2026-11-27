@@ -73,15 +73,111 @@ private:
 };
 }  // namespace
 
+/// region <Reads of the store>
+
+void TimeTravelController::ReadSession(const std::function<void()>& read) const
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
+    read();
+}
+
+bool TimeTravelController::StoredFramesReadableLive(uint64_t loFrame, uint64_t hiFrame, bool lineage) const
+{
+    // A recording is viewed on its own line; anything else (a query's view left behind) takes the pause
+    if (_viewId != _tip)
+        return false;
+    // An ancestor's frames: viewing its line (ViewBranch) sets the journals' cursors to the line's ends, and the
+    // frame in progress has records the engine does not hold yet
+    if (lineage && _lines.size() > 1 && OwnerOnLineage(loFrame) != _tip)
+        return false;
+    if (_line->timeline.empty() || (_engine->EvictedSegments() == 0 && _engine->ReadBackSegments() == 0))
+        return true;
+    // Two tiers: a segment not whole in memory is read back from its file by the read (new versions in the store,
+    // the read-back cache trimmed), which is not a read of a recording's engine
+    const int64_t last = TimelineIndexAtOrBefore(TTDTimePoint{hiFrame, 0});
+    if (last < 0)
+        return true;   // before the history: the read refuses, nothing is read
+    const int64_t first = std::max<int64_t>(TimelineIndexAtOrBefore(TTDTimePoint{loFrame, 0}), 0);
+    const size_t base = _engine->FirstCheckpoint();
+    const uint32_t line = _engine->ActiveLine();
+    const std::deque<TTDSegmentInfo>& segments = _engine->Segments();
+    for (size_t k = 0; k < segments.size(); ++k)
+        if (!segments[k].Whole() && segments[k].firstCheckpoint <= base + static_cast<size_t>(last) &&
+            _engine->SegmentEnd(line, k) > base + static_cast<size_t>(first))
+            return false;
+    return true;
+}
+
+bool TimeTravelController::StoredFramesPauseRecording(uint64_t loFrame, uint64_t hiFrame) const
+{
+    const SessionOperation read{*this, SessionOperation::Kind::Read};
+    return _state == TTDSessionState::Recording && !StoredFramesReadableLive(loFrame, hiFrame, /*lineage=*/false);
+}
+
+void TimeTravelController::ReadStoredFrames(uint64_t loFrame, uint64_t hiFrame, bool insideFrame,
+                                            const std::function<void()>& read)
+{
+    // One operation from the decision to the read's end: the recording cannot move on between them
+    SessionOperation op{*this, SessionOperation::Kind::Read};
+    if (insideFrame)
+        op.Changes();   // the frame's writes may be rebuilt by a replay (BuildWriteJournalFrames): published at the end
+    if (_state == TTDSessionState::Recording &&
+        (insideFrame || !StoredFramesReadableLive(loFrame, hiFrame, /*lineage=*/false)))
+    {
+        // Browsing while recording pauses the recording (D8): everything up to here goes to the engine
+        op.Changes();
+        PauseRecordingForBrowsing();
+    }
+    read();
+}
+
+bool TimeTravelController::ReadCpuViewStored(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view)
+{
+    const SessionOperation read{*this, SessionOperation::Kind::Read};
+    // While a recording runs: only what is read without touching it. The rest is ReadCpuView's replay path, which
+    // pauses the recording first (D8)
+    if (_state == TTDSessionState::Recording && !StoredFramesReadableLive(at.frame, at.frame, /*lineage=*/true))
+        return false;
+    TTDCpuView stored;
+    if (!ReadCpuViewFromStore(at, offset, length, stored))
+        return false;
+    view = std::move(stored);
+    return true;
+}
+
+/// endregion </Reads of the store>
+
 /// region <Memory series>
+
+bool TimeTravelController::SeriesReadableLive(const TTDSeriesQuery& query) const
+{
+    if (_line->timeline.empty())
+        return true;
+    const bool listed = !query.frames.empty();
+    // The whole history starts on the trunk: with branches that is an ancestor's part (frame 0 stands for it)
+    const uint64_t lo = listed            ? query.frames.front()
+                        : query.fromStart ? (_lines.size() > 1 ? 0 : _line->timeline.front().time.frame)
+                                          : query.fromFrame;
+    const uint64_t hi = listed ? query.frames.back() : query.toEnd ? UINT64_MAX : query.toFrame;
+    return StoredFramesReadableLive(lo, hi, /*lineage=*/true);
+}
 
 bool TimeTravelController::ResolveSeriesQuery(TTDSeriesQuery& query, uint64_t& first, uint64_t& last,
                                               std::string& error)
 {
     const size_t firstIndex = LineageFirstIndex();
     const size_t endIndex = LineageEndIndex();
-    const TTDCheckpoint* firstCp = _line->timeline.empty() ? nullptr : ViewLineageCheckpoint(firstIndex);
-    const TTDCheckpoint* lastCp = firstCp && endIndex > firstIndex ? ViewLineageCheckpoint(endIndex - 1) : nullptr;
+    // The lineage's first and last checkpoints. Read from the lines themselves where both hold checkpoints: no line
+    // is viewed for it (a recording that runs is read on its own line only, StoredFramesReadableLive)
+    const std::vector<TTDCheckpoint>& head = _lines.front()->timeline;
+    const std::vector<TTDCheckpoint>& tail = _lines[_tip]->timeline;
+    const bool direct = !head.empty() && !tail.empty();
+    const TTDCheckpoint* firstCp = direct                    ? &head.front()
+                                   : _line->timeline.empty() ? nullptr
+                                                             : ViewLineageCheckpoint(firstIndex);
+    const TTDCheckpoint* lastCp = direct                               ? &tail.back()
+                                  : firstCp && endIndex > firstIndex   ? ViewLineageCheckpoint(endIndex - 1)
+                                                                       : nullptr;
     if (!firstCp || !lastCp)
     {
         error = "no recorded history";
@@ -111,8 +207,10 @@ bool TimeTravelController::ResolveSeriesQuery(TTDSeriesQuery& query, uint64_t& f
 bool TimeTravelController::MemorySeriesRestores(const TTDSeriesQuery& asked)
 {
     const SessionOperation read{*this, SessionOperation::Kind::Read};
-    if (_state == TTDSessionState::Recording)
-        return false;   // the series pauses the recording first and reads the flushed store
+    // A recording that runs is left as it is only for what the store holds in memory on its own line: for anything
+    // else the series pauses it first (D8)
+    if (_state == TTDSessionState::Recording && !SeriesReadableLive(asked))
+        return true;
     bool anyCpu = false;
     for (const TTDSeriesRange& r : asked.ranges)
         anyCpu = anyCpu || r.cpu;
@@ -157,12 +255,14 @@ bool TimeTravelController::MemorySeriesRestores(const TTDSeriesQuery& asked)
 TTDSeriesResult TimeTravelController::ReadMemorySeries(const TTDSeriesQuery& asked)
 {
     TTDSeriesResult result;
+    // One operation from the decision to the last row. Store reads only: a read of the session, a running machine
+    // goes on after it and a recording that runs stays as it is (RQ-2). A restore changes the machine for a while
+    // and puts it back, and a recording pauses for it, as for frames the store cannot give while it runs (D8)
+    SessionOperation op{*this, SessionOperation::Kind::Read};
     const bool restores = MemorySeriesRestores(asked);
-    const bool recording = _state == TTDSessionState::Recording;
-    // Store reads only: a read of the session. A restore (or pausing a recording for it) changes the machine for a
-    // while and puts it back
-    const SessionOperation op{*this, restores || recording ? SessionOperation::Kind::Change : SessionOperation::Kind::Read};
-    if (_state == TTDSessionState::Recording)
+    if (restores)
+        op.Changes();
+    if (_state == TTDSessionState::Recording && restores)
         PauseRecordingForBrowsing();
     Memory* memory = _context ? _context->pMemory : nullptr;
     if (!_engine || !memory || _line->timeline.empty())

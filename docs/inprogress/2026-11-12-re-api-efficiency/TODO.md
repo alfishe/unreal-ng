@@ -2,7 +2,11 @@
 
 > TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
 
-**Status:** analysis done; F3, F6, V4 done. PLAN row **#122** (T2).
+**Status (2026-11-27):** 23 of 28 items done and on master: F1-F3, F5, F6, F8 (verified, no change), F9, S1, S2, S4,
+V1-V5, V7, E1-E6, E8. Left: F4 (waits for RZX interop, PLAN #27 R5), S3 (waits for the owner's choice of the runner:
+Lua + C or WASM), F7, V6, E7. PLAN row **#122** (T2). The "uncommitted on <branch>" notes below are from the day each
+item was built; all of them have landed since (commits in the
+[TTD index](../../emulator/design/debugger/time-travel-debug/README.md#plan-and-history-folders-docsinprogress)).
 
 ## Documents
 - [analysis.md](analysis.md) — every fault, slow path, missing verb and ergonomics gap the reverse-engineering agents hit, with evidence in the reverse cases repo, the master code places, and proposals (§6 summary table).
@@ -244,7 +248,8 @@
   "gdb", "dezog", "zrcp", "pid"}` by temp file + rename when the ports are decided. `mcplib.launch(binary, 'auto')`
   (`run_all.py --port-base auto`) uses both and gives `process.ports`. Tests: `PortPlan_Test.*` (core-tests). Docs:
   [environment-variables](../../emulator/environment-variables.md#all-six-ports-at-once---port-base-and---ports-file).
-  Left: `re_session.py` and the other launchers still take a number.
+  `re_session.py` takes `--port-base auto` too since `5aeaf906a` (the MCP endpoint is then in the work folder's
+  `session.json`, `mcp`).
 - [x] E3: `frame` in `/registers` and run answers (S). Run answers in `c3ab886b3`; 2026-11-24: `special.frame` next
   to `special.t` in `GET /registers` (and the `regs` of `/debug/snapshot`), the MCP register text ends with
   "frame N T t". Test `DebugSnapshot_Test.RegistersCarryEveryGroup`.
@@ -262,9 +267,10 @@
   keys held together wherever a key text is taken: `DebugKeyboardManager::SplitKeyChord` ("w+o", "caps+1"; the key
   `+` stays a key, "ss++" is symbol shift and `+`), used by the WebAPI `keyboard/tap` / `press` / `release` (`key`)
   and `combo` (an item of `keys`), so by MCP `type_input`, and by the `input.key` action for an item of `keys` (its
-  text form split at `+` already). The refusal says how keys are written (`DescribeUnknownKey`): "Unknown key 'W O':
+  text form split at `+` already); since `5aeaf906a` also by the CLI (`key tap caps+5`), Lua and Python key verbs
+  (`DebugKeyboardManager::ParseKeyChord`). The refusal says how keys are written (`DescribeUnknownKey`): "Unknown key 'W O':
   a key is one name (a, enter, caps); keys held together are joined with '+' (w+o); a space or a comma does not
-  separate keys". CLI `key press` / Python / Lua key verbs still take one name. Tests:
+  separate keys". Tests:
   `DebugKeyboardManager_test.SplitKeyChord_PlusJoinsKeysHeldTogether`, `.SplitKeyChord_TheKeyPlusStaysAKey`,
   `.DescribeUnknownKey_SaysHowKeysAreWritten`,
   `HostActions_Test.AKeyTapsHoldsAndReleasesAndAnUnknownNameIsABadRequest`.

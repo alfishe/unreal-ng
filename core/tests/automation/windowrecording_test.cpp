@@ -171,9 +171,13 @@ TEST(WindowRecording_Test, WordsMakeARequest)
     error.clear();
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "codec", "H265", error));
     EXPECT_EQ(request.codec, "h265");
-    EXPECT_EQ(request.transfer, "picture") << "the window's picture to ffmpeg by default";
+    EXPECT_EQ(request.transfer, "auto") << "NV12 where the file is 4:2:0 anyway, else the picture, by default";
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "transfer", "picture", error));
+    EXPECT_EQ(request.transfer, "picture");
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "transfer", "NV12", error));
     EXPECT_EQ(request.transfer, "nv12");
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "transfer", "YUV444", error));
+    EXPECT_EQ(request.transfer, "yuv444");
 
     // The keyboard: on = the window's, off / none = the picture only; audio none = off
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "keyboard", "on", error));
@@ -239,6 +243,9 @@ TEST(WindowRecording_Test, StartRefusesRangesBeforeTheWindowIsAsked)
     r.codec = "h265";
     r.transfer = "nv12";
     EXPECT_TRUE(WindowRecording::Start("id", r).Ok()) << "NV12 frames for an H.26x file";
+    r = Valid();  // prores
+    r.transfer = "yuv444";
+    EXPECT_TRUE(WindowRecording::Start("id", r).Ok()) << "YUV444 frames for a ProRes 4444 file";
 }
 
 TEST(WindowRecording_Test, StartReportAndStop)

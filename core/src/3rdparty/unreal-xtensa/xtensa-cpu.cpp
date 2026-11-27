@@ -25,6 +25,7 @@ struct Cpu::PageEntry
 struct Cpu::CodePage
 {
     uint64_t bits[64] = {}; ///< one bit per byte of the 4 KB host page that belongs to a decoded instruction
+    bool watched = false;   ///< WatchWrites: the next store into this page records it
 };
 
 struct Cpu::Block
@@ -264,6 +265,13 @@ bool Cpu::AddRegion(uint32_t guestBase, uint32_t size, uint8_t* host, uint32_t f
         e.code = nullptr;
     }
     InvalidateCode();
+    if (watching_)
+    {
+        // New bytes under the guest addresses: the watcher takes them all as written
+        for (uint32_t off = 0; off < size; off += 4096)
+            writtenPages_.push_back(reinterpret_cast<uintptr_t>(host) + off);
+        ArmWriteWatch();
+    }
     return true;
 }
 
@@ -368,8 +376,65 @@ inline bool Cpu::Store(uint32_t addr, int size, uint32_t value)
     return true;
 }
 
+// No bits, never watched itself: shared by every CPU, only read
+Cpu::CodePage Cpu::watchSentinel_;
+
+bool Cpu::HasCode(const PageEntry& e) const
+{
+    return e.code && e.code != WatchSentinel();
+}
+
+void Cpu::WatchWrites(bool on)
+{
+    if (on == watching_)
+        return;
+    watching_ = on;
+    writtenPages_.clear();
+    if (on)
+    {
+        ArmWriteWatch();
+        return;
+    }
+    for (auto& t : l1_)
+        if (t)
+            for (size_t i = 0; i < 1024; ++i)
+                if (t[i].code == WatchSentinel())
+                    t[i].code = nullptr;
+    for (auto& kv : codePages_)
+        kv.second->watched = false;
+}
+
+void Cpu::ArmWriteWatch()
+{
+    if (!watching_)
+        return;
+    // Only the pages of writable regions, a few thousand entries: microseconds per arming
+    for (const Region& r : regions_)
+    {
+        if (!(r.flags & RegionWrite))
+            continue;
+        for (uint64_t a = r.base; a < static_cast<uint64_t>(r.base) + r.size; a += 4096)
+            if (PageEntry* e = Entry(static_cast<uint32_t>(a)); e && !e->code && (e->flags & RegionWrite))
+                e->code = WatchSentinel();
+    }
+    for (auto& kv : codePages_)
+        kv.second->watched = true;
+}
+
 void Cpu::CodeWriteCheck(PageEntry& e, uint32_t addr, int size)
 {
+    if (e.code == WatchSentinel())
+    {
+        // A watched page without code: record it, and the next stores take the fast path again
+        writtenPages_.push_back(e.bias + (addr & ~0xFFFu));
+        e.code = nullptr;
+        return;
+    }
+    if (e.code->watched)
+    {
+        writtenPages_.push_back(e.bias + (addr & ~0xFFFu));
+        e.code->watched = false;
+    }
     const uint32_t off = addr & 0xFFF;
     for (int i = 0; i < size; ++i)
     {
@@ -519,8 +584,9 @@ void Cpu::InvalidateCode()
         retired_.push_back(std::move(kv.second));
     blockMap_.clear();
     std::memset(lookup_, 0, sizeof(lookup_));
+    // A watched code page stays watched without its code (conservative: a page written already is recorded again)
     for (PageEntry* e : codeEntries_)
-        e->code = nullptr;
+        e->code = watching_ && (e->flags & RegionWrite) ? WatchSentinel() : nullptr;
     codeEntries_.clear();
     codePages_.clear();
     codeHeld_ = false;
@@ -586,27 +652,31 @@ void Cpu::MarkCode(uint32_t addr, int len)
         PageEntry* e = Entry(a);
         if (!e)
             continue;
-        if (!e->code)
+        if (!HasCode(*e))
         {
-            // The bitmap belongs to the host page: attach it to every guest alias of that page.
+            // The bitmap belongs to the host page: attach it to every guest alias of that page. A watched page
+            // stays watched (conservative: one written already is recorded again)
             const uintptr_t hostPage = (e->bias + (a & ~0xFFFu));
             auto& cp = codePages_[hostPage];
             if (!cp)
+            {
                 cp.reset(new CodePage);
+                cp->watched = watching_;
+            }
             for (const Region& r : regions_)
             {
                 const uintptr_t h0 = reinterpret_cast<uintptr_t>(r.host);
                 if (hostPage >= h0 && hostPage < h0 + r.size)
                 {
                     PageEntry* alias = Entry(r.base + static_cast<uint32_t>(hostPage - h0));
-                    if (alias && alias->bias == reinterpret_cast<uintptr_t>(r.host) - r.base && !alias->code)
+                    if (alias && alias->bias == reinterpret_cast<uintptr_t>(r.host) - r.base && !HasCode(*alias))
                     {
                         alias->code = cp.get();
                         codeEntries_.push_back(alias);
                     }
                 }
             }
-            if (!e->code) // mapping replaced since: keep this entry consistent anyway
+            if (!HasCode(*e)) // mapping replaced since: keep this entry consistent anyway
             {
                 e->code = cp.get();
                 codeEntries_.push_back(e);

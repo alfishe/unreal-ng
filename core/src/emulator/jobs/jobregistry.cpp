@@ -542,10 +542,9 @@ Registry::CancelResult Registry::Cancel(uint64_t id)
             emulatorId = job->spec.emulatorId;
             running = true;
         }
-        else
+        else if (!TakeQueuedLocked(job))
         {
-            _queue.erase(std::remove(_queue.begin(), _queue.end(), job), _queue.end());
-            job->cancel->store(true);
+            return CancelResult::Finished;  // another cancel took it and is ending it
         }
     }
     if (running)
@@ -555,25 +554,51 @@ Registry::CancelResult Registry::Cancel(uint64_t id)
         Notify(emulatorId);
         return CancelResult::Requested;
     }
+    FinishCancelledQueued(job);
+    return CancelResult::Cancelled;
+}
+
+bool Registry::TakeQueuedLocked(const std::shared_ptr<Job>& job)
+{
+    const auto it = std::find(_queue.begin(), _queue.end(), job);
+    if (it == _queue.end())
+        return false;
+    _queue.erase(it);
+    job->cancel->store(true);
+    return true;
+}
+
+void Registry::FinishCancelledQueued(const std::shared_ptr<Job>& job)
+{
     Outcome outcome;
     outcome.ok = false;
     outcome.cancelled = true;
     outcome.status = 409;
     outcome.error = "cancelled before it ran";
     Finish(job, std::move(outcome), false);
-    return CancelResult::Cancelled;
 }
 
 void Registry::CancelInstance(const std::string& emulatorId)
 {
-    std::vector<uint64_t> ids;
+    std::vector<std::shared_ptr<Job>> queued;
+    std::vector<uint64_t> running;
     {
+        // The queued ones leave the queue in one step, before any running one is asked to stop: a lane freed by that
+        // stop must find nothing of this instance to start
         std::lock_guard<std::mutex> lock(_mutex);
         for (const auto& [id, job] : _jobs)
-            if (job->spec.emulatorId == emulatorId && !IsFinal(job->state))
-                ids.push_back(id);
+        {
+            if (job->spec.emulatorId != emulatorId || IsFinal(job->state))
+                continue;
+            if (job->state == JobState::Running)
+                running.push_back(id);
+            else if (TakeQueuedLocked(job))
+                queued.push_back(job);
+        }
     }
-    for (uint64_t id : ids)
+    for (const auto& job : queued)
+        FinishCancelledQueued(job);
+    for (uint64_t id : running)
         (void)Cancel(id);
 }
 

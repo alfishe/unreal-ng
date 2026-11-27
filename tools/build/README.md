@@ -77,6 +77,54 @@ tools/build/slot.sh [-t SECONDS] [-q] POOL -- COMMAND [ARGS...]
 - Benchmarks and A/B timing runs: use `UNREAL_NICE=0` (or no slot at all) - lowered
   priority skews the numbers, and run them on a quiet machine.
 
+## Compiler cache
+
+Every compile goes through ccache when it is installed ([`cmake/Ccache.cmake`](../../cmake/Ccache.cmake), `UNREAL_CCACHE`,
+on by default; the build hosts run ccache 4.14.3). Two layers:
+
+| Layer | Where | Written by | Removed |
+|-------|-------|------------|---------|
+| Own cache | `<checkout>/scratch/ccache`, 10 GiB (`-DUNREAL_CCACHE_SIZE=`) | that checkout's builds | with the worktree (`git worktree remove`) |
+| Master cache, read only | `scratch/wt-ccache-master/scratch/ccache` of the main checkout, 40 GiB | `tools/build/ccache-master.sh` | never; ccache trims it, least recently used first |
+
+- **A new worktree compiles only what it changed.** Its first build finds the rest in the master cache. Measured on
+  2026-11-27, `all` + `core-tests`, the first worktree with an empty cache, then a second one at the same commit
+  reading the first one's as its master cache: macOS 429 and 100 s (before, with one plain ccache per user: 635 and
+  525 s, 3 % hits), Linux gcc 749 and 76 s, MSVC 786 and 237 s, MinGW 945 and 216 s (Windows: the links stay); 97 %
+  hits, the misses are the files whose definitions carry the checkout's absolute path.
+- **Keep the master cache current: `tools/build/ccache-master.sh` after a landing**, on each host. It fetches
+  github/master into the worktree `scratch/wt-ccache-master` (the script's, never a task's: do not edit, reset or
+  remove it) and builds it; when master has not moved since its last build it returns at once. One run at a time (pool
+  `ccache-master`). `--status` prints where it is.
+- **A clone (the Windows host)** has no main checkout to find the master cache in: pass its directory,
+  `-DUNREAL_CCACHE_MASTER_DIR=C:/Projects/GitHub/unreal-ng-ccache-master/scratch/ccache`.
+- **What makes a cache shareable** (set on the launcher's command line, above any `ccache.conf`): `base_dir` = the
+  checkout's root, `hash_dir=false`, `depend_mode=true`. Precompiled headers are off with ccache: a PCH holds absolute
+  paths and ccache hashes its bytes, so its users never hit in another checkout; `core`'s `stdafx.h` is included in
+  each source instead (`unreal_precompile_headers()`), costing about 0.3-0.6 s per `core` source on a miss. MSVC
+  writes debug info into the objects (`/Z7`): ccache cannot cache `/Zi`.
+- **Statistics**: `ccache -d <checkout>/scratch/ccache -s` (`Remote storage` = hits in the master cache).
+
+## Linker
+
+gcc and clang off Apple link with **lld** when it is installed (`cmake/Linker.cmake`, every configure, the configure
+log says `Linker: lld`): Linux (`apt install lld`) and MinGW (MSYS2's `mingw64/bin/ld.lld`). Left alone: macOS
+(`ld64.lld` was no faster than Apple's `ld`), MSVC, and LTO builds (gcc's LTO needs GNU ld's plugin; the release
+packages keep their linker). `-DUNREAL_LLD=OFF` keeps the system's linker.
+
+`core-tests` lists its tests for ctest only when ctest runs (`gtest_discover_tests(... DISCOVERY_MODE PRE_TEST)`): as a
+step after every link, CMake's script over the 14k test names took 37 s on macOS. Nothing here runs ctest (`test.sh`
+and `test-parallel` run the shards themselves).
+
+One lone relink of `core-tests` (and `unreal-qt` on Linux), 2026-11-27:
+
+| Host | Before | lld | lld + no discovery step |
+|------|--------|-----|-------------------------|
+| macOS (Apple `ld`) | 42 s | - | 0.9 s |
+| Linux | 39 s (GNU ld 2.42); `unreal-qt` 19 s | 8 s; `unreal-qt` 1.7 s | 2.9 s |
+
+mold 2.30 was no faster than lld 18 on Linux.
+
 ## Landing on master
 
 Work happens in a worktree (`scratch/wt-<name>`), never on a branch switched in the shared main checkout. When the

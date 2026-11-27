@@ -19,7 +19,12 @@ For SD / SPI traffic the [bus analyzer](bus-analyzer.md) is the better instrumen
 ```text
 # one-shot — the default instrument for "what did this routine touch?":
 analyze_performance {"action":"porttrace","frames":120,"limit":40}
-#   → runs exactly N paused-forward frames (1–1000), returns the last `limit` events
+#   → runs exactly N paused-forward frames (1–1000), returns the last `limit` events (also as text lines)
+analyze_performance {"action":"porttrace","frames":600,"limit":100,"filter":"fdc-only"}      # a preset, set before the capture
+analyze_performance {"action":"porttrace","frames":600,"limit":100,
+                     "filter":{"include":[{"port":"0xFFFD","direction":"out"}],"exclude":[{"pc":["0000","3FFF"]}]}}
+#   → only what the filter passes is recorded at all, so a long capture holds what is studied; omitted: the
+#     filter in force stays
 
 # full session via invoke_api (same paths as WebAPI):
 invoke_api  {"method":"PUT", "path":"/api/v1/emulator/{id}/feature/porttrace","body":{"enabled":true}}
@@ -191,6 +196,20 @@ python3 tools/porttrace/porttrace_gui.py
 Analysis questions the tools answer: per-port/per-device histograms, IN/OUT
 ratios, unmapped-access detection (probing undiscovered ports), decode-rule
 coverage, PC attribution ("who hammers port X").
+
+### Other instruments for the same question
+
+- **Each access with its frame, T and PC inside a recorded window**, with no instruction stream: the CPU access
+  trace of a TTD recording, filtered to ports - `analysis {"action":"trace","path":"/abs/scratch/ports.trace",
+  "from_frame":1200,"to_frame":1260,"kinds":"in,out","addresses":"7FFD-7FFD"}` (`pc` narrows by the instruction's
+  address; [analysis-layers.md](../../docs/emulator/analysis/analysis-layers.md)).
+- **One device's ports over a long run**: its port history with a record-time filter, so the capture holds only what
+  is studied - `device_history {"action":"config","device":"zxbus.1.ports","mode":"capture","limit":0,
+  "stream":"scratch/gs-ports.jsonl","filter":"dir=out pc=#8000-#9FFF"}`
+  ([device-history.md](../../docs/emulator/design/debugger/device-history.md)). A field the records do not have is
+  refused with the valid ones. A capture with a stream and no filter of a busy device grows fast (a General Sound
+  card: 1.7 GB for a 2600-frame tape load, nearly all of it the firmware's own polls; `side=host out=true` keeps the
+  host's writes).
 
 ## Pitfalls
 

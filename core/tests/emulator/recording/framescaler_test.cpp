@@ -561,6 +561,30 @@ TEST(FrameScaler_Test, PlaneScaler_SameSizeIsACopyAndAFlatPlaneStaysFlat)
     }
 }
 
+TEST(FrameScaler_Test, PlaneScaler_BlocksGiveTheBytesOfTheSourceCopiedInBlocks)
+{
+    // The window recording's scale: the source as if drawn in blocks x blocks pixels, its weights folded onto the
+    // samples, gives the bytes of the plane really copied in blocks and scaled
+    const struct { uint32_t sw, sh, blocks, dw, dh; } sizes[] = {
+        {8, 6, 2, 16, 12}, {37, 23, 2, 101, 64}, {30, 20, 3, 61, 47}, {40, 30, 2, 61, 45}, {9, 7, 4, 50, 31}};
+    for (const auto& s : sizes)
+    {
+        const std::vector<uint8_t> plane = NoiseBytes(static_cast<size_t>(s.sw) * s.sh, s.sw + s.blocks);
+        const uint32_t bw = s.sw * s.blocks, bh = s.sh * s.blocks;
+        std::vector<uint8_t> copied(static_cast<size_t>(bw) * bh);
+        for (uint32_t y = 0; y < bh; y++)
+            for (uint32_t x = 0; x < bw; x++)
+                copied[static_cast<size_t>(y) * bw + x] = plane[static_cast<size_t>(y / s.blocks) * s.sw + x / s.blocks];
+        std::vector<uint8_t> expected(static_cast<size_t>(s.dw) * s.dh), folded(expected.size());
+        FrameScaler::PlaneScaler scaler;
+        ASSERT_TRUE(scaler.Prepare(bw, bh, s.dw, s.dh));
+        scaler.Rows(copied.data(), bw, expected.data(), s.dw, 0, s.dh);
+        ASSERT_TRUE(scaler.Prepare(s.sw, s.sh, s.dw, s.dh, s.blocks));
+        scaler.Rows(plane.data(), s.sw, folded.data(), s.dw, 0, s.dh);
+        EXPECT_EQ(folded, expected) << s.sw << "x" << s.sh << " in " << s.blocks << " -> " << s.dw << "x" << s.dh;
+    }
+}
+
 TEST(FrameScaler_Test, PlaneScaler_FixedPointIsWithinOneOfTheKernelInDoubles)
 {
     const struct { uint32_t sw, sh, dw, dh; } sizes[] = {{37, 23, 101, 64}, {32, 24, 64, 48}, {50, 40, 31, 17}, {659, 9, 2636, 36}};

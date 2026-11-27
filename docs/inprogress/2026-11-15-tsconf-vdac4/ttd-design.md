@@ -59,7 +59,7 @@ The FT812 reuses the VDAC2 types: it is the same `EveHostCard` code, the region 
 ## 4. Keyframes
 
 - When: every capture the engine rescans (a session's first, the first after a restore: every piece is offered then,
-  so the ESP memory of that frame is stored whatever the device says), every K frames (K = 25, §9.1), and when the journal
+  so the ESP memory of that frame is stored whatever the device says), every K captures (K = 25 in slot 0 and the FT812, §9.1; 50 while the Quake II core runs, §9.5), and when the journal
   holds more than J bytes (J = 256 KB; an `APP_START` carries the ELF). The engine tells its region sources at the
   start of each capture, before the device states are taken: `ITTDRegionSource::TTDCaptureBegins(rescan)`.
 - At a keyframe the device marks every ESP piece written; the engine compares each with its delta base and stores the
@@ -107,8 +107,41 @@ M3 Ultra with the code kept), plus decoding the ESP pieces.
 
 A replay that does not reach the recorded host state (or does not fit its journal) makes the position not
 bit-exact: the engine asks the source after the load (`ITTDRegionSource::TTDLoadDiverged`) and the seek's check
-reports `replay_diverged` (`not_bit_exact`, `GET /ttd/position` `check`). The hash covers the host state, not the
-ESP memory: a memory difference that leaves the host state alike is not seen.
+reports `replay_diverged` (`not_bit_exact`, `GET /ttd/position` `check`). Since 2026-11-27 the ESP memory is checked
+too (§6.3).
+
+### 6.3 The ESP memory check (2026-11-27)
+
+A replay that ends at the recorded host state may still leave other ESP memory bytes (PSRAM, SRAM with its I and D
+views, the ROM's RW copy): nothing read them yet, so the host state agrees. Each capture now records, per region, a
+hash of the memory beside the host state's (`TTDVdac4EspCpu::MemoryHashes`, the blob's `VD4M` tail; older blobs have
+none and are not checked). A replay that ends at another memory reports `replay_diverged` on `Vdac4EspCpu`, the
+detail naming the region (`replay ended at another ESP memory (vdac4.esp.psram)`).
+
+Cost, kept to what was written:
+
+- **The hash is a sum** over the region's 4 KB pieces of a 4-lane hash of each piece, seeded by its place. A capture
+  hashes again only the pieces written since the last one and updates the sum; the whole memory (9 MB, about
+  0.5 ms on the M3 Ultra) is hashed only when the table does not match the memory: the first capture, the capture
+  after a load or restore, and a load's check itself (once per load).
+- **The write watch.** The Xtensa CPU's stores already test the page's decoded-code pointer
+  (`xtensa::Cpu::Store`, the JIT's `Translate`); while watched, a page without code gets a shared sentinel
+  there, a page with code a flag in its bitmap: the first store into it takes the existing slow path once, records
+  the page's host address and clears the watch (`Cpu::WatchWrites`, `ArmWriteWatch`, `WrittenPages`). The host's own
+  writes go through `EspMemory::Bytes` (writable view), `Write32`, `WriteString`: each records its range while
+  watched; `Reset` all of it. `EspAppHost::WatchWrites` / `TakeWrites` join both. Each capture takes the
+  ranges, hashes their pieces and arms the watch again (a few thousand page entries, microseconds).
+- **Off: nothing.** The watch is on only while recording (`TTDRecordingStarted` / `Stopped`); off, the store
+  paths are as before (the sentinel is never set), `Bytes()` pays one test of a flag.
+- **The check of the watch:** `UNREAL_VDAC4_TTD_MEMORY_CHECK=1` hashes the whole memory at each capture as well and
+  prints every piece the watch missed (stats `watchMisses`); a run of new ESP code should come out clean.
+
+Measured 2026-11-27 (M3 Ultra, A = master 14790bf91, B = this, both at once, order rotated): TTD off, Quake II demo
+7.106 / 7.147 ms per frame (5 rounds, noise), Metal Slug 8.401 / 8.393 (3 rounds). Recording: Quake II 7.953 /
+8.040 (+0.09 ms, +1.1 %, 5 rounds), Metal Slug 6.528 / 6.645 (+0.12 ms, +1.8 %, 3 rounds). With
+`UNREAL_VDAC4_TTD_MEMORY_CHECK=1` on both games no page was missed, and every seek was exact (Quake II 26 of 26,
+Metal Slug every point but the session's first frame, `picture_incomplete`). Each load hashes the whole memory once
+(about 0.5 ms; seeks take 12-150 ms).
 
 ### 6.2 Replay points
 
@@ -191,6 +224,54 @@ ESP memory checked at 72:
 
 K = 25 costs 5 % of the history (the ESP keyframes twice as often) for 6-7 ms of every seek.
 
+### 9.5 K per personality: the Quake II core at 50 (2026-11-27)
+
+K swept on one build (`UNREAL_VDAC4_TTD_KEYFRAME`, one headless, muted instance per K, all K at once, launch order
+rotated, two rounds; .20 M3 Ultra, load average 30-100 from other sessions, the same for every K). The streams are
+byte for byte the same in both rounds; seek times agree within a few ms.
+
+- **Quake II** (`_Q2.SPG`): recording from frame 300 (TS-Conf loader, `core_load` at ~2100, the map load) with
+  `run_frames`, points at fixed frames, then 60 s of the demo in real time. 13 points, 26 seeks in a shuffled order,
+  9 seeks across `core_load`, 9 step-backs.
+- **Metal Slug** (`_MSLUG.SPG`, slot 0 with the ESP's app): recorded 60 s in real time after `MS BOOT` and one
+  `MS PERF` window (as `msfps.py`), 7 points, 14 seeks.
+
+| K | Q2 demo MB/min | Q2 session MB/min | Q2 file | Q2 seek median / p90 / max | MS MB/min | MS file | MS seek median / p90 / max |
+|---|---|---|---|---|---|---|---|
+| 10 | 72.8 | 45.6 | 300 MB | 20 / 58 / 89 ms | 78.0 | 92 MB | 36 / 47 / 67 ms |
+| 25 | 40.7 | 33.4 | 228 MB | 19 / 166 / 184 ms | 63.0 | 77 MB | 53 / 93 / 105 ms |
+| 35 | 33.2 | 30.8 | 213 MB | 19 / 137 / 149 ms | 58.8 | 73 MB | 33 / 42 / 153 ms |
+| 50 | 27.8 | 28.6 | 199 MB | 18 / 181 / 326 ms | 55.6 | 70 MB | 63 / 111 / 181 ms |
+| 100 | 21.4 | 25.9 | 183 MB | 19 / 382 / 490 ms | 52.3 | 66 MB | 85 / 287 / 310 ms |
+| 200 | 20.3 | 25.3 | 180 MB | 23 / 466 / 622 ms | 50.2 | 64 MB | 197 / 470 / 532 ms |
+
+The demo rate from the history counter; the session rate and the regions from the session file. Across `core_load`
+13-19 ms at every K up to 100 (the loader's span is short of keyframes anyway), step back 16-18 ms (Q2), recording
+4.6-5.0 ms/frame at every K (Q2 demo), 5.5-6.0 (MS): K does not show in the recording's cost.
+
+- **Where the bytes go.** An ESP keyframe stores the ESP memory that changed since the last one and the CPU state;
+  while the Quake II core runs it also stores the SDRAM pieces the frame and z buffers rewrote (§11): Q2 demo at
+  K = 25: SDRAM 21.6, PSRAM 11.0, ESP CPU state 7.5 MB/min; at K = 50: 14.2, 7.6, 6.0. Above K = 100 the other
+  keys (the journal over 256 KB, the firmware's LINK writes) come first: K = 200 and 400 store the same.
+- **Where the seek goes.** The replay from the keyframe, a few ms per capture of the demo: the tail (p90, max)
+  grows with K, the median is the points near a keyframe. DOOM (§9.1): 25 -> 50 is 5 % of the history for 6-7 ms
+  of every seek.
+- **The knee.** Q2: 25 -> 50 takes 32 % off the demo's stream and 13 % off the session file; 50 -> 100 only 23 %
+  more of the stream for twice the tail. Metal Slug: 25 -> 50 only 12 % of the stream (9 % of the file) for a third
+  more seek; DOOM 5 %. So K = 50 while the Quake II core runs (`kKeyframeFramesQ2`), 25 elsewhere
+  (`kKeyframeFrames`): `TTDCaptureBegins` takes the interval of the Tang's personality at the capture. A change of
+  personality keys the capture anyway (`Q2Epoch`), so a span never mixes the two. Keyframes only place what is
+  stored: the replay and the restore are the same either way.
+- **Checked on the default build** (no override, beside `UNREAL_VDAC4_TTD_KEYFRAME=25`, same round): Quake II
+  stores what K = 50 stored (199 MB, 28.6 MB/min; the loader's span at 25), Metal Slug what K = 25 stored (77 MB).
+- **Not taken.** A rule by the bytes since the keyframe: the bytes a keyframe stores are known only after the
+  engine compared the pieces, after `TTDCaptureBegins` decided; and the seek's cost is the captures replayed, not
+  the bytes. K = 35 for Q2: half the gain (-18 % of the stream).
+- **Seen on the way, not K's.** Seeks to the loader's points read a stale `tang.q2.latched` (the count of the last
+  run of the core): `LeaveQ2` now zeroes it, as a state without the core carries none (22/26 -> 26/26 exact). Metal Slug: 6-10 of 14 seeks
+  show another picture than the live point at a pause in real time (the ESP's app on its worker thread), at every
+  K, while the engine's check says exact and PC, memory, Tang agree; fixed 2026-11-27 (§10).
+
 ### 9.2 Seek time: the ESP memory left to the replay point (2026-11-25)
 
 A profile of the seeks (DOOM, the grid above, `sample` of the seek phase only): of a seek, the memory restore
@@ -263,8 +344,9 @@ Tried before and dropped (patches kept outside the tree):
 
 ## 10. Open
 
-- A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame (about
-  1 ms per frame).
+- ~~A replay divergence is seen through the host state's hash only (§6): the ESP memory is not hashed per frame
+  (about 1 ms per frame).~~ Done 2026-11-27 (owner: do it, at the least cost): the memory's hash per capture from
+  the pieces written only (§6.3).
 - The blob's limit (4 MB) holds: a journal over 256 KB keys the capture that finds it, so the blob carries the host
   state and at most 256 KB of journal whatever one frame sent (an `APP_START` with its ELF). Only a host state over
   3.7 MB would pass it.
@@ -280,7 +362,21 @@ Tried before and dropped (patches kept outside the tree):
   bytes in the delivery's header, no tail) still load. The Quake II loading run: 205 -> 22 MB stored.
 - Fixed 2026-11-27: `vdac4.q2.sdram` was stored at every capture while Quake II draws (278 MB/min in the demo); now
   at the ESP's keyframes only (§11), 27 MB/min. The rest of the demo's stream is the ESP's own keyframes (PSRAM
-  17 MB/min, the ESP CPU state 9 MB/min): K (§9.1) trades those for the seek's replay.
+  17 MB/min, the ESP CPU state 9 MB/min): K (§9.1) trades those for the seek's replay; K = 50 while the core
+  runs since 2026-11-27 (§9.5).
+- ~~Metal Slug (slot 0, the ESP's app on its worker thread): a seek to a point taken at a pause in real time shows
+  another picture in 6-10 of 14 seeks at every K, the engine's check exact (§9.5).~~ Fixed 2026-11-27, both sides
+  were wrong. The live machine stopped inside a frame showed the FT812 frame that finished last, while the display
+  rule (and the seek) shows the frame in flight drawn up to the position: a stop now catches the FT812 picture up
+  (`EveHostCard::CatchUpPicture`, `Screen::CatchUpExternalPicture`, at a pause, a park, the end of a direct run).
+  And a seek inside a frame replayed from the frame before only: lines of the FT812 frame in flight at that
+  checkpoint were drawn with the checkpoint's `RAM_G`, which Metal Slug rewrites all the time; the compose now
+  replays the device's lead-in for time targets too and retries from earlier checkpoints until both FT812 frames
+  are drawn by the replay, else reports `picture_incomplete` (the session's first frames). Rows of the difference
+  were contiguous top bands, the live picture of the next point: the frame in flight. Rerun: 6 real-time points
+  sought twice each, all 12 equal (`capture/screen?source=live`, three of them inside a frame); the start point,
+  in the session's first frame, reported `picture_incomplete` on both seeks; 38 deterministic and real-time points of `ms5.py` equal. The window's picture
+  (`source=presented`) keeps the last finished frame on a pause, for every machine; a seek shows the composed one.
 
 ## 11. The Quake II core between keyframes (2026-11-27)
 

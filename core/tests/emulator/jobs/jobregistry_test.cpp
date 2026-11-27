@@ -412,6 +412,28 @@ TEST_F(JobRegistry_Test, CancelInstanceEndsItsQueuedAndStopsItsRunning)
     EXPECT_EQ(_registry->List("emu-2").size(), 1u);
 }
 
+TEST_F(JobRegistry_Test, CancelInstanceNeverStartsAQueuedJobOfTheLaneItFrees)
+{
+    auto running = std::make_shared<Gate>();
+    auto queued = std::make_shared<Gate>();
+    queued->open = true;  // if it does start, it ends at once
+    uint64_t a = 0;
+    uint64_t b = 0;
+    jobs::Spec spec = GatedSpec(running);
+    // Holds the removal right after the running job is asked to stop, until that job ended and its lane is free: the
+    // moment a worker would pick the next job up
+    spec.onCancel = [this, &a, &b] {
+        (void)_registry->Wait(a, TestWait::Scaled(2000ms));
+        (void)TestWait::For([&] { return StateOf(b) != jobs::JobState::Queued; }, 100ms);
+    };
+    a = Submit(std::move(spec));
+    b = Submit(GatedSpec(queued));
+    ASSERT_TRUE(TestWait::For([&] { return running->entered.load() == 1; }));
+    _registry->CancelInstance("emu-1");
+    EXPECT_EQ(StateOf(b), jobs::JobState::Cancelled);
+    EXPECT_EQ(queued->entered.load(), 0);
+}
+
 TEST_F(JobRegistry_Test, DestroyedRegistryEndsQueuedJobs)
 {
     jobs::Limits limits;

@@ -7,6 +7,7 @@
 
 TsConfMemory::TsConfMemory(EmulatorContext* context) : Memory(context)
 {
+    _toolWriteNotify = true;  // a tool's write drops the cache entry it hits (ToolWroteWindow)
 }
 
 /// region <Latch-to-bank translation>
@@ -215,6 +216,49 @@ void TsConfMemory::AfterWrite(uint16_t addr)
     }
     if (_waitCpu) [[unlikely]]
         DramWait(TsConfArbiter::Access::Write);
+}
+
+void TsConfMemory::ToolWroteWindow(uint8_t bank, uint16_t offset)
+{
+    if (!_ts)
+        return;
+    const uint8_t index = static_cast<uint8_t>(offset >> 1);
+    if (_ts->cacheTag[index] == CacheTag(WindowPage(bank), offset))
+        _ts->cacheTag[index] = 0;
+}
+
+/// The DRAM word an entry's tag names: page {tag[12:5]}, address {tag[4:0], index, 0}
+uint16_t TsConfMemory::RamWordOfEntry(uint8_t index) const
+{
+    const uint16_t tag = _ts->cacheTag[index];
+    const size_t page = (tag >> 5) & 0xFF;
+    const size_t offset = (size_t(tag & 0x1F) << 9) | (size_t(index) << 1);
+    const uint8_t* word = _ramBase + page * PAGE_SIZE + offset;
+    return static_cast<uint16_t>(word[0] | (word[1] << 8));
+}
+
+void TsConfMemory::ToolEditBegins()
+{
+    if (_toolEditDepth++ != 0 || !_ts)
+        return;
+    for (unsigned i = 0; i < 256; ++i)
+    {
+        _toolEditTags[i] = _ts->cacheTag[i];
+        if (_ts->cacheTag[i] & 0x8000)
+            _toolEditWords[i] = RamWordOfEntry(static_cast<uint8_t>(i));
+    }
+}
+
+void TsConfMemory::ToolEditEnds()
+{
+    if (_toolEditDepth == 0 || --_toolEditDepth != 0 || !_ts)
+        return;
+    // Only an entry still naming the word it named at the start, with the word changed, is dropped: one the edit
+    // filled or moved (a CPU read inside it, a loader's trap) holds what it read
+    for (unsigned i = 0; i < 256; ++i)
+        if ((_ts->cacheTag[i] & 0x8000) && _ts->cacheTag[i] == _toolEditTags[i] &&
+            RamWordOfEntry(static_cast<uint8_t>(i)) != _toolEditWords[i])
+            _ts->cacheTag[i] = 0;
 }
 
 inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)

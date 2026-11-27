@@ -159,5 +159,6 @@ Exactness: every recording of every level replays (stepped, in debug mode) to ea
 - The CPU's debug work costs nothing measurable: splitting the debug flag gains nothing.
 - The HALT idle is the whole gain: W2 recording -39 %, overhead +108 % → +27 %. No HALT, no change (W1, W3).
 - Left on W1 / W3 (+45 %): the debug memory path (+41-60 µs) and TTD's own work (capture 24-36 µs, coverage). A
-  TTD-only memory path would save part of the 41-60 µs at most: not worth a new mode now.
+  TTD-only memory path would save part of the 41-60 µs at most: not worth a new mode (dropped for good, owner
+  2026-11-27).
 

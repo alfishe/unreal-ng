@@ -28,5 +28,7 @@ The README §5 leftovers, with numbers and tests in [README §5](README.md#5-not
   in 25 ms, about 50 ms for the whole 64 MB ring), and port searches take under 1 ms.
 
 ## Follow-ups
-- Querying the index directly (TD-7/G-5) is ~80% covered by TD-2 range `find-last`;
-  the dedicated endpoint stays deferred — [../PLAN.md](../PLAN.md) #20.
+- None left. The index is queried through `ttd coverage probe` / `scan` / `summary` (built 2026-09-17), `rare`
+  (2026-10) and range `find-last`; "when did this instruction first / last run" over a whole recording, or several,
+  is the L1 analysis's first / last frame per instruction (`2683ddc69`, several sessions `96aea1d42`). No further
+  query endpoint will be added (owner 2026-11-27); PLAN #20 is retired.

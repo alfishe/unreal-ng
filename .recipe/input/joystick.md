@@ -29,6 +29,9 @@ and every call below works as on a Pentagon.
 | every model in the table above | refused: the board's Kempston holds the function | - |
 
 ```text
+emulator_manage {"action":"preset","model":"48K","cards":["edge.1=kempston"],"features":{"kempstonmouse":false}}
+#   one call: the card fitted, the Kempston mouse's ports freed, RAM zeroed, muted, paused at power-on, run control
+#   held; no restart ([setup](../_common/setup.md#4a-a-lab-machine-in-one-call-preset))
 emulator_manage {"action":"create","model":"48K","slots":{"edge.1":"kempston"}}   # created with it, no restart
 emulator_manage {"action":"slots_plug","slot":"edge.next","card":"kempston"}      # a running 48K: restarts
 slots plug edge.next kempston                                                    # CLI (decode=a5: early boards)
@@ -73,6 +76,14 @@ The reproducible pattern: pause, inject, `run_frames N`, read.
 {"tool": "joystick_input", "arguments": {"action": "status"}}
 ```
 
+`status` says first whether the guest can see the stick at all: `port_decoded` (is `#1F` decoded right now),
+`port_source` (`board` or `card`), `kempston_mouse_feature`, `kempston_mouse_fitted`, and the same as one sentence
+in `ports_text` ("Kempston joystick port #1F: decoded (the plugged kempston card). Kempston mouse: on, it answers
+#FADF / #FBDF / #FFDF (a program that reads its stick at #DF may get the mouse); feature kempstonmouse off frees
+those ports"). The same fields are in `GET /joystick`, CLI `joystick status` and the Lua / Python state. To free the
+mouse ports: `emulator_manage {"action":"feature","name":"kempstonmouse","enabled":false}`
+(`{"action":"features"}` lists every feature with its state).
+
 `press` holds buttons and leaves the others; `set` makes exactly this state (a byte, or a list; `[]`
 releases everything); `tap` presses and releases on its own after `frames` (default 2, 1..65535).
 Errors are `isError` results carrying the shared wording, for example
@@ -89,6 +100,7 @@ curl -s -X POST $B/$ID/joystick/release -H "$J" -d '{"buttons":["up"]}'
 curl -s -X POST $B/$ID/joystick/set     -H "$J" -d '{"state":24}'          # or {"buttons":[]}
 curl -s -X POST $B/$ID/joystick/tap     -H "$J" -d '{"buttons":"fire","frames":5}'
 curl -s $B/$ID/joystick | jq '{state, port_value, pressed, wired, pending_tap, warning}'
+curl -s $B/$ID/joystick | jq '{port_decoded, port_source, kempston_mouse_feature, kempston_mouse_fitted, ports_text}'
 ```
 
 Assert on `state` / `port_value` (the byte `IN #1F` returns) and `wired` (this machine answers the joystick:

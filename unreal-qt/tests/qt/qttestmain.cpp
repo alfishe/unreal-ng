@@ -5,6 +5,8 @@
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
+#include "common/encoderconfig.h"
+
 #ifdef UNREAL_VULKAN
 #include "sharedvulkandevice.h"
 #endif
@@ -23,6 +25,8 @@ int main(int argc, char** argv)
     QCoreApplication::setApplicationName(QStringLiteral("unreal-qt-tests"));
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsFolder.path());
+    // Recordings with the defaults encode in software, as in core-tests (core/tests/main.cpp)
+    EncoderConfig::SetHardwareDefault(false);
     ::testing::InitGoogleTest(&argc, argv);
     const int result = RUN_ALL_TESTS();
 #ifdef UNREAL_VULKAN

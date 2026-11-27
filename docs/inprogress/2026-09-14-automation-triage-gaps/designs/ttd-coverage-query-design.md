@@ -4,7 +4,11 @@
 
 **Document Path:** `docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-coverage-query-design.md`
 **Feature Target:** TD-7 (P2) — Query the Coverage Index
-**Status:** Architectural Specification
+**Status:** built 2026-09-17 (`coverage/probe`, `coverage/scan`, `coverage/summary` on WebAPI, MCP, CLI, Lua,
+Python; `coverage/rare` added 2026-10). Closed 2026-11-27 (owner): no further coverage index query endpoint will be
+added. What goes beyond these verbs is covered by range `find-last` and by the L1 analysis (first / last frame per
+instruction, over one or several sessions). The text below is the 2026-09 specification, kept as history (v1 names
+such as `TimeTravelManager`).
 **Target Interfaces:** WebAPI, MCP, CLI, Lua, Python
 **Engine Overhead:** 0% new capture cost (queries pre-existing compressed index)
 **Parent:** [ttd-coverage-evaluation.md](../ttd-coverage-evaluation.md) gap G-5

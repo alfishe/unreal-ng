@@ -387,7 +387,7 @@ the SDRAM pieces at every capture, under a load average of 35-80; this one ran u
 | Stream while a map loads (frames 18500-24300) | 32 MB/min stored (Evo RAM 6.6, ESP CPU state 6.1, SDRAM 6.0, PSRAM 5.5, ESP firmware state 5.2); 25 MB/min by the history counter |
 | The loader run (TS-Conf boot to `core_load` and SETUP, 86 s) | 22 MB in the history (was 205: the firmware's delivery shifted its state, [ttd-design.md](ttd-design.md) §10); session file 32 MB (was 213) |
 | One session of 446 s (two demo maps, two loads) | **43 MB/min** stored (was 132): SDRAM 14.9, PSRAM 9.4, ESP CPU state 6.9, Evo RAM 5.0, ESP firmware state 3.6, `vdac4q2` 0.07 |
-| SDRAM stores | at every ESP keyframe (25 captures): median 107 pieces, 218 KB; whole (5.3 MB) at the engine's keyframes |
+| SDRAM stores | at every ESP keyframe (25 captures; 50 since, below): median 107 pieces, 218 KB; whole (5.3 MB) at the engine's keyframes |
 | Keyframes (one a minute) / delta checkpoints | 8.1-8.9 MB / median 3 KB, largest 0.58 MB |
 | Session file | 352 MB (was 1014), dump 1.5 s, load 1.0 s, 4/4 points exact |
 | Seeks | 27/27 in the demo and 14/14 across `core_load` exact (screen, `tang.q2` counters, PC); demo 15-151 ms, median 28; loader 11-19 ms |
@@ -395,8 +395,18 @@ the SDRAM pieces at every capture, under a load average of 35-80; this one ran u
 | Branch | made in the demo, ran 10 s, seeks to and from it exact |
 
 What remains of the demo's stream is the ESP's own keyframes (PSRAM, the CPU state, and the SDRAM pieces the
-frame and z buffers rewrite between two of them): K = 25 ([ttd-design.md](ttd-design.md) §9.1) trades them for the
-seek's replay.
+frame and z buffers rewrite between two of them): K trades them for the seek's replay. K swept 10-400
+([ttd-design.md](ttd-design.md) §9.5): while the core runs the ESP keys every 50 captures
+(`TTDVdac4EspCpu::kKeyframeFramesQ2`), elsewhere every 25:
+
+| K | Demo MB/min | Session MB/min | Session file | Seek median / p90 / max |
+|---|---|---|---|---|
+| 25 (before) | 40.7 | 33.4 | 228 MB | 19 / 166 / 184 ms |
+| **50 (now)** | **27.8** | **28.6** | **199 MB** | 18 / 181 / 326 ms |
+| 100 | 21.4 | 25.9 | 183 MB | 19 / 382 / 490 ms |
+
+(The sweep's session: frames 300 to about 18,500, one map, shorter than the 446 s run above.) Seeks across `core_load`
+13-19 ms, step back 16-18 ms, recording unchanged.
 
 Tests: `vdac4quake2state_test.cpp` (`Vdac4BomzhState_Test`: fixed size, a state cut mid-command, mid-WRITE, after an RD copy and at the stream's other points of a stream with
 WRITE / RD / triangles / FRAME goes on as the uncut run, foreign state refused, reset, the Evo side apart from the LINK side,

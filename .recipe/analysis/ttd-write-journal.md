@@ -36,7 +36,8 @@ time_travel {"action":"find_last","addr":"0x5C3A"}               # answers at on
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/journal" -H 'Content-Type: application/json' \
      -d '{"enabled": true}' | jq '{write_journal_enabled, write_journal_segments}'
 
-# after "ttd/stop": build frames 1200..1500 (blocks until done)
+# after "ttd/stop": build frames 1200..1500 (blocks until done; "async": true answers a job id at once and
+# GET $BASE/jobs/<job>?wait_ms=60000 waits for it - MCP: "async":true, then jobs {"action":"wait","job":N})
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/journal/build" -H 'Content-Type: application/json' \
      -d '{"from_frame": 1200, "to_frame": 1500}' | jq '{ok, frames_built, records, write_journal_segments}'
 

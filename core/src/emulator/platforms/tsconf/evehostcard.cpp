@@ -94,7 +94,11 @@ EveHostCard::EveHostCard(EmulatorContext* context, std::function<uint32_t()> ras
     PlanNextEvent();
 
     if (_context && _chip)
+    {
         _context->pTtdDisplayParticipant = this;
+        if (_context->pScreen)
+            _context->pScreen->SetExternalCatchUp(&EveHostCard::CatchUpPicture, this);
+    }
 }
 
 EveHostCard::~EveHostCard()
@@ -104,7 +108,10 @@ EveHostCard::~EveHostCard()
     // The Screen must not keep a pointer into _picture (at machine teardown
     // the Screen is gone first and pScreen is already null)
     if (_context && _context->pScreen)
+    {
         _context->pScreen->SetExternalSettle(nullptr, this);
+        _context->pScreen->SetExternalCatchUp(nullptr, this);
+    }
     if (_showing && _context && _context->pScreen)
         _context->pScreen->ClearExternalPicture();
     if (_chip)
@@ -200,6 +207,30 @@ void EveHostCard::SettleFrames(void* card)
     auto* self = static_cast<EveHostCard*>(card);
     if (self->_async)
         EveFramesBarrier(self->_chip);
+}
+
+void EveHostCard::CatchUpPicture(void* card)
+{
+    // What the monitor shows where the machine stopped (display rule: the FT812 frame in flight drawn up to the
+    // position over its previous frame), the picture a TTD seek to this position composes
+    // (TTDPrepareComposedPicture). Only a picture that is drawn; not inside a TTD replay (it composes the
+    // position's picture itself); not right after a state load (a seek put the composed picture there: the lines
+    // the load left owed would be drawn with this moment's inputs, not with the ones the machine drew them with)
+    auto* self = static_cast<EveHostCard*>(card);
+    if (!self->_chip || !self->_showing || self->_owedFromLoad || !self->Drawing() ||
+        (self->_context && self->_context->ttdReplayActive))
+        return;
+    self->Synchronize();
+    if (self->ConfigureOutput())  // every line due drawn (or queued to the renderer); a new mode: a new buffer
+    {
+        self->PublishPicture();
+        return;
+    }
+    if (self->_async)
+        EveFramesBarrier(self->_chip);  // the renderer's frame ends presented (they write _picture)
+    EveDrawingBarrier(self->_chip);
+    if (self->_chipFrame.size() * 4 == self->_picture.size())
+        self->ConvertFrameToPicture();
 }
 
 void EveHostCard::Synchronize()
@@ -796,6 +827,7 @@ bool EveHostCard::TtdLoadState(const uint8_t* src)
     _edgeCount = blob.edgeCount;
     std::memcpy(_edges, blob.edges, sizeof(_edges));
     _chipFrames = EveCompletedFrames(_chip);
+    _chipFramesAtLoad = _chipFrames;
 
     // The output follows the restored mode; the FT812 picture is not state: what a
     // position shows is composed by the TTD replay (TTDPrepareComposedPicture). The load
@@ -992,6 +1024,31 @@ uint64_t EveHostCard::TtdMemoryHash() const
     return h;
 }
 
+unsigned EveHostCard::TTDLeadInFrames() const
+{
+    // The replay from the checkpoint of the target frame minus the lead-in must hold two whole FT812 frames: the
+    // one shown (inside a frame: in flight) and the one under it. The frame in flight at the checkpoint is drawn
+    // again from line 0 with the checkpoint's inputs, so its lines above the checkpoint are not the ones the
+    // machine showed. (lead-in + 1) machine frames >= 2 FT812 frames
+    if (!_chip)
+        return 1;
+    EveTiming timing{};
+    EveGetTiming(_chip, &timing);
+    const uint64_t hz = EveSystemClockHz(_chip);
+    if (hz == 0 || timing.framePeriodClocks == 0)
+        return 1;
+    const uint64_t twoFrames = (2 * timing.framePeriodClocks * kRasterHz + hz - 1) / hz;  // raster tacts
+    const uint64_t frames = (twoFrames + kFrameTacts - 1) / kFrameTacts;
+    return static_cast<unsigned>(std::clamp<uint64_t>(frames, 2, 16) - 1);
+}
+
+bool EveHostCard::TTDComposedPictureComplete() const
+{
+    // Not shown: the machine's own raster is the picture. Else two FT812 frames ended since the checkpoint: the
+    // one under the frame in flight (or the one shown at a frame boundary) started after it
+    return !_chip || !_showing || EveCompletedFrames(_chip) >= _chipFramesAtLoad + 2;
+}
+
 void EveHostCard::TTDPrepareComposedPicture(bool frameTarget)
 {
     if (!_chip)
@@ -1166,6 +1223,7 @@ void EveHostCard::PowerOn() {}
 void EveHostCard::PowerOnAt(uint64_t) {}
 void EveHostCard::OnFrameEnd() {}
 void EveHostCard::Synchronize() {}
+void EveHostCard::CatchUpPicture(void*) {}
 void EveHostCard::SetShowing(bool) {}
 size_t EveHostCard::TakeIntEdges(uint32_t, uint32_t*, size_t) { return 0; }
 bool EveHostCard::StartCapture(const std::string&, std::string* error)
@@ -1199,6 +1257,8 @@ uint8_t* EveHostCard::TtdEncodeZeroRuns(const uint8_t*, size_t, uint8_t* out) { 
 bool EveHostCard::TtdLoadMemory(const uint8_t*) { return false; }
 uint64_t EveHostCard::TtdStateHash() const { return 0; }
 uint64_t EveHostCard::TtdMemoryHash() const { return 0; }
+unsigned EveHostCard::TTDLeadInFrames() const { return 1; }
 void EveHostCard::TTDPrepareComposedPicture(bool) {}
+bool EveHostCard::TTDComposedPictureComplete() const { return true; }
 
 #endif // ENABLE_VDAC2

@@ -4131,54 +4131,71 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
         _context->ttdPortWrites = nullptr;
     };
 
+    // A device picture (VDAC2 / VDAC4: the FT812) runs on its own frame clock: the device frame shown and the
+    // one under it (inside a frame: the one in flight drawn over its previous one) may have started before the
+    // target frame's checkpoint, and what was drawn before a checkpoint is not in the replay (the device draws its
+    // frame in flight again from line 0 with the checkpoint's inputs). So the replay starts the device's lead-in
+    // frames earlier, and further back while the device says a line it shows was not drawn by the replay. Where
+    // the session holds nothing earlier the picture is not the live one: the seek's check says so
     ITTDDisplayParticipant* participant = _context->pTtdDisplayParticipant;
-    if (frameTarget)
+    const uint64_t ended = !frameTarget                    ? 0
+                           : targetFrame == kCurrentFrame ? frame
+                           : targetFrame == kEndedFrame   ? (frame > 0 ? frame - 1 : 0)
+                                                          : targetFrame;
+    // The frame whose final picture is the base: the target frame (a frame target), the one before it (inside)
+    const bool haveBase = frameTarget || frame > 0;
+    const uint64_t base = frameTarget ? ended : (frame > 0 ? frame - 1 : 0);
+    const uint64_t leadIn = participant ? participant->TTDLeadInFrames() : 0;
+    uint64_t from = haveBase ? (base > leadIn ? base - leadIn : 0) : frame;
+    const TTDCheckpoint* first = &_line->timeline.front();
+    for (unsigned attempt = 0;; ++attempt)
     {
-        // At a frame boundary (D13): the final picture of the frame that ended
-        // here, its own T-states start to end. A device picture (VDAC2) runs on
-        // its own frame clock: its frame that finished last may have started
-        // before that frame, so replay from earlier
-        const uint64_t ended = targetFrame == kCurrentFrame ? frame
-                               : targetFrame == kEndedFrame ? (frame > 0 ? frame - 1 : 0)
-                                                            : targetFrame;
-        const uint64_t leadIn = participant ? participant->TTDLeadInFrames() : 0;
-        const uint64_t from = ended > leadIn ? ended - leadIn : 0;
-        if (const TTDCheckpoint* cp = checkpointAtOrBefore(from))
+        // Before the session: its first checkpoint (its baseline is captured mid-frame)
+        const TTDCheckpoint* cp = checkpointAtOrBefore(from);
+        if (!cp && first->time.frame <= (frameTarget ? ended : frame))
+            cp = first;
+        if (frameTarget)
         {
-            restoreForPicture(*cp);
-            paintStaticBase();
-            runUntilFrame(ended);
-            RunToFrameEnd();
+            // At a frame boundary (D13): the final picture of the frame that ended here, its own T-states start
+            // to end
+            if (cp)
+            {
+                restoreForPicture(*cp);
+                paintStaticBase();
+                runUntilFrame(ended);
+                RunToFrameEnd();
+            }
         }
-    }
-    else
-    {
-        // Base: frame f-1's final picture, as a live machine has it when f
-        // starts. The first frame of the session has no predecessor; its base
-        // is the static decode of its checkpoint.
-        const TTDCheckpoint* prev = frame > 0 ? checkpointAtOrBefore(frame - 1) : nullptr;
-        const TTDCheckpoint* cur = checkpointAtOrBefore(frame);
-        if (prev)
+        else
         {
-            restoreForPicture(*prev);
-            paintStaticBase();
-            runUntilFrame(frame);
-        }
-        else if (cur)
-        {
-            restoreForPicture(*cur);
-            paintStaticBase();
+            // Base: frame f-1's final picture, as a live machine has it when f starts. The first frame of the
+            // session has no predecessor; its base is the static decode of its checkpoint. Then what the beam
+            // draws in frame f up to the position
+            if (cp)
+            {
+                restoreForPicture(*cp);
+                paintStaticBase();
+                runUntilFrame(frame);
+            }
+            if (_context->emulatorState.frame_counter == frame)
+                RunToTInFrame(tInFrame);
+            _context->pScreen->UpdateScreen();
         }
 
-        // Then what the beam draws in frame f up to the position.
-        if (_context->emulatorState.frame_counter == frame)
-            RunToTInFrame(tInFrame);
-        _context->pScreen->UpdateScreen();
-    }
-
-    // A device picture (VDAC2) gets ready for the target kind before the copy
-    if (participant)
+        // A device picture gets ready for the target kind before the copy
+        if (!participant)
+            break;
         participant->TTDPrepareComposedPicture(frameTarget);
+        if (participant->TTDComposedPictureComplete())
+            break;
+        if (!cp || cp == first || cp->time.frame == 0 || attempt >= kComposeMoreLeadIns)
+        {
+            if (_composeDepth == 1)
+                _composedPictureIncomplete = true;
+            break;
+        }
+        from = cp->time.frame - 1;  // the checkpoint before this one
+    }
 
     std::vector<uint8_t>& composed = scratch.composed;
     composed.clear();
@@ -4218,8 +4235,20 @@ void TimeTravelController::PresentPosition(bool frameTarget)
     // Composing the picture restores neighboring checkpoints; the position's
     // own settings and media check stays the seek's
     const TTDRestoreResult seekCheck = _lastEngineCheck;
+    _composedPictureIncomplete = false;
     ComposeDisplay(frameTarget);
     _lastEngineCheck = seekCheck;
+    // The state is exact, the picture is not the live one: lines of the device picture were drawn before the
+    // earliest checkpoint the compose may replay from, and no replay draws them again
+    if (_composedPictureIncomplete)
+    {
+        TTDRestoreIssue issue;
+        issue.kind = TTDRestoreIssueKind::PictureIncomplete;
+        issue.severity = TTDRestoreStatus::NotBitExact;
+        issue.detail = "the device picture shows lines drawn before the earliest checkpoint a replay starts from";
+        issue.firstFrame = issue.lastFrame = _context ? _context->emulatorState.frame_counter : 0;
+        _lastEngineCheck.Add(std::move(issue));
+    }
     PublishSeekedFrame();
     PublishCardReadouts();
     _perf.lastPresentNs = static_cast<uint64_t>(
@@ -7205,14 +7234,10 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
 
 TTDCpuView TimeTravelController::ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length)
 {
-    // At a checkpoint the store holds every mapped page: a read, the machine untouched (phase 2, B4)
-    if (_state != TTDSessionState::Recording)
-    {
-        const SessionOperation read{*this, SessionOperation::Kind::Read};
-        TTDCpuView stored;
-        if (_state != TTDSessionState::Recording && ReadCpuViewFromStore(at, offset, length, stored))
-            return stored;
-    }
+    // At a checkpoint the store holds every mapped page: a read, the machine untouched (phase 2, B4), a recording
+    // that runs left as it is (RQ-2)
+    if (TTDCpuView stored; ReadCpuViewStored(at, offset, length, stored))
+        return stored;
 
     // Replays and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};

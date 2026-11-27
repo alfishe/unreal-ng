@@ -129,6 +129,35 @@ TEST_F(TsConfMemory_Test, CacheOnlyForEnabledWindows)
     EXPECT_EQ(Peek(0xC000), 0x44) << "W3 is not cached";
 }
 
+/// A tool's write is seen by the CPU as after its own write: code the CPU ran from a cached window, overwritten by
+/// a tool (the CPU's view), runs as the new code
+TEST_F(TsConfMemory_Test, CCH4_ToolWriteOverRunCodeIsSeen)
+{
+    Reg(TsConfReg::CacheConfig, 0x04);  // W2
+    RunCode({0x3E, 0x11});              // LD A,#11 at #8000: the fetches fill the entries
+    ASSERT_EQ(_z80->a, 0x11);
+    RunCode({0x3E, 0x22});              // the tool writes LD A,#22 over it
+    EXPECT_EQ(_z80->a, 0x22) << "the tool's bytes, not the cached word";
+}
+
+/// A tool's edit of a physical page (Emulator::EditMemoryFromTool brackets it) drops the entries whose word it
+/// changed; an entry a DMA left stale before the edit stays stale, as on the board
+TEST_F(TsConfMemory_Test, CCH5_ToolEditOfAPageDropsWhatItChanged)
+{
+    Reg(TsConfReg::CacheConfig, 0x04);  // W2 = page 2
+    EXPECT_EQ(Peek(0x8200), 0x02) << "fills";
+    EXPECT_EQ(Peek(0x8300), 0x02) << "fills";
+    Ram(2, 0x0300) = 0x77;              // a DMA's write: the entry keeps the old word
+    ASSERT_EQ(Peek(0x8300), 0x02);
+
+    _memory->ToolEditBegins();
+    Ram(2, 0x0200) = 0x66;              // a tool writing the physical page
+    _memory->ToolEditEnds();
+
+    EXPECT_EQ(Peek(0x8200), 0x66) << "the edited word is read again";
+    EXPECT_EQ(Peek(0x8300), 0x02) << "the stale entry the edit did not touch stays";
+}
+
 /// CCH-2: SYS_CONFIG bit 2 writes all four CACHE_CONFIG bits
 TEST_F(TsConfMemory_Test, CCH2_SysConfigCopiesTheCacheBit)
 {

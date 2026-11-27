@@ -963,7 +963,28 @@ std::string Emulator::EditMemoryFromTool(const ToolEdit& what, const std::functi
         // The recording keeps a marker with the edit's bytes, so the engine's replay applies it
         if (session)
             ttd->BeginToolEdit();
-        edit();
+        // A cache of RAM in front of the CPU (TS-Conf) drops what the edit changed, inside the edit so a recording
+        // keeps it
+        struct ToolEditBracket
+        {
+            Memory* memory;
+            explicit ToolEditBracket(Memory* m) : memory(m)
+            {
+                if (memory)
+                    memory->ToolEditBegins();
+            }
+            ~ToolEditBracket()
+            {
+                if (memory)
+                    memory->ToolEditEnds();
+            }
+            ToolEditBracket(const ToolEditBracket&) = delete;
+            ToolEditBracket& operator=(const ToolEditBracket&) = delete;
+        };
+        {
+            const ToolEditBracket bracket(_context ? _context->pMemory : nullptr);
+            edit();
+        }
         if (session)
             ttd->EndToolEdit(source);
         return true;
@@ -2093,9 +2114,15 @@ void Emulator::WaitWhilePaused()
     // park). The caller executes the machine, so it may read the session
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
-    // The picture up to the beam for whoever looks while parked (Screen::CatchesUpOnEvents)
-    if (Screen* screen = _context ? _context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
-        screen->UpdateScreen();
+    // The picture up to the beam for whoever looks while parked (Screen::CatchesUpOnEvents); paused, a card's
+    // picture too (Screen::CatchUpExternalPicture: a command's park leaves it to the frame end)
+    if (Screen* screen = _context ? _context->pScreen : nullptr)
+    {
+        if (screen->CatchesUpOnEvents())
+            screen->UpdateScreen();
+        if (IsPaused())
+            screen->CatchUpExternalPicture();
+    }
     if (IsPaused())
         NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
     // The analyzers close what they keep pending: a report read while parked has the last instruction
@@ -3776,9 +3803,14 @@ Emulator::DirectStepScope::~DirectStepScope()
             _emulator._lastStop.breakpoint = _emulator._directStop;
             _emulator._lastStop.serial++;
         }
-        // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
-        if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
-            screen->UpdateScreen();
+        // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents),
+        // and a card's picture up to where the run stopped (Screen::CatchUpExternalPicture)
+        if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr)
+        {
+            if (screen->CatchesUpOnEvents())
+                screen->UpdateScreen();
+            screen->CatchUpExternalPicture();
+        }
         // A direct run is not paced to real time and leaves the machine stopped: its frames are due at once
         if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr)
             screen->SettlePresentTiming();
