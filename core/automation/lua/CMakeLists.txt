@@ -44,6 +44,17 @@ set(SOL2_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/sol2/sol2-3.5.0/single/inc
 set(AUTOMATION_LUA_SOURCES
     src/automation-lua.cpp
     src/hooks/luahookhost.cpp
+    # LuaEmulator::registerType, a group of bindings per file: they compile in parallel
+    src/emulator/register/machines.cpp
+    src/emulator/register/screen-media.cpp
+    src/emulator/register/disk-tape.cpp
+    src/emulator/register/input-breakpoints.cpp
+    src/emulator/register/labels-boards.cpp
+    src/emulator/register/network-gs.cpp
+    src/emulator/register/gs-ttd.cpp
+    src/emulator/register/ttd-window.cpp
+    src/emulator/register/video-audio.cpp
+    src/emulator/register/audio-scripts.cpp
     # NOTE: automation-main.cpp is excluded because it contains a main() function
     # which conflicts when linking with other executables like unreal-qt
 )

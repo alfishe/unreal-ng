@@ -166,13 +166,15 @@
 - [x] F9: L1 `root` at a snapshot's first PC (verify first) (S). Verified present 2026-11-24 (the replay's first
   instruction always got `root`), fixed: entry kind `resume` unless the first PC is the reset vector. Test
   `AnalysisL1_Test.CallGraphTailJump`.
-- [ ] S4: history / trace filters, event-only trace (M). Verified 2026-11-24, partly there: the machine port trace
+- [x] S4: history / trace filters, event-only trace (M). Verified 2026-11-24, partly there: the machine port trace
   (`/profiler/porttrace`) is event-only (frame, PC) with record-time filters (port, device, direction, PC range,
   value) on WebAPI, CLI, Lua, Python. Record-time filters of the device histories built 2026-11-26: `filter` in the
   history config on every plane (`side=host out=true`, `port=#B3,#BB pc=#8000-#9FFF`), the records left out counted
   and neither kept nor streamed (`historyfilter.h`, docs/emulator/design/debugger/device-history.md). The 1.7 GB
-  history of the case was a capture with a stream and no filter, not a ring. Left: the filter on the MCP `porttrace`
-  action, the instruction access trace.
+  history of the case was a capture with a stream and no filter, not a ring. Built 2026-11-27: MCP
+  `analyze_performance porttrace` takes `filter` (a preset name or the include / exclude rules, set before the capture)
+  and shows the events in its text; the CPU access trace (`analysis trace`) takes the filter `kinds`, `pc`,
+  `addresses` (`kinds=in,out`: a port trace with each access's frame, T and PC, no instruction stream).
 - [x] V4: counting breakpoints with per-hit frames (with PLAN #6) (M).
   As built (2026-11-19, uncommitted on `find-count`): a breakpoint that only counts (`stop: false`, CLI `--count`)
   records its hits in a bounded `BreakpointHitLog` (`hit_log` N, default 1000, 0 none, at most 100000;

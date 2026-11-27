@@ -14,7 +14,7 @@
 ///       char magic[4] "UATR"; u16 version (1); u16 header bytes (64)
 ///       u64 from frame; u32 from t (TTD units); u32 TTD units per CPU T-state
 ///       u64 to frame;   u32 to t (TTD units);   u32 CPU T-states per frame
-///       u64 instructions; u64 cycles; u8 truncated; 7 bytes zero
+///       u64 instructions; u64 cycles; u8 truncated; u8 filtered (1: a filter left records out); 6 bytes zero
 ///     u16 page[4]       the page mapped in each 16 K bank at the start
 ///     u8 memory[65536]  the Z80 view at the start
 ///     records, each starting with its tag:
@@ -27,6 +27,12 @@
 /// prefixes and displacement included); the interrupt's pushes and vector reads come before the handler's first
 /// instruction, under the instruction they interrupted.
 ///
+/// A filter (AccessTraceOptions::kinds, pcRanges, addressRanges) says which records are written at all, so a long
+/// window fits a file: `kinds = "IO"` is a port trace with each access's frame, T and PC and no instruction stream.
+/// With a kind or an address filter an instruction's record is written only when one of its cycles is (before that
+/// cycle); with a PC filter alone every instruction in the ranges is written with all its cycles. The counts in the
+/// header and the summary are the written records.
+///
 /// @code
 ///   analysis::AccessTraceOptions options;
 ///   options.fromFrame = 1001; options.toFrame = 1003; options.path = "scratch/pass.uatr";
@@ -36,6 +42,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace analysis
 {
@@ -50,6 +58,14 @@ struct AccessTraceOptions
     uint32_t toTInFrame = 0;
     uint64_t maxCycles = 8000000;  ///< the trace stops (truncated) after this many bus cycles
     std::string path;           ///< the file to write
+    /// The filter (see above). kinds: the cycle tags to write, of "FRWIOE"; "": every kind
+    std::string kinds;
+    /// Only instructions whose PC is in one of these (inclusive); empty: every instruction
+    std::vector<std::pair<uint16_t, uint16_t>> pcRanges;
+    /// Only cycles whose address (a port for I / O) is in one of these (inclusive); empty: every address
+    std::vector<std::pair<uint16_t, uint16_t>> addressRanges;
+
+    bool Filtered() const { return !kinds.empty() || !pcRanges.empty() || !addressRanges.empty(); }
 };
 
 struct AccessTraceSummary

@@ -20,6 +20,7 @@
 ///                   (L3 experiments, l3experiment.h; kept ones become TTD branches, l3experimentbranch.h)
 ///   analysis cover [<budget>] [frames=<n>] [ranges=<r,...>]                 (L3 directed coverage)
 ///   analysis trace <path> [from_frame=<f>] [from_tinframe=<t>] [to_frame=<f>] [to_tinframe=<t>] [max_cycles=<n>]
+///                  [kinds=in,out] [pc=8000-9FFF] [addresses=4000-5AFF]   (a filter: only these records)
 ///                                                             (the CPU access trace of a window, accesstrace.h)
 
 #include <map>
@@ -36,7 +37,7 @@ inline constexpr const char* kUsage =
     "[next|list|show|resolve] [id] [ok|wrong|skip] [label=L] [title=T] [comment=C] [kind=K] [names={json}] "
     "[reason=R] [offset=N] | experiment <spec.json|{json}> "
     "[finding=ID] [keep_branches=asked|observed|all] [run=R] | cover [budget] [frames=N] | trace <path> "
-    "[from_frame=F] [from_tinframe=T] [to_frame=F] [to_tinframe=T] [max_cycles=N] [--json]";
+    "[from_frame=F] [from_tinframe=T] [to_frame=F] [to_tinframe=T] [max_cycles=N] [kinds=in,out] [pc=8000-9FFF] [addresses=4000-5AFF] [--json]";
 
 /// False with the reason in error. The first word is the action (none: status); name=value words set an option by name
 inline bool ParseArgs(const std::vector<std::string>& args, std::string& action, std::map<std::string, std::string>& options,

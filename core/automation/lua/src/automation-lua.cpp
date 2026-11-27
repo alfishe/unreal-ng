@@ -2,6 +2,8 @@
 #include "emulator/lua_emulator.h"
 #include "hooks/luahookhost.h"
 
+#include <sol/sol.hpp>
+
 #include <chrono>
 #include <thread>
 #include <iostream>
@@ -364,4 +366,32 @@ void AutomationLua::InterruptHook(lua_State* L, lua_Debug*)
 {
     // Stays set: a pcall in the script catches this one, its next instruction raises it again
     luaL_error(L, "the script was stopped: the Lua interpreter is shutting down");
+}
+
+void AutomationLua::onStart()
+{
+    // Open some common libraries
+    _lua->open_libraries(sol::lib::base, sol::lib::package);
+    _lua->script("print('AutomationLua::onStart - lua test script executed!\\n');print(_VERSION);");
+}
+
+void AutomationLua::onFinish()
+{
+    // Clean up Lua state on the Lua thread (single-threaded ownership)
+    if (_luaEmulator)
+    {
+        delete _luaEmulator;
+        _luaEmulator = nullptr;
+    }
+
+    if (_lua)
+    {
+        delete _lua;
+        _lua = nullptr;
+    }
+}
+
+void AutomationLua::BindEmulator(Emulator* emulator)
+{
+    _luaEmulator->setEmulator(emulator);
 }
