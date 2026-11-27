@@ -61,6 +61,9 @@ public:
         }
         return answered;
     }
+    /// The firmware's own LINK write (the link watch's mark, a Z80 TANG_WRITE), not the app's: no replay of the ESP's
+    /// app gives it back, so the Tang counts it for TTD (Vdac4Tang::Q2OutsideInputs)
+    virtual bool FirmwareLinkWrite(uint32_t address, uint32_t value) { return LinkWrite(address, value); }
     /// core_load of a held core: the Tang runs the core whose VDAC4 mark is `usercode` (0x564434xx). kZmOk with
     /// the core's LINK VERSION word once it answers; kZmError when the Tang has no such core
     virtual int LoadCore(uint32_t usercode, uint32_t& version)

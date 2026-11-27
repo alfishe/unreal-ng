@@ -330,15 +330,16 @@ void DeviceScreenWrapper::takeRecordingPictures(std::vector<RecordingPicture>& o
         _gpuWindow->takeRecordingPictures(out);
 }
 
-bool DeviceScreenWrapper::grabRecordingPicture(QImage& image, uint64_t& frame, std::string& error, int pictureHeight)
+bool DeviceScreenWrapper::grabRecordingPicture(RecordingPicture& picture, std::string& error, int pictureHeight)
 {
-    frame = 0;
-    if (_useGPU && _gpuWindow && _gpuWindow->recordingCaptureOn() && _gpuWindow->grabRecordingPicture(image, frame))
+    picture = {};
+    if (_useGPU && _gpuWindow && _gpuWindow->recordingCaptureOn() && _gpuWindow->grabRecordingPicture(picture))
         return true;
-    if (!grabWindowPicture(image, error, pictureHeight))
+    picture = {};
+    if (!grabWindowPicture(picture.image, error, pictureHeight))
         return false;
     if (!_useGPU && _software)
-        frame = _software->preparedFrameNumber();
+        picture.number = _software->preparedFrameNumber();
     return true;
 }
 

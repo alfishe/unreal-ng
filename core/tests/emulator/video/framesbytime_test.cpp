@@ -18,6 +18,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/smoothmotion.h"
 
 /// Screen frames by time (docs/inprogress/2026-10-26-frame-presenter, section 3): every latched frame gets a target
 /// time at its frame end (StampPresentTiming), and readers pick by time (CopyFrameAt) or take each frame once
@@ -675,6 +676,43 @@ TEST_F(FramesByTime_Test, TemporalEffectSwitchCutsTheFrameClock)
         serial = info.serial;
     EXPECT_EQ(serial, 33u);
     EXPECT_EQ(info.targetNs, Target(32));
+}
+
+/// Smooth motion reads ahead (frame N due: it draws towards N + 1): with a temporal effect the video waits one frame
+/// more while smooth motion is set, so N + 1's output is in a frame before N is due, as without the effect. Without
+/// it, a presenter drawing ~40 ms ahead of its refresh (Metal) had no next frame for 85 % of the pictures
+TEST_F(FramesByTime_Test, SmoothMotionGetsAFrameMoreWithATemporalEffect)
+{
+    CONFIG& config = _emulator->GetContext()->config;
+    const uint8_t before = config.smoothMotion;
+    config.smoothMotion = static_cast<uint8_t>(smoothmotion::Mode::Off);
+    for (int k = 0; k < 4; k++)
+        LatchAndStamp();
+    StartTemporalEffect();
+    for (int k = 0; k < 12; k++)
+        LatchProcessed();
+    const uint8_t effect = _screen->GetEffectivePresentDelayFrames();
+    EXPECT_EQ(effect, 7) << "ZX DLSS alone: its look-ahead + 1";
+    for (const smoothmotion::Mode mode : {smoothmotion::Mode::Interpolate, smoothmotion::Mode::Auto,
+                                          smoothmotion::Mode::Blend, smoothmotion::Mode::InterpolateLite})
+    {
+        config.smoothMotion = static_cast<uint8_t>(mode);
+        LatchProcessed();
+        EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), effect + 1) << smoothmotion::ModeName(mode);
+    }
+    // The frame due a frame later, the sound with it: the next frame's output in a frame before
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    uint64_t serial = 0;
+    for (int k = 0; k < 6; k++)
+        LatchProcessed();
+    while (_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false))
+        serial = info.serial;
+    EXPECT_EQ(info.targetNs, kBase + static_cast<int64_t>(serial + effect + 1) * kPeriod);
+    config.smoothMotion = static_cast<uint8_t>(smoothmotion::Mode::Off);
+    LatchProcessed();
+    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), effect);
+    config.smoothMotion = before;
 }
 
 /// ZX DLSS switched on mid-stream: its look-ahead (7 frames) is longer than the delay so far, but the picture never

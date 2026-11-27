@@ -139,6 +139,9 @@ public:
     virtual uint64_t Presented() const { return 0; }
     /// Presents shown a refresh late so far (Stats::late, without the statistics' locks: asked every picture)
     virtual uint64_t LatePresents() const { return 0; }
+    /// Presents shown at another lag than the one before them (PresentLead::Steps): what smooth motion's guard counts,
+    /// a run evenly a refresh late is none
+    virtual uint64_t SteppedPresents() const { return LatePresents(); }
     virtual uint64_t LastLatePresent() const { return 0; }
     virtual uint32_t LastLateLag() const { return 0; }
     virtual uint64_t LastOnTimePresent() const { return 0; }

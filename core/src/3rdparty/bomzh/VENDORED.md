@@ -10,8 +10,9 @@ against, pixel for pixel.
 | Source | Quake-II-for-ZX-Evolution-VDAC4, `gpu/model/bomzh.c` and `gpu/model/bomzh.h`, commit `c5b4143` (2026-11-25) |
 | License | MIT, Copyright (c) 2026 Andrew Lazarev (`LICENSE`, the repository's root license; `gpu/` carries no other) |
 | Copied | `bomzh.h` as is, `bomzh.c` as `bomzh.cpp` (the model builds as C++: the core library globs `*.cpp`) |
-| Local changes | `bz_shown_rgb` reads the shown frame through `rd8` (the address wraps in SDRAM): the original indexed `mem` directly and could read past its end for a frame placed near the top of SDRAM. `poly` returns at once for `n <= 0` (gcc 13 -O3 -Wmaybe-uninitialized: `vy[top]` was read with no vertex written) |
+| Local changes | 1. `bz_shown_rgb` reads the shown frame through `rd8` (the address wraps in SDRAM): the original indexed `mem` directly and could read past its end for a frame placed near the top of SDRAM. 2. `poly` returns at once for `n <= 0` (gcc 13 -O3 -Wmaybe-uninitialized: `vy[top]` was read with no vertex written). 3. Time travel and snapshots (marked `unreal-ng` in both files): `bz_state_save` / `bz_state_load` (`BZ_STATE_BYTES` little-endian bytes: every `bz_s` field but `mem`, `mask` and the hooks), `bz_reset` (back to what `bz_create` made, the SDRAM zero) and `bz_layout` (the SETUP's frames and z, the frame drawn), appended after `bz_stats_reset` in `bomzh.h` and before `bz_set_hooks` in `bomzh.cpp`. The drawing code is unchanged |
 | Build | `core/src/CMakeLists.txt`: no precompiled header (`SKIP_PRECOMPILE_HEADERS`) |
 
-Update: copy both files again (`bomzh.c` to `bomzh.cpp`), reapply the local change, replace the commit above, build
-and run `core-tests --gtest_filter='*Bomzh*'`.
+Update: copy both files again (`bomzh.c` to `bomzh.cpp`), reapply the local changes, replace the commit above, check
+the state functions against `struct bz_s` (a new field is a new entry in `bz_state_save` / `bz_state_load` and in
+`BZ_STATE_BYTES`), build and run `core-tests --gtest_filter='*Bomzh*'`.

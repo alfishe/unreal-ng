@@ -10,10 +10,13 @@
 
 #include "vdac2cardfixture.h"
 
+#include <cstring>
+#include <initializer_list>
 #include <thread>
 #include <vector>
 
 #include "emulator/platforms/tsconf/vdac4/vdac4bomzh.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4espstate.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4ftworker.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4tang.h"
 
@@ -264,6 +267,151 @@ TEST_F(Vdac4Tang_Test, Quake2CoreBackAndBoot)
     ASSERT_EQ(Tang()->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
     EXPECT_TRUE(Tang()->CoreBack());
     EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Ts);
+}
+
+/// Time travel over core_load / core_back (quake2.md §8): a state taken while the Quake II core runs brings it back
+/// as it was over a Tang in slot 0 or running the core with another history; a slot-0 state leaves the core
+TEST_F(Vdac4Tang_Test, Quake2StateRestoresAcrossCoreLoadAndBack)
+{
+    PastEspBoot();
+    uint32_t version = 0;
+    ASSERT_EQ(Tang()->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    auto queue = [&](std::initializer_list<uint32_t> words) {
+        for (uint32_t w : words)
+            Tang()->LinkWrite(0x40000, w);
+    };
+    queue({0x0A00'0000u, 0x10000, 0x20000, 0x30000, (8u << 16) | 16u, 0x40000, 0, 0x50000, 0x60000});
+    queue({0x0600'0000u, 0, (8u << 16) | 16u, 7, 0x0700'0000u, 0});  // a frame filled with color 7, shown
+    queue({0x0900'0003u, 0x200000, 0x11223344u});                      // inside a WRITE
+    Tang()->PresentFrame();
+    EXPECT_EQ(Tang()->Q2LatchedFrames(), 1u);
+    auto save = [&] {
+        std::vector<uint8_t> bytes;
+        Vdac4EspStateWriter w(bytes);
+        Tang()->SaveQ2(w);
+        return bytes;
+    };
+    auto load = [&](const std::vector<uint8_t>& bytes) {
+        Vdac4EspStateReader r(bytes.data(), bytes.size());
+        return Tang()->LoadQ2(r) && r.AtEnd();
+    };
+    const Vdac4Tang::State q2State = Tang()->GetState();
+    const std::vector<uint8_t> q2Bytes = save();
+    const std::vector<uint8_t> sdram(Tang()->Q2Model()->Memory(),
+                                     Tang()->Q2Model()->Memory() + Vdac4BomzhCore::kMemoryBytes);
+
+    // core_back, then a new core_load with another history: the model is the same memory, reset
+    const uint8_t* memory = Tang()->Q2Model()->Memory();
+    ASSERT_TRUE(Tang()->CoreBack());
+    const Vdac4Tang::State tsState = Tang()->GetState();
+    const std::vector<uint8_t> tsBytes = save();
+    ASSERT_EQ(Tang()->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    EXPECT_EQ(Tang()->Q2Model()->Memory(), memory) << "the SDRAM stays where it is (a TTD region)";
+    EXPECT_EQ(Tang()->Q2Core()->Frames(), 0u) << "core_load resets the core";
+    queue({0x0700'0000u, 0, 0x0700'0000u, 0});
+
+    // The Quake II state back over the other history (the engine restores the SDRAM first)
+    std::memcpy(Tang()->Q2Model()->Memory(), sdram.data(), sdram.size());
+    Tang()->SetState(q2State);
+    ASSERT_TRUE(load(q2Bytes));
+    EXPECT_EQ(save(), q2Bytes);
+    EXPECT_EQ(Tang()->Q2LatchedFrames(), 1u);
+
+    // The slot-0 state leaves the core; the Quake II state over slot 0 enters it again, the WRITE goes on
+    Tang()->SetState(tsState);
+    ASSERT_TRUE(load(tsBytes));
+    EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Ts);
+    EXPECT_EQ(Tang()->Q2Core(), nullptr);
+    Tang()->SetState(q2State);
+    ASSERT_TRUE(load(q2Bytes));
+    ASSERT_NE(Tang()->Q2Core(), nullptr);
+    EXPECT_EQ(save(), q2Bytes);
+    queue({0x5566'7788u, 0x99AA'BBCCu});
+    const uint8_t* m = Tang()->Q2Model()->Memory() + 0x200000;
+    EXPECT_EQ(m[0], 0x44);
+    EXPECT_EQ(m[4], 0x88);
+    EXPECT_EQ(m[8], 0xCC);
+    EXPECT_EQ(Tang()->Q2Core()->GetStats().badWords, 0u);
+
+    std::vector<uint8_t> foreign = q2Bytes;
+    foreign[0] ^= 1;
+    EXPECT_FALSE(load(foreign));
+}
+
+/// What the ESP's TTD keyframes rely on (ttd-design.md §11): core_load / core_back move the epoch, the firmware's own
+/// writes are counted (the app's are not), the replay feed writes the core alone, and the Live part of a checkpoint
+/// takes the Evo side and checks the core the replay computed
+TEST_F(Vdac4Tang_Test, Quake2ReplayFeedEpochAndLivePart)
+{
+    PastEspBoot();
+    const uint64_t epoch = Tang()->Q2Epoch();
+    uint32_t version = 0;
+    ASSERT_EQ(Tang()->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    EXPECT_NE(Tang()->Q2Epoch(), epoch) << "core_load";
+
+    // The firmware's write counts, the app's does not
+    const uint64_t outside = Tang()->Q2OutsideInputs();
+    Tang()->FirmwareLinkWrite(0x40000, 0x0A00'0000u);
+    EXPECT_EQ(Tang()->Q2OutsideInputs(), outside + 1);
+    for (uint32_t w : {0x10000u, 0x20000u, 0x30000u, (8u << 16) | 16u, 0x40000u, 0u, 0x50000u, 0x60000u})
+        Tang()->LinkWrite(0x40000, w);
+    const uint8_t ftWord[4] = {1, 2, 3, 4};
+    Tang()->LinkFtWrite(0x1000, ftWord, 1);
+    EXPECT_EQ(Tang()->Q2OutsideInputs(), outside + 1);
+    EXPECT_EQ(Tang()->Q2Core()->GetStats().badWords, 0u) << "SETUP whole, FT words not core words";
+
+    // A checkpoint's Live part, then the core moved on by the replay feed alone (the Tang's own state unchanged)
+    auto live = [&] {
+        std::vector<uint8_t> bytes;
+        Vdac4EspStateWriter w(bytes);
+        Tang()->SaveQ2(w, Vdac4Tang::Q2Part::Live);
+        return bytes;
+    };
+    auto whole = [&] {
+        std::vector<uint8_t> bytes;
+        Vdac4EspStateWriter w(bytes);
+        Tang()->SaveQ2(w);
+        return bytes;
+    };
+    const std::vector<uint8_t> before = whole();
+    const Vdac4Tang::State tangBefore = Tang()->GetState();
+    const uint64_t epochBefore = Tang()->Q2Epoch();
+    for (uint32_t w : {0x0600'0000u, 0u, (8u << 16) | 16u, 9u, 0x0700'0000u, 0u})
+        Tang()->Q2ReplayLinkWrite(0x40000, w);
+    const uint8_t words[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    Tang()->Q2ReplayLinkFtWrite(0x2000, words, 2);
+    EXPECT_EQ(Tang()->Q2OutsideInputs(), outside + 1) << "the replay feed is no outside input";
+    EXPECT_EQ(Tang()->Q2Epoch(), epochBefore);
+    EXPECT_EQ(Tang()->Q2Core()->Frames(), 1u);
+    EXPECT_EQ(Tang()->GetState().ftAddr, tangBefore.ftAddr) << "the Tang itself unchanged";
+    EXPECT_EQ(Tang()->GetState().scratch, tangBefore.scratch);
+    Tang()->SetShowing(true);  // the Evo side moves too
+    const std::vector<uint8_t> after = live();
+    const std::vector<uint8_t> afterWhole = whole();
+
+    // Back to the core before the feed; the same feed again gives the recorded core: the Live part matches
+    Vdac4EspStateReader back(before.data(), before.size());
+    ASSERT_TRUE(Tang()->LoadQ2(back));
+    bool matches = true;
+    Vdac4EspStateReader early(after.data(), after.size());
+    ASSERT_TRUE(Tang()->LoadQ2(early, Vdac4Tang::Q2Part::Live, &matches));
+    EXPECT_FALSE(matches) << "the core is not where the checkpoint was";
+    Vdac4EspStateReader again(before.data(), before.size());
+    ASSERT_TRUE(Tang()->LoadQ2(again));
+    for (uint32_t w : {0x0600'0000u, 0u, (8u << 16) | 16u, 9u, 0x0700'0000u, 0u})
+        Tang()->Q2ReplayLinkWrite(0x40000, w);
+    Tang()->Q2ReplayLinkFtWrite(0x2000, words, 2);
+    Vdac4EspStateReader at(after.data(), after.size());
+    ASSERT_TRUE(Tang()->LoadQ2(at, Vdac4Tang::Q2Part::Live, &matches));
+    EXPECT_TRUE(at.AtEnd());
+    EXPECT_TRUE(matches);
+    EXPECT_EQ(whole(), afterWhole) << "the Evo side came from the Live part";
+
+    ASSERT_TRUE(Tang()->CoreBack());
+    EXPECT_EQ(Tang()->Q2Core(), nullptr);
+    const uint64_t epochBack = Tang()->Q2Epoch();
+    Tang()->Q2ReplayLinkWrite(0x40000, 0x0700'0000u);  // no core: nothing
+    EXPECT_EQ(Tang()->Q2Epoch(), epochBack);
 }
 
 #endif // ENABLE_VDAC2

@@ -246,6 +246,15 @@ public:
     /// The last word read at each LINK address so far: what a replay stopped at a boundary goes on with
     const std::map<uint32_t, uint32_t>& JournalReadMap() const { return _journal.lastRead; }
     void SetJournalReadMap(const std::map<uint32_t, uint32_t>& reads) { _journal.lastRead = reads; }
+    /// Where a replay sends the app's LINK writes, which it drops otherwise (the Tang is restored, not replayed):
+    /// the VDAC4 board's TTD restore feeds them to the Quake II core it computes again from the keyframe. Unset
+    /// (empty functions): dropped
+    void SetReplayLinkSink(std::function<void(uint32_t address, uint32_t value)> write,
+                           std::function<void(uint32_t ftAddress, const uint8_t* words, size_t count)> ftWrite)
+    {
+        _replayLinkWrite = std::move(write);
+        _replayLinkFtWrite = std::move(ftWrite);
+    }
 
     /// endregion
 
@@ -546,6 +555,8 @@ private:
     std::unique_ptr<IEspCpu> _cpu;
     EspAppHostPorts _outer;  ///< the owner's ports
     EspAppHostPorts _ports;  ///< what the host calls: _outer through the journal
+    std::function<void(uint32_t, uint32_t)> _replayLinkWrite;  ///< SetReplayLinkSink
+    std::function<void(uint32_t, const uint8_t*, size_t)> _replayLinkFtWrite;
     uint32_t _mhz;
     EspMemory _memory;
 

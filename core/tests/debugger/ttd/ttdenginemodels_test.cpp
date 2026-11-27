@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <initializer_list>
 #include <map>
 #include <string>
 #include <vector>
@@ -40,6 +41,10 @@
 #include "emulator/platforms/tsconf/vdac4/esp/espapphost.h"
 #include "emulator/platforms/tsconf/vdac4/esp/espxtensaruntime.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4board.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4bomzh.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4espstate.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4tang.h"
+#include "emulator/video/screen.h"
 #endif
 #include "emulator/ports/portdecoder.h"
 
@@ -50,6 +55,19 @@ uint64_t Fnv1a(const uint8_t* data, size_t size)
     uint64_t h = 1469598103934665603ull;
     for (size_t i = 0; i < size; ++i)
         h = (h ^ data[i]) * 1099511628211ull;
+    return h;
+}
+
+/// FNV-1a over 64-bit words (a size that is a multiple of 8): the 8 MB of the Quake II core's SDRAM per point
+uint64_t Fnv1aWords(const uint8_t* data, size_t size)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i + 8 <= size; i += 8)
+    {
+        uint64_t w = 0;
+        std::memcpy(&w, data + i, 8);
+        h = (h ^ w) * 1099511628211ull;
+    }
     return h;
 }
 
@@ -467,6 +485,176 @@ TEST_F(TTDEngineModels_Fixture, Vdac4EspMemoryWithoutAReplayPointIsRestoredByThe
     }
     EXPECT_EQ(esp->GetStats().regionsLeft, 0u) << "no replay point, nothing left to the device";
     EXPECT_EQ(esp->GetStats().divergences, 0u) << esp->GetStats().lastDivergence;
+}
+
+/// The Tang's Quake II core under time travel (quake2.md §8): recorded across core_load and core_back, every
+/// checkpoint restores the core (registers, stream in flight, latched picture), its 8 MB SDRAM (a region marked
+/// by the core: WRITE as it lands, the frames and z of the drawing) and the picture the monitor shows, in
+/// either direction over the personality change
+TEST_F(TTDEngineModels_Fixture, Vdac4Quake2CoreRestoresAtEveryCheckpoint)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("TSL-VDAC4"));
+    EmulatorContext* context = _emulator->GetContext();
+    auto* ports = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    Vdac4Board* board = ports->GetVdac4Board();
+    Vdac4Tang* tang = ports->GetVdac4Tang();
+    ASSERT_NE(board, nullptr);
+    ASSERT_NE(tang, nullptr);
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    board->Runtime().WaitIdle();
+
+    // The firmware's writes (no replay gives them back): the capture after them keys the ESP and the core
+    auto queue = [&](std::initializer_list<uint32_t> words) {
+        for (uint32_t w : words)
+            tang->FirmwareLinkWrite(0x40000, w);
+    };
+    auto load = [&] {
+        uint32_t version = 0;
+        ASSERT_EQ(tang->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+        queue({0x0900'0002u, 0x50000, 0x0A00'0000u, 0x0000'1E14u});
+        queue({0x0A00'0000u, 0x100000, 0x180000, 0x200000, (60u << 16) | 80u, 0x40000, 0, 0x50000, 0x60000});
+    };
+    struct Q2Live
+    {
+        ttd::TTDTimePoint at;
+        Vdac4Tang::Personality personality;
+        std::vector<uint8_t> state;
+        uint64_t sdram = 0;
+        uint64_t picture = 0;
+    };
+    auto capture = [&] {
+        Q2Live s;
+        s.at = _ttd->CurrentPosition();
+        s.personality = tang->GetPersonality();
+        Vdac4EspStateWriter w(s.state);
+        tang->SaveQ2(w);
+        s.sdram = Fnv1aWords(tang->Q2Model()->Memory(), Vdac4BomzhCore::kMemoryBytes);
+        uint32_t* pixels = nullptr;
+        size_t bytes = 0;
+        context->pScreen->GetFramebufferData(&pixels, &bytes);
+        s.picture = pixels ? Fnv1a(reinterpret_cast<const uint8_t*>(pixels), bytes) : 0;
+        return s;
+    };
+
+    std::vector<Q2Live> live;
+    ASSERT_TRUE(_ttd->StartRecording());
+    constexpr int kFrames = 20, kLoadAt = 3, kBackAt = 11, kReloadAt = 14;
+    bool writeOpen = false;
+    for (int f = 0; f < kFrames; ++f)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        board->Runtime().WaitIdle();
+        live.push_back(capture());
+        // The next frame's commands (the ESP's, as the game sends them), behind the ESP's journal: every
+        // checkpoint is a keyframe of its own here. The ESP's firmware has no app and goes on with its own FT812
+        // traffic, which reaches the core too (bad words there): recorded as well, it changes nothing here
+        if (f == kLoadAt || f == kReloadAt)
+            ASSERT_NO_FATAL_FAILURE(load());
+        if (f == kBackAt)
+        {
+            ASSERT_TRUE(tang->CoreBack());
+            writeOpen = false;
+        }
+        if (tang->GetPersonality() != Vdac4Tang::Personality::Q2)
+            continue;
+        const uint32_t v = static_cast<uint32_t>(f);
+        queue({0x0600'0000u, (v % 7) << 16 | (v % 11), (20u << 16) | 30u, v * 13});  // FILL a box
+        queue({0x0600'0001u, 0, (60u << 16) | 80u, v * 1000});                         // z
+        queue({0x0400'0300u | (v & 0xFF), ((v * 3) % 50) << 16 | ((v * 5) % 70), 1u << 28});
+        queue({0x0900'0002u, 0x300000 + v * 0x1004, v, ~v});                         // WRITE across pieces
+        queue({0x0700'0000u, 0});                                                     // FRAME
+        if (writeOpen)
+            queue({v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v});
+        writeOpen = f % 3 == 0;
+        if (writeOpen)
+            queue({0x0900'0010u, 0x380000});  // a WRITE left open at the frame's end: its data comes next frame
+    }
+    _ttd->StopRecording();
+    ASSERT_GE(Engine().CheckpointCount(), size_t(kFrames));
+    // The test's writes are the firmware's: each capture after one is a keyframe
+    ttd::TTDVdac4EspCpu* esp = nullptr;
+    for (const ttd::TTDDeviceEntry& e : Engine().Devices().Entries())
+        if (auto* d = dynamic_cast<ttd::TTDVdac4EspCpu*>(e.device))
+            esp = d;
+    ASSERT_NE(esp, nullptr);
+    EXPECT_GE(esp->GetStats().keyframes, uint64_t(kBackAt - kLoadAt + kFrames - kReloadAt - 2));
+
+    uint32_t sdram = 0;
+    while (sdram < Engine().Regions().size() && Engine().Regions()[sdram].name != "vdac4.q2.sdram")
+        ++sdram;
+    ASSERT_LT(sdram, Engine().Regions().size()) << "the SDRAM is an engine region";
+    size_t changed = 0;
+    for (size_t i = 1; i < Engine().CheckpointCount(); ++i)
+        changed += Engine().ChangeCount(i, sdram);
+    EXPECT_GT(changed, 0u);
+    EXPECT_LT(changed, (Engine().CheckpointCount() - 1) * 64) << "pieces stored per frame, not the 8 MB";
+
+    // Each live frame at its checkpoint, back and forth across core_load / core_back
+    std::vector<size_t> order;
+    for (size_t k = 0; k < live.size(); ++k)
+        order.push_back(k);
+    for (size_t k : {size_t(kReloadAt + 3), size_t(kLoadAt - 1), size_t(kBackAt + 2), size_t(kLoadAt + 5),
+                     size_t(kFrames - 1), size_t(kReloadAt - 1), size_t(kLoadAt + 1)})
+        order.push_back(k);
+    for (size_t k : order)
+    {
+        const Q2Live& want = live[k];
+        size_t cp = 0;
+        while (cp < Engine().CheckpointCount() &&
+               (Engine().Checkpoint(cp)->position.frame != want.at.frame ||
+                Engine().Checkpoint(cp)->position.tInFrame > want.at.tInFrame))
+            ++cp;
+        ASSERT_LT(cp, Engine().CheckpointCount()) << "frame " << want.at.frame;
+        const ttd::TTDPosition& p = Engine().Checkpoint(cp)->position;
+        ASSERT_TRUE(_ttd->SeekTo({p.frame, static_cast<uint32_t>(p.tInFrame)}));
+        board->Runtime().WaitIdle();
+        SCOPED_TRACE("live frame " + std::to_string(k));
+        EXPECT_EQ(_ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact) << _ttd->LastEngineCheck().message;
+        const Q2Live got = capture();
+        EXPECT_EQ(got.personality, want.personality);
+        EXPECT_TRUE(got.state == want.state) << "the core's state";
+        EXPECT_EQ(got.sdram, want.sdram) << "SDRAM";
+        EXPECT_EQ(got.picture, want.picture) << "the picture shown";
+    }
+}
+
+/// The Quake II core between the ESP's keyframes comes from the replay of the ESP's app only. A write that reaches
+/// it as the app's would (LinkWrite) but is in no journal is not given back: the restore says so (the core's
+/// hash), it does not hand over another core as exact
+TEST_F(TTDEngineModels_Fixture, Vdac4Quake2CoreOffTheJournalIsReportedNotExact)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("TSL-VDAC4"));
+    auto* ports = dynamic_cast<PortDecoder_TSConf*>(_emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    Vdac4Board* board = ports->GetVdac4Board();
+    Vdac4Tang* tang = ports->GetVdac4Tang();
+    ASSERT_NE(board, nullptr);
+    ASSERT_NE(tang, nullptr);
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    board->Runtime().WaitIdle();
+    uint32_t version = 0;
+    ASSERT_EQ(tang->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    ASSERT_TRUE(_ttd->StartRecording());
+    std::vector<ttd::TTDTimePoint> at;
+    for (int f = 0; f < 8; ++f)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        board->Runtime().WaitIdle();
+        at.push_back(_ttd->CurrentPosition());
+        for (uint32_t w : {0x0600'0001u, 0u, (8u << 16) | 16u, static_cast<uint32_t>(f) + 1})
+            tang->LinkWrite(0x40000, w);
+    }
+    _ttd->StopRecording();
+    size_t cp = 0;
+    while (cp < Engine().CheckpointCount() && Engine().Checkpoint(cp)->position.frame != at[5].frame)
+        ++cp;
+    ASSERT_LT(cp, Engine().CheckpointCount());
+    const ttd::TTDPosition& p = Engine().Checkpoint(cp)->position;
+    ASSERT_TRUE(_ttd->SeekTo({p.frame, static_cast<uint32_t>(p.tInFrame)}));
+    board->Runtime().WaitIdle();
+    EXPECT_EQ(_ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::NotBitExact);
+    EXPECT_NE(_ttd->LastEngineCheck().message.find("Quake II"), std::string::npos) << _ttd->LastEngineCheck().message;
 }
 
 #endif  // ENABLE_VDAC2

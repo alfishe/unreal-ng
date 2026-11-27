@@ -636,7 +636,7 @@ void Vdac4EspFirmware::HandleTangWrite(const EspPacket& packet)
             words[i] &= ~(1U << 9);  // CTRL bit 9 starts the SD READ calibration: never from a plugin
     }
     for (size_t i = 0; ok && i < count; ++i)
-        ok = _tang->LinkWrite(static_cast<uint32_t>(address + i * 4), words[i]);
+        ok = _tang->FirmwareLinkWrite(static_cast<uint32_t>(address + i * 4), words[i]);
     const uint8_t reply = ok ? 1 : 0;
     Send(kRespTangWrite, &reply, 1);
 }
@@ -994,7 +994,7 @@ void Vdac4EspFirmware::PollLinkWatch()
         return;
     if (!_linkWatchArmed)
     {
-        if (_tang->LinkWrite(kRegScratch, kLinkMarker))
+        if (_tang->FirmwareLinkWrite(kRegScratch, kLinkMarker))
         {
             _linkWatchArmed = true;
             _linkWatchAtMs = _nowMs;
@@ -1017,7 +1017,7 @@ void Vdac4EspFirmware::PollLinkWatch()
                   static_cast<unsigned>(mark), static_cast<unsigned>(version >> 24),
                   static_cast<unsigned>((version >> 8) & 0xFF), static_cast<unsigned>(version & 0xFF));
     Log(line);
-    _tang->LinkWrite(kRegScratch, kLinkMarker);
+    _tang->FirmwareLinkWrite(kRegScratch, kLinkMarker);
 }
 
 // --- Cores and data files from the Evo card (0.1.164, 0.1.166) -------------------------------------------------
@@ -1346,14 +1346,16 @@ void Vdac4EspFirmware::Save(Vdac4EspStateWriter& out) const
     out.Bool(_clockSet);
     out.U8(_media.First());
     out.U8(_media.Last());
-    // Delivery: only what came so far
+    // Delivery: only what came so far. Its bytes go last (the delivery tail below): they grow with every piece,
+    // and a TTD capture stores the pieces of the state that changed, so nothing after them may move. Here an empty
+    // blob (a state before the tail had the bytes here)
     out.Bool(_deliveryActive);
     out.String(_deliveryName);
     out.U32(_deliverySize);
     out.U32(_deliveryStamp);
     out.U32(_deliveryReceived);
     out.Bool(_deliveryResource);
-    out.Blob(_delivery.data(), _deliveryActive ? _deliveryReceived : 0);
+    out.Blob(_delivery.data(), 0);
     out.U8(static_cast<uint8_t>(_resources.size()));
     for (const HeldResource& item : _resources)
     {
@@ -1398,6 +1400,10 @@ void Vdac4EspFirmware::Save(Vdac4EspStateWriter& out) const
     out.Bool(_linkWatchArmed);
     out.U32(_linkWatchAtMs);
     out.U32(_linkReloads);
+    // Tail (delivery): the bytes received so far, from a 4 KB boundary of the state (the app state and the strings
+    // above change size: the bytes stay put while the step holds); absent in older states (they had them above)
+    out.AlignBlob(4096, 4);
+    out.Blob(_delivery.data(), _deliveryActive ? _deliveryReceived : 0);
 }
 
 bool Vdac4EspFirmware::Load(Vdac4EspStateReader& in)
@@ -1428,8 +1434,12 @@ bool Vdac4EspFirmware::Load(Vdac4EspStateReader& in)
     _deliveryReceived = in.U32();
     _deliveryResource = in.Bool();
     std::vector<uint8_t> received;
-    if (!in.Blob(received, kMaxResourceBytes) || received.size() != (_deliveryActive ? _deliveryReceived : 0) ||
-        _deliverySize > kMaxResourceBytes || _deliveryReceived > _deliverySize)
+    const size_t receivedBytes = _deliveryActive ? _deliveryReceived : 0;
+    if (!in.Blob(received, kMaxResourceBytes) || _deliverySize > kMaxResourceBytes || _deliveryReceived > _deliverySize)
+        return false;
+    // Empty with bytes received: they come in the delivery tail (a state of this version); else here (an older one)
+    const bool receivedInTail = received.empty() && receivedBytes != 0;
+    if (!receivedInTail && received.size() != receivedBytes)
         return false;
     if (_deliveryActive)
     {
@@ -1506,8 +1516,21 @@ bool Vdac4EspFirmware::Load(Vdac4EspStateReader& in)
             _linkReloads = in.U32();
             if (!in.Ok())
                 return false;
+            std::vector<uint8_t> pad;
+            if (!in.AtEnd() && !in.Blob(pad, 4096))
+                return false;
+            if (!in.AtEnd())
+            {
+                received.clear();
+                if (!in.Blob(received, kMaxResourceBytes) || received.size() != receivedBytes)
+                    return false;
+                if (receivedInTail)
+                    std::copy(received.begin(), received.end(), _delivery.begin());
+            }
         }
     }
+    if (receivedInTail && received.size() != receivedBytes)
+        return false;  // the bytes were to come in the tail, which is not there
     // The running app comes back only if the runtime can restore it; otherwise it is stopped (as after a crash)
     if (appRunning && _runtime != nullptr)
     {

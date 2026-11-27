@@ -10,6 +10,11 @@
 ///     keyframes (every kKeyframeFrames captures, a rescan, a journal over kJournalLimit), its blob is the host's
 ///     state at the last keyframe and the input journal since. A restore loads the keyframe and runs the ESP
 ///     again up to the frame on that journal, then checks the host state's hash.
+///   - Vdac4Q2 (81): the Tang's Quake II core (bomzh-3D) while it runs. Every input of the core but the Evo side
+///     is a LINK write of the ESP's app, so the core goes with the ESP's keyframes: Vdac4EspCpu's keyframe holds
+///     the core's whole state, and its restore feeds the core the LINK writes of its replay. Vdac4Q2's blob at
+///     every capture is the rest (the Evo side, the latched picture, a hash of the core's state to check the
+///     replay against); its SDRAM is the region Vdac4Q2Sdram, offered whole at the ESP's keyframes only.
 
 #include <cstdint>
 #include <map>
@@ -119,6 +124,8 @@ public:
     /// Replay points kept (each the ESP's whole memory, about 9 MB)
     static constexpr size_t kReplayPoints = 3;
     const Stats& GetStats() const { return _stats; }
+    /// The last capture was a keyframe of the ESP (Vdac4Q2 offers the SDRAM then)
+    bool LastCaptureKeyed() const { return _keyedNow; }
 
 private:
     void MarkAllMemory();
@@ -134,10 +141,11 @@ private:
         std::vector<uint8_t> state;    ///< the host's state
         std::map<uint32_t, uint32_t> reads;
         std::vector<uint8_t> psram, sram, rom;
+        std::vector<uint8_t> q2State, q2Sdram;  ///< the Quake II core, when the keyframe has it running
         uint64_t used = 0;
     };
     ReplayPoint* FindReplayPoint(uint64_t keyHash, const std::vector<uint8_t>& journal);
-    void KeepReplayPoint(uint64_t keyHash, const uint8_t* journal, size_t size);
+    void KeepReplayPoint(uint64_t keyHash, const uint8_t* journal, size_t size, bool q2);
 
     Vdac4Board& _board;
     TTDRegionTracker _trackers[3];
@@ -154,6 +162,48 @@ private:
     Stats _stats;
     std::string _loadDivergence;  ///< the last load's divergence, until the engine takes it (empty: none)
     bool _regionsLeft = false;    ///< TTDLoadRestoresRegions said yes: the next load must write the memory
+    bool _keyedNow = false;       ///< LastCaptureKeyed
+    std::vector<uint8_t> _q2Key;  ///< the Quake II core's state at the keyframe (Vdac4BomzhCore::Save; empty: not running)
+    uint64_t _q2Epoch = 0;        ///< Vdac4Tang::Q2Epoch and Q2OutsideInputs at the last capture: a change keys
+    uint64_t _q2Outside = 0;
+};
+
+/// The Tang's Quake II core: the engine's blob is Vdac4Tang::SaveQ2 Live (the Evo side, counters, a hash of the
+/// core's state, the picture only when the core's state does not give it); the core itself comes from
+/// Vdac4EspCpu's keyframe and replay, so this device restores after it and checks the hash. The SDRAM is a region
+/// of its own, offered at the ESP's keyframes. The whole state (a live save) carries the core and the SDRAM
+class TTDVdac4Q2 : public TTDSerializable, public ITTDRegionSource
+{
+public:
+    TTDVdac4Q2(Vdac4Tang& tang, const TTDVdac4EspCpu& espCpu);
+
+    size_t TTDStateSize() const override;
+    void TTDSaveState(uint8_t* dst) const override;
+    void TTDLoadState(const uint8_t* src) override;
+    bool TTDVariableSize() const override { return true; }
+    void TTDSaveStateTo(std::vector<uint8_t>& out) const override;
+    std::string TTDDeviceName() const override { return "Vdac4Q2"; }
+    TTDDeviceType TTDType() const override { return TTDDeviceType::Vdac4Q2; }
+    uint64_t TTDHashState() const override;
+    TTDDeviceDescriptor TTDDescribe() const override;
+
+    /// region <ITTDRegionSource>
+    void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool on) override { _armed = on; }
+    void TTDBeforeCapture() override;
+    void TTDBeforeRestore() override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
+    bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
+    size_t TTDStateWithoutRegionsLimit() const override;
+    bool TTDLoadDiverged(std::string& detail) override;
+    /// endregion
+
+private:
+    Vdac4Tang& _tang;
+    const TTDVdac4EspCpu& _espCpu;
+    TTDRegionTracker _tracker;
+    bool _armed = false;
+    std::string _loadDivergence;  ///< the last load's divergence, until the engine takes it (empty: none)
 };
 
 }  // namespace ttd

@@ -127,6 +127,16 @@ uint32_t bz_draw_fb (const bz_t *bz);
 const bz_stats_t *bz_stats (const bz_t *bz);
 void bz_stats_reset (bz_t *bz);
 
+/* unreal-ng (VENDORED.md): the model's state for time travel and snapshots. bz_state_save writes everything but
+ * the SDRAM (bz_mem) and the hooks as BZ_STATE_BYTES little-endian bytes, the same on every host; bz_state_load
+ * takes them back. bz_reset brings the model to what bz_create made (SDRAM zero, every register 0), hooks kept.
+ * bz_layout: the frames and z of the last SETUP and the frame drawn now (fb[0], fb[1], zaddr, draw). */
+#define BZ_STATE_BYTES 26856u
+void bz_state_save (const bz_t *bz, uint8_t *dst);
+void bz_state_load (bz_t *bz, const uint8_t *src);
+void bz_reset (bz_t *bz);
+void bz_layout (const bz_t *bz, uint32_t out[4]);
+
 /* Помощники для переднего края: кодирование команд и чисел. */
 static BZ_INLINE uint32_t bz_xy (int x, int y) { return (uint32_t)(uint16_t)x | ((uint32_t)(uint16_t)y << 16); }
 /* z в 16 бит из zi (Q2.30): «плавающее» 5+11, больше — ближе (SPEC.md, «Точка»). */

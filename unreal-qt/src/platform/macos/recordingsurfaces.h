@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 /// The window recording's frames with no copy through the CPU (macOS, the GL window, the hardware encoder): the GPU
@@ -16,12 +17,9 @@
 class RecordingSurfaces
 {
 public:
-    static constexpr int kSlots = 3;  ///< frames in flight: composed, waiting for the GPU, taken a refresh later
-
     /// A frame composed, the GPU maybe still at it
     struct Pending
     {
-        int slot = -1;
         void* fence = nullptr;              ///< GLsync
         std::shared_ptr<void> pixelBuffer;  ///< CVPixelBufferRef (released by the last owner)
     };
@@ -36,11 +34,9 @@ public:
     int Width() const { return _width; }
     int Height() const { return _height; }
 
-    /// Clears a new frame to `background` (0..1), then blits `from` (x, y, width, height; GL rows, from the bottom) of
-    /// the framebuffer `source` into `to` (x, y, width, height; rows from the top), turned over; a fence behind it,
-    /// flushed. `slot` must not be pending
-    bool Compose(int slot, unsigned source, const int from[4], const int to[4], bool linear, const float background[3],
-                 Pending& out);
+    /// Clears a new frame to `background` (0..1), then `draw` draws into its framebuffer (GL row r: the frame's row r
+    /// from the top; false: failed); a fence behind it, flushed
+    bool Compose(const float background[3], const std::function<bool(unsigned framebuffer)>& draw, Pending& out);
     /// The frame once the GPU drew it (a second at most), else null; the pending is done either way
     std::shared_ptr<void> Finish(Pending& pending);
     /// A frame not wanted
@@ -53,13 +49,26 @@ public:
     static void UnlockPixels(void* pixelBuffer);
 
 private:
-    void Unbind(int slot);
+    /// A surface of the pool's with the texture and the framebuffer that draw into it. Kept while the pool hands the
+    /// surface out again (it has a few, frame after frame): a texture made anew each frame cost the GUI thread 4 % of
+    /// a core at 50 frames/s (the driver wires the new texture's memory at the next submit)
+    struct Target
+    {
+        void* surface = nullptr;  ///< IOSurfaceRef, retained: its address stays this surface's while held
+        unsigned texture = 0;
+        unsigned framebuffer = 0;
+        uint64_t used = 0;
+    };
+    static constexpr int kTargets = 8;  ///< more than the pool keeps in use; the least recently used goes
+
+    Target* TargetFor(void* surface);
+    void ReleaseTargets();
 
     void* _pool = nullptr;  ///< CVPixelBufferPoolRef
     int _width = 0;
     int _height = 0;
-    unsigned _textures[kSlots] = {};
-    unsigned _framebuffers[kSlots] = {};
+    Target _targets[kTargets] = {};
+    uint64_t _uses = 0;
 };
 
 #endif  // __APPLE__

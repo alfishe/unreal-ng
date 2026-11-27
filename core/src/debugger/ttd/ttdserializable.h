@@ -221,6 +221,8 @@ enum class TTDDeviceType : uint16_t
     Vdac4Esp = 79,      ///< the VDAC4 board's ESP32-S3: its clock, SPI slave, link, frame transport, firmware
     Vdac4EspCpu = 80,   ///< the VDAC4 ESP's app host: its state at the last keyframe and the input journal since;
                         ///< its memory is the regions Vdac4EspPsram / Sram / Rom (ttdvdac4.h)
+    Vdac4Q2 = 81,       ///< the VDAC4 Tang's Quake II core (core_load Q2): bomzh-3D registers, tables, command stream,
+                        ///< the latched picture; its 8 MB SDRAM is the region Vdac4Q2Sdram (ttdvdac4.h)
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
