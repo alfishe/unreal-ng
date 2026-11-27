@@ -1294,6 +1294,16 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         }
     }
     _ffmpeg = ffmpeg;
+    // transfer auto: NV12 where the file is 4:2:0 anyway (a hardware encoder without 4:4:4: its trial is the one the
+    // picture way runs, so no second one); x264 / x265, ProRes and 4:4:4 encoders keep the picture
+    const bool h265 = request.codec == "h265";
+    const bool hardwareWay = !native && request.codec != "prores" && request.hardware;
+    HardwareEncoder hardware = hardwareWay && request.transfer != "nv12" ? FfmpegHardwareEncoder(ffmpeg, h265, false)
+                                                                          : HardwareEncoder{};
+    const bool nv12 = !native && (request.transfer == "nv12" ||
+                                  (request.transfer == "auto" && !hardware.name.isEmpty() && !hardware.full));
+    if (hardwareWay && request.transfer == "nv12")
+        hardware = FfmpegHardwareEncoder(ffmpeg, h265, true);
 
     _request = request;
     _keyboardId.clear();
@@ -1405,7 +1415,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         _screenRect = QRect(QPoint(0, 0), picture);
         _keyboardRect = QRect(0, picture.height(), width, height);
     }
-    if (request.transfer == "nv12")
+    if (nv12)
     {
         // NV12 colors 2x2 blocks: the frame is built in place only on even rectangles (a pixel off the center)
         const auto even = [](const QRect& rect)
@@ -1472,7 +1482,6 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // twelve times less). The keyboard is drawn at its size there, so it is scaled with the picture
     // With transfer nv12 the frame is composed here at the file's size and goes as NV12: ffmpeg only encodes (a GPU
     // encoder takes NV12 as it is; 4K BGRA was too much for ffmpeg in front of Intel's encoder, POC 054)
-    const bool nv12 = !native && request.transfer == "nv12";
     _transfer = native ? "native" : (nv12 ? "nv12" : "picture");
     QSize pipeSize = _size;
     QRect pipeScreen = _screenRect;
@@ -1531,20 +1540,21 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // BT.709: shifted colors) in the last scaler, which makes the encoder's pixel format in the same pass; NV12
     // frames are BT.709 already (FrameScaler). Then the tags (FrameScaler::FfmpegColorTags, the sRGB transfer).
     // ProRes through VideoToolbox takes the B,G,R,A frames themselves and converts them: they get the matrix, primaries
-    // and transfer tags but no range (a YUV range tag on B,G,R,A stops the encoder; it writes limited range itself)
+    // and transfer tags but no range (a YUV range tag on B,G,R,A stops the encoder; it writes limited range itself).
+    // Elsewhere ProRes is ffmpeg's own prores_ks (no VideoToolbox): 4:4:4 10-bit made by the scaler like the others
+#ifdef __APPLE__
     if (request.codec == "prores")
         pipeFilter += QString(pipeFilter.isEmpty() ? "" : ",") + FrameScaler::FfmpegColorTagsNoRange;
     else
+#endif
     {
         QStringList color;
         if (!nv12)
-            color << "scale=out_color_matrix=bt709:out_range=tv";
+            color << (request.codec == "prores" ? "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p10le"
+                                                : "scale=out_color_matrix=bt709:out_range=tv");
         color << FrameScaler::FfmpegColorTags;
         pipeFilter += QString(pipeFilter.isEmpty() ? "" : ",") + color.join(',');
     }
-    const bool h265 = request.codec == "h265";
-    const HardwareEncoder hardware =
-        request.codec != "prores" && request.hardware ? FfmpegHardwareEncoder(ffmpeg, h265, nv12) : HardwareEncoder{};
     if (!hardware.device.isEmpty())
     {
         // VA-API encodes from the card's memory: the picture goes up after the scaling, in the encoder's layout
@@ -1560,7 +1570,11 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         args << "-vf" << pipeFilter;
     args << FfmpegVfrArgs(ffmpeg);
     if (request.codec == "prores")
+#ifdef __APPLE__
         args << "-c:v" << "prores_videotoolbox" << "-profile:v" << "4444";
+#else
+        args << "-c:v" << "prores_ks" << "-profile:v" << "4444" << "-pix_fmt" << "yuv444p10le";
+#endif
     else if (!hardware.name.isEmpty())
     {
         // The GPU's encoder (found by probing): real time at any size; 4:4:4 where the card takes it

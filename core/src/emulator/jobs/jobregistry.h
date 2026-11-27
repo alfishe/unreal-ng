@@ -213,6 +213,9 @@ private:
 
     void WorkerLoop();
     std::shared_ptr<Job> NextRunnableLocked();
+    /// Remove a queued job from the queue so no worker starts it (false: not in it, another call took it)
+    bool TakeQueuedLocked(const std::shared_ptr<Job>& job);
+    void FinishCancelledQueued(const std::shared_ptr<Job>& job);
     void Finish(const std::shared_ptr<Job>& job, Outcome outcome, bool ran);
     void PruneLocked(std::vector<std::shared_ptr<Job>>& dropped);
     Info InfoLocked(const Job& job) const;

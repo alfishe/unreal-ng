@@ -280,10 +280,11 @@ struct WindowRecordingRequest
     uint16_t frameWidth = 0;   ///< the file's frame; 0: the picture with the keyboard under it
     uint16_t frameHeight = 0;
     std::string layout = "below";  ///< the keyboard "below" the picture or "side" (right of it, for 16:9)
-    /// What ffmpeg gets: "picture" = the window's picture at its own size, ffmpeg scales and borders it (the default:
-    /// the fewest bytes); "nv12" = the file's frame composed here at its size and converted to NV12 (4:2:0), nothing
-    /// left for ffmpeg but the encoder: a GPU encoder's own input. The Mac's own writer takes neither
-    std::string transfer = "picture";
+    /// What ffmpeg gets: "picture" = the window's picture at its own size, ffmpeg scales and borders it (the fewest
+    /// bytes); "nv12" = the file's frame composed here at its size and converted to NV12 (4:2:0, by the GPU window),
+    /// nothing left for ffmpeg but the encoder: a GPU encoder's own input; "auto" (the default) = nv12 where the
+    /// file is 4:2:0 anyway (a hardware encoder without 4:4:4), else picture. The Mac's own writer takes none
+    std::string transfer = "auto";
 };
 
 struct WindowRecordingStatus

@@ -4,6 +4,8 @@ message(">> core/src CMakeLists.txt")
 
 # Project named 'core' on C++
 project(core LANGUAGES CXX)
+# ccache and unreal_precompile_headers(); already included when the root or unreal-qt configures (include_guard)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Ccache.cmake)
 
 # Enable Objective-C++ on Apple platforms (for VideoToolbox encoder)
 if(APPLE)
@@ -312,8 +314,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC ${SOURCE_DIR}/3rdparty/ymfm)
 
 
-# 'stdafx.h' is our precompiled header
-target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
+# 'stdafx.h' is our precompiled header (with ccache included in every source instead: cmake/Ccache.cmake)
+unreal_precompile_headers(${PROJECT_NAME} ${SOURCE_DIR}/stdafx.h)
 
 
 # The machine state coordinator: its own library, so its include path holds only its own directory

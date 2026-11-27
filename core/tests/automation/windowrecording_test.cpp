@@ -171,7 +171,9 @@ TEST(WindowRecording_Test, WordsMakeARequest)
     error.clear();
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "codec", "H265", error));
     EXPECT_EQ(request.codec, "h265");
-    EXPECT_EQ(request.transfer, "picture") << "the window's picture to ffmpeg by default";
+    EXPECT_EQ(request.transfer, "auto") << "NV12 where the file is 4:2:0 anyway, else the picture, by default";
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "transfer", "picture", error));
+    EXPECT_EQ(request.transfer, "picture");
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "transfer", "NV12", error));
     EXPECT_EQ(request.transfer, "nv12");
 

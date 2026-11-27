@@ -3,6 +3,7 @@
 #include "ttdvdac4.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #include "emulator/platforms/tsconf/vdac4/esp/espapphost.h"
@@ -330,6 +331,12 @@ TTDDeviceDescriptor TTDVdac4Esp::TTDDescribe() const
 
 TTDVdac4EspCpu::TTDVdac4EspCpu(Vdac4Board& board) : _board(board)
 {
+    if (const char* env = std::getenv("UNREAL_VDAC4_TTD_KEYFRAME"); env && *env)
+    {
+        const long every = std::strtol(env, nullptr, 10);
+        if (every >= 1 && every <= 1000)
+            _keyEvery = _keyEveryQ2 = static_cast<uint32_t>(every);
+    }
     vdac4::EspMemory& memory = _board.Runtime().Host().Memory();
     _trackers[0].Bind(memory.PsramBytes().data(), memory.PsramBytes().size());
     _trackers[1].Bind(memory.SramBytes().data(), memory.SramBytes().size());
@@ -474,7 +481,8 @@ void TTDVdac4EspCpu::TTDCaptureBegins(bool rescan)
     // A journal over its limit keys this capture, so the blob carries it no more: whatever one frame sent (an
     // APP_START's ELF of megabytes), the blob stays the host state and at most kJournalLimit of journal
     const bool key = rescan || _keyDue || _keyState.empty() || host.Journal() != vdac4::EspAppHost::JournalMode::Record ||
-                     _sinceKey >= kKeyframeFrames || host.JournalBytes().size() > kJournalLimit || q2Moved;
+                     _sinceKey >= KeyframeFrames(tang.Q2Core() != nullptr) ||
+                     host.JournalBytes().size() > kJournalLimit || q2Moved;
     _keyedNow = key;
     if (key)
     {

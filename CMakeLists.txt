@@ -47,6 +47,7 @@ project(unreal VERSION 1.0.0)
 # -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitize.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Lto.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ccache.cmake)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
 validate_toolchain_dependencies()
@@ -153,11 +154,12 @@ option(RELEASE_WITH_DEBUG_SYMBOLS "Generate debug symbols in Release builds" ON)
 if (RELEASE_WITH_DEBUG_SYMBOLS AND CMAKE_BUILD_TYPE STREQUAL "Release")
     if (MSVC)
         # MSVC: Generate PDB files for Release builds
-        # /Zi: Generate complete debug info in PDB
+        # /Z7: complete debug info in each object (not /Zi, a PDB shared by a target's compiles: ccache cannot cache
+        #      those, and parallel compiles wait on mspdbsrv for it); the link still writes the program's PDB
         # /DEBUG:FULL: Include all debug info in PDB (not /DEBUG:FASTLINK)
         # /OPT:REF,ICF: Still optimize (remove unused functions, fold identical code)
-        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Z7")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Z7")
         set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
         set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
         message(STATUS "MSVC Release with PDB symbols: ENABLED")

@@ -243,6 +243,8 @@ void Vdac4Tang::LeaveQ2()
     _q2Picture.shrink_to_fit();
     _q2Width = _q2Height = 0;
     _q2Frames = 0;
+    // A state without the core carries no counter: a restore to before core_load reads 0, as the run did there
+    _q2Latched = 0;
 }
 
 void Vdac4Tang::PresentQ2()

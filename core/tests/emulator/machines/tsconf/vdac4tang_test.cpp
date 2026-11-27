@@ -322,6 +322,7 @@ TEST_F(Vdac4Tang_Test, Quake2StateRestoresAcrossCoreLoadAndBack)
     ASSERT_TRUE(load(tsBytes));
     EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Ts);
     EXPECT_EQ(Tang()->Q2Core(), nullptr);
+    EXPECT_EQ(Tang()->Q2LatchedFrames(), 0u) << "a slot-0 state has no latched count (none before core_load)";
     Tang()->SetState(q2State);
     ASSERT_TRUE(load(q2Bytes));
     ASSERT_NE(Tang()->Q2Core(), nullptr);
