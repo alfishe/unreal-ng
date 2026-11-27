@@ -33,7 +33,7 @@ TEST_F(Vdac4EspFirmware_Test, SysInfoAcksThenReportsAndSetsStep8)
     EXPECT_EQ(text.rfind("RAM:", 0), 0u);
     EXPECT_NE(text.find("BOARD:VDAC4-A3.1"), std::string::npos);
     EXPECT_NE(text.find("CORE:SPI+"), std::string::npos);
-    EXPECT_EQ(text.substr(text.size() - 12), "FW:unreal-ng");
+    EXPECT_EQ(text.substr(text.size() - 30), "FW:vdac4-0.1.174-unreal-ng-hle");
     frame = Exchange(0x05, {}, 0x85);
     ASSERT_EQ(frame.data.size(), 1u);
     EXPECT_EQ(frame.data[0], 8);
@@ -320,6 +320,51 @@ TEST_F(Vdac4EspFirmware_Test, TangRegistersThroughTheLink)
     frame = Exchange(0x46, {0x48, 0x00, 1, 1, 0, 0, 0}, 0xC6);
     EXPECT_EQ(frame.data[0], 0);
     EXPECT_EQ(_tang.registers.count(0x48), 0u);
+}
+
+/// tang_link.cpp link task: the mark in SCRATCH, rewritten within 2 s once a reload (or a Z80 write) wipes it
+TEST_F(Vdac4EspFirmware_Test, LinkWatchKeepsTheMarkInScratch)
+{
+    _tang.registers[0x00] = 0x56444334;
+    _tang.registers[0x04] = 0x03000002;
+    std::vector<std::string> log;
+    _esp->Firmware().SetLog([&log](const std::string& line) { log.push_back(line); });
+    BootAndInit();
+    const uint32_t mark = _tang.registers[0x3C];
+    EXPECT_EQ(mark >> 24, 0x5Cu);
+    // A reloaded bitstream holds 0: left alone before the period, the mark again after it
+    _tang.registers[0x3C] = 0;
+    AdvanceMs(100);
+    EXPECT_EQ(_tang.registers[0x3C], 0u);
+    AdvanceMs(2000);
+    EXPECT_EQ(_tang.registers[0x3C], mark);
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 1u);
+    ASSERT_FALSE(log.empty());
+    EXPECT_EQ(log.back(), "LINK: Tang reloaded (SCRATCH 00000000), core 03 version 0.2");
+    // Still loading (no ID): no reload yet; the ID back - the mark back
+    _tang.registers[0x3C] = 0xCCCCCCCC;
+    _tang.registers[0x00] = 0xCCCCCCCC;
+    AdvanceMs(2100);
+    EXPECT_EQ(_tang.registers[0x3C], 0xCCCCCCCCu);
+    _tang.registers[0x00] = 0x56444334;
+    AdvanceMs(2100);
+    EXPECT_EQ(_tang.registers[0x3C], mark);
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 2u);
+    // A Z80 TANG_WRITE to SCRATCH costs one needless reload, as on the board
+    ASSERT_EQ(Exchange(0x46, {0x3C, 0x00, 1, 1, 2, 3, 4}, 0xC6).data[0], 1);
+    EXPECT_EQ(_tang.registers[0x3C], 0x04030201u);
+    AdvanceMs(2100);
+    EXPECT_EQ(_tang.registers[0x3C], mark);
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 3u);
+    // The watch state goes with the snapshot: armed, so no fresh mark write on the first pass after load
+    std::vector<uint8_t> state;
+    _esp->Save(state);
+    Create();
+    ASSERT_TRUE(_esp->Load(state.data(), state.size()));
+    EXPECT_EQ(_esp->Firmware().LinkReloads(), 3u);
+    const int writes = _tang.writes;
+    AdvanceMs(10);
+    EXPECT_EQ(_tang.writes, writes);
 }
 
 /// Save in the middle of a delivery, load into a fresh device, finish the delivery there

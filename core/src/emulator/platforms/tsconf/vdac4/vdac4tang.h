@@ -34,10 +34,13 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <vector>
 
 #include "emulator/platforms/tsconf/evehostcard.h"
 
 class EmulatorContext;
+class Vdac4BomzhCore;
 
 class Vdac4Tang : public EveHostCard
 {
@@ -53,12 +56,15 @@ public:
     static constexpr uint64_t kTactsPerMs = kRasterHz / 1000;
     /// FT -> TS after this long without Evo FT traffic while M_SEL = 0 (RTL SWITCH_IDLE_MS)
     static constexpr uint32_t kSwitchIdleMs = 500;
+    /// The Quake II core's HDMI frame (60 Hz)
+    static constexpr uint32_t kQ2FramePeriodUs = 16'667;
 
     enum class Personality : uint8_t
     {
         Ts = 1,       ///< slot 0, TS-Conf HDMI core
         Loading = 0,  ///< slot 1 bitstream loading
         Ft = 2,       ///< slot 1, FT812 core
+        Q2 = 3,       ///< a core from the Evo card (core_load "Q2"): the Quake II GPU, its own HDMI picture
     };
 
     /// LINK register addresses (R3 §2)
@@ -83,6 +89,7 @@ public:
     };
 
     Vdac4Tang(EmulatorContext* context, std::function<uint32_t()> rasterInFrame);
+    ~Vdac4Tang() override;
 
     /// region <EveHostCard>
     void PowerOn() override;
@@ -102,6 +109,16 @@ public:
     void LinkWrite(uint32_t address, uint32_t value);
     /// LinkWrite(FT_ADDR, ftAddress), then LinkWrite(FT_DATA, word) for each of `count` words (little-endian bytes)
     void LinkFtWrite(uint32_t ftAddress, const uint8_t* words, size_t count);
+    /// core_load of a core the BL616 holds (its VDAC4 mark `usercode`): the Tang runs it and answers its LINK
+    /// VERSION. kZmOk (0), or -1 when no emulated core has that mark. Only the Quake II core (0x564434'Q') is
+    /// emulated
+    int LoadCore(uint32_t usercode, uint32_t& version);
+    /// tang::backToSlot0: BOOT, then the TS-Conf core runs. True when it does
+    bool CoreBack();
+    /// The Quake II core while it runs (Personality::Q2), else nullptr
+    const Vdac4BomzhCore* Q2Core() const { return _q2.get(); }
+    /// Quake II pictures latched to the Screen since the core was loaded
+    uint64_t Q2LatchedFrames() const { return _q2Latched; }
 
     /// region <The ESP's jobs (vdac4board.h)>
     /// The owner's position now, absolute raster tacts (the stamp of an ESP job; a job running meanwhile may have
@@ -141,7 +158,9 @@ public:
         uint32_t scratch = 0;
     };
     const State& GetState() const { return _state; }
-    void SetState(const State& state) { _state = state; }
+    /// The Quake II core's drawing state is not part of it: TTD is unavailable while it runs (Vdac4Board); a
+    /// state with personality Q2 starts the core afresh
+    void SetState(const State& state);
 
     static constexpr uint32_t kFtCfgRamG3M = 0x01;
     static constexpr uint32_t kFtCfgNoDither = 0x02;
@@ -154,6 +173,12 @@ private:
     void StartLoading(uint64_t now);
     void EnterFt();
     void EnterTs();
+    void EnterQ2();
+    /// The Quake II core goes (BOOT, power): the Screen's picture back to what the TS / FT personality shows
+    void LeaveQ2();
+    /// A new picture of the Quake II core: latched to the Screen (its own picture while the core runs)
+    void PresentQ2();
+    uint64_t NowMs() const { return Now() / kTactsPerMs; }
     /// RAM_G size from FT_CFG bit 0 (2 MB + ROM fonts, or 3 MB)
     void ApplyRamMode();
     /// An Evo transfer ended in TS personality: does it start the FT core?
@@ -170,6 +195,12 @@ private:
     }
 
     State _state;
+    std::unique_ptr<Vdac4BomzhCore> _q2;
+    std::vector<uint8_t> _q2Picture;
+    uint16_t _q2Width = 0;
+    uint16_t _q2Height = 0;
+    uint32_t _q2Frames = 0;     ///< the core's FRAMES as of the last latch
+    uint64_t _q2Latched = 0;
     bool _espJob = false;
     std::function<void()> _waitEsp;
 };

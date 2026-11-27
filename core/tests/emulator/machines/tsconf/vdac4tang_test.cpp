@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "emulator/platforms/tsconf/vdac4/vdac4bomzh.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4ftworker.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4tang.h"
 
@@ -224,6 +225,45 @@ TEST_F(Vdac4Tang_Test, FtWorkerAppliesInOrder)
         if (threaded)
             EXPECT_EQ(ft.GetStats().ops, kWords + 3u);  // the writes and the job's end
     }
+}
+
+/// core_load of the Quake II core (quake2.md): the Tang answers as bomzh-3D on the LINK whatever M_SEL says, the
+/// Evo reads nothing from it; the Evo's RST_PULSE (its BIOS resetting the video card) brings slot 0 back
+TEST_F(Vdac4Tang_Test, Quake2CoreLoadsAndTheEvoResetBringsSlotZero)
+{
+    PastEspBoot();
+    uint32_t version = 0;
+    EXPECT_EQ(Tang()->LoadCore(0x56443446, version), -1) << "no emulated core with that mark";
+    ASSERT_EQ(Tang()->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    EXPECT_EQ(version, 0x51010003u);
+    EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Q2);
+    EXPECT_EQ(Tang()->LinkRead(Vdac4Tang::LinkVersion), 0x51010003u);
+    ASSERT_NE(Tang()->Q2Core(), nullptr);
+    // A frame through the queue
+    Tang()->LinkWrite(0x40000, 0x0700'0000u);
+    Tang()->LinkWrite(0x40000, 0);
+    EXPECT_EQ(Tang()->LinkRead(0x10), 1u);
+    _decoder->WriteRegister(TsConfReg::VConfig, kMsel);
+    TickMs(2000);
+    EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Q2) << "M_SEL = 1 holds it";
+    EXPECT_EQ(Read(kRegId, 1)[0], 0) << "the Evo's SPI gets nothing back";
+    HostCommand(kHostRstPulse);
+    EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Ts);
+    EXPECT_EQ(Tang()->Q2Core(), nullptr);
+    EXPECT_EQ(Tang()->LinkRead(Vdac4Tang::LinkVersion) >> 24, 1u);
+}
+
+/// BOOT over the LINK and CoreBack go back to slot 0 too
+TEST_F(Vdac4Tang_Test, Quake2CoreBackAndBoot)
+{
+    PastEspBoot();
+    uint32_t version = 0;
+    ASSERT_EQ(Tang()->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    Tang()->LinkWrite(Vdac4Tang::LinkBoot, 0x424F4F54);
+    EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Ts);
+    ASSERT_EQ(Tang()->LoadCore(Vdac4BomzhCore::kUserCode, version), 0);
+    EXPECT_TRUE(Tang()->CoreBack());
+    EXPECT_EQ(Tang()->GetPersonality(), Vdac4Tang::Personality::Ts);
 }
 
 #endif // ENABLE_VDAC2

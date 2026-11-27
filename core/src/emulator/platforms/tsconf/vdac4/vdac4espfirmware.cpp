@@ -69,6 +69,7 @@ enum : uint8_t
     kModCommit = 0x6B,
     kAppStart = 0x6C,
     kAppStop = 0x6D,
+    kDataPiece = 0x6F,
 
     kRespWifiConnect = 0x81,
     kRespSysInfo = 0x82,
@@ -119,6 +120,10 @@ enum : uint8_t
 
 // tang_link.hpp registers the Z80 may write (TANG_WRITE)
 constexpr uint32_t kRegScratch = 0x3C;
+// tang_link.cpp: 0x5C000000 | esp_random() 24 bits; a fixed low part here keeps runs and replays deterministic
+constexpr uint32_t kLinkMarker = 0x5C56'4434u;
+constexpr uint32_t kLinkWatchPeriodMs = 2000;  // kStatusPeriodMs
+constexpr uint32_t kLinkIdValue = 0x5644'4334u;  // "VDC4"
 constexpr uint32_t kRegCtrl = 0x40;
 constexpr uint32_t kRegAdjust = 0x44;
 constexpr uint32_t kRegUiKey = 0x50;
@@ -199,6 +204,7 @@ void Vdac4EspFirmware::Shutdown()
     StopApp();
     DropDelivery();
     _resources.clear();
+    _remotes.clear();  // the table of data files is RAM; the held cores are the BL616's flash
     _media.Clear();
     _lastStep = 0;
     ClearError();
@@ -209,6 +215,7 @@ void Vdac4EspFirmware::Shutdown()
     _inCommand = false;
     _appDone = false;
     _ftDetachState = 0;
+    _linkWatchArmed = false;
 }
 
 void Vdac4EspFirmware::Pass(uint32_t nowMs)
@@ -218,6 +225,7 @@ void Vdac4EspFirmware::Pass(uint32_t nowMs)
         return;
     // pollCore1 and the network core's poll: once per pass
     PollFtDetach();
+    PollLinkWatch();
     if (_appRunning && _runtime != nullptr)
         _runtime->Poll(nowMs);
     for (size_t pass = 0; pass < kMaxPacketsPerPass && !_resetRequested; ++pass)
@@ -452,6 +460,11 @@ bool Vdac4EspFirmware::DispatchToApps(const EspPacket& packet)
         case kAppStart:
             HandleStart(packet);
             return true;
+        case kDataPiece:
+            // handleDataPiece: no answer; the read waiting for it takes it (or it is late and ignored)
+            if (_runtime != nullptr)
+                _runtime->DataPiece(packet.data, packet.length);
+            return true;
         case kCoreList: {
             // The firmware built without the LINK: there is no Tang SD to list cores from
             static const uint8_t reply[] = "\0no LINK to the Tang";
@@ -529,7 +542,7 @@ void Vdac4EspFirmware::HandleSysInfo()
         "RAM:%uB PSRAM:%u/%uB Flash:%uB Sketch:%uB RST:%u CORE:%s+VFS1/NET+EVT0 NETSTK:%uB CTRL:%s "
         "VFSBUF:%s:%u+%u %sPROXY:%s FW:%s",
         180u * 1024u, static_cast<unsigned>(psramFree), 8u * 1024u * 1024u, 8u * 1024u * 1024u, 0x180000u, 1u,
-        "SPI", 0u, "PSRAM", "PSRAM", 16384u, 16384u, extra, "OFF", kVersion);
+        "SPI", 0u, "PSRAM", "PSRAM", 16384u, 16384u, extra, "OFF", kFirmwareVersion);
     const size_t used = length <= 0 ? 0 : std::min(static_cast<size_t>(length), sizeof(text) - 1);
     Send(kRespSysInfo, reinterpret_cast<const uint8_t*>(text), used);
     _lastStep = 8;  // native plugins read step 8 as "SYS_INFO received"
@@ -691,6 +704,29 @@ void Vdac4EspFirmware::HandleQuery(const EspPacket& packet)
         ReplyQuery(3);
         return;
     }
+    // A data file of an app from the Evo card (flag 4, 0.1.165): the app's name after the file's, then (0.1.166)
+    // the file's number at the Z80 program
+    if ((packet.data[0] & 0x04) != 0)
+    {
+        const size_t appAt = 9 + nameLength + 1;
+        const size_t appLength = appAt < packet.length ? NameLength(packet, appAt) : 0;
+        if (appLength == 0 || appLength >= 9)
+        {
+            ReplyQuery(3);
+            return;
+        }
+        const std::string app(reinterpret_cast<const char*>(packet.data + appAt), appLength);
+        const size_t indexAt = appAt + appLength + 1;
+        const int index = indexAt < packet.length ? packet.data[indexAt] : -1;
+        HandleDataQuery(name, size, stamp, app, index);
+        return;
+    }
+    // An FPGA core from the Evo card (flag 2, 0.1.164): NAME.BIN, its own way, not into the module cache
+    if ((packet.data[0] & 0x02) != 0)
+    {
+        HandleCoreQuery(name, size, stamp);
+        return;
+    }
     if (resource)
     {
         for (const HeldResource& item : _resources)
@@ -800,7 +836,11 @@ void Vdac4EspFirmware::HandleCommit()
     uint8_t ok = 0;
     if (_deliveryActive && _deliveryReceived == _deliverySize)
     {
-        if (_deliveryResource)
+        if (_deliveryCore)
+        {
+            ok = CommitCore() ? 1 : 0;
+        }
+        else if (_deliveryResource)
         {
             if (_resources.size() < kMaxResources)
             {
@@ -835,6 +875,7 @@ void Vdac4EspFirmware::DropDelivery()
     _deliveryName.clear();
     _deliverySize = 0;
     _deliveryReceived = 0;
+    _deliveryCore = false;
 }
 
 // [name, 0] -> [result int8][app name, 0][version, 0]
@@ -910,6 +951,9 @@ void Vdac4EspFirmware::StopApp()
     if (_runtime != nullptr)
         _runtime->StopApp();
     _ftDetachState = 0;
+    _linkWatchArmed = false;
+    _linkWatchAtMs = 0;
+    _linkReloads = 0;
     _appModule.clear();
     _appInfo = Vdac4AppInfo{};
 }
@@ -937,6 +981,274 @@ void Vdac4EspFirmware::PollFtDetach()
         _ftDetachState |= 2;
     if ((_ftDetachState & 2) != 0 && personality == 1 && !selected)
         StopApp();
+}
+
+void Vdac4EspFirmware::PollLinkWatch()
+{
+    // tang_link.cpp:592-657. After the link is up the firmware writes its mark to SCRATCH and reads it back every
+    // kStatusPeriodMs: a freshly loaded bitstream holds 0 there (multiboot, a core from the BL616 cache, core_back),
+    // so a foreign value means "the FPGA reloaded": with ID answering, log it and write the mark again. Z80
+    // TANG_WRITE to SCRATCH costs one such needless "reload", as on the board. Apps read the mark to check the link
+    // (Quake II link_diag). The flash settings / menu re-init of the firmware are not modelled (no state to redo).
+    if (_tang == nullptr)
+        return;
+    if (!_linkWatchArmed)
+    {
+        if (_tang->LinkWrite(kRegScratch, kLinkMarker))
+        {
+            _linkWatchArmed = true;
+            _linkWatchAtMs = _nowMs;
+        }
+        return;
+    }
+    if (static_cast<uint32_t>(_nowMs - _linkWatchAtMs) < kLinkWatchPeriodMs)
+        return;
+    _linkWatchAtMs = _nowMs;
+    uint32_t mark = 0;
+    if (!_tang->LinkRead(kRegScratch, mark) || mark == kLinkMarker)
+        return;
+    uint32_t id = 0;
+    uint32_t version = 0;
+    if (!_tang->LinkRead(0, id) || id != kLinkIdValue || !_tang->LinkRead(4, version))
+        return;  // still loading: the next check retries
+    ++_linkReloads;
+    char line[96];
+    std::snprintf(line, sizeof(line), "LINK: Tang reloaded (SCRATCH %08X), core %02X version %u.%u",
+                  static_cast<unsigned>(mark), static_cast<unsigned>(version >> 24),
+                  static_cast<unsigned>((version >> 8) & 0xFF), static_cast<unsigned>(version & 0xFF));
+    Log(line);
+    _tang->LinkWrite(kRegScratch, kLinkMarker);
+}
+
+// --- Cores and data files from the Evo card (0.1.164, 0.1.166) -------------------------------------------------
+
+void Vdac4EspFirmware::Log(const std::string& line)
+{
+    if (_log)
+        _log(line);
+}
+
+const char* Vdac4EspFirmware::CoreImageProblem(const uint8_t* data, size_t size, uint32_t* usercode)
+{
+    // core_store::checkEvoImage -> core_cache::checkImage (head 128 bytes, tail 64)
+    if (data == nullptr || size < 128 + 64)
+        return "too short for a core bitstream";
+    if (size > kMaxCoreBytes)
+        return "longer than a Tang flash slot (1 MB)";
+    static const uint8_t kId[8] = {0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x1B};
+    const uint8_t* head = data;
+    size_t i = 0;
+    while (i < 64 && !(head[i] == 0xA5 && head[i + 1] == 0xC3))
+        ++i;
+    if (i >= 64 || std::memcmp(head + i + 2, kId, 8) != 0)
+        return "not a GW2AR-18 bitstream (no sync word / IDCODE 0000081B)";
+    bool jump = false;
+    for (size_t j = i + 10; j + 8 <= 128 && head[j] != 0x3B; j += 4)
+    {
+        if (head[j] == 0xD2 && head[j + 1] == 0x00 && head[j + 2] == 0xFF && head[j + 3] == 0xFF)
+        {
+            if ((head[j + 4] | head[j + 5] | head[j + 6] | head[j + 7]) != 0)
+                return "multiboot jump address is not 0 (the core would not return to slot 0)";
+            jump = true;
+            break;
+        }
+    }
+    if (!jump)
+        return "no multiboot jump address in the bitstream";
+    const uint8_t* t = data + size - 64;
+    for (size_t k = 0; k + 8 <= 64; ++k)
+    {
+        if (t[k] == 0x0A && t[k + 1] == 0 && t[k + 2] == 0 && t[k + 3] == 0 && t[k + 4] == 0x56 && t[k + 5] == 0x44 &&
+            t[k + 6] == 0x34)
+        {
+            if (usercode != nullptr)
+                *usercode = 0x56443400u | t[k + 7];
+            return nullptr;
+        }
+    }
+    return "no VDAC4 mark in UserCode (core not built for VDAC4)";
+}
+
+void Vdac4EspFirmware::HandleCoreQuery(const std::string& name, uint32_t size, uint32_t stamp)
+{
+    const size_t dot = name.rfind('.');
+    if (dot == std::string::npos || dot == 0 || name.compare(dot, std::string::npos, ".BIN") != 0 ||
+        size > kMaxCoreBytes || dot >= 16)
+    {
+        ReplyQuery(3);
+        return;
+    }
+    const std::string core = name.substr(0, dot);
+    char line[160];
+    for (const HeldCore& held : _cores)
+    {
+        if (held.name == core && held.size == size && held.stamp == stamp)
+        {
+            // evoClaimCached: the same file of the card is in the BL616 cache already
+            std::snprintf(line, sizeof(line), "core %s: %u bytes already in the BL616 cache, not sent from the card",
+                          core.c_str(), static_cast<unsigned>(size));
+            Log(line);
+            ReplyQuery(0);
+            return;
+        }
+    }
+    if (!AllocateDelivery(size, false))
+    {
+        ReplyQuery(2);
+        return;
+    }
+    _deliveryName = name;
+    _deliverySize = size;
+    _deliveryStamp = stamp;
+    _deliveryReceived = 0;
+    _deliveryResource = false;
+    _deliveryCore = true;
+    ReplyQuery(1);
+}
+
+bool Vdac4EspFirmware::CommitCore()
+{
+    const std::string core = _deliveryName.substr(0, _deliveryName.find('.'));
+    uint32_t usercode = 0;
+    char line[200];
+    if (const char* bad = CoreImageProblem(_delivery.data(), _deliverySize, &usercode))
+    {
+        std::snprintf(line, sizeof(line), "core %s: not a VDAC4 core bitstream (%s)", core.c_str(), bad);
+        Log(line);
+        return false;
+    }
+    // No USB drive: into the BL616 cache at once (evoStoreToCache); its flash outlives the ESP's restarts. Only
+    // what core_load needs is kept: the emulated Tang runs the core the mark names, not the bitstream
+    HeldCore held;
+    held.name = core;
+    held.size = _deliverySize;
+    held.stamp = _deliveryStamp;
+    held.usercode = usercode;
+    auto same = std::find_if(_cores.begin(), _cores.end(), [&](const HeldCore& c) { return c.name == core; });
+    if (same != _cores.end())
+        *same = held;
+    else if (_cores.size() < kEvoCores)
+        _cores.push_back(held);
+    else
+    {
+        _cores[_coreNext] = held;
+        _coreNext = (_coreNext + 1) % kEvoCores;
+    }
+    std::snprintf(line, sizeof(line), "core %s: %u bytes put into the BL616 cache (UserCode %08X)", core.c_str(),
+                  static_cast<unsigned>(_deliverySize), static_cast<unsigned>(usercode));
+    Log(line);
+    return true;
+}
+
+bool Vdac4EspFirmware::AddRemote(const std::string& app, const std::string& name, uint32_t size, uint32_t stamp,
+                                 uint8_t index)
+{
+    auto nameChar = [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+    };
+    if (app.empty() || app.size() > 8 || !std::all_of(app.begin(), app.end(), nameChar) ||
+        !EspModuleCache::ValidName(name.c_str()) || name == "WRITING.TMP" || size == 0)
+        return false;
+    std::string upperApp = app;
+    Upper(upperApp);
+    // The same file of the app takes its own place; a full table forgets other apps' files (their Z80 programs
+    // are gone)
+    auto same = std::find_if(_remotes.begin(), _remotes.end(),
+                             [&](const RemoteFile& r) { return r.app == upperApp && r.name == name; });
+    if (same == _remotes.end() && _remotes.size() >= kMaxRemote)
+    {
+        _remotes.erase(std::remove_if(_remotes.begin(), _remotes.end(),
+                                      [&](const RemoteFile& r) { return r.app != upperApp; }),
+                       _remotes.end());
+        if (_remotes.size() >= kMaxRemote)
+            return false;
+    }
+    RemoteFile file;
+    file.app = upperApp;
+    file.name = name;
+    file.size = size;
+    file.stamp = stamp;
+    file.index = index;
+    if (same != _remotes.end())
+        *same = file;
+    else
+        _remotes.push_back(file);
+    if (_runtime != nullptr)
+        _runtime->DataFilesChanged();
+    return true;
+}
+
+void Vdac4EspFirmware::HandleDataQuery(const std::string& name, uint32_t size, uint32_t stamp, const std::string& app,
+                                       int index)
+{
+    char line[200];
+    if (index >= 0)
+    {
+        if (AddRemote(app, name, size, stamp, static_cast<uint8_t>(index)))
+        {
+            std::snprintf(line, sizeof(line),
+                          "data file %s of %s, %u bytes: read from the Evo card on request (file %d of the Z80 program)",
+                          name.c_str(), app.c_str(), static_cast<unsigned>(size), index);
+            Log(line);
+            ReplyQuery(5);  // kRemote
+            return;
+        }
+        std::snprintf(line, sizeof(line), "data file %s of %s: NOT REGISTERED (bad name or table full)", name.c_str(),
+                      app.c_str());
+        Log(line);
+        ReplyQuery(3);  // kBadName
+        return;
+    }
+    // The emulated board has no USB drive
+    std::snprintf(line, sizeof(line), "data file %s of %s: no USB drive", name.c_str(), app.c_str());
+    Log(line);
+    ReplyQuery(4);  // kNoDrive
+}
+
+int Vdac4EspFirmware::DataFile(const std::string& app, const std::string& name, uint8_t& index, uint32_t& size)
+{
+    std::string upperApp = app;
+    Upper(upperApp);
+    for (const RemoteFile& file : _remotes)
+    {
+        if (file.app == upperApp && file.name == name)
+        {
+            index = file.index;
+            size = file.size;
+            return kZmOk;
+        }
+    }
+    return kZmNotFound;
+}
+
+int Vdac4EspFirmware::CoreLoad(const std::string& name, uint32_t& version)
+{
+    std::string core = name;
+    Upper(core);
+    if (_tang == nullptr)
+        return kZmError;
+    const auto held = std::find_if(_cores.begin(), _cores.end(), [&](const HeldCore& c) { return c.name == core; });
+    char line[160];
+    if (held == _cores.end())
+    {
+        // Neither a Tang flash slot nor the BL616 cache has it (no Tang SD here)
+        std::snprintf(line, sizeof(line), "core %s: no such core", core.c_str());
+        Log(line);
+        return kZmNotFound;
+    }
+    const int result = _tang->LoadCore(held->usercode, version);
+    std::snprintf(line, sizeof(line), "core %s (UserCode %08X) from the BL616 cache: %s", core.c_str(),
+                  static_cast<unsigned>(held->usercode),
+                  result == kZmOk ? "running" : "the emulated Tang has no such core");
+    Log(line);
+    return result;
+}
+
+int Vdac4EspFirmware::CoreBack()
+{
+    if (_tang == nullptr)
+        return kZmError;
+    return _tang->CoreBack() ? kZmOk : kZmTimeout;
 }
 
 // --- IVdac4AppHost (zm_core_t) ---------------------------------------------------------------------------------
@@ -1062,6 +1374,30 @@ void Vdac4EspFirmware::Save(Vdac4EspStateWriter& out) const
     if (_appRunning && _runtime != nullptr)
         _runtime->SaveState(appState);
     out.Blob(appState);
+    // Tail (0.1.164 / 0.1.166): absent in older states
+    out.Bool(_deliveryCore);
+    out.U8(static_cast<uint8_t>(_cores.size()));
+    out.U8(static_cast<uint8_t>(_coreNext));
+    for (const HeldCore& core : _cores)
+    {
+        out.String(core.name);
+        out.U32(core.size);
+        out.U32(core.stamp);
+        out.U32(core.usercode);
+    }
+    out.U8(static_cast<uint8_t>(_remotes.size()));
+    for (const RemoteFile& file : _remotes)
+    {
+        out.String(file.app);
+        out.String(file.name);
+        out.U32(file.size);
+        out.U32(file.stamp);
+        out.U8(file.index);
+    }
+    // Tail (link watch): absent in older states
+    out.Bool(_linkWatchArmed);
+    out.U32(_linkWatchAtMs);
+    out.U32(_linkReloads);
 }
 
 bool Vdac4EspFirmware::Load(Vdac4EspStateReader& in)
@@ -1129,6 +1465,49 @@ bool Vdac4EspFirmware::Load(Vdac4EspStateReader& in)
     in.Blob(appState, 64 * 1024 * 1024);
     if (!in.Ok())
         return false;
+    _remotes.clear();
+    if (!in.AtEnd())
+    {
+        _deliveryCore = in.Bool();
+        const uint8_t cores = in.U8();
+        const uint8_t next = in.U8();
+        if (cores > kEvoCores || next >= kEvoCores)
+            return false;
+        _cores.clear();
+        _coreNext = next;
+        for (uint8_t i = 0; i < cores; ++i)
+        {
+            HeldCore core;
+            in.String(core.name, 15);
+            core.size = in.U32();
+            core.stamp = in.U32();
+            core.usercode = in.U32();
+            _cores.push_back(std::move(core));
+        }
+        const uint8_t remotes = in.U8();
+        if (remotes > kMaxRemote)
+            return false;
+        for (uint8_t i = 0; i < remotes; ++i)
+        {
+            RemoteFile file;
+            in.String(file.app, 8);
+            in.String(file.name, 12);
+            file.size = in.U32();
+            file.stamp = in.U32();
+            file.index = in.U8();
+            _remotes.push_back(std::move(file));
+        }
+        if (!in.Ok())
+            return false;
+        if (!in.AtEnd())
+        {
+            _linkWatchArmed = in.Bool();
+            _linkWatchAtMs = in.U32();
+            _linkReloads = in.U32();
+            if (!in.Ok())
+                return false;
+        }
+    }
     // The running app comes back only if the runtime can restore it; otherwise it is stopped (as after a crash)
     if (appRunning && _runtime != nullptr)
     {

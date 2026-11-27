@@ -217,7 +217,8 @@ TEST(DisplayRate_Test, SmoothGuardStepsDownOnLateOrSlowPictures)
     // One window of `lates` late presents, all at its start (a stall); the verdict is the window's, not a picture's
     uint64_t late = 100;
     SmoothGuard software;  // no presenter counts: late presents stay 0
-    auto window = [&](SmoothGuard& g, uint32_t lates, int64_t slowNs, uint32_t slow) {
+    // slowNs defaults to QUICK's value: gcc rejects a local variable in a default argument
+    auto window = [&](SmoothGuard& g, uint32_t lates, int64_t slowNs = 1'000'000, uint32_t slow = 0) {
         bool down = false;
         for (uint32_t i = 0; i < SmoothGuard::kWindow; i++)
         {
@@ -231,25 +232,25 @@ TEST(DisplayRate_Test, SmoothGuardStepsDownOnLateOrSlowPictures)
     };
     // kLates of a window, kBadWindows windows in a row: down
     for (uint32_t w = 0; w + 1 < SmoothGuard::kBadWindows; w++)
-        EXPECT_FALSE(window(guard, SmoothGuard::kLates, QUICK, 0)) << "window " << w;
-    EXPECT_TRUE(window(guard, SmoothGuard::kLates, QUICK, 0));
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates)) << "window " << w;
+    EXPECT_TRUE(window(guard, SmoothGuard::kLates));
     EXPECT_EQ(guard.ClosedLates(), SmoothGuard::kLates);
     // One stall (the owner's Mac: 4 presents late at once, none for seconds around): no step, however many
     for (int stall = 0; stall < 5; stall++)
     {
-        EXPECT_FALSE(window(guard, 20, QUICK, 0)) << stall;
-        EXPECT_FALSE(window(guard, 0, QUICK, 0)) << stall;
-        EXPECT_FALSE(window(guard, 0, QUICK, 0)) << stall;
+        EXPECT_FALSE(window(guard, 20)) << stall;
+        EXPECT_FALSE(window(guard, 0)) << stall;
+        EXPECT_FALSE(window(guard, 0)) << stall;
     }
     // Bad windows broken by a good one start over
     for (uint32_t w = 0; w + 1 < SmoothGuard::kBadWindows; w++)
-        EXPECT_FALSE(window(guard, SmoothGuard::kLates, QUICK, 0));
-    EXPECT_FALSE(window(guard, 0, QUICK, 0));
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates));
+    EXPECT_FALSE(window(guard, 0));
     for (uint32_t w = 0; w + 1 < SmoothGuard::kBadWindows; w++)
-        EXPECT_FALSE(window(guard, SmoothGuard::kLates, QUICK, 0));
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates));
     // One less a window: no step
     for (uint32_t w = 0; w < SmoothGuard::kBadWindows * 2; w++)
-        EXPECT_FALSE(window(guard, SmoothGuard::kLates - 1, QUICK, 0));
+        EXPECT_FALSE(window(guard, SmoothGuard::kLates - 1));
     // No presenter counts (the software screen): pictures drawn in most of a refresh tell
     bool down = false;
     for (uint32_t w = 0; w < SmoothGuard::kBadWindows; w++)

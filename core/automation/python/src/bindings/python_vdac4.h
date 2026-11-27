@@ -38,6 +38,17 @@ inline void registerVdac4Bindings(EmulatorClass& emulatorClass)
             tang["esp_host"] = s.espHost;
             tang["ram_g_3mb"] = s.ramG3M;
             tang["ft_cfg"] = s.ftCfg;
+            py::dict q2;
+            q2["frames"] = s.q2Frames;
+            q2["latched"] = s.q2Latched;
+            q2["commands"] = s.q2Commands;
+            q2["words"] = s.q2Words;
+            q2["bad_words"] = s.q2BadWords;
+            q2["bad_command"] = s.q2BadCommand;
+            q2["mark"] = s.q2Mark;
+            q2["width"] = s.q2Width;
+            q2["height"] = s.q2Height;
+            tang["q2"] = q2;
             py::dict esp;
             esp["phase"] = s.espPhase;
             esp["ms"] = s.espMs;
@@ -48,6 +59,36 @@ inline void registerVdac4Bindings(EmulatorClass& emulatorClass)
             esp["resources"] = s.resources;
             esp["clock_restarts"] = s.clockRestarts;
             esp["clock_offset_us"] = s.clockOffsetUs;
+            esp["psram_free"] = s.psramFree;
+            py::list cores;
+            for (const auto& core : s.cores)
+            {
+                py::dict item;
+                item["name"] = core.name;
+                item["size"] = core.size;
+                item["usercode"] = core.usercode;
+                cores.append(item);
+            }
+            esp["cores"] = cores;
+            py::dict data;
+            py::list files;
+            for (const auto& file : s.dataFiles)
+            {
+                py::dict item;
+                item["app"] = file.app;
+                item["name"] = file.name;
+                item["size"] = file.size;
+                item["index"] = file.index;
+                files.append(item);
+            }
+            data["files"] = files;
+            data["open"] = s.dataOpen;
+            data["reading"] = s.dataReading;
+            data["requests"] = s.dataRequests;
+            data["repeats"] = s.dataRepeats;
+            data["failures"] = s.dataFailures;
+            data["bytes"] = s.dataBytes;
+            data["longest_ms"] = s.dataLongestMs;
             py::dict app;
             app["running"] = s.appRunning;
             app["module"] = s.appModule;
@@ -118,6 +159,7 @@ inline void registerVdac4Bindings(EmulatorClass& emulatorClass)
             d["esp"] = esp;
             d["app"] = app;
             d["link"] = link;
+            d["data"] = data;
             d["packets"] = packets;
             d["audio"] = audio;
             d["threads"] = threads;
@@ -125,8 +167,10 @@ inline void registerVdac4Bindings(EmulatorClass& emulatorClass)
             return d;
         },
         "The TS-Conf VDAC4 board's state, the keys of WebAPI GET /vdac4/state: tang {personality, armed, esp_host, "
-        "ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, "
-        "clock_offset_us}, app {running, module, name, version, command_first, command_last, error, sections [{elf_address, size, loaded_at}]}, link "
+        "ram_g_3mb, ft_cfg, q2 {frames, latched, commands, words, bad_words, bad_command, mark, width, height}}, esp "
+        "{phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, clock_offset_us, psram_free, "
+        "cores [{name, size, usercode}]}, data {files [{app, name, size, index}], open, reading, requests, repeats, "
+        "failures, bytes, longest_ms}, app {running, module, name, version, command_first, command_last, error, sections [{elf_address, size, loaded_at}]}, link "
         "{pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames}, packets {count, "
         "recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns, dropped, sound}, log "
         "(the last `log` ESP lines, at most 256). Raises RuntimeError without the board.",

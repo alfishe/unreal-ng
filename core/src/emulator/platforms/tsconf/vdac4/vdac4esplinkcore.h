@@ -111,6 +111,9 @@ public:
     static constexpr uint8_t kAudioData = 0x31;
     static constexpr uint8_t kModPut = 0x6A;
     static constexpr uint8_t kVfsReadMedia = 0x5F;
+    /// A piece of an app data file from the Evo card (0.1.166): [request][offset LE32] before the data
+    static constexpr uint8_t kDataPiece = 0x6F;
+    static constexpr size_t kDataPiecePrefix = 5;
 
     enum BulkState : uint8_t
     {

@@ -184,6 +184,7 @@ void TTDVdac4Tang::TTDLoadState(const uint8_t* src)
     const uint8_t personality = r.U8();
     s.personality = personality == 0 ? Vdac4Tang::Personality::Loading
                     : personality == 2 ? Vdac4Tang::Personality::Ft
+                    : personality == 3 ? Vdac4Tang::Personality::Q2
                                        : Vdac4Tang::Personality::Ts;
     s.armed = r.U8();
     s.msel = r.U8();
