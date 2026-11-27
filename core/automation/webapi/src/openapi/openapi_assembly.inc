@@ -14,8 +14,16 @@
         ["properties"]["address"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/assemble"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["write"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/assemble"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["cpu"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/assemble"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["cpu"]["description"] =
+        "main (default), gs or ms: whose view the write goes to (a card CPU: CpuView::Write, its ROM windows keep "
+        "their bytes). 404 code cpu_unavailable for a card CPU that is not there";
     paths["/api/v1/emulator/{id}/assemble"]["post"]["responses"]["200"]["description"] =
-        "Assembly result (status/size/written/bytes/listing); status=error carries message + line";
+        "Assembly result (status/size/written/bytes/listing, cpu); status=error carries message + line";
+    paths["/api/v1/emulator/{id}/assemble"]["post"]["responses"]["409"]["description"] =
+        "The write was refused (code refused)";
 
     paths["/api/v1/emulator/{id}/listing/load"]["post"]["summary"] = "Load sjasmplus .lst listing";
     paths["/api/v1/emulator/{id}/listing/load"]["post"]["tags"].append("Debug Commands");

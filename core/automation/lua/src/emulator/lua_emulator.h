@@ -29,6 +29,7 @@
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/boards/debugboards.h"
+#include "debugger/debugerror.h"
 #include "debugger/targets/cpuview.h"
 #include <algorithm>
 #include <functional>
@@ -550,8 +551,24 @@ protected:
             return cpu;
         const std::string error = CpuView::Select(emulator->GetContext(), *name, cpu);
         if (!error.empty())
-            throw std::runtime_error(error);
+            throw std::runtime_error(DebugError::WithCode(error, CpuView::SelectCode(*name)));
         return cpu;
+    }
+
+    /// `length` bytes of a card CPU's own page (CpuView::PageRead): a script error when refused
+    std::vector<uint8_t> CardPageBytes(DebugCpuId cpu, const std::string& kind, int page, int offset, int length) const
+    {
+        std::vector<uint8_t> bytes;
+        if (page < 0 || offset < 0)
+            throw std::invalid_argument(DebugError::WithCode("page and offset must be >= 0", DebugError::kInvalidArgument));
+        const std::string error =
+            CpuView::PageRead(effectiveEmulator()->GetContext(), cpu, kind, static_cast<uint32_t>(page),
+                              static_cast<uint32_t>(offset), static_cast<uint32_t>(std::max(length, 1)), bytes);
+        if (!error.empty())
+            throw std::runtime_error(DebugError::WithCode(error, DebugError::kInvalidArgument));
+        if (length == 0)
+            bytes.clear();
+        return bytes;
     }
 
     /// A card CPU's step or run (`run`: the RunControl call): the reply's body and ok = true, or ok = false and error.
@@ -567,6 +584,7 @@ protected:
         {
             result["ok"] = false;
             result["error"] = "no emulator";
+            result["code"] = std::string(DebugError::kNotFound);
             return result;
         }
         // The automation gate as every step of a script: its session, or an implicit one
@@ -579,6 +597,7 @@ protected:
         {
             result["ok"] = false;
             result["error"] = reply.message;
+            result["code"] = std::string(reply.Code());
             return result;
         }
         for (const auto& [key, value] : reply.body.members)
@@ -637,6 +656,7 @@ protected:
         {
             result["ok"] = false;
             result["error"] = reply.message;
+            result["code"] = std::string(reply.Code());
             return result;
         }
         for (const auto& [key, value] : reply.body.members)

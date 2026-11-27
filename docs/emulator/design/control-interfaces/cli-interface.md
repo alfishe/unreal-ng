@@ -189,7 +189,10 @@ works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `mem
 (`stepover --cpu gs`); `skip_until <pc> --cpu gs` runs it to the cursor (a breakpoint on the way ends it);
 `card_run_to cycle <N> | int | command | main_t <T> [--cpu gs|ms]` runs it to card cycle N of the frame, its next
 interrupt, the host's next command (paused after that main instruction) or the main CPU's T of the frame. `selected-cpu [main|gs|ms]` sets or shows the CPU the front-ends show: a card shown follows
-the main CPU's steps of the paused machine.
+the main CPU's steps of the paused machine. `debug-targets` lists the CPUs; `--cpu gs` also goes on `debug-snapshot`,
+`find`, `assemble`, `memory fill <addr> <len> <byte>` and `memory read rom|ram <page> <offset> [len]` (the card's
+own page); `calltrace`, `pchist` and `disasm_page` refuse a card CPU. An error line ends with `(code: <code>)`
+([the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
 
 **Command Aliases**:
 The CLI supports command aliases for convenience:

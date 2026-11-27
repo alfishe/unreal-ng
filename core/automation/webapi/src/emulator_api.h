@@ -650,6 +650,7 @@ public:
     // The GS debugger's twin timeline (gs-debugger design §5.4, §7.2): both lanes on one clock, its lease
     ADD_METHOD_TO(EmulatorAPI::getDebugTimeline, "/api/v1/emulator/{id}/debug/timeline", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postDebugTimelineArm, "/api/v1/emulator/{id}/debug/timeline/arm", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getDebugTargets, "/api/v1/emulator/{id}/debug/targets", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Put);
     // Device boards (debugger-model widget catalog §4): layout and values as data, the board's actions
@@ -2182,6 +2183,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void postDebugTimelineArm(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                               const std::string& id) const;
+    /// GET /debug/targets - the CPUs a debugger can name now (core CpuView::Targets)
+    void getDebugTargets(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
     /// GET / PUT /debug/selected_cpu - the CPU the front-ends show (core CpuView::Selected / SetSelected)
     void getSelectedCpu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;

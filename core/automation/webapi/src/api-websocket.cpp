@@ -309,12 +309,14 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
     // The checks every HTTP request passes before routing (drogon's forward skips them)
     if (const drogon::HttpResponsePtr refused = webapi_gate::PassRequestGates(call))
     {
+        webapi_gate::AddErrorCode(call, refused);
         Send(weak, ResultOf(rid, refused));
         return;
     }
     connection->inFlight++;
     drogon::app().forward(call, [weak, rid, connection, call](const drogon::HttpResponsePtr& resp) {
         connection->inFlight--;
+        webapi_gate::AddErrorCode(call, resp);  // the error code, as the post-handling advice adds it
         webapi_gate::FitAnswer(call, resp);  // ?max_chars (a forward may skip the post-handling advices)
         Send(weak, ResultOf(rid, resp));
     });

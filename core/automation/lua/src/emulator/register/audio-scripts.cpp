@@ -325,19 +325,23 @@ void LuaEmulator::RegisterAudioAndScripts(sol::state& lua)
     });
 #endif
 
-    // Assemble Z80 source text; optionally write the bytes into RAM
+    // Assemble Z80 source text; optionally write the bytes into RAM. `cpu` last: "gs" / "ms" write into the sound
+    // card CPU's view (CpuView::Write) and answer cpu
     lua.set_function("assemble", [this](const std::string& code, sol::object addressValue,
-                                        sol::optional<bool> writeOpt) -> sol::table {
+                                        sol::optional<bool> writeOpt, sol::optional<std::string> cpuName) -> sol::table {
         sol::state_view lua_view(*_lua);
         sol::table result = lua_view.create_table();
         Emulator* emulator = effectiveEmulator();
-        if (!emulator) { result["error"] = "no emulator"; return result; }
+        if (!emulator) { result["error"] = "no emulator"; result["code"] = std::string(DebugError::kNotFound); return result; }
+        const DebugCpuId cpu = ScriptCpu(cpuName);
+        if (IsCardCpu(cpu))
+            result["cpu"] = std::string(DebugCpuName(cpu));
 
         uint16_t address = 0;
         if (addressValue.is<std::string>())
         {
             try { address = static_cast<uint16_t>(std::stoul(addressValue.as<std::string>(), nullptr, 0)); }
-            catch (...) { result["error"] = "invalid address"; return result; }
+            catch (...) { result["error"] = "invalid address"; result["code"] = std::string(DebugError::kInvalidArgument); return result; }
         }
         else if (addressValue.is<int>())
         {
@@ -352,10 +356,19 @@ void LuaEmulator::RegisterAudioAndScripts(sol::state& lua)
         {
             result["error"] = asmResult.error.message;
             result["error_line"] = asmResult.error.line;
+            result["code"] = std::string(DebugError::kInvalidArgument);
             return result;
         }
 
-        if (writeOpt.value_or(false))
+        if (writeOpt.value_or(false) && IsCardCpu(cpu))
+        {
+            const std::string refused = CpuView::Write(emulator, cpu, "Lua assemble write",
+                                                       static_cast<uint16_t>(asmResult.startAddress), asmResult.bytes);
+            if (!refused.empty())
+                throw std::runtime_error(refused);
+            result["written"] = true;
+        }
+        else if (writeOpt.value_or(false))
         {
             Memory* memory = emulator->GetMemory();
             if (memory)

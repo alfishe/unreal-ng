@@ -164,9 +164,12 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
         "mark: the region kind (code, data, text, font, sprite, tile, screen, table, ...)";
     schema["properties"]["title"]["type"] = "string";
     schema["properties"]["title"]["description"] = "mark: the region's title";
-    schema["properties"]["cpu"]["type"] = "boolean";
+    for (const char* type : {"string", "boolean"})
+        schema["properties"]["cpu"]["type"].append(type);
     schema["properties"]["cpu"]["description"] =
-        "mark: claim the CPU addresses instead of the pages they show now (default false)";
+        "disassemble, assemble, find_bytes: the CPU, main (default), gs (the General Sound / NeoGS card's CPU: its own "
+        "view) or ms (the MultiSound card's GS); trace is the main CPU's only (a card CPU is refused, code "
+        "not_supported). mark: true claims the CPU addresses instead of the pages they show now (default false)";
     schema["properties"]["text"]["type"] = "string";
     schema["properties"]["text"]["description"] = "markup_comment: the comment (empty removes it)";
     schema["properties"]["profile"]["type"] = "string";
@@ -189,6 +192,8 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             std::string action = args["action"].asString();
+            // disassemble / assemble / find_bytes / trace: the CPU named (a string; mark's boolean is its own)
+            const std::string codeCpu = args["cpu"].isString() ? args["cpu"].asString() : std::string();
 
             if (action == "disassemble")
             {
@@ -204,6 +209,8 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                 {
                     suffix += "&address=" + AddressArg(args["address"]);
                 }
+                if (!codeCpu.empty())
+                    suffix += "&cpu=" + UrlEncodeSegment(codeCpu);
                 // The listing goes in the text itself: clients that pass only content[] to the model get the code
                 TargetResolver::ResolveFromArgs(args, caller, [suffix, &caller, done](bool ok, const std::string& idOrError) {
                     if (!ok)
@@ -237,7 +244,7 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                 }
                 bool hasAddress = args.isMember("address") && !AddressArg(args["address"]).empty();
 
-                TargetResolver::ResolveFromArgs(args, caller, [&args, hasAddress, &caller, done](bool ok, const std::string& idOrError) {
+                TargetResolver::ResolveFromArgs(args, caller, [&args, hasAddress, codeCpu, &caller, done](bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
                         done(ToolResult::Error(idOrError));
@@ -245,6 +252,8 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                     }
                     auto body = std::make_shared<Json::Value>();
                     (*body)["code"] = args["code"].asString();
+                    if (!codeCpu.empty())
+                        (*body)["cpu"] = codeCpu;
                     if (hasAddress)
                     {
                         (*body)["address"] = args["address"];
@@ -295,7 +304,7 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                     return;
                 }
 
-                TargetResolver::ResolveFromArgs(args, caller, [&args, pattern, &caller, done](bool ok, const std::string& idOrError) {
+                TargetResolver::ResolveFromArgs(args, caller, [&args, pattern, codeCpu, &caller, done](bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
                         done(ToolResult::Error(idOrError));
@@ -303,6 +312,8 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                     }
                     auto body = std::make_shared<Json::Value>();
                     (*body)["pattern_hex"] = pattern;
+                    if (!codeCpu.empty())
+                        (*body)["cpu"] = codeCpu;
                     for (const char* field : {"space", "mask_hex"})
                     {
                         if (args.isMember(field) && args[field].isString())
@@ -362,6 +373,17 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
 
             if (action == "trace")
             {
+                if (!codeCpu.empty() && codeCpu != "main")
+                {
+                    Json::Value refused;
+                    refused["error"] = "Bad Request";
+                    refused["message"] = "cpu " + codeCpu + ": the call trace is the main CPU's only";
+                    refused["code"] = "not_supported";
+                    ToolResult result = ToolResult::Error("debug_code trace: " + DescribeErrorBody(refused));
+                    result.structured = refused;
+                    done(std::move(result));
+                    return;
+                }
                 unsigned frames = args.isMember("frames") ? args["frames"].asUInt() : 10u;
                 if (frames < 1) frames = 1;
                 if (frames > 1000) frames = 1000;

@@ -382,15 +382,32 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
                                                        [&] { mem->ToolWriteToZ80Memory(addr, value); });
     });
 
-    lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
+    // mem_read_word / mem_write_word / mem_read_block / mem_hexdump / mem_write_block: `cpu` last ("gs" / "ms": the
+    // sound card CPU's view, cpuview.h)
+    lua.set_function("mem_read_word", [this](uint16_t addr, sol::optional<std::string> cpuName) -> uint16_t {
         if (!effectiveEmulator()) return 0;
+        if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+        {
+            std::vector<uint8_t> bytes;
+            CpuView::Read(effectiveEmulator()->GetContext(), cpu, addr, 2, bytes);
+            return bytes.size() == 2 ? static_cast<uint16_t>(bytes[0] | (bytes[1] << 8)) : 0;
+        }
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return 0;
         return mem->DirectReadFromZ80Memory(addr) | (mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + 1)) << 8);
     });
 
-    lua.set_function("mem_write_word", [this](uint16_t addr, uint16_t value) {
+    lua.set_function("mem_write_word", [this](uint16_t addr, uint16_t value, sol::optional<std::string> cpuName) {
         if (!effectiveEmulator()) return;
+        if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+        {
+            const std::string refused =
+                CpuView::Write(effectiveEmulator(), cpu, "Lua memory write", addr,
+                               {static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>(value >> 8)});
+            if (!refused.empty())
+                throw std::runtime_error(refused);
+            return;
+        }
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return;
         effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, 2), [&] {
@@ -465,14 +482,19 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
         return {StateNodeToLua(s, reply.body), sol::make_object(s, sol::lua_nil)};
     });
 
-    lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
+    // debug_snapshot(opts) -> snapshot | nil, error, code (debugerror.h)
+    lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts)
+                                           -> std::tuple<sol::object, sol::object, sol::object> {
         Emulator* emulator = effectiveEmulator();
         if (!emulator)
-            return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator")),
+                    sol::make_object(s, std::string(DebugError::kNotFound))};
         DebugSnapshot::Options options;
         options.rawBytes = true;
         if (opts)
         {
+            // cpu = "gs" / "ms": the sound card CPU's snapshot (debug_cpu names it)
+            options.cpu = ScriptCpu(opts->get<sol::optional<std::string>>("cpu"));
             options.disasm = std::min<unsigned>(opts->get_or("disasm", 0u), 100u);
             options.stack = opts->get_or("stack", 8u);
             options.pchist = opts->get_or("pchist", 0u);
@@ -483,8 +505,9 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
         }
         const DebugSnapshot::Result result = DebugSnapshot::Build(emulator, options);
         if (!result.error.empty())
-            return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
-        return {StateNodeToLua(s, result.snapshot), sol::make_object(s, sol::lua_nil)};
+            return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error),
+                    sol::make_object(s, std::string(result.code))};
+        return {StateNodeToLua(s, result.snapshot), sol::make_object(s, sol::lua_nil), sol::make_object(s, sol::lua_nil)};
     });
 
     // mem_read_bytes(addr, len [, space]) -> the bytes as a Lua string (MemoryRead): the CPU view (wraps at #FFFF,
@@ -666,10 +689,18 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
         return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
     });
 
-    lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {
+    lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len, sol::optional<std::string> cpuName) -> sol::table {
         sol::state_view lua_view(*_lua);
         sol::table data = lua_view.create_table();
         if (!effectiveEmulator()) return data;
+        if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+        {
+            std::vector<uint8_t> bytes;
+            CpuView::Read(effectiveEmulator()->GetContext(), cpu, addr, len, bytes);
+            for (size_t i = 0; i < bytes.size(); i++)
+                data[i + 1] = bytes[i];
+            return data;
+        }
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return data;
         for (uint16_t i = 0; i < len; i++) {
@@ -733,20 +764,38 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
     });
 
     // TD-3 compact read format: classic 16B/line hexdump + ASCII sidebar
-    lua.set_function("mem_hexdump", [this](uint16_t addr, sol::optional<int> lenOpt) -> std::string {
+    lua.set_function("mem_hexdump", [this](uint16_t addr, sol::optional<int> lenOpt,
+                                           sol::optional<std::string> cpuName) -> std::string {
         if (!effectiveEmulator()) return "";
+        const DebugCpuId cpu = ScriptCpu(cpuName);
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return "";
         const size_t len = lenOpt ? static_cast<size_t>(*lenOpt) : 64;
         if (len < 1 || len > 4096) return "";
+        if (IsCardCpu(cpu))
+        {
+            std::vector<uint8_t> bytes;
+            CpuView::Read(effectiveEmulator()->GetContext(), cpu, addr, static_cast<uint32_t>(len), bytes);
+            return FormatHexDump(bytes.data(), bytes.size(), addr);
+        }
         std::vector<uint8_t> buffer(len);
         for (size_t i = 0; i < len; i++)
             buffer[i] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
         return FormatHexDump(buffer.data(), buffer.size(), addr);
     });
 
-    lua.set_function("mem_write_block", [this](uint16_t addr, sol::table data) {
+    lua.set_function("mem_write_block", [this](uint16_t addr, sol::table data, sol::optional<std::string> cpuName) {
         if (!effectiveEmulator()) return;
+        if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+        {
+            std::vector<uint8_t> bytes;
+            for (auto& pair : data)
+                bytes.push_back(pair.second.as<uint8_t>());
+            const std::string refused = CpuView::Write(effectiveEmulator(), cpu, "Lua memory write", addr, bytes);
+            if (!refused.empty())
+                throw std::runtime_error(refused);
+            return;
+        }
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return;
         effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, data.size()), [&] {
@@ -758,9 +807,13 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
         });
     });
 
-    // Physical page access (ram/rom/cache/misc)
-    lua.set_function("page_read", [this](const std::string& type, int page, int offset) -> int {
+    // Physical page access (ram/rom/cache/misc); `cpu` last: "gs" / "ms" read the sound card CPU's own pages (rom,
+    // ram: CpuView::PageRead), a card page is not written (the card CPU's view is: mem_write)
+    lua.set_function("page_read", [this](const std::string& type, int page, int offset,
+                                         sol::optional<std::string> cpuName) -> int {
         if (!effectiveEmulator()) return 0;
+        if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            return CardPageBytes(cpu, type, page, offset, 1).at(0);
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return 0;
         ValidatePageIndex("page_read", type, page, offset);
@@ -776,8 +829,11 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
         return pagePtr[offset];
     });
 
-    lua.set_function("page_write", [this](const std::string& type, int page, int offset, uint8_t value) {
+    lua.set_function("page_write", [this](const std::string& type, int page, int offset, uint8_t value,
+                                          sol::optional<std::string> cpuName) {
         if (!effectiveEmulator()) return;
+        if (IsCardCpu(ScriptCpu(cpuName)))
+            throw std::runtime_error(DebugError::WithCode(CpuView::kCardPageWriteRefusal, DebugError::kNotSupported));
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return;
         ValidatePageIndex("page_write", type, page, offset);
@@ -799,10 +855,18 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
         });
     });
 
-    lua.set_function("page_read_block", [this](const std::string& type, int page, int offset, int len) -> sol::table {
+    lua.set_function("page_read_block", [this](const std::string& type, int page, int offset, int len,
+                                               sol::optional<std::string> cpuName) -> sol::table {
         sol::state_view lua_view(*_lua);
         sol::table data = lua_view.create_table();
         if (!effectiveEmulator()) return data;
+        if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+        {
+            const std::vector<uint8_t> bytes = CardPageBytes(cpu, type, page, offset, std::max(len, 0));
+            for (size_t i = 0; i < bytes.size(); i++)
+                data[i + 1] = bytes[i];
+            return data;
+        }
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return data;
         ValidatePageIndex("page_read_block", type, page, offset);
@@ -824,8 +888,11 @@ void LuaEmulator::RegisterMachines(sol::state& lua)
         return data;
     });
 
-    lua.set_function("page_write_block", [this](const std::string& type, int page, int offset, sol::table data) {
+    lua.set_function("page_write_block", [this](const std::string& type, int page, int offset, sol::table data,
+                                                sol::optional<std::string> cpuName) {
         if (!effectiveEmulator()) return;
+        if (IsCardCpu(ScriptCpu(cpuName)))
+            throw std::runtime_error(DebugError::WithCode(CpuView::kCardPageWriteRefusal, DebugError::kNotSupported));
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return;
         ValidatePageIndex("page_write_block", type, page, offset);

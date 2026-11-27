@@ -773,7 +773,8 @@ TEST_F(McpDebugTools_Test, InspectState_CpuGoesToTheCardRoutes)
     EXPECT_NE(result.text.find("the CPU's windows"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("ram page 1"), std::string::npos) << result.text;
     EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/disasm?count=8&cpu=gs"), nullptr);
-    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/state/memory"), nullptr) << "the banks stay the machine's";
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/memory/info?cpu=gs"), nullptr) << "the card CPU's banks";
+    EXPECT_EQ(_caller->Last("GET", "/api/v1/emulator/emu-1/state/memory"), nullptr);
 
     Json::Value missing;
     missing["message"] = "cpu ms not available: no card with a CPU in its slot";
@@ -999,4 +1000,77 @@ TEST_F(McpDebugTools_Test, AnalyzePerformance_CpuProfileForwardsTheOpAndCarriesT
     bad["action"] = "cpuprofile";
     bad["op"] = "report/../stop";
     EXPECT_TRUE(Run("analyze_performance", bad).isError) << "an op is one path segment";
+}
+
+// Debugger-model Phase 3 stage 3: every MCP action that takes `cpu` sends it on its route (one row per action); the
+// card's absent or refused answers carry the error code in the text and in structuredContent
+TEST_F(McpDebugTools_Test, CardCpu_EveryCpuActionSendsTheCpuAndTheErrorCode)
+{
+    struct Row
+    {
+        const char* tool;
+        const char* action;   // debug_code's action, or inspect_state's aspect
+        const char* method;
+        const char* path;     // the route called (before its query)
+        const char* bodyCpu;  // the body's cpu, or nullptr when the query carries it (cpu=gs)
+    };
+    const Row rows[] = {
+        {"inspect_state", "snapshot", "GET", "/api/v1/emulator/emu-1/debug/snapshot", nullptr},
+        {"inspect_state", "memory_banks", "GET", "/api/v1/emulator/emu-1/memory/info", nullptr},
+        {"inspect_state", "debug_targets", "GET", "/api/v1/emulator/emu-1/debug/targets", nullptr},
+        {"inspect_state", "pchist", "GET", "/api/v1/emulator/emu-1/debug/pchist", nullptr},
+        {"inspect_state", "stack", "GET", "/api/v1/emulator/emu-1/registers", nullptr},
+        {"debug_code", "disassemble", "GET", "/api/v1/emulator/emu-1/disasm", nullptr},
+        {"debug_code", "assemble", "POST", "/api/v1/emulator/emu-1/assemble", "gs"},
+        {"debug_code", "find_bytes", "POST", "/api/v1/emulator/emu-1/memory/find", "gs"},
+    };
+    for (const Row& row : rows)
+    {
+        SCOPED_TRACE(std::string(row.tool) + " " + row.action);
+        _caller->calls.clear();
+        Json::Value args;
+        args["cpu"] = "gs";
+        if (std::string(row.tool) == "inspect_state")
+            args["aspects"].append(row.action);
+        else
+        {
+            args["action"] = row.action;
+            args["code"] = "nop";
+            args["pattern_hex"] = "C3";
+        }
+        Run(row.tool, args);
+        bool sent = false;
+        for (const FakeCaller::RecordedCall& call : _caller->calls)
+            if (call.method == row.method && call.path.rfind(row.path, 0) == 0)
+                sent |= row.bodyCpu ? call.body["cpu"].asString() == row.bodyCpu
+                                    : std::string(row.action) == "debug_targets" ||
+                                          call.path.find("cpu=gs") != std::string::npos;
+        EXPECT_TRUE(sent) << "no " << row.method << " " << row.path;
+    }
+
+    // A refusal of the card CPU: the code in the text (content[]) and in the structured body
+    Json::Value refused;
+    refused["error"] = "Bad Request";
+    refused["message"] = "cpu gs: the disassembly of a machine page is the main CPU's only";
+    refused["code"] = "not_supported";
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=16&cpu=gs"] = {400, refused};
+    Json::Value disasm;
+    disasm["action"] = "disassemble";
+    disasm["cpu"] = "gs";
+    const mcp::ToolResult answer = Run("debug_code", disasm);
+    EXPECT_TRUE(answer.isError);
+    EXPECT_NE(answer.text.find("(code: not_supported)"), std::string::npos) << answer.text;
+    EXPECT_EQ(answer.structured["code"].asString(), "not_supported");
+
+    // trace is the main CPU's: refused before any call
+    _caller->calls.clear();
+    Json::Value trace;
+    trace["action"] = "trace";
+    trace["cpu"] = "gs";
+    const mcp::ToolResult traced = Run("debug_code", trace);
+    EXPECT_TRUE(traced.isError);
+    EXPECT_EQ(traced.structured["code"].asString(), "not_supported");
+    EXPECT_NE(traced.text.find("(code: not_supported)"), std::string::npos) << traced.text;
+    for (const FakeCaller::RecordedCall& call : _caller->calls)
+        EXPECT_EQ(call.path.find("calltrace"), std::string::npos) << call.path;
 }

@@ -5,6 +5,7 @@
 #include "cli-processor.h"
 
 #include <debugger/boards/debugboards.h>
+#include <debugger/debugerror.h>
 #include <debugger/debugmanager.h>
 #include <debugger/targets/cpuview.h>
 #include <emulator/emulator.h>
@@ -24,6 +25,12 @@ std::string Hex(unsigned value, int digits)
     std::ostringstream out;
     out << std::hex << std::uppercase << std::setfill('0') << std::setw(digits) << value;
     return out.str();
+}
+
+/// A page type word as the main CPU's memory commands take it (ram, rom, cache, misc)
+bool IsPageType(const std::string& word)
+{
+    return word == "ram" || word == "rom" || word == "cache" || word == "misc";
 }
 
 int Int(const StateNode& node, const char* group, const char* name)
@@ -53,7 +60,7 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
     DebugCpuId selected = cpu;
     if (const std::string error = CpuView::Select(context, DebugCpuName(cpu), selected); !error.empty())
     {
-        session.SendResponse("Error: " + error + NEWLINE);
+        session.SendResponse("Error: " + DebugError::WithCode(error, DebugError::kCpuUnavailable) + NEWLINE);
         return true;
     }
     const std::string name = DebugCpuName(cpu);
@@ -180,6 +187,61 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
                                      NEWLINE);
             return true;
         }
+        if (sub == "fill")
+        {
+            // memory fill <addr> <len> <byte> --cpu gs: the card CPU's view (a page by number is not written)
+            uint16_t address = 0, length = 0, value = 0;
+            if (words.size() > 1 && IsPageType(words[1]))
+            {
+                session.SendResponse("Error: " +
+                                     DebugError::WithCode(CpuView::kCardPageWriteRefusal, DebugError::kNotSupported) +
+                                     NEWLINE);
+                return true;
+            }
+            if (words.size() < 4 || !ParseAddress(words[1], address) || !ParseAddress(words[2], length) ||
+                !ParseAddress(words[3], value, 0xFF) || length == 0)
+            {
+                session.SendResponse("Usage: memory fill <addr> <len> <byte> --cpu " + name + NEWLINE);
+                return true;
+            }
+            size_t written = 0;
+            const std::string refused = CpuView::Write(&emulator, cpu, "CLI memory fill", address,
+                                                       std::vector<uint8_t>(length, static_cast<uint8_t>(value)), &written);
+            if (!refused.empty())
+                session.SendResponse("Error: " + DebugError::WithCode(refused, DebugError::kRefused) + NEWLINE);
+            else
+                session.SendResponse("Filled " + std::to_string(written) + " bytes at 0x" + Hex(address, 4) +
+                                     " with 0x" + Hex(value, 2) + " (cpu " + name + ")" + NEWLINE);
+            return true;
+        }
+        if (sub == "read" && words.size() > 1 && IsPageType(words[1]))
+        {
+            // memory read <rom|ram> <page> <offset> [len] --cpu gs: the card CPU's own page (CpuView::PageRead)
+            uint16_t page = 0, offset = 0, length = 128;
+            if (words.size() < 4 || !ParseAddress(words[2], page) || !ParseAddress(words[3], offset) ||
+                (words.size() > 4 && !ParseAddress(words[4], length)))
+            {
+                session.SendResponse("Usage: memory read <rom|ram> <page> <offset> [len] --cpu " + name + NEWLINE);
+                return true;
+            }
+            std::vector<uint8_t> bytes;
+            if (const std::string error = CpuView::PageRead(context, cpu, words[1], page, offset, length, bytes);
+                !error.empty())
+            {
+                session.SendResponse("Error: " + DebugError::WithCode(error, DebugError::kInvalidArgument) + NEWLINE);
+                return true;
+            }
+            out << name << " " << words[1] << " page " << page << ":" << NEWLINE;
+            for (size_t row = 0; row < bytes.size(); row += 16)
+            {
+                out << Hex(static_cast<unsigned>(offset + row), 4) << ":";
+                for (size_t i = row; i < std::min(bytes.size(), row + 16); i++)
+                    out << " " << Hex(bytes[i], 2);
+                out << NEWLINE;
+            }
+            session.SendResponse(out.str());
+            return true;
+        }
         if (sub == "read")
             words.erase(words.begin());
         uint16_t address = 0;
@@ -187,8 +249,9 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
         if (words.empty() || !ParseAddress(words[0], address) || (words.size() > 1 && !ParseAddress(words[1], length)))
         {
             session.SendResponse("Usage: memory [read] <addr> [len] --cpu " + name +
-                                 "; memory write <addr> <bytes...> --cpu " + name + "; memory info --cpu " + name +
-                                 NEWLINE);
+                                 "; memory read <rom|ram> <page> <offset> [len] --cpu " + name +
+                                 "; memory write <addr> <bytes...> --cpu " + name + "; memory fill <addr> <len> <byte> --cpu " +
+                                 name + "; memory info --cpu " + name + NEWLINE);
             return true;
         }
         std::vector<uint8_t> bytes;
@@ -373,13 +436,64 @@ void CLIProcessor::HandleSelectedCpu(const ClientSession& session, const std::ve
     {
         if (const std::string error = CpuView::SetSelected(context, args[0]); !error.empty())
         {
-            session.SendResponse("Error: " + error + NEWLINE);
+            session.SendResponse("Error: " + DebugError::WithCode(error, CpuView::SelectCode(args[0])) + NEWLINE);
             return;
         }
     }
     StateNode selected = CpuView::Selected(context);
     session.SendResponse("Selected cpu: " + selected["cpu"].s +
                          (selected["follows"].b ? " (follows the main CPU's steps)" : "") + NEWLINE);
+}
+
+bool CLIProcessor::TakeAvailableCpu(const ClientSession& session, Emulator& emulator, std::vector<std::string>& args,
+                                    DebugCpuId& cpu) const
+{
+    if (!TakeCpuOption(session, args, cpu))
+        return false;
+    DebugCpuId selected = cpu;
+    if (const std::string error = CpuView::Select(emulator.GetContext(), DebugCpuName(cpu), selected); !error.empty())
+    {
+        session.SendResponse("Error: " + DebugError::WithCode(error, DebugError::kCpuUnavailable) + NEWLINE);
+        return false;
+    }
+    return true;
+}
+
+bool CLIProcessor::MainCpuOnly(const ClientSession& session, Emulator& emulator, std::vector<std::string>& args,
+                               const std::string& what) const
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeAvailableCpu(session, emulator, args, cpu))
+        return false;
+    if (const std::string refused = CpuView::MainOnly(cpu, what); !refused.empty())
+    {
+        session.SendResponse("Error: " + DebugError::WithCode(refused, DebugError::kNotSupported) + NEWLINE);
+        return false;
+    }
+    return true;
+}
+
+// debug-targets: the CPUs a debugger can name now (CpuView::Targets, GET /debug/targets): one line each
+void CLIProcessor::HandleDebugTargets(const ClientSession& session, const std::vector<std::string>& args)
+{
+    (void)args;
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    StateNode targets = CpuView::Targets(emulator->GetContext());
+    std::ostringstream out;
+    out << "Debug targets (selected: " << targets["selected"].s << "):" << NEWLINE;
+    for (StateNode& target : targets["targets"].items)
+    {
+        out << "  " << std::left << std::setw(5) << target["cpu"].s << (target["available"].b ? "available" : "not available");
+        if (target.find("card"))
+            out << " (card " << target["card"].s << ")";
+        out << NEWLINE;
+    }
+    session.SendResponse(out.str());
 }
 
 // board [list] | board <id> [values] | board <id> <action> [arg]: the device boards (debugger-model widget catalog §4,

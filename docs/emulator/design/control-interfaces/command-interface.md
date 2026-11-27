@@ -724,6 +724,15 @@ card catches up (a host port access or the frame end). The reply names the card'
 steps of the paused machine, so its state is the one at the main CPU's moment. Every
 plane: [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu).
 
+`--cpu` on the rest of the debugger (debugger model Phase 3): `debug-targets` lists the CPUs (`main`, `gs`, `ms`:
+there now or not, the card); `debug-snapshot --cpu gs` is the card CPU's snapshot (`cpu` stays `z80`, `debug_cpu`
+names it); `memory read rom|ram <page> <offset> [len] --cpu gs` reads the card's own page (a page write is refused),
+`memory fill <addr> <len> <byte> --cpu gs` fills its view; `find <pattern> --cpu gs` searches its 64K view;
+`assemble <addr> <code> --write --cpu gs` writes there. `calltrace`, `pchist` and `disasm_page` are the main CPU's:
+`--cpu gs` is refused. Errors end with `(code: <code>)`, the one code of every surface (`cpu_unavailable`,
+`invalid_argument`, `not_supported`, ...: [protocol §4.5](../../../inprogress/2026-09-28-debugger-model/protocol.md#45-errors)).
+The same on every plane: [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu).
+
 `board [list]`, `board <id> [values]` and `board <id> <action> [arg]` read the device boards: a device's hardware as
 groups of named controls with their values (the GS slot's card publishes `gs`, or on NeoGS `neogs`, `neogs_dma`,
 `neogs_sd`, `neogs_mp3`, `neogs_flash`). `board neogs_sd insert <image or folder>` and `board neogs_sd eject` go to the

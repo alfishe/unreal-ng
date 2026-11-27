@@ -5,6 +5,7 @@
 #include "debugger/search/memorysearch.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "../common/cpu_selector.h"
+#include "debugger/debugerror.h"
 #include "../common/binaryresponse.h"
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
@@ -818,10 +819,11 @@ namespace
 void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
-    auto badRequest = [&callback](const std::string& message) {
+    auto badRequest = [&callback](const std::string& message, const char* code = DebugError::kInvalidArgument) {
         Json::Value error;
         error["error"] = "Bad Request";
         error["message"] = message;
+        error["code"] = code;
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
@@ -841,6 +843,11 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
         callback(resp);
         return;
     }
+
+    // "cpu" (body or ?cpu=) gs / ms: the sound card CPU's own 64K view (space cpu only)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!webapi_cpu::CpuOrError(emulator, req, callback, cpu))
+        return;
 
     auto body = req->getJsonObject();
     if (!body || (!body->isMember("pattern_hex") && !body->isMember("pattern")))
@@ -914,11 +921,12 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
     request.end = end;
     request.max = body->isMember("max") ? (*body)["max"].asUInt() : 64u;
     request.alignment = body->isMember("alignment") ? (*body)["alignment"].asUInt() : 1u;
+    request.cpu = cpu;
 
     const MemorySearchResult result = MemorySearch::Search(emulator->GetContext(), request);
     if (!result.error.empty())
     {
-        badRequest(result.error);
+        badRequest(result.error, *result.code ? result.code : DebugError::kInvalidArgument);
         return;
     }
 
@@ -950,6 +958,8 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
     Json::Value ret;
     ret["success"] = true;
     ret["space"] = MemorySearch::SpaceName(request);
+    if (IsCardCpu(cpu))
+        ret["cpu"] = DebugCpuName(cpu);
     ret["count"] = static_cast<Json::UInt>(result.matches.size());
     ret["matches"] = matches;
     ret["truncated"] = result.truncated;
@@ -1108,6 +1118,16 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
+    {
+        // ?cpu=gs / ms: the sound card CPU's own page (CpuView::PageRead); a bad offset / length is refused there
+        uint64_t cardOffset = 0, cardLength = 128;
+        const std::string offsetText = req->getParameter("offset"), lengthText = req->getParameter("length");
+        if ((!offsetText.empty() && !StringHelper::TryParseUInt64(offsetText, cardOffset)) ||
+            (!lengthText.empty() && !StringHelper::TryParseUInt64(lengthText, cardLength)))
+            cardOffset = 0x10000;
+        if (webapi_cpu::CardPageReply(emulator, req, callback, false, type, pageStr, cardOffset, cardLength))
+            return;
+    }
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
     const bool isCache = (type == "cache");   // the CPU's fast RAM pages (the Sprinter's), as page_read takes them
@@ -1283,6 +1303,9 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     }
 
     Memory* memory = emulator->GetMemory();
+    // A card CPU's pages are not written by number (400 not_supported): its view is (POST /memory/write?cpu=)
+    if (webapi_cpu::CardPageReply(emulator, req, callback, true, type, pageStr, 0, 0))
+        return;
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
     const bool isCache = (type == "cache");

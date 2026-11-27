@@ -2,6 +2,9 @@
 // Extracted from cli-processor.cpp - 2026-01-08
 
 #include "cli-processor.h"
+
+#include <debugger/debugerror.h>
+#include <debugger/targets/cpuview.h>
 #include "cli-memory-region.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/memory/memoryread.h"
@@ -1593,7 +1596,7 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
 }
 
 // HandleCallTrace - lines 2505-2727
-void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vector<std::string>& argsIn)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1601,6 +1604,10 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         session.SendResponse("Error: No emulator selected" + std::string(NEWLINE));
         return;
     }
+    // --cpu: the call trace is the main CPU's only (a card CPU is refused, code not_supported)
+    std::vector<std::string> args = argsIn;
+    if (!MainCpuOnly(session, *emulator, args, "the call trace"))
+        return;
     auto* memory = emulator->GetMemory();
     if (!memory)
     {
@@ -1819,17 +1826,22 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
 
 // HandleFind — search memory for a byte pattern through MemorySearch (the WebAPI memory/find, Lua / Python
 // mem_find and MCP find_bytes use the same): hex bytes with ?? / A? wildcards, in the CPU view, one page or all RAM.
-void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<std::string>& argsIn)
 {
     static const char* const kUsage =
         "Usage: find <hex pattern, ?? = any byte> [--space cpu|ram|ram5|rom2|cache0|<region>] [--mask <hex>] [--from N] [--to N] "
-        "[--align 1|2] [--max N]";
+        "[--align 1|2] [--max N] [--cpu main|gs|ms]";
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
         session.SendResponse("No emulator selected.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU (a card that is not there: an error with its code)
+    std::vector<std::string> args = argsIn;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeAvailableCpu(session, *emulator, args, cpu))
+        return;
     std::string pattern, mask, space;
     uint32_t start = 0, end = 0xFFFFFFFF;
     unsigned max = 64, alignment = 1;
@@ -1868,13 +1880,14 @@ void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<st
     std::string error;
     if (!MemorySearch::BuildRequest(pattern, nullptr, mask, space, start, end, max, alignment, request, error))
     {
-        session.SendResponse("find: " + error + NEWLINE);
+        session.SendResponse("find: " + DebugError::WithCode(error, DebugError::kInvalidArgument) + NEWLINE);
         return;
     }
+    request.cpu = cpu;
     const MemorySearchResult result = MemorySearch::Search(emulator->GetContext(), request);
     if (!result.error.empty())
     {
-        session.SendResponse("find: " + result.error + NEWLINE);
+        session.SendResponse("find: " + DebugError::WithCode(result.error, result.code) + NEWLINE);
         return;
     }
 
@@ -1892,7 +1905,8 @@ void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<st
         else
             ss << std::setw(2) << static_cast<int>(request.pattern[i]) << "/" << std::setw(2) << static_cast<int>(m);
     }
-    ss << "  in " << MemorySearch::SpaceName(request) << NEWLINE;
+    ss << "  in " << MemorySearch::SpaceName(request) << (IsCardCpu(cpu) ? std::string(" of cpu ") + DebugCpuName(cpu) : "")
+       << NEWLINE;
     for (const MemorySearchMatch& m : result.matches)
     {
         // The address (a page match: page:offset), then the context from context_start: 4 before, the match, 4 after
@@ -1952,7 +1966,7 @@ void CLIProcessor::HandlePortOut(const ClientSession& session, const std::vector
 
 // HandlePcHistory - pchist [depth] | pchist on | off: the PC history, newest first (core PcHistory, the WebAPI
 // GET / POST /debug/pchist); the first read starts recording
-void CLIProcessor::HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandlePcHistory(const ClientSession& session, const std::vector<std::string>& argsIn)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1960,6 +1974,10 @@ void CLIProcessor::HandlePcHistory(const ClientSession& session, const std::vect
         session.SendResponse(std::string("No emulator selected.") + NEWLINE);
         return;
     }
+    // --cpu: the PC history is the main CPU's only (a card CPU is refused, code not_supported)
+    std::vector<std::string> args = argsIn;
+    if (!MainCpuOnly(session, *emulator, args, "the PC history"))
+        return;
     if (!args.empty() && (args[0] == "on" || args[0] == "off"))
     {
         const std::string error = PcHistory::SetArmed(emulator.get(), args[0] == "on");
@@ -2121,7 +2139,7 @@ void CLIProcessor::HandleDebugWait(const ClientSession& session, const std::vect
 }
 
 // HandleDebugSnapshot - one coherent debugger snapshot (core DebugSnapshot, the WebAPI GET /debug/snapshot) as text
-void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& argsIn)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -2129,8 +2147,14 @@ void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::
         session.SendResponse(std::string("No emulator selected.") + NEWLINE);
         return;
     }
+    // --cpu gs / ms: the sound card CPU (a card that is not there: an error with its code)
+    std::vector<std::string> args = argsIn;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeAvailableCpu(session, *emulator, args, cpu))
+        return;
     DebugSnapshot::Options options;
     options.rawBytes = true;
+    options.cpu = cpu;
     for (size_t i = 0; i < args.size(); ++i)
     {
         const bool value = i + 1 < args.size();
@@ -2146,7 +2170,8 @@ void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::
                 options.pchist = static_cast<unsigned>(std::stoul(args[++i], nullptr, 0));
             else
             {
-                session.SendResponse("Usage: debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N]" + std::string(NEWLINE));
+                session.SendResponse("Usage: debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N] "
+                                     "[--cpu main|gs|ms]" + std::string(NEWLINE));
                 return;
             }
         }
@@ -2159,7 +2184,7 @@ void CLIProcessor::HandleDebugSnapshot(const ClientSession& session, const std::
     const DebugSnapshot::Result result = DebugSnapshot::Build(emulator.get(), options);
     if (!result.error.empty())
     {
-        session.SendResponse("debug-snapshot: " + result.error + NEWLINE);
+        session.SendResponse("debug-snapshot: " + DebugError::WithCode(result.error, result.code) + NEWLINE);
         return;
     }
     const StateNode& s = result.snapshot;

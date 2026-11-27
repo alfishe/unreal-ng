@@ -71,4 +71,36 @@ StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, siz
 /// The card CPU's four 16K windows: {cpu, windows: [{start, size, kind ("rom", "ram"), page, offset}]}; a window
 /// with nothing mapped is "none"
 StateNode Windows(EmulatorContext* context, DebugCpuId cpu);
+
+/// The card CPU's memory overview: {cpu, pages: {ram_count, rom_count}, windows} (the scripts' memory_info, MCP
+/// memory_banks). Empty object without the card
+StateNode MemoryInfo(EmulatorContext* context, DebugCpuId cpu);
+
+/// The CPUs a debugger can name now: {selected, targets: [{cpu, available, card ("gs", "neogs") while there}]},
+/// main, gs, ms in that order (debugger model protocol §3.1)
+StateNode Targets(EmulatorContext* context);
+
+/// The error code (debugerror.h) of Select's refusal of `name`: invalid_argument for no CPU's name, else
+/// cpu_unavailable (a card CPU that is not there now)
+const char* SelectCode(const std::string& name);
+
+/// "" for the main CPU; for a card CPU the refusal of a capability only the main CPU has ("cpu gs: <what> is the
+/// main CPU's only"; code not_supported): the PC history, the call trace, the machine's pages by number
+std::string MainOnly(DebugCpuId cpu, const std::string& what);
+
+/// A card's 16K page size, as mapCardAddress numbers its pages
+inline constexpr uint32_t kCardPageSize = 0x4000;
+/// The refusal of a page write by number on a card CPU (code not_supported): its view is written instead
+inline constexpr const char* kCardPageWriteRefusal =
+    "a card CPU's pages are read by number, not written: write its view (the CPU address) instead";
+
+/// `length` bytes from `offset` of the card CPU's own page `page` of `kind` ("rom", "ram"; Windows' numbers), cut at
+/// the page's end; no side effects. "" on success, else why not (no card, a kind or page it has not, an offset past
+/// the page)
+std::string PageRead(EmulatorContext* context, DebugCpuId cpu, const std::string& kind, uint32_t page,
+                     uint32_t offset, uint32_t length, std::vector<uint8_t>& out);
+
+/// `words` 16-bit words from the card CPU's SP in its view: {cpu, sp, words[]} (the snapshot's stack shape). Empty
+/// object without the card
+StateNode Stack(EmulatorContext* context, DebugCpuId cpu, unsigned words);
 }  // namespace CpuView

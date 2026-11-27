@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "debugger/targets/debugcpuid.h"
 #include "emulator/memory/memory.h"
 #include "emulator/state/statenode.h"
 
@@ -43,6 +44,7 @@ struct MemorySearchRequest
     unsigned alignment = 1;        // 1 or 2
     unsigned contextBefore = 4;    // bytes before the match returned with each match (clamped at the space's start)
     unsigned contextAfter = 4;     // bytes after the pattern
+    DebugCpuId cpu = DebugCpuId::Main;  // a card CPU (gs, ms): its own 64K view, space cpu only (CpuView::Read)
 };
 
 struct MemorySearchMatch
@@ -60,6 +62,7 @@ struct MemorySearchResult
     std::vector<MemorySearchMatch> matches;
     bool truncated = false;
     std::string error;  // non-empty: the request was refused, nothing searched
+    const char* code = "";  // the error's code (debugerror.h): invalid_argument, not_supported, cpu_unavailable
 };
 
 namespace MemorySearch
@@ -89,6 +92,6 @@ bool BuildRequest(const std::string& pattern, const std::vector<uint8_t>* patter
                   const std::string& space, uint32_t start, uint32_t end, unsigned max, unsigned alignment,
                   MemorySearchRequest& out, std::string& error);
 /// The result as the scripting surfaces return it: {space, count, truncated, matches: [{address | page {kind,
-/// page} + offset, context_start, context}]}, numbers as numbers; {error} when refused
+/// page} + offset, context_start, context}]} (+ cpu for a card CPU), numbers as numbers; {error, code} when refused
 StateNode ToState(const MemorySearchRequest& request, const MemorySearchResult& result);
 }  // namespace MemorySearch

@@ -592,6 +592,15 @@ one per machine, `{cpu, follows}`. A card shown follows the main CPU's steps of 
 `run_tstates`, `run_frames`) in tight mode, so its registers and memory are the ones at the main CPU's moment. 400 for
 no name or another one, 404 for a card CPU with no card in its slot.
 
+`GET /debug/targets`: the CPUs a debugger can name now, `{selected, targets: [{cpu, available, card}]}`. `?cpu=` (or
+the body's `cpu`) also goes on `GET /debug/snapshot` (`cpu` stays `z80`, `debug_cpu` names the CPU), `POST
+/memory/find`, `POST /assemble`, the page reads `GET /memory/{type}/{page}/{offset}` and `GET /memory/page/{type}/{page}`
+(a card CPU's own `rom` / `ram` page; a page write is a 400 `not_supported`) and `GET /memory/info`; `/calltrace`,
+`/debug/pchist` and `/disasm/page` refuse a card CPU (400 `not_supported`). Every JSON error body (status >= 400) has
+`code` beside `error` and `message`: `cpu_unavailable`, `invalid_argument`, `not_supported`, `not_found`, `not_paused`,
+`run_control_held`, `revoked`, `refused`, `busy`, `internal` (a handler's own, else one from the status;
+[protocol §4.5](../../../inprogress/2026-09-28-debugger-model/protocol.md#45-errors)).
+
 Every `format=binary` answer is the bytes alone (`application/octet-stream`) with the headers `X-Unreal-Space`
 (`cpu`, `ram5`, a region name), `X-Unreal-Address` and `X-Unreal-Length`, exposed to browser clients
 (`Access-Control-Expose-Headers`). Errors stay JSON with a 4xx status. The JSON formats are unchanged.

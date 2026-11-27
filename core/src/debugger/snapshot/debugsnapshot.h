@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "debugger/targets/debugcpuid.h"
 #include "emulator/state/statenode.h"
 
 class Emulator;
@@ -42,6 +43,9 @@ struct Options
     std::vector<std::string> memory;   ///< windows "<space>:<address>:<length>", at most 8, each at most 65536
     bool rawBytes = false;             ///< memory windows carry "bytes" (the raw bytes as a string) instead of "base64"
     unsigned pchist = 0;               ///< PC history entries, newest first (0 = none, at most 1024; arms the history)
+    /// The CPU the snapshot is of: a card CPU's regs, windows as pages, stack, card time, code from its PC and "cpu:"
+    /// memory windows in its view (debug_cpu names it; "cpu" stays "z80"); pchist is refused (main only)
+    DebugCpuId cpu = DebugCpuId::Main;
 };
 constexpr unsigned kMaxStackWords = 128;
 constexpr size_t kMaxWindows = 8;
@@ -51,6 +55,7 @@ struct Result
     StateNode snapshot;   ///< the answer (tdd §4.1)
     std::string error;    ///< non-empty: refused (`busy` false: a bad request; true: no coherent moment in time)
     bool busy = false;
+    const char* code = "";  ///< the error's code (debugerror.h): invalid_argument, cpu_unavailable, not_supported, busy
 };
 
 /// Check the options without taking a snapshot: empty = valid, else the reason
