@@ -56,6 +56,24 @@ tools/build/build.sh core-tests     # single target
 
 Benchmarks need one manual configure with `-DBENCHMARKS=ON`, then `build.sh` keeps it.
 
+### Compiler cache (ccache)
+
+On by itself in **every** CMake configure, also outside the slot scripts (a direct `cmake -S . -B dir`, an IDE, a
+sanitizer or Docker build): `cmake/Ccache.cmake` puts ccache (4.14.3 on the build hosts) on the compiler command line
+when it is installed. Nothing to set, nothing to clean. Details: [`tools/build/README.md`](tools/build/README.md#compiler-cache).
+
+- **Each checkout has its own cache, `<checkout>/scratch/ccache`**: removing the worktree removes it. Never point
+  ccache elsewhere (`CCACHE_DIR`, `cache_dir` in a `ccache.conf`: the command line wins anyway) and never share one
+  cache between worktrees by hand.
+- **It reads the host's master cache**, `scratch/wt-ccache-master/scratch/ccache` of the main checkout: a new worktree
+  compiles only what differs from master (a full build in about 100 s on macOS, 80 s on Linux). The worktree
+  `scratch/wt-ccache-master` belongs to `tools/build/ccache-master.sh`: never edit, reset, build in or remove it.
+- **After a landing run `tools/build/ccache-master.sh`** (background, any checkout of the host): it builds the new
+  master there. Without it new worktrees still hit everything that did not change since its last run.
+- **A clone** (the Windows host) passes `-DUNREAL_CCACHE_MASTER_DIR=<the master clone>/scratch/ccache` at configure.
+- An existing build directory switches to it at its next configure (`build.sh` configures every time; after a plain
+  `cmake --build` run `cmake -S . -B <dir>` once). `-DUNREAL_CCACHE=OFF` turns it off (timing a cold compile).
+
 ### Linux (gcc) check
 
 CI uses gcc (stricter than clang). After C++ changes: `docker/linux/build.sh --test`.
@@ -69,6 +87,7 @@ sessions' uncommitted edits stay byte for byte), `--push` publishes exactly the 
 ```bash
 git fetch github master && git merge --no-edit github/master   # never merge local master: it may hold others' commits
 tools/build/build.sh && tools/build/land.sh --push "$(git rev-parse master)"
+tools/build/ccache-master.sh                                    # background: the master cache follows (on each build host)
 tools/build/land.sh --publish-only                              # push HEAD without moving local master
 ```
 
@@ -86,7 +105,8 @@ Several sessions and their agents work on the same machines at once; nothing out
   place may be another session's and may act on its worktree (a `sync.sh` once reset another agent's remote worktree).
 - **On a remote host** (build hosts, the Windows host) touch only the worktree, branch and build folder you created
   there, named after your task (`scratch/wt-<name>`); never reset, sync, delete or reuse another one, even if it looks
-  stale. Remove yours when done; leave the host's master fast-forward only.
+  stale. Remove yours when done; leave the host's master fast-forward only. `scratch/wt-ccache-master` is the host's
+  master cache: only `tools/build/ccache-master.sh` touches it.
 - **Something of yours vanished or changed**: stop, report it, do not "fix" it by overwriting others' state.
 
 ## Writing Tests
