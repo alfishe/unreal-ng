@@ -256,3 +256,5 @@ void StudioLauncher::Set(State state, const QString& detail)
     _detail = detail;
     emit Changed();
 }
+
+#include "moc_studiolauncher.cpp"

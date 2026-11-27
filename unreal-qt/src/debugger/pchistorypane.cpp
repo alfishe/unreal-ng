@@ -416,3 +416,5 @@ void PcHistoryPane::read()
     _keys = std::move(keys);
     _total = total;
 }
+
+#include "moc_pchistorypane.cpp"

@@ -589,3 +589,5 @@ void RegistersWidget::prepareForShutdown()
     qDebug() << "RegistersWidget::prepareForShutdown()";
     m_isShuttingDown = true;
 }
+
+#include "moc_registerswidget.cpp"

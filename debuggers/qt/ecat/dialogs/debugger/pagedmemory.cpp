@@ -227,3 +227,5 @@ void PagedMemory::mark_stop()
     if (isVisible()) update_mapping(true);
     if (m_panel != nullptr) m_panel->mark_stop();
 }
+
+#include "moc_pagedmemory.cpp"

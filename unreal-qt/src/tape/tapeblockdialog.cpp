@@ -186,3 +186,5 @@ TapeBlockDialog::TapeBlockDialog(const TapeBlockDescriptor& descriptor,
 
     resize(560, 420);
 }
+
+#include "moc_tapeblockdialog.cpp"

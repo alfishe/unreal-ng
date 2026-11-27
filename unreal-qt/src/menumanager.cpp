@@ -1986,3 +1986,5 @@ void MenuManager::handleRecordingStateChanged(int id, Message* message)
         }, Qt::QueuedConnection);
 }
 #endif
+
+#include "moc_menumanager.cpp"

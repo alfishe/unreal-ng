@@ -576,3 +576,5 @@ void DebuggerTimeTravel::buildBranchMenu()
     _branchMenu->addAction(tr("Show in the TTD panel"), this, [this]() { emit showInTtdPanel(); });
     _branchMenu->setToolTipsVisible(true);
 }
+
+#include "moc_debuggertimetravel.cpp"

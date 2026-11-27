@@ -1040,3 +1040,5 @@ void OsdKeyboardWindow::hideEvent(QHideEvent* event)
 }
 
 // endregion </OsdKeyboardWindow>
+
+#include "moc_osdkeyboardwindow.cpp"

@@ -1488,3 +1488,5 @@ void DebuggerWindow::restore_layout()
         else p.split->setSizes(QList<int>() << 730 << 370);
     }
 }
+
+#include "moc_debuggerwindow.cpp"

@@ -328,3 +328,5 @@ QString TapeExportAudioDialog::suggestedOutputPath() const
     return source.absolutePath() + QLatin1Char('/') + source.completeBaseName() + QLatin1Char('.') +
            SuffixForFormat(formatIndex);
 }
+
+#include "moc_tapeexportaudiodialog.cpp"

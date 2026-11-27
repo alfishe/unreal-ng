@@ -440,3 +440,5 @@ void DesignCanvas::contextMenuEvent(QContextMenuEvent* e)
     }
     menu.exec(e->globalPos());
 }
+
+#include "moc_designcanvas.cpp"

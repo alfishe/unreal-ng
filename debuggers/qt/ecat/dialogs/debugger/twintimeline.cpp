@@ -839,3 +839,5 @@ bool TwinTimeline::event(QEvent *event)
     if (event->type() == QEvent::FontChange) updateGeometry();
     return QWidget::event(event);
 }
+
+#include "moc_twintimeline.cpp"

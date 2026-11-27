@@ -273,3 +273,5 @@ void ProfilesDialog::newProfile()
     _apply->setEnabled(false);
     report(true, tr("A new profile: change its id and bindings, then Save"));
 }
+
+#include "moc_profilesdialog.cpp"

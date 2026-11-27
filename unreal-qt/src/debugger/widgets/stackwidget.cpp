@@ -225,3 +225,5 @@ void StackWidget::prepareForShutdown()
     qDebug() << "StackWidget::prepareForShutdown()";
     m_isShuttingDown = true;
 }
+
+#include "moc_stackwidget.cpp"

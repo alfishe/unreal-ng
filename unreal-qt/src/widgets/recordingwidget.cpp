@@ -1053,3 +1053,5 @@ void RecordingWidget::onUpdateStats()
             .arg(stats.recentFps, 0, 'f', 1));
     }
 }
+
+#include "moc_recordingwidget.cpp"

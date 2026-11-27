@@ -269,3 +269,5 @@ void DaemonControl::Terminate()
         _proc.kill();
     emit StateChanged();
 }
+
+#include "moc_daemoncontrol.cpp"

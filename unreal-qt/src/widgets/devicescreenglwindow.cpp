@@ -3233,3 +3233,5 @@ void DeviceScreenGLWindow::handleExternalKeyRelease(QKeyEvent* event)
 {
     keyReleaseEvent(event);
 }
+
+#include "moc_devicescreenglwindow.cpp"

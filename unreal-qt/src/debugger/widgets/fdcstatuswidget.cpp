@@ -291,3 +291,5 @@ void FdcStatusWidget::renderSnapshot(const FdcSnapshot& snapshot)
                           .arg(snapshot.diskInserted ? "" : "\nNo disk in drive");
     setToolTip(tooltip);
 }
+
+#include "moc_fdcstatuswidget.cpp"

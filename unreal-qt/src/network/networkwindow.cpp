@@ -983,3 +983,5 @@ void NetworkWindow::fillTree(QTreeWidgetItem* item, const QString& path, const S
     if (_expanded.contains(path))
         item->setExpanded(true);
 }
+
+#include "moc_networkwindow.cpp"

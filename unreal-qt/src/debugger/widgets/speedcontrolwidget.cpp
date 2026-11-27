@@ -472,3 +472,5 @@ void SpeedControlWidget::updateLabel()
     }
     _label->setText(text);
 }
+
+#include "moc_speedcontrolwidget.cpp"

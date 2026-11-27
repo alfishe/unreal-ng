@@ -1181,3 +1181,5 @@ void AudioSettingsWidget::onNeoGSStereoModeChanged(int index)
     // Kept by the SoundManager (any thread), taken by the card at the next frame
     context()->pSoundManager->setNeoGSStereoMode(static_cast<NeoGSConfig::StereoMode>(_neoGSStereoCombo->itemData(index).toInt()));
 }
+
+#include "moc_audiosettingswidget.cpp"

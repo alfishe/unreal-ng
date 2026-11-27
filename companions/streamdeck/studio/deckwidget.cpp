@@ -751,3 +751,5 @@ void DeckWidget::wheelEvent(QWheelEvent* e)
     }
     e->accept();
 }
+
+#include "moc_deckwidget.cpp"

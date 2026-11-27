@@ -474,3 +474,5 @@ json DeckClient::Describe() const
         j["error"] = _error.toStdString();
     return j;
 }
+
+#include "moc_deckclient.cpp"

@@ -371,3 +371,5 @@ void MainWindow::loadSettings()
     _webApiPort = settings.value("webApiPort", 8090).toInt();
 }
 
+
+#include "moc_MainWindow.cpp"

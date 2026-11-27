@@ -1659,3 +1659,5 @@ void DisassemblerWidget::prepareForShutdown()
     qDebug() << "DisassemblerWidget::prepareForShutdown()";
     m_isShuttingDown = true;
 }
+
+#include "moc_disassemblerwidget.cpp"

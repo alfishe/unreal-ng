@@ -99,3 +99,5 @@ void SurfaceTargets::onFocusWindowChanged(QWindow* window)
     if (window != nullptr)
         activated();
 }
+
+#include "moc_surfacetargets.cpp"

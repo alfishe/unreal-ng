@@ -975,3 +975,5 @@ void MainWindow::RefreshStatus()
     setWindowTitle(QStringLiteral("Stream Deck Studio - %1 %2 · %3")
                        .arg(NameOf(_deck->GetModel()), _deck->Serial(), _link->RoleText()));
 }
+
+#include "moc_mainwindow.cpp"

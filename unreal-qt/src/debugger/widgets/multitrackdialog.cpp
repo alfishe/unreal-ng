@@ -391,3 +391,5 @@ void MultiTrackDialog::updateButtonStates()
     _duplicateButton->setEnabled(currentRow >= 0);
     _clearButton->setEnabled(rowCount > 0);
 }
+
+#include "moc_multitrackdialog.cpp"

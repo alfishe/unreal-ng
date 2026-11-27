@@ -277,3 +277,5 @@ void LogViewer::paintEvent(QPaintEvent* e)
         painter.fillRect(QRect(QPoint((int)er.left(), (int)offset.y()), er.bottomRight()), palette().window());
     }
 }
+
+#include "moc_logviewer.cpp"

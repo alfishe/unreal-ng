@@ -933,3 +933,5 @@ void TileGridGL::unsubscribeFromNotifications()
         _videoFrameObserverId = 0;
     }
 }
+
+#include "moc_TileGridGL.cpp"

@@ -699,3 +699,5 @@ bool GsMonitorView::run_row_action(RowAction action, int row, unsigned int byte,
     }
     return done();
 }
+
+#include "moc_gsmonitor.cpp"

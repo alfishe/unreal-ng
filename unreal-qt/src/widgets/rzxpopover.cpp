@@ -373,3 +373,5 @@ void RzxPopover::seekTo(uint64_t frame)
         });
     }).detach();
 }
+
+#include "moc_rzxpopover.cpp"

@@ -2844,3 +2844,5 @@ void DebuggerWindow::prepareForShutdown()
 
     qDebug() << "DebuggerWindow::prepareForShutdown() - All child widgets notified";
 }
+
+#include "moc_debuggerwindow.cpp"

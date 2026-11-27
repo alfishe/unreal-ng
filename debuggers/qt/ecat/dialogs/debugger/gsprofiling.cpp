@@ -1168,3 +1168,5 @@ void GsHeatmapView::refresh()
     m_recent_line->setText(count > 0 ? tr("The ranges the DAC fetched in the last %1 frames (the samples playing): %2").arg(num(recent, "frames")).arg(count)
                                      : tr("No DAC fetch in the last %1 frames (nothing playing)").arg(num(recent, "frames")));
 }
+
+#include "moc_gsprofiling.cpp"

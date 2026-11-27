@@ -872,3 +872,5 @@ void DisasmView::commit_edit()
     refresh_memory();
     emit memory_changed();
 }
+
+#include "moc_disasmview.cpp"

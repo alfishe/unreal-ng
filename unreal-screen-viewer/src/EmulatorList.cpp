@@ -140,3 +140,5 @@ void EmulatorList::onSelectionChanged()
         emit emulatorSelected(emulatorId);
     }
 }
+
+#include "moc_EmulatorList.cpp"

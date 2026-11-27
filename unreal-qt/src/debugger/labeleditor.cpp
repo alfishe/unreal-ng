@@ -989,3 +989,5 @@ std::shared_ptr<Label> LabelEditor::getLabelFromRow(int row) const
 
     return label;
 }
+
+#include "moc_labeleditor.cpp"

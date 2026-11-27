@@ -145,3 +145,5 @@ void Recorder::Feed(const QImage& rgba, double t)
     _encoder->OnVideoFrame(fb, t);
     ++_frames;
 }
+
+#include "moc_recorder.cpp"

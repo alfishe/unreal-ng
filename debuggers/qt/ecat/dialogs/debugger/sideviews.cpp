@@ -750,3 +750,5 @@ void DevicesView::refresh()
     }
     while (topLevelItemCount() > (int)snapshot.size()) delete takeTopLevelItem(topLevelItemCount() - 1);
 }
+
+#include "moc_sideviews.cpp"

@@ -1119,3 +1119,5 @@ bool HotspotEditor::exportBundle(const QString& parent, QString& error) const
     }
     return true;
 }
+
+#include "moc_hotspoteditor.cpp"

@@ -248,3 +248,5 @@ void GuiActions::Trigger(const HostActionEvent& event)
     }
     registry.Submit(id, std::move(actionValue), instance, std::move(origin), std::move(done));
 }
+
+#include "moc_guiactions.cpp"

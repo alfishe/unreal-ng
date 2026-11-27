@@ -328,3 +328,5 @@ void CompanionsDialog::refresh()
 }
 
 /// endregion </CompanionsDialog>
+
+#include "moc_companioncontroller.cpp"

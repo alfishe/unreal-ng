@@ -1505,3 +1505,5 @@ bool GsHeatmapCanvas::event(QEvent* event)
 }
 
 // endregion </GsHeatmapCanvas>
+
+#include "moc_gscpuanalysispane.cpp"

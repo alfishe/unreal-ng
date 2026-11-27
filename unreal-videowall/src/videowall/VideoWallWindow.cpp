@@ -2429,3 +2429,5 @@ void VideoWallWindow::publishStatus() const
         std::memcpy(dest + 40, jsonBytes.constData(), jsonLen);
     }
 }
+
+#include "moc_VideoWallWindow.cpp"

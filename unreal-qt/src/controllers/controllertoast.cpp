@@ -88,3 +88,5 @@ void ControllerToast::paintEvent(QPaintEvent*)
     painter.setBrush(QColor(30, 30, 30, 220));
     painter.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 10, 10);
 }
+
+#include "moc_controllertoast.cpp"

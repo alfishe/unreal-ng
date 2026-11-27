@@ -181,3 +181,5 @@ void WebAPIClient::onDisableSharedMemoryReply()
     qDebug() << "WebAPIClient: Shared memory disabled for" << emulatorId;
     emit sharedMemoryDisabled(emulatorId);
 }
+
+#include "moc_WebAPIClient.cpp"

@@ -849,3 +849,5 @@ void DeviceScreen::prepareForShutdown()
     qDebug() << "DeviceScreen::prepareForShutdown()";
     _isShuttingDown = true;
 }
+
+#include "moc_devicescreen.cpp"
