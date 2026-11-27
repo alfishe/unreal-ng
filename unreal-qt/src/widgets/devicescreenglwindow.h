@@ -168,8 +168,8 @@ public:
     void setRecordingCapture(bool enabled, int pictureHeight = 0);
     /// The file's frame for the GPU to compose (before setRecordingCapture; off with it): on macOS under GL each
     /// capture is the whole frame drawn into the hardware encoder's own buffer, no copy through the CPU. With
-    /// `nv12` (any backend) each capture is the picture converted to NV12 in its place, read back at 1.5 bytes a
-    /// pixel. Else the captures stay pictures read back
+    /// `planes` (any backend) each capture is the picture converted to NV12 or YUV444 in its place, read back at 1.5
+    /// or 3 bytes a pixel. Else the captures stay pictures read back
     void setRecordingFrame(const RecordingFrameLayout& layout);
     /// The recording pictures captured and not taken yet, oldest first, appended to `out`: a picture read back
     /// (B,G,R,A bytes: Format_ARGB32, top row first) or a frame the GPU composed, with its emulated frame number (0:
@@ -341,7 +341,7 @@ private:
     std::unique_ptr<gpu::Texture> _hudTexture;  ///< Vulkan: the HUD painted on the CPU, over the picture
     std::unique_ptr<gpu::Program> _hudProgram;
     std::unique_ptr<gpu::Program> _recordCopyProgram;  ///< the recording's picture copied (frame, blocks)
-    std::unique_ptr<gpu::Program> _recordNv12Program;  ///< the recording's picture as NV12 (packRecordingNv12)
+    std::unique_ptr<gpu::Program> _recordPlanesProgram;  ///< the recording's picture as planes (packRecordingPlanes)
     QImage _hudImage;
     quint64 _hudTextureSerial = 0;  ///< Vulkan: the HUD layer (HudOverlay::layerSerial) in _hudTexture; 0: none
     std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
@@ -535,10 +535,10 @@ private:
     /// The drawn picture (`rect` of _recordTarget, GL rows) composed by the GPU into a frame of the file
     /// (setRecordingFrame) in `slot`. False: not this way (no layout, not GL, not macOS)
     bool composeRecordingFrame(const gpu::Rect& rect, const QSize& kept, int slot);
-    /// The drawn picture as NV12 at the frame's place (RecordingFrameLayout::nv12) into _recordNv12: a texel holds
-    /// four Y or two U,V bytes, so its rows read back are the NV12 bytes. `image`: the picture's size as
-    /// RecordingPicture carries it. False: not this way (the picture read as it is)
-    bool packRecordingNv12(const gpu::Rect& rect, const QSize& kept, QSize& image);
+    /// The drawn picture as NV12 or YUV444 at the frame's place (RecordingFrameLayout::planes) into _recordPlanes: a
+    /// texel holds four bytes of a plane's row (NV12's U,V row: two pairs), so its rows read back are the planes.
+    /// `image`: the picture's size as RecordingPicture carries it. False: not this way (the picture read as it is)
+    bool packRecordingPlanes(const gpu::Rect& rect, const QSize& kept, QSize& image);
     RecordingFrameLayout _recordFrame;
 #ifdef __APPLE__
     std::unique_ptr<RecordingSurfaces> _recordSurfaces;
@@ -547,7 +547,7 @@ private:
     int _recordHeight = 0;
     std::unique_ptr<gpu::Texture> _recordTarget;  ///< kept from picture to picture (a new one each time cost 0.1 ms)
     std::unique_ptr<gpu::Texture> _recordScaled;  ///< the picture in blocks, then scaled smooth (compose, NV12)
-    std::unique_ptr<gpu::Texture> _recordNv12;    ///< the picture as NV12 bytes in RGBA8 texels (packRecordingNv12)
+    std::unique_ptr<gpu::Texture> _recordPlanes;  ///< the picture's planes in RGBA8 texels (packRecordingPlanes)
     /// The frame itself while smooth motion shows a picture between two frames: the recording has one picture per
     /// emulated frame, labelled with its number (a picture between N and N+1 put the border's change a frame early)
     std::unique_ptr<gpu::Texture> _recordSource;
@@ -559,7 +559,7 @@ private:
         int slot = 0;
         QSize size;
         uint64_t frame = 0;  ///< the emulated frame shown (0: not known)
-        bool nv12 = false;   ///< the read is _recordNv12's (`size`: the NV12 image's)
+        bool planes = false;  ///< the read is _recordPlanes's (`size`: the planes' image's)
 #ifdef __APPLE__
         RecordingSurfaces::Pending composed;  ///< a frame the GPU composes (else a read in the slot)
 #endif

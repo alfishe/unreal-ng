@@ -122,6 +122,11 @@ Full guide: [`core/tests/README.md`](core/tests/README.md). Non-negotiables:
 - **Scratch files**: `TestPathHelper::GetUniqueTestScratchPath()`
 - **Avoid `vector::resize(n,0)`** on large buffers - use `ZeroInitBuffer`
 - **Second thread in a test**: wait for it to start, bound the loop by both sides, assert the race happened ([concurrency tests](core/tests/README.md#concurrency-tests))
+- **A test checks behavior, not speed**: no wall-clock thresholds (`EXPECT_LT(ms, 20)`), no "at most N Hz"; a speed-up is proven by an A/B measurement in the report, not by a test. Count what happened instead (calls, paints, tries, bytes)
+- **No pixel-exact compares across render paths or platforms**: fonts, hinting and antialiasing differ (FreeType vs CoreText vs DirectWrite); compare a path with itself, or count draw calls
+- **No test-only hooks in production code**: use what exists (`SetRunControlClock`, CUT classes, fakes behind interfaces)
+- **Worth it or nothing**: no regression test per perf / UI tweak by default; a test only when it checks real behavior cheaply and deterministically. A broken test on master is fixed or deleted at once
+- **Qt tests (`unreal-qt-tests`) run on Linux too before landing** (offscreen, on a Linux build host): macOS-only green is not green
 
 ## Running Tests
 

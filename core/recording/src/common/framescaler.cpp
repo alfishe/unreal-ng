@@ -1029,15 +1029,18 @@ double KeysCubic(double x)
 }
 }  // namespace
 
-PlaneScaler::Axis PlaneScaler::MakeAxis(uint32_t src, uint32_t dst)
+PlaneScaler::Axis PlaneScaler::MakeAxis(uint32_t src, uint32_t dst, uint32_t blocks)
 {
     Axis axis;
     axis.first.resize(dst);
     axis.weights.resize(static_cast<size_t>(dst) * 4);
     const int last = static_cast<int>(src) - 1;
+    const int lastBlock = static_cast<int>(src * blocks) - 1;
+    const int b = static_cast<int>(blocks);
     for (uint32_t i = 0; i < dst; i++)
     {
-        const double centre = (i + 0.5) * src / dst - 0.5;
+        // In the blocks' pixels; a tap takes its block's sample (4 taps reach 4 samples at most)
+        const double centre = (i + 0.5) * src * blocks / dst - 0.5;
         const int base = static_cast<int>(std::floor(centre)) - 1;
         double raw[4], sum = 0;
         for (int k = 0; k < 4; k++)
@@ -1047,10 +1050,10 @@ PlaneScaler::Axis PlaneScaler::MakeAxis(uint32_t src, uint32_t dst)
             total += weight[k] = static_cast<int>(std::lround(raw[k] / sum * (1 << kCubicBits)));
         weight[1] += (1 << kCubicBits) - total;  // exact unity: a flat plane stays the same
         // Taps off the picture take its edge sample: they fold onto the 4 samples from `low`, all inside it
-        const int low = std::clamp(base, 0, last - 3);
+        const int low = std::clamp(std::clamp(base, 0, lastBlock) / b, 0, last - 3);
         int folded[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; k++)
-            folded[std::clamp(base + k, 0, last) - low] += weight[k];
+            folded[std::clamp(base + k, 0, lastBlock) / b - low] += weight[k];
         axis.first[i] = low;
         for (int k = 0; k < 4; k++)
             axis.weights[static_cast<size_t>(i) * 4 + k] = static_cast<int16_t>(folded[k]);
@@ -1058,14 +1061,15 @@ PlaneScaler::Axis PlaneScaler::MakeAxis(uint32_t src, uint32_t dst)
     return axis;
 }
 
-bool PlaneScaler::Prepare(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH)
+bool PlaneScaler::Prepare(uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH, uint32_t blocks)
 {
-    if (srcW < 4 || srcH < 4 || dstW == 0 || dstH == 0)
+    if (srcW < 4 || srcH < 4 || dstW == 0 || dstH == 0 || blocks == 0)
         return false;
-    if (srcW != _srcW || dstW != _dstW)
-        _x = MakeAxis(srcW, dstW);
-    if (srcH != _srcH || dstH != _dstH)
-        _y = MakeAxis(srcH, dstH);
+    if (srcW != _srcW || dstW != _dstW || blocks != _blocks)
+        _x = MakeAxis(srcW, dstW, blocks);
+    if (srcH != _srcH || dstH != _dstH || blocks != _blocks)
+        _y = MakeAxis(srcH, dstH, blocks);
+    _blocks = blocks;
     _srcW = srcW;
     _srcH = srcH;
     _dstW = dstW;
