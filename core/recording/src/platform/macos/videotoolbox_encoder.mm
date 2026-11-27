@@ -603,10 +603,36 @@ void VideoToolboxEncoder::SubmitFrameTarget(FrameTarget& target, double timestam
     if (!pixelBuffer)
         return;
 
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+    appendFrame(pixelBuffer, timestampSec);
+    CVPixelBufferRelease(pixelBuffer);
+    target = FrameTarget();
+}
+
+bool VideoToolboxEncoder::AppendPixelBuffer(void* pixelBuffer, double timestampSec)
+{
+    CVPixelBufferRef buffer = static_cast<CVPixelBufferRef>(pixelBuffer);
+    if (!buffer || !_isRecording || !_videoInput || !_pixelBufferAdaptor)
+        return false;
+    if (CVPixelBufferGetWidth(buffer) != _width || CVPixelBufferGetHeight(buffer) != _height ||
+        CVPixelBufferGetPixelFormatType(buffer) != kCVPixelFormatType_32BGRA)
+    {
+        _lastError = "The pixel buffer is not of the output's size and format: dropped";
+        return false;
+    }
     @autoreleasepool
     {
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+        if (!WaitWriterReady())
+            return false;
+    }
+    return appendFrame(pixelBuffer, timestampSec);
+}
 
+bool VideoToolboxEncoder::appendFrame(void* pixelBuffer, double timestampSec)
+{
+    bool appended = false;
+    @autoreleasepool
+    {
         // A frame at or before the previous one would fail the writer (and the file): drop it
         if (timestampSec <= _lastVideoTimestamp)
         {
@@ -618,7 +644,7 @@ void VideoToolboxEncoder::SubmitFrameTarget(FrameTarget& target, double timestam
                 (__bridge AVAssetWriterInputPixelBufferAdaptor*)_pixelBufferAdaptor;
             AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
             CMTime pts = CMTimeMakeWithSeconds(timestampSec, 1000000);
-            if (![adaptor appendPixelBuffer:pixelBuffer withPresentationTime:pts])
+            if (![adaptor appendPixelBuffer:static_cast<CVPixelBufferRef>(pixelBuffer) withPresentationTime:pts])
             {
                 NSString* errDesc = writer.error ? [writer.error localizedDescription] : @"unknown";
                 _lastError = std::string("appendPixelBuffer failed: ") + [errDesc UTF8String];
@@ -627,11 +653,11 @@ void VideoToolboxEncoder::SubmitFrameTarget(FrameTarget& target, double timestam
             {
                 _framesEncoded++;
                 _lastVideoTimestamp = timestampSec;
+                appended = true;
             }
         }
-        CVPixelBufferRelease(pixelBuffer);
     }
-    target = FrameTarget();
+    return appended;
 }
 
 void VideoToolboxEncoder::ReleaseFrameTarget(FrameTarget& target)

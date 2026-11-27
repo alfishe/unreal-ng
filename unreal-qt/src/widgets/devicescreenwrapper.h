@@ -14,6 +14,7 @@
 #include "emulator/video/windowview.h"
 #include "crtprofiles.h"
 #include "framesource.h"
+#include "recordingpicture.h"
 #include "slangpresetrunner.h"
 
 class QPainter;
@@ -157,8 +158,10 @@ public:
     /// drawn for the recording and read back without waiting. False: no GPU window (the software screen draws its
     /// pictures on request, grabWindowPicture)
     bool setRecordingCapture(bool enabled, int pictureHeight);
-    /// The captured pictures not taken yet, oldest first, appended to `out`, their frame numbers to `frames`
-    void takeRecordingPictures(std::vector<QImage>& out, std::vector<uint64_t>& frames);
+    /// The file's frame for the GPU window to compose its captures into (DeviceScreenGLWindow::setRecordingFrame)
+    void setRecordingFrame(const RecordingFrameLayout& layout);
+    /// The captured pictures not taken yet, oldest first, appended to `out`
+    void takeRecordingPictures(std::vector<RecordingPicture>& out);
     /// The recording's picture drawn now: the GPU window's capture way read at once (the capture on), else
     /// grabWindowPicture
     /// grabWindowPicture. `frame`: the emulated frame number of the picture (0: not known)

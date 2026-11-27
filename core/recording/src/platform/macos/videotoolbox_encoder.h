@@ -48,6 +48,10 @@ public:
     FrameTargetResult AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target) override;
     void SubmitFrameTarget(FrameTarget& target, double timestampSec) override;
     void ReleaseFrameTarget(FrameTarget& target) override;
+    /// A frame already in a pixel buffer of the output size and the encoder's kind (B,G,R,A, IOSurface-backed: the
+    /// GPU composed it), appended as it is: no copy. The caller keeps its reference. False: dropped (the reason in
+    /// GetLastError)
+    bool AppendPixelBuffer(void* pixelBuffer, double timestampSec);
     void OnAudioSamples(const int16_t* samples, size_t sampleCount, double timestampSec) override;
 
     /// endregion </Frame Input>
@@ -81,6 +85,8 @@ private:
     void AppendAudio(const int16_t* samples, size_t sampleCount, double timestampSec);
     /// The sound queued while the writer held its input back, as much as it takes now
     void FlushAudio();
+    /// The frame into the writer (its input ready), the timestamp checked
+    bool appendFrame(void* pixelBuffer, double timestampSec);
     // Internal initialization methods (implemented in .mm)
     bool initAudioConverter(const EncoderConfig& config);
     bool initAssetWriter(const std::string& filename, const EncoderConfig& config);
