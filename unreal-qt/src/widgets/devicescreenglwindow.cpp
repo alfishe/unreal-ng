@@ -1271,7 +1271,7 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
     _smoothTooSlow = false;
     _smoothSteppedDown = false;
     _smooth.SetLite(false);
-    _smoothGuard.StartOver(_presenter ? _presenter->LatePresents() : 0);
+    _smoothGuard.StartOver(_presenter ? _presenter->SteppedPresents() : 0);
     _uploadedSerial = 0;
     updateDisplayRate();
     updateVideoSync();
@@ -1358,7 +1358,7 @@ void DeviceScreenGLWindow::updateVideoSync()
             << QString::fromStdString(reason) << ")";
     _sync = sync;
     // Smooth motion on or off: the interpolation starts from the frames that come from now on, its guard as well
-    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+    _smoothGuard.Reset(_presenter ? _presenter->SteppedPresents() : 0);
     std::lock_guard<std::mutex> lock(_frameSourceMutex);
     _smooth.Reset();
     _smoothShown = {};
@@ -1450,7 +1450,7 @@ void DeviceScreenGLWindow::updateDisplayRate()
         return restoreDisplayRate(error.c_str());
     qInfo() << "DeviceScreenGLWindow: display rate" << pick.hz << "Hz for the machine's" << machineHz << "(was"
             << _originalHz << ")";
-    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);  // the switch's blanking is no late picture
+    _smoothGuard.Reset(_presenter ? _presenter->SteppedPresents() : 0);  // the switch's blanking is no late picture
     _displayHz = pick.hz;
     _displayState = "matched";
     _displayReason.clear();
@@ -1470,7 +1470,7 @@ void DeviceScreenGLWindow::watchScreenRate()
                     return;
                 qInfo() << "DeviceScreenGLWindow: the display's rate is" << hz << "Hz now";
                 // The presents late across the switch (the display blanks) are not the interpolation's
-                _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+                _smoothGuard.Reset(_presenter ? _presenter->SteppedPresents() : 0);
                 updateDisplayRate();
                 updateVideoSync();
             },
@@ -1479,7 +1479,7 @@ void DeviceScreenGLWindow::watchScreenRate()
 
 void DeviceScreenGLWindow::settleSmoothGuard()
 {
-    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+    _smoothGuard.Reset(_presenter ? _presenter->SteppedPresents() : 0);
     _smoothGuardFromNs = SteadyNowNs() + kSmoothGuardSettleNs;
 }
 
@@ -1487,18 +1487,20 @@ void DeviceScreenGLWindow::noteInterpolated(int64_t drawNs)
 {
     if (SteadyNowNs() < _smoothGuardFromNs)
     {
-        _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+        _smoothGuard.Reset(_presenter ? _presenter->SteppedPresents() : 0);
         return;
     }
     // An interpolated picture drawn. Do they reach the screen in time? Told by what the presenter saw, whatever the
-    // device and the picture's size: of the last kSmoothGuardWindow of them, kSmoothGuardLates or more presents a
-    // refresh late is an interpolation this machine cannot draw within a refresh (the Steam Deck: 18.9 ms a picture
+    // device and the picture's size: of the last kSmoothGuardWindow of them, kSmoothGuardLates or more presents shown
+    // a refresh off the one before (PresentLead::Steps: a picture held or skipped; a run evenly a refresh late is the
+    // compositor's and moves as smoothly, the blend would be as late) is an interpolation this machine cannot draw
+    // within a refresh (the Steam Deck: 18.9 ms a picture
     // on its GPU at 16.7 ms a refresh; 13 pictures a second reached the screen, and the lead those lates widened to
     // its bound halved the blend's too). Then it steps down for a while (SmoothGuard::SteppedDown, retrySmoothStep):
     // first to the cheap interpolation (LiteFlow, about 1 / 30 of the time on one thread), and if that is late as
     // well (or was the mode chosen), to the blend. Not in the first seconds of a window shown (settleSmoothGuard)
     // Without a presenter (the GL swap alone) the drawing's own time tells
-    if (_smoothGuard.Note(_presenter ? _presenter->LatePresents() : 0, drawNs, refreshPeriodNs()))
+    if (_smoothGuard.Note(_presenter ? _presenter->SteppedPresents() : 0, drawNs, refreshPeriodNs()))
     {
         if (!_smooth.Lite())
         {
@@ -1510,7 +1512,7 @@ void DeviceScreenGLWindow::noteInterpolated(int64_t drawNs)
             _smoothTooSlow = true;
         _smoothGuard.SteppedDown(SteadyNowNs());
         qWarning() << "DeviceScreenGLWindow: smooth motion's interpolation is too slow here (of its last"
-                   << SmoothGuard::kWindow << "pictures" << _smoothGuard.ClosedLates() << "a refresh late,"
+                   << SmoothGuard::kWindow << "pictures" << _smoothGuard.ClosedLates() << "a refresh off the one before,"
                    << _smoothGuard.ClosedSlow() << "drawn in most of a refresh) -"
                    << (_smoothTooSlow ? "blended" : "the cheap interpolation") << "for a while";
     }
@@ -1529,7 +1531,7 @@ void DeviceScreenGLWindow::retrySmoothStep()
         _smooth.SetLite(false);
         _smoothShown = {};
     }
-    _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+    _smoothGuard.Reset(_presenter ? _presenter->SteppedPresents() : 0);
     if (_smoothSteppedDown)
         _smoothGuard.RetryLater(SteadyNowNs());  // the full interpolation is tried next, after the same wait
     qInfo() << "DeviceScreenGLWindow: smooth motion tries" << (_smooth.Lite() ? "the cheap interpolation" : "the interpolation")
@@ -2652,7 +2654,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
             const bool smoothNow = smoothActive();
             // Off (turbo, low latency, the temporal blend, another sync step): the presents late meanwhile are not
             // the interpolation's, on again it starts counting from now
-            _smoothGuard.Track(smoothNow, _presenter ? _presenter->LatePresents() : 0);
+            _smoothGuard.Track(smoothNow, _presenter ? _presenter->SteppedPresents() : 0);
             if (smoothNow)
                 retrySmoothStep();
             if (smoothNow && !_smoothWasActive)

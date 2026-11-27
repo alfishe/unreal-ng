@@ -7,7 +7,7 @@
 ///   - Vdac4Tang (78): the Tang's own state (personality, timers, FT_CFG, the LINK window);
 ///   - Vdac4Esp (79): the ESP's clock, its SPI slave, link, frame transport and firmware;
 ///   - Vdac4EspCpu (80): the Xtensa app host. Its memory (PSRAM, SRAM, the ROM's RW copy) is recorded only at
-///     keyframes (every kKeyframeFrames captures, a rescan, a journal over kJournalLimit), its blob is the host's
+///     keyframes (every KeyframeFrames() captures, a rescan, a journal over kJournalLimit), its blob is the host's
 ///     state at the last keyframe and the input journal since. A restore loads the keyframe and runs the ESP
 ///     again up to the frame on that journal, then checks the host state's hash.
 ///   - Vdac4Q2 (81): the Tang's Quake II core (bomzh-3D) while it runs. Every input of the core but the Evo side
@@ -75,8 +75,13 @@ private:
 class TTDVdac4EspCpu : public TTDSerializable, public ITTDRegionSource
 {
 public:
-    /// A keyframe at least this often (captures)
+    /// A keyframe at least this often (captures) while slot 0 or the FT812 runs
     static constexpr uint32_t kKeyframeFrames = 25;
+    /// The same while the Quake II core runs: its keyframes store the SDRAM pieces the frame and z buffers rewrote
+    /// as well, so they cost more (ttd-design.md §9.5)
+    static constexpr uint32_t kKeyframeFramesQ2 = 50;
+    /// The interval in use: the one of the personality, or UNREAL_VDAC4_TTD_KEYFRAME for both (A/B runs)
+    uint32_t KeyframeFrames(bool q2) const { return q2 ? _keyEveryQ2 : _keyEvery; }
     /// A keyframe once the journal holds this much
     static constexpr size_t kJournalLimit = 256 * 1024;
 
@@ -152,6 +157,8 @@ private:
     bool _armed = false;
     std::vector<uint8_t> _keyState;  ///< the host's state at the last keyframe (empty: none yet)
     uint32_t _sinceKey = 0;          ///< captures since the keyframe
+    uint32_t _keyEvery = kKeyframeFrames;
+    uint32_t _keyEveryQ2 = kKeyframeFramesQ2;
     bool _keyDue = true;
     uint64_t _hashNow = 0;           ///< the host state's hash at this capture
     uint64_t _journalLast = 0;       ///< the journal's length at this capture

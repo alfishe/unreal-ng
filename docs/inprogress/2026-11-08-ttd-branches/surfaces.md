@@ -46,8 +46,9 @@ popups or docks. So the chip, the tree and the fork popup became:
   records a new branch from there (the owner's choice, 2026-11-10: the fork must be visible on the button, not only
   in its tooltip). At the end of the recording it reads **Continue Rec**: the same session goes on, while Start Rec
   begins a new one. Both names fit the button, so the slider keeps its length.
-- **Under remote control** the panel turns none of its controls on (it updates them every 100 ms, the guard relocks
-  every 250 ms: the two made the panel flicker).
+- **Under remote control** the panel turns none of its controls on (it updates them every 100 ms, the guard then
+  relocked every 250 ms: the two made the panel flicker; since 2026-11-27 the guard relocks a re-enabled control at
+  the next turn of the event loop, the panel's rule stays).
 
 Not built (the owner closed the work 2026-11-16; [DONE.md](DONE.md)): the main window's status bar, the lane
 filters (creator / tags / run), edits in the past from the panel, and writing a rename, note, tag or pin of a folder

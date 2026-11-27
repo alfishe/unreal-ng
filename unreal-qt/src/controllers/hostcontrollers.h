@@ -11,6 +11,7 @@
 #include <QTimer>
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -285,6 +286,12 @@ private:
     /// Own the devices while this process is the first live one of the queue; a queue with no live client is claimed
     void updateOwner();
     QString _ownersPath;  ///< "" in a windowless session: it never takes the devices from a window
+    /// The owners file as last read (updateOwner): read again only when its time or size changed, or after
+    /// kOwnersRereadPolls polls whatever they say (a file system with coarse times)
+    std::vector<int64_t> _ownerPids;
+    std::filesystem::file_time_type _ownersTime{};
+    std::uintmax_t _ownersSize = 0;
+    int _ownersPollsLeft = 0;
     /// Steam's menus over the window in gamescope (platform/linux/steamoverlay.h): the devices are Steam's meanwhile,
     /// neither the machine nor the app's own screens read them. Checked every 50 ms while in gamescope
     void checkSteamOverlay();
@@ -343,7 +350,8 @@ private:
     bool _pauseOnDisconnect = false;
     EmulatorBinding* _binding = nullptr;
     std::shared_ptr<Emulator> _attached;  ///< the emulator whose ControllerManager samples the service
-    QTimer _timer;
+    /// The 250 ms poll (ui-ux.md §7), owned by this object: it lives on this object's thread and goes with it
+    QTimer _timer{this};
     uint64_t _revision = ~0ull;
     uint64_t _machineRevision = ~0ull;
     bool _debugLayer = false;

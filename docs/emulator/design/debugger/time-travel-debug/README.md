@@ -198,7 +198,7 @@ Tools, POCs and data:
 
 ## Open tasks
 
-Collected 2026-11-20 from every plan doc. Not TTD, kept because they sit next to it: F8, E3. Pure non-TTD items of
+Collected 2026-11-20 from every plan doc; statuses brought up to date 2026-11-27 (open without RZX: S3 alone). Not TTD, kept because they sit next to it: F8, E3. Pure non-TTD items of
 the same TODO (V6 and the rest) are left out.
 
 Open, by priority:
@@ -206,13 +206,13 @@ Open, by priority:
 | Id | Title | Priority | Status | Source |
 |----|-------|----------|--------|--------|
 | F4 | Analysis of sessions recorded during RZX playback (bundle carries the RZX; PLAN #27 R5) | P1 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| S2 | Job model / long-poll for long verbs (TTD dump, analysis build, memory series) | P2 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| S3 | Server-side input script player with TTD recording | P2 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| V1 | L1 analysis over several TTD sessions | P2 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| S2 | Job model / long-poll for long verbs (TTD dump, analysis build, memory series) | P2 | done 2026-11-23 (`c86776e1c`) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| S3 | Server-side input script player with TTD recording | P2 | open, waits for the owner's choice of the runner (Lua + C or WASM) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| V1 | L1 analysis over several TTD sessions | P2 | done 2026-11-25 (`96aea1d42`: build option `sessions`, one frame axis) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | R4 | RZX recording (writer: `IN` values, fetch counts, frame ends) | T2 (PLAN #27) | open, nobody on it | [rzx TODO](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) |
 | F9 | L1 marks a false root at a snapshot's first PC | P3 | done 2026-11-24 (`resume` kind) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| S4 | History / trace filters, event-only trace | P3 | open, partly there (verified 2026-11-24) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| V5 | L1 first / last frame per instruction; reader-PC filter | P3 | open, partly there (verified 2026-11-24) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| S4 | History / trace filters, event-only trace | P3 | done 2026-11-27 (`c2395b749` record-time filter of the device histories, `a11ec13f1` MCP port trace filter and the access trace filter) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
+| V5 | L1 first / last frame per instruction; reader-PC filter | P3 | done (`2683ddc69` 2026-11-24 the frames per instruction, `96aea1d42` 2026-11-25 `ignore_readers`) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | E5 | `capture.json` records the script start frame | P3 | done 2026-11-24 | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | E7 | RZX seek discoverability | P3 | open | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | E8 | Capability check before a session | P3 | done 2026-11-24 (tool list checked at launch) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
