@@ -49,6 +49,18 @@ public:
     {
         return _cpu.KeepHeldCode();
     }
+    bool WatchWrites(bool on) override
+    {
+        _cpu.WatchWrites(on);
+        return true;
+    }
+    void TakeWrittenPages(std::vector<uintptr_t>& out) override
+    {
+        std::vector<uintptr_t>& pages = _cpu.WrittenPages();
+        out.insert(out.end(), pages.begin(), pages.end());
+        pages.clear();
+        _cpu.ArmWriteWatch();
+    }
 
 #ifdef UNREAL_XTENSA_PROFILE
     void DumpProfile(const char* path) override { _cpu.DumpProfile(path); }

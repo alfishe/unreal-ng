@@ -2923,6 +2923,26 @@ void EspAppHost::HoldCode()
     _cpu->HoldCode();
 }
 
+bool EspAppHost::WatchWrites(bool on)
+{
+    _memory.WatchHostWrites(on);
+    _cpuWatches = _cpu->WatchWrites(on) && on;
+    _writtenPages.clear();
+    return _cpuWatches || !on;
+}
+
+bool EspAppHost::TakeWrites(std::vector<std::pair<const uint8_t*, uint32_t>>& out)
+{
+    bool all = _memory.TakeHostWrites(out);
+    if (!_cpuWatches)
+        return true;
+    _writtenPages.clear();
+    _cpu->TakeWrittenPages(_writtenPages);
+    for (uintptr_t page : _writtenPages)
+        out.emplace_back(reinterpret_cast<const uint8_t*>(page), 4096u);
+    return all;
+}
+
 void EspAppHost::InvalidateAllCode()
 {
     _cpu->InvalidateCode(EspMemory::kPsramDbus, EspMemory::kPsramSize);

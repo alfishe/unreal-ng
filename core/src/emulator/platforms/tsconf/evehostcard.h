@@ -261,11 +261,15 @@ public:
     uint64_t TtdStateHash() const;
     uint64_t TtdMemoryHash() const;
 
-    /// ITTDDisplayParticipant: one machine frame before a frame target (an FT812
-    /// frame, ~16.9 ms, may have started before the target frame's checkpoint);
+    /// ITTDDisplayParticipant: the machine frames a replay needs before the target frame so that two FT812
+    /// frames (the one shown or in flight and the one under it) start after its checkpoint: at least 1 (an FT812
+    /// frame of ~16.9 ms in a 20.5 ms machine frame), more for a mode whose frame is longer;
     /// inside a frame the picture is the FT812 frame drawn up to the position
-    unsigned TTDLeadInFrames() const override { return 1; }
+    unsigned TTDLeadInFrames() const override;
     void TTDPrepareComposedPicture(bool frameTarget) override;
+    /// Two FT812 frames completed since the last state load: every line the composed picture shows was drawn
+    /// by the replay, none is left from before the checkpoint
+    bool TTDComposedPictureComplete() const override;
     /// endregion
 
     const Time& GetTime() const { return _time; }
@@ -351,6 +355,7 @@ private:
     bool _outputSet = false;       // EveSetOutput was called once
     bool _owedFromLoad = false;    // TtdLoadState left the frame's lines owed (until the next advance)
     uint64_t _chipFrames = 0;      // EveCompletedFrames seen last
+    uint64_t _chipFramesAtLoad = 0;  // EveCompletedFrames right after the last TtdLoadState
     std::atomic<uint64_t> _latchedFrames{0};
     std::vector<uint32_t> _chipFrame;
     std::vector<uint8_t> _picture;
@@ -364,6 +369,8 @@ private:
     /// renderer draws the frames of the machine frame just run while the next one runs (MainLoop::Park settles all)
     uint64_t _frameEndsAtLastEnd = 0;
     static void SettleFrames(void* card);
+    /// Screen::CatchUpExternalPicture: the picture of this moment, the FT812 frame in flight drawn up to the CPU
+    static void CatchUpPicture(void* card);
     std::atomic<bool> _asyncPresent{false};  // _showing as of the last output setup, for the renderer
     // Where in the machine's time each FT812 frame ended, by its EveCompletedFrames count: written on the emulation
     // thread before the chip steps that end it (so before the frame end is queued), read by the renderer. The

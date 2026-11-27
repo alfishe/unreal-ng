@@ -3,6 +3,7 @@
 #include "ttdvdac4.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -36,6 +37,40 @@ uint64_t Hash64(const uint8_t* data, size_t size, uint64_t seed = 0x9E3779B97F4A
         h = (h ^ data[i]) * 0x100000001B3ull;
     return h ^ (h >> 32);
 }
+
+/// A 4 KB piece of the ESP memory: four independent lanes (a quarter of the time of Hash64's one chain; the whole
+/// 9 MB in about 0.5 ms on the M3 Ultra), the piece's place in the seed
+uint64_t PieceHash(const uint8_t* data, size_t size, uint64_t seed)
+{
+    auto mix = [](uint64_t v) {
+        v ^= v >> 33;
+        v *= 0xFF51AFD7ED558CCDull;
+        v ^= v >> 33;
+        v *= 0xC4CEB9FE1A85EC53ull;
+        return v ^ (v >> 33);
+    };
+    uint64_t a = seed, b = seed ^ 0x9E3779B97F4A7C15ull, c = seed + 0x632BE59BD9B4E019ull, d = ~seed;
+    size_t i = 0;
+    for (; i + 32 <= size; i += 32)
+    {
+        uint64_t w[4];
+        std::memcpy(w, data + i, 32);
+        a = (a ^ w[0]) * 0x100000001B3ull;
+        a ^= a >> 29;
+        b = (b ^ w[1]) * 0x100000001B3ull;
+        b ^= b >> 29;
+        c = (c ^ w[2]) * 0x100000001B3ull;
+        c ^= c >> 29;
+        d = (d ^ w[3]) * 0x100000001B3ull;
+        d ^= d >> 29;
+    }
+    for (; i < size; ++i)
+        a = (a ^ data[i]) * 0x100000001B3ull;
+    return mix(a ^ mix(b + 1) ^ mix(c + 2) ^ mix(d + 3) ^ size);
+}
+
+constexpr uint32_t kMemHashTag = 0x4D344456;  // "VD4M": the ESP memory's hashes after the key blob's fields
+constexpr const char* kEspRegionNames[] = {"vdac4.esp.psram", "vdac4.esp.sram", "vdac4.esp.rom"};
 
 /// A self-delimiting blob: u32 total length (itself included), then the body
 void BeginSized(std::vector<uint8_t>& out)
@@ -152,6 +187,8 @@ struct CpuKeyBlob
     std::vector<uint8_t> key, q2Key, journal;
     uint64_t hash = 0;
     uint64_t prev = 0;
+    bool hasMemory = false;  ///< the ESP memory's hashes follow (blobs since 2026-11-27)
+    uint64_t memory[3] = {};
 };
 
 bool ReadCpuKeyBlob(const uint8_t* state, size_t size, CpuKeyBlob& out, size_t maxState)
@@ -166,6 +203,14 @@ bool ReadCpuKeyBlob(const uint8_t* state, size_t size, CpuKeyBlob& out, size_t m
     r.Blob(out.journal, maxState);
     out.hash = r.U64();
     out.prev = r.AtEnd() ? 0 : r.U64();
+    out.hasMemory = !r.AtEnd();
+    if (out.hasMemory)
+    {
+        if (r.U32() != kMemHashTag)
+            return false;
+        for (uint64_t& h : out.memory)
+            h = r.U64();
+    }
     return r.Ok() && r.AtEnd();
 }
 
@@ -337,6 +382,8 @@ TTDVdac4EspCpu::TTDVdac4EspCpu(Vdac4Board& board) : _board(board)
         if (every >= 1 && every <= 1000)
             _keyEvery = _keyEveryQ2 = static_cast<uint32_t>(every);
     }
+    if (const char* env = std::getenv("UNREAL_VDAC4_TTD_MEMORY_CHECK"); env && *env && *env != '0')
+        _memCheck = true;
     vdac4::EspMemory& memory = _board.Runtime().Host().Memory();
     _trackers[0].Bind(memory.PsramBytes().data(), memory.PsramBytes().size());
     _trackers[1].Bind(memory.SramBytes().data(), memory.SramBytes().size());
@@ -401,6 +448,7 @@ void TTDVdac4EspCpu::TTDLoadState(const uint8_t* src)
     // The memory moved without marks, the journal does not start from it: the next capture is a keyframe
     _keyDue = true;
     MarkAllMemory();
+    _memValid = false;
 }
 
 uint64_t TTDVdac4EspCpu::HostHash() const
@@ -427,10 +475,20 @@ void TTDVdac4EspCpu::TTDRecordingStarted()
 {
     _keyDue = true;
     _points.clear();  // another session's memory: let it go
+    _board.Runtime().WaitIdle();
+    _memWatch = true;
+    _memValid = false;
+    (void)_board.Runtime().Host().WatchWrites(true);
 }
 
 void TTDVdac4EspCpu::TTDRecordingStopped()
 {
+    _board.Runtime().WaitIdle();
+    _memWatch = false;
+    _memValid = false;
+    (void)_board.Runtime().Host().WatchWrites(false);
+    _writes.clear();
+    _writes.shrink_to_fit();
     _board.Runtime().Host().JournalStop();
     _keyState.clear();
     _keyState.shrink_to_fit();
@@ -462,6 +520,101 @@ void TTDVdac4EspCpu::MarkAllMemory()
 {
     for (TTDRegionTracker& tracker : _trackers)
         tracker.MarkAll();
+}
+
+uint8_t* TTDVdac4EspCpu::RegionBytes(size_t r) const
+{
+    vdac4::EspMemory& memory = _board.Runtime().Host().Memory();
+    std::vector<uint8_t>* parts[] = {&memory.PsramBytes(), &memory.SramBytes(), &memory.RomBytes()};
+    return parts[r]->data();
+}
+
+size_t TTDVdac4EspCpu::RegionSize(size_t r) const
+{
+    vdac4::EspMemory& memory = _board.Runtime().Host().Memory();
+    std::vector<uint8_t>* parts[] = {&memory.PsramBytes(), &memory.SramBytes(), &memory.RomBytes()};
+    return parts[r]->size();
+}
+
+void TTDVdac4EspCpu::HashAllMemory()
+{
+    for (size_t r = 0; r < 3; ++r)
+    {
+        const uint8_t* bytes = RegionBytes(r);
+        const size_t size = RegionSize(r);
+        std::vector<uint64_t>& hashes = _pieceHash[r];
+        hashes.resize((size + kTTDPieceSize - 1) / kTTDPieceSize);
+        uint64_t sum = 0;
+        for (size_t p = 0; p < hashes.size(); ++p)
+        {
+            const size_t at = p * kTTDPieceSize;
+            hashes[p] = PieceHash(bytes + at, std::min<size_t>(kTTDPieceSize, size - at), (uint64_t(r) << 32) | p);
+            sum += hashes[p];
+        }
+        _memSum[r] = sum;
+    }
+    ++_stats.memoryFullHashes;
+}
+
+void TTDVdac4EspCpu::UpdateMemoryHash()
+{
+    vdac4::EspAppHost& host = _board.Runtime().Host();
+    _writes.clear();
+    const bool all = host.TakeWrites(_writes);
+    if (all || !_memValid)
+    {
+        HashAllMemory();
+        _memValid = _memWatch;
+        return;
+    }
+    // The pieces the ranges touch, once each, in the three regions (a range elsewhere, the extmem page, is no
+    // part of the TTD state)
+    size_t offsets[3] = {0, _pieceHash[0].size(), _pieceHash[0].size() + _pieceHash[1].size()};
+    _pieceDirty.assign(offsets[2] + _pieceHash[2].size(), 0);
+    for (const auto& [ptr, length] : _writes)
+        for (size_t r = 0; r < 3; ++r)
+        {
+            const uint8_t* base = RegionBytes(r);
+            const size_t size = RegionSize(r);
+            if (ptr < base || ptr >= base + size)
+                continue;
+            const size_t from = static_cast<size_t>(ptr - base);
+            const size_t to = std::min(size, from + length);
+            for (size_t p = from / kTTDPieceSize; p * kTTDPieceSize < to; ++p)
+                _pieceDirty[offsets[r] + p] = 1;
+            break;
+        }
+    for (size_t r = 0; r < 3; ++r)
+    {
+        const uint8_t* bytes = RegionBytes(r);
+        const size_t size = RegionSize(r);
+        for (size_t p = 0; p < _pieceHash[r].size(); ++p)
+        {
+            if (!_pieceDirty[offsets[r] + p])
+                continue;
+            const size_t at = p * kTTDPieceSize;
+            const uint64_t h =
+                PieceHash(bytes + at, std::min<size_t>(kTTDPieceSize, size - at), (uint64_t(r) << 32) | p);
+            _memSum[r] += h - _pieceHash[r][p];
+            _pieceHash[r][p] = h;
+            ++_stats.memoryPiecesHashed;
+        }
+    }
+    if (!_memCheck)
+        return;
+    // The check of the watch itself (A/B and new ESP code): a write the watch did not see shows here
+    const std::vector<uint64_t> kept[3] = {_pieceHash[0], _pieceHash[1], _pieceHash[2]};
+    const uint64_t sums[3] = {_memSum[0], _memSum[1], _memSum[2]};
+    HashAllMemory();
+    for (size_t r = 0; r < 3; ++r)
+        if (sums[r] != _memSum[r])
+        {
+            ++_stats.watchMisses;
+            for (size_t p = 0; p < kept[r].size(); ++p)
+                if (kept[r][p] != _pieceHash[r][p])
+                    std::fprintf(stderr, "vdac4 ttd: the write watch missed %s piece %zu (offset 0x%zx)\n",
+                                 kEspRegionNames[r], p, p * kTTDPieceSize);
+        }
 }
 
 void TTDVdac4EspCpu::TTDCaptureBegins(bool rescan)
@@ -510,6 +663,8 @@ void TTDVdac4EspCpu::TTDCaptureBegins(bool rescan)
         _journalLast = host.JournalBytes().size();
         _hashNow = HostHash();
     }
+    if (_memWatch)
+        UpdateMemoryHash();
 }
 
 void TTDVdac4EspCpu::TTDBeforeRestore()
@@ -520,6 +675,7 @@ void TTDVdac4EspCpu::TTDBeforeRestore()
     // Between keyframes the ESP memory moves on unmarked, and a restore re-runs it: every piece is restored
     if (_armed)
         MarkAllMemory();
+    _memValid = false;
     // A seek inside one run of an app brings the same code bytes back: the load keeps the translated code then
     _board.Runtime().Host().HoldCode();
     _regionsLeft = false;
@@ -555,6 +711,12 @@ bool TTDVdac4EspCpu::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
     w.Blob(_board.Runtime().Host().JournalData());
     w.U64(_hashNow);
     w.U64(_journalPrev);
+    if (_memWatch)
+    {
+        w.U32(kMemHashTag);
+        for (uint64_t h : _memSum)
+            w.U64(h);
+    }
     return true;
 }
 
@@ -687,11 +849,27 @@ bool TTDVdac4EspCpu::TTDLoadStateWithoutRegions(const uint8_t* state, size_t siz
     else
         host.JournalBegin();  // stopped inside: the journal starts here (the next capture keys anyway)
     _stats.replayedBytes += journal.size() - std::min(journal.size(), from);
-    if (!replayed || HostHash() != hash)
+    // The memory too (§6.3): the replay's writes the watch holds are of no use, the whole memory is hashed once
+    std::string memoryDiffers;
+    if (replayed && blob.hasMemory)
+    {
+        HashAllMemory();
+        _writes.clear();
+        (void)host.TakeWrites(_writes);
+        _memValid = _memWatch;
+        for (size_t r = 0; r < 3; ++r)
+            if (_memSum[r] != blob.memory[r])
+                memoryDiffers += (memoryDiffers.empty() ? "" : ", ") + std::string(kEspRegionNames[r]);
+    }
+    const bool hostSame = replayed && HostHash() == hash;
+    if (!hostSame || !memoryDiffers.empty())
     {
         ++_stats.divergences;
-        _stats.lastDivergence = !replayed ? error : "replay ended at another host state";
+        _stats.lastDivergence = !replayed  ? error
+                                : !hostSame ? "replay ended at another host state"
+                                            : "replay ended at another ESP memory (" + memoryDiffers + ")";
         _loadDivergence = _stats.lastDivergence;
+        _points.clear();  // a point on the way may hold the same difference
     }
     else if (!atPoint)
         KeepReplayPoint(keyHash, journal.data(), journal.size(), q2 != nullptr);

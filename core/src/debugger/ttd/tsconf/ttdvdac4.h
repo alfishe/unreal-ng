@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "debugger/ttd/engine/ttdregiontracker.h"
@@ -125,6 +126,9 @@ public:
         std::string lastDivergence;
         uint64_t replayPointHits = 0;  ///< restores that went on from a replay point, not the keyframe
         uint64_t regionsLeft = 0;      ///< of them: the engine left the ESP memory to the point (not decoded first)
+        uint64_t memoryPiecesHashed = 0;  ///< pieces of the ESP memory hashed at captures (the written ones)
+        uint64_t memoryFullHashes = 0;    ///< hashes of the whole ESP memory (a capture after a load, a restore)
+        uint64_t watchMisses = 0;         ///< UNREAL_VDAC4_TTD_MEMORY_CHECK: captures whose memory hash was wrong
     };
     /// Replay points kept (each the ESP's whole memory, about 9 MB)
     static constexpr size_t kReplayPoints = 3;
@@ -132,9 +136,27 @@ public:
     /// The last capture was a keyframe of the ESP (Vdac4Q2 offers the SDRAM then)
     bool LastCaptureKeyed() const { return _keyedNow; }
 
+    /// The ESP memory's hash per region (psram, sram, rom) at the last capture, as the blob records it
+    const uint64_t* MemoryHashes() const { return _memSum; }
+
 private:
     void MarkAllMemory();
     uint64_t HostHash() const;
+
+    /// The ESP memory's hash (ttd-design.md §6.3): per region the sum of the hashes of its 4 KB pieces, so a
+    /// capture hashes again only the pieces written since the last one (EspAppHost::TakeWrites). Whole after a
+    /// load (the memory moved behind the watch)
+    void UpdateMemoryHash();
+    void HashAllMemory();
+    uint8_t* RegionBytes(size_t r) const;
+    size_t RegionSize(size_t r) const;
+    std::vector<uint64_t> _pieceHash[3];
+    uint64_t _memSum[3] = {};
+    bool _memValid = false;   ///< _pieceHash matches the memory up to the writes the watch holds
+    bool _memWatch = false;   ///< the watch is on (a recording)
+    bool _memCheck = false;   ///< UNREAL_VDAC4_TTD_MEMORY_CHECK: every capture checks the sums against a whole hash
+    std::vector<std::pair<const uint8_t*, uint32_t>> _writes;
+    std::vector<uint8_t> _pieceDirty;
 
     /// The ESP as a replay left it at a capture boundary: a restore whose keyframe is the same and whose journal
     /// begins with this one goes on from here (a seek's picture restores the frame before the seek's: once per

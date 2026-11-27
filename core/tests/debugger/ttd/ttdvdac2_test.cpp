@@ -117,6 +117,16 @@ protected:
         return std::vector<uint32_t>(fb, fb + size / sizeof(uint32_t));
     }
 
+    /// What the monitor shows: the FT812 frame that finished last (the present queue; a direct run's frames are
+    /// due at once). The framebuffer (Shown) of a stopped machine holds the frame in flight drawn up to the stop
+    std::vector<uint32_t> Presented()
+    {
+        std::vector<uint32_t> picture(Shown().size());
+        EXPECT_TRUE(_context->pScreen->CopyPresentedFramebuffer(reinterpret_cast<uint8_t*>(picture.data()),
+                                                                picture.size() * sizeof(uint32_t)));
+        return picture;
+    }
+
     /// The card and the TS-Conf engine (its DMA reaches the card) brought up to the
     /// CPU's position: both run lazily, so the same moment can sit at different
     /// catch-up points in a live run and after a restore
@@ -150,7 +160,7 @@ protected:
         {
             _emulator->RunNFrames(1, true);
             const uint64_t f = _context->emulatorState.frame_counter;
-            finalPicture[f - 1] = Shown();
+            finalPicture[f - 1] = Presented();
             stateAt[f] = Now();
         }
         _ttd->StopRecording();
@@ -220,12 +230,7 @@ TEST_F(TTDVdac2_Test, TheMonitorShowsTheSeekedPicture)
     std::map<uint64_t, Moment> stateAt;
     std::map<uint64_t, std::vector<uint32_t>> finalPicture;
     Record(10, stateAt, finalPicture);
-    auto presented = [this]() {
-        std::vector<uint32_t> picture(Shown().size());
-        EXPECT_TRUE(_context->pScreen->CopyPresentedFramebuffer(reinterpret_cast<uint8_t*>(picture.data()),
-                                                                picture.size() * sizeof(uint32_t)));
-        return picture;
-    };
+    auto presented = [this]() { return Presented(); };
 
     const uint64_t first = finalPicture.begin()->first + 1;
     const uint64_t last = finalPicture.rbegin()->first;
@@ -258,9 +263,11 @@ TEST_F(TTDVdac2_Test, SeekInsideFrameShowsTheFrameDrawnSoFar)
     for (uint32_t t : {20000u, 120000u, 230000u})  // 14 MHz frame: 4 x 71680 T-states
     {
         _emulator->RunTStates(t, true);
-        const std::vector<uint32_t> lastFinished = Shown();
-        // What the rule shows at this moment on a live machine: the frame in flight
+        const std::vector<uint32_t> lastFinished = Presented();
+        // What the rule shows at this moment: the frame in flight. The run's end shows it already
+        const std::vector<uint32_t> atStop = Shown();
         _card->TTDPrepareComposedPicture(false);
+        EXPECT_TRUE(Shown() == atStop) << "a stopped machine shows the FT812 frame in flight drawn so far";
         if (!(Shown() == lastFinished))
             ++differFromLastFinished;
         const Moment live = Now();
@@ -281,6 +288,144 @@ TEST_F(TTDVdac2_Test, SeekInsideFrameShowsTheFrameDrawnSoFar)
         EXPECT_EQ(_card->TtdStateHash(), p.live.cardState);
         EXPECT_EQ(_card->TtdMemoryHash(), p.live.chipMemory);
     }
+}
+
+namespace
+{
+/// A Z80 program for the FT812 through #77 / #57 (vdac2cardfixture.h): `setup` (address, 32-bit value pairs) once,
+/// then a 16 x 16 RGB565 bitmap at RAM_G 0 rewritten without a pause, one color per pass (about 0.8 ms at 14 MHz).
+/// The display list of `setup` repeats that bitmap over the whole 1024 x 768 picture: every FT812 line shows the
+/// color of the moment it was drawn, so a line drawn at another moment (from another input) differs
+std::vector<uint8_t> RamGWriterProgram(const std::vector<std::pair<uint32_t, uint32_t>>& setup)
+{
+    std::vector<uint8_t> code = {0xF3, 0x06, 0x00};  // DI; LD B,0 (OUT (C),A: port #00xx)
+    auto out = [&code](uint8_t port, uint8_t value) {
+        code.insert(code.end(), {0x0E, port, 0x3E, value, 0xED, 0x79});  // LD C,port; LD A,value; OUT (C),A
+    };
+    auto writeHeader = [&](uint32_t address) {
+        out(0x77, 0x06);  // FT812 selected
+        out(0x57, static_cast<uint8_t>(0x80 | ((address >> 16) & 0x3F)));
+        out(0x57, static_cast<uint8_t>(address >> 8));
+        out(0x57, static_cast<uint8_t>(address));
+    };
+    for (const auto& [address, value] : setup)
+    {
+        writeHeader(address);
+        for (int i = 0; i < 4; ++i)
+            out(0x57, static_cast<uint8_t>(value >> (8 * i)));
+        out(0x77, 0x02);  // deselected
+    }
+    code.insert(code.end(), {0x1E, 0x00});  // LD E,0: the color
+    const size_t loop = code.size();
+    writeHeader(0);
+    code.insert(code.end(), {0x16, 0x00});  // LD D,0: 256 pixels
+    const size_t inner = code.size();
+    code.insert(code.end(), {0x7B, 0xED, 0x79, 0xED, 0x79, 0x15});  // LD A,E; OUT (C),A twice; DEC D
+    code.insert(code.end(), {0x20, static_cast<uint8_t>(inner - (code.size() + 2))});  // JR NZ,inner
+    out(0x77, 0x02);
+    code.push_back(0x1C);  // INC E
+    code.insert(code.end(), {0x18, static_cast<uint8_t>(loop - (code.size() + 2))});  // JR loop
+    return code;
+}
+}  // namespace
+
+/// Inside a frame the picture holds two FT812 frames, the one in flight and the one under it, and either may
+/// have started before the checkpoint of the frame before the position (an FT812 frame is 16.9 ms, a machine
+/// frame 20.5 ms). A replay draws again from line 0 the FT812 frame in flight at its checkpoint, with the
+/// inputs of the checkpoint: lines of it the picture shows were then not the ones the live machine drew. And the
+/// live machine, stopped there, showed the FT812 frame that finished last instead of the frame in flight. Found
+/// with Metal Slug on VDAC4 (it writes RAM_G all the time), 2026-11-27: some seeks showed another picture than the
+/// live machine at the same position while the state was exact. Every position, at every FT812 phase, shows the
+/// live picture; one in the session's first frame, which no replay can draw, says so in the check
+TEST_F(TTDVdac2_Test, SeekShowsTheLivePictureWhileRamGChanges)
+{
+    // The program stops test6 (its own drawing would overwrite the display list); a frame first lets the
+    // coprocessor finish what test6 queued. Each program at its own address: the TS-Conf CPU cache keeps the
+    // words the CPU fetched, and a tool's write does not reach it
+    auto start = [this](uint16_t at, const std::vector<uint8_t>& code) {
+        for (size_t i = 0; i < code.size(); ++i)
+            _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(at + i), code[i]);
+        Z80* z80 = _context->pCore->GetZ80();
+        z80->pc = at;
+        z80->iff1 = z80->iff2 = 0;
+        z80->halted = 0;  // test6 waits for its interrupt in HALT
+    };
+    start(0x8000, {0xF3, 0x18, 0xFE});  // DI; JR $
+    _emulator->RunNFrames(2, true);
+    constexpr uint32_t kRamDl = 0x300000;
+    start(0x9000, RamGWriterProgram({
+        {kRamDl + 0, 0x02000000},                                    // CLEAR_COLOR_RGB(0, 0, 0)
+        {kRamDl + 4, 0x26000007},                                    // CLEAR(1, 1, 1)
+        {kRamDl + 8, 0x04FFFFFF},                                    // COLOR_RGB(255, 255, 255)
+        {kRamDl + 12, 0x01000000},                                   // BITMAP_SOURCE(0)
+        {kRamDl + 16, 0x07000000 | (7u << 19) | (32u << 9) | 16u},   // BITMAP_LAYOUT(RGB565, 32, 16)
+        {kRamDl + 20, 0x28000000},                                   // BITMAP_LAYOUT_H(0, 0)
+        {kRamDl + 24, 0x08000000 | (1u << 19) | (1u << 18) | 256u},  // BITMAP_SIZE(NEAREST, REPEAT, REPEAT, 1024 & 511, 768 & 511)
+        {kRamDl + 28, 0x29000000 | (2u << 2) | 1u},                  // BITMAP_SIZE_H(1024 >> 9, 768 >> 9)
+        {kRamDl + 32, 0x1F000001},                                   // BEGIN(BITMAPS)
+        {kRamDl + 36, 0x80000000},                                   // VERTEX2II(0, 0, 0, 0)
+        {kRamDl + 40, 0x21000000},                                   // END
+        {kRamDl + 44, 0x00000000},                                   // DISPLAY
+        {0x302054, 2},                                               // REG_DLSWAP: at the frame end
+    }));
+    _emulator->RunNFrames(2, true);
+    ASSERT_TRUE(_card->IsShowing());
+
+    struct Probe
+    {
+        ttd::TTDTimePoint at;
+        std::vector<uint32_t> live;
+    };
+    std::vector<Probe> probes;
+    ASSERT_TRUE(_ttd->StartRecording());
+    const uint64_t firstFrame = _context->emulatorState.frame_counter;
+    // In the session's first frame: no checkpoint before it
+    _emulator->RunTStates(20000, true);
+    const ttd::TTDTimePoint inFirstFrame{_context->emulatorState.frame_counter,
+                                         static_cast<uint32_t>(_context->pCore->GetZ80()->t)};
+    ASSERT_EQ(inFirstFrame.frame, firstFrame);
+    _emulator->RunNFrames(2, true);
+    // 14 MHz frame: 4 x 71680 T-states. Positions early in a frame and late, at drifting FT812 phases
+    for (uint32_t t : {3000u, 150000u, 9000u, 270000u, 30000u, 60000u, 5000u, 90000u, 15000u, 1000u})
+    {
+        _emulator->RunTStates(t, true);
+        // What the rule shows at this moment on a live machine: the FT812 frame in flight over the one before.
+        // The stopped machine shows it already (Screen::CatchUpExternalPicture)
+        const std::vector<uint32_t> atStop = Shown();
+        _card->TTDPrepareComposedPicture(false);
+        EXPECT_TRUE(Shown() == atStop) << "the live machine stopped at (" << _context->emulatorState.frame_counter
+                                       << ", " << _context->pCore->GetZ80()->t << ") shows the frame in flight";
+        probes.push_back(
+            {{_context->emulatorState.frame_counter, static_cast<uint32_t>(_context->pCore->GetZ80()->t)}, Shown()});
+        _emulator->RunNFrames(1, true);
+    }
+    _ttd->StopRecording();
+    std::set<std::vector<uint32_t>> distinct;
+    for (const Probe& p : probes)
+        distinct.insert(p.live);
+    ASSERT_GE(distinct.size(), probes.size() - 1) << "the pictures must differ, or a seek proves nothing";
+
+    // Back and forth: every seek restores against another live state
+    std::vector<size_t> order;
+    for (size_t i = 0; i < probes.size(); ++i)
+        order.push_back(i % 2 ? probes.size() - 1 - i / 2 : i / 2);
+    for (size_t i : order)
+    {
+        const Probe& p = probes[i];
+        SCOPED_TRACE(::testing::Message() << "position (" << p.at.frame << ", " << p.at.tInFrame << ")");
+        ASSERT_TRUE(_ttd->SeekTo(p.at));
+        ASSERT_EQ(_context->pCore->GetZ80()->t, p.at.tInFrame);
+        EXPECT_TRUE(Shown() == p.live) << "the picture of the live machine at that moment";
+        EXPECT_EQ(_ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact) << _ttd->LastEngineCheck().message;
+    }
+
+    // The session's first frame: what the FT812 drew before the session started is in no checkpoint
+    ASSERT_TRUE(_ttd->SeekTo(inFirstFrame));
+    const ttd::TTDRestoreResult& check = _ttd->LastEngineCheck();
+    EXPECT_EQ(check.status, ttd::TTDRestoreStatus::NotBitExact);
+    EXPECT_TRUE(std::any_of(check.issues.begin(), check.issues.end(), [](const ttd::TTDRestoreIssue& issue) {
+        return issue.kind == ttd::TTDRestoreIssueKind::PictureIncomplete;
+    })) << check.message;
 }
 
 /// A session written to a stream and read back seeks to the same pictures and state

@@ -350,13 +350,22 @@ the same rule as for the ZX screen:
 
 - **By frame number:** the picture the monitor showed at the end of that machine frame: the
   FT812 frame that finished last. The FT812 frame (about 16.9 ms) does not line up with the
-  machine frame (about 20 ms), so the replay starts one machine frame earlier
-  (`TTDLeadInFrames() = 1`): the FT812 frame that finished last is then drawn entirely by the
-  replay, even if it started before the target frame's checkpoint.
+  machine frame (about 20 ms), so the replay starts earlier (`TTDLeadInFrames()`: machine
+  frames for two FT812 frames, 1 at 16.9 ms): the FT812 frame that finished last is then drawn
+  entirely by the replay, even if it started before the target frame's checkpoint.
 - **At a T-state / time point inside a frame:** the FT812 frame in flight, drawn up to that
   moment, over its previous frame. The library draws lines lazily (at a frame end or before a
   memory write); `TTDPrepareComposedPicture` brings the chip to the position and makes it draw
-  every line due, then presents its frame buffer.
+  every line due, then presents its frame buffer. The replay starts the same lead-in earlier
+  (since 2026-11-27; it started at the frame before the position): the frame under the one in
+  flight is drawn entirely by the replay too.
+- **Every line drawn by the replay** (`TTDComposedPictureComplete`: two FT812 frames finished
+  since the replay's checkpoint), else the compose starts a checkpoint earlier (up to 4); where
+  the session holds none, the seek's check reports `picture_incomplete` (`not_bit_exact`): the
+  picture shows lines the FT812 drew before the session.
+- **A live machine stopped at a moment** (a pause, the end of a direct run) shows the same
+  picture (`EveHostCard::CatchUpPicture` through `Screen::CatchUpExternalPicture`, since
+  2026-11-27; before, the FT812 frame that finished last).
 - **While the replay runs the chip draws every frame,** shown or not, so the result does not
   depend on whether the host was looking at the picture (`Vdac2Card::Drawing`).
 
@@ -370,6 +379,7 @@ SDK program `test6.spg` (a 1940 x 768 image in `RAM_G`, scrolled every frame):
 | `ChipBlobsAreRecorded` | both blobs are registered with their sizes |
 | `SeekByFrameMatchesTheLiveRun` | seeking by frame number, back and forth: the picture equals the live picture at the end of that frame; at the live run's exact position the card state, the chip state, every memory region and the metrics block equal the live run's byte for byte |
 | `SeekInsideFrameShowsTheFrameDrawnSoFar` | at three T-states inside frames: the picture equals the live machine's frame drawn so far (and differs from the last finished frame), state and memory equal |
+| `SeekShowsTheLivePictureWhileRamGChanges` | `RAM_G` rewritten by the CPU without a pause: at ten positions (FT812 phases) the stopped live machine shows the frame in flight, and the seek shows the same with an exact check; a position in the session's first frame reports `picture_incomplete` |
 | `SavedSessionReplaysTheSame` | the session written to a stream and read back seeks to the same pictures and state |
 | `HistoryLimitKeepsTheChipRight` | with a 6-frame history limit (the oldest checkpoints and their blobs released while recording), saved and loaded: every kept frame seeks to the live picture, card state and chip memory |
 
@@ -386,7 +396,11 @@ Notes from building it:
 - The one-frame lead-in is not proven necessary by these captures: the library redraws the
   frame in flight from line 0 after a restore, so the picture is right without it unless the
   memory changed during that FT812 frame before the checkpoint. It stays, correct by
-  construction, for one extra replayed frame per seek.
+  construction, for one extra replayed frame per seek. Metal Slug on VDAC4 (2026-11-27) is that
+  case: it writes `RAM_G` all the time, and seeks inside a frame (which had no lead-in) showed
+  lines of the frame in flight at the checkpoint drawn with the checkpoint's memory.
+  `SeekShowsTheLivePictureWhileRamGChanges` (a Z80 loop rewriting a bitmap the display list
+  repeats over the picture) checks it at ten FT812 phases.
 
 ## 10. The ROM image
 

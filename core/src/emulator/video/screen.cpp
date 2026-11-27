@@ -1361,6 +1361,20 @@ void Screen::SettleExternalFrames()
         _externalSettle(_externalSettleOwner);
 }
 
+void Screen::SetExternalCatchUp(ExternalCatchUp catchUp, void* owner)
+{
+    if (!catchUp && owner != _externalCatchUpOwner)
+        return;
+    _externalCatchUp = catchUp;
+    _externalCatchUpOwner = catchUp ? owner : nullptr;
+}
+
+void Screen::CatchUpExternalPicture()
+{
+    if (_externalCatchUp && IsExternalPictureActive())
+        _externalCatchUp(_externalCatchUpOwner);
+}
+
 void Screen::ClearExternalPicture()
 {
     if (!IsExternalPictureActive())
