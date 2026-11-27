@@ -1449,6 +1449,52 @@ public:
         return send_post(QJsonObject{{"action", "conversation"}, {"send_id", (qint64)id}});
     }
 
+    // The twin timeline over the WebAPI: GET debug/timeline (no session: a read never blocks another client), the
+    // lease a timed one that runs out when this process stops renewing it (it ends with a crash too); POST
+    // debug/timeline/arm renews or releases it. A 404 (no card CPU there) as {available: false, message}
+    static constexpr unsigned int kTimelineLeaseMs = 15000;
+    std::string timeline_client() const override
+    {
+        return "ecat-" + std::to_string(QCoreApplication::applicationPid());
+    }
+    GsJson read_timeline(const std::string &card, double span_t, unsigned int recent, unsigned int density, bool arm) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        QStringList parts;
+        if (!card.empty()) parts << "cpu=" + QString::fromStdString(card);
+        parts << "span=" + QString::number(span_t, 'f', 1) << QString("recent=%1").arg(recent) << QString("density=%1").arg(density)
+              << "client=" + QString::fromUtf8(QUrl::toPercentEncoding(QString::fromStdString(timeline_client())))
+              << QString("lease_ms=%1").arg(kTimelineLeaseMs) << QString("arm=%1").arg(arm ? "true" : "false")
+              << "wait_ms=0";  // a 503 at once rather than the server's wait under this blocking request
+        QByteArray out;
+        const int status = m_http.request("GET", m_base + "/debug/timeline?" + parts.join('&'), QByteArray(), out);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const QJsonObject body = QJsonDocument::fromJson(out).object();
+        if (status == 404) {
+            const QJsonObject na{{"available", false}, {"message", body.value("message").toString(body.value("error").toString())}};
+            return {true, QJsonDocument(na).toJson(QJsonDocument::Compact).toStdString(), std::string()};
+        }
+        if (status != 200) {
+            GsJson failed{false, std::string(),
+                          body.value("message").toString(body.value("error").toString(QString("HTTP %1").arg(status))).toStdString()};
+            failed.busy = status == 503;
+            return failed;
+        }
+        return {true, out.toStdString(), std::string()};
+    }
+    GsJson timeline_arm(bool on) override
+    {
+        if (!m_online.load()) return {false, std::string(), "The emulator is not connected"};
+        int status = 0;
+        const QJsonObject r = m_http.json("POST", m_base + "/debug/timeline/arm",
+                                          QJsonObject{{"on", on}, {"client", QString::fromStdString(timeline_client())},
+                                                      {"lease_ms", (int)kTimelineLeaseMs}}, &status);
+        if (status == 0) return {false, std::string(), "No answer from the emulator"};
+        const std::string json = QJsonDocument(r).toJson(QJsonDocument::Compact).toStdString();
+        if (status != 200) return {false, json, r.value("message").toString(r.value("error").toString()).toStdString()};
+        return {true, json, std::string()};
+    }
+
     // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
     // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
     bool ttd_supported() const override { return true; }

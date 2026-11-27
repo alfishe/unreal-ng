@@ -23,6 +23,7 @@
 #include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/timeline/twintimeline.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
@@ -1497,6 +1498,38 @@ public:
             if (!error.empty())
                 return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
             return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // The GS debugger's twin timeline (gs-debugger design §5.4): timeline([{cpu=, span=, recent=, lease_ms=}]) ->
+        // {state, armed, cpu, lanes, now, position, window, recent, next, markers, density, text} | nil, error (takes
+        // or renews the script's lease, 0 = until timeline_arm(false)); timeline_arm(on[, lease_ms]) -> {armed, ...}
+        lua.set_function("timeline", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            timeline::Query query;
+            query.client = "lua";
+            query.leaseMs = 0;
+            if (opts)
+            {
+                query.cpu = opts->get_or("cpu", std::string());
+                query.spanT = opts->get_or("span", timeline::kDefaultSpanT);
+                query.recent = opts->get_or("recent", 64u);
+                query.leaseMs = opts->get_or("lease_ms", 0u);
+            }
+            const timeline::Reply reply = timeline::Read(emulator, query);
+            if (reply.status != 200)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, reply.error)};
+            return {StateNodeToLua(s, reply.body), sol::make_object(s, sol::lua_nil)};
+        });
+        lua.set_function("timeline_arm", [this](sol::this_state s, bool on, sol::optional<unsigned> leaseMs) -> std::tuple<sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            const timeline::Reply reply = timeline::SetArmed(emulator, "lua", on, leaseMs.value_or(0));
+            if (reply.status != 200)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, reply.error)};
+            return {StateNodeToLua(s, reply.body), sol::make_object(s, sol::lua_nil)};
         });
 
         lua.set_function("debug_snapshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> std::tuple<sol::object, sol::object> {

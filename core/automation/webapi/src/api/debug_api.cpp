@@ -14,6 +14,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 #include <drogon/HttpAppFramework.h>
 #include <drogon/HttpResponse.h>
@@ -29,6 +32,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/memory/memoryread.h>
 #include <debugger/pchistory/pchistory.h>
+#include <debugger/timeline/twintimeline.h>
 #include <debugger/ports/portwrite.h>
 #include <debugger/snapshot/debugsnapshot.h>
 #include <debugger/boards/debugboards.h>
@@ -3295,6 +3299,132 @@ void EmulatorAPI::getPcHistory(const HttpRequestPtr& req, std::function<void(con
     auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.report));
     addCorsHeaders(resp);
     callback(resp);
+}
+
+namespace
+{
+void ReplyTimeline(std::function<void(const HttpResponsePtr&)>& callback, const timeline::Reply& reply)
+{
+    HttpResponsePtr resp;
+    if (reply.status == 200)
+        resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.body));
+    else
+    {
+        Json::Value error;
+        error["error"] = reply.status == 404   ? "Not Found"
+                         : reply.status == 503 ? "Service Unavailable"
+                                               : "Bad Request";
+        error["message"] = reply.error;
+        resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(static_cast<HttpStatusCode>(reply.status));
+    }
+    addCorsHeaders(resp);
+    callback(resp);
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/{id}/debug/timeline - the GS debugger's twin timeline (twintimeline.h, gs-debugger
+/// design §5.4): paused, both lanes' recent blocks, NOW, the next instructions and the markers; running, the density
+/// per frame. A read takes or renews the client's lease (arm=false: a read only)
+void EmulatorAPI::getDebugTimeline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    timeline::Query query;
+    query.client = "rest";
+    timeline::Reply bad;
+    bad.status = 400;
+    query.cpu = req->getParameter("cpu");
+    const std::string span = req->getParameter("span");
+    if (!span.empty())
+    {
+        try
+        {
+            size_t used = 0;
+            query.spanT = std::stod(span, &used);
+            if (used != span.size())
+                throw std::invalid_argument(span);
+        }
+        catch (const std::exception&)
+        {
+            bad.error = "span is a number of main T (1..100000)";
+            return ReplyTimeline(callback, bad);
+        }
+    }
+    for (const auto& [name, target] : {std::pair<const char*, size_t*>{"recent", &query.recent},
+                                       std::pair<const char*, size_t*>{"density", &query.density}})
+    {
+        const std::string text = req->getParameter(name);
+        uint64_t value = 0;
+        if (text.empty())
+            continue;
+        if (!StringHelper::TryParseUInt64(text, value) || value > timeline::kMaxRecent)
+        {
+            bad.error = std::string(name) + " is 0.." + std::to_string(timeline::kMaxRecent);
+            return ReplyTimeline(callback, bad);
+        }
+        *target = static_cast<size_t>(value);
+    }
+    if (!req->getParameter("client").empty())
+        query.client = req->getParameter("client");
+    const std::string lease = req->getParameter("lease_ms");
+    uint64_t leaseMs = 0;
+    if (!lease.empty())
+    {
+        if (!StringHelper::TryParseUInt64(lease, leaseMs) || leaseMs > 3600000)
+        {
+            bad.error = "lease_ms is 0..3600000 (0: until released)";
+            return ReplyTimeline(callback, bad);
+        }
+        query.leaseMs = static_cast<uint32_t>(leaseMs);
+    }
+    const std::string arm = req->getParameter("arm");
+    if (!arm.empty())
+        query.arm = !(arm == "0" || arm == "false" || arm == "off");
+    // A GUI client asks wait_ms=0: a 503 at once instead of a wait its blocking request would stall on
+    const std::string wait = req->getParameter("wait_ms");
+    if (!wait.empty())
+    {
+        uint64_t waitMs = 0;
+        if (!StringHelper::TryParseUInt64(wait, waitMs) || waitMs > timeline::kDefaultWaitMs)
+        {
+            bad.error = "wait_ms is 0.." + std::to_string(timeline::kDefaultWaitMs);
+            return ReplyTimeline(callback, bad);
+        }
+        query.waitMs = static_cast<uint32_t>(waitMs);
+    }
+    ReplyTimeline(callback, timeline::Read(emulator.get(), query));
+}
+
+/// @brief POST /api/v1/emulator/{id}/debug/timeline/arm {"on": true | false, "client"?: "rest", "lease_ms"?: 30000}
+void EmulatorAPI::postDebugTimelineArm(const HttpRequestPtr& req,
+                                       std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    const auto json = req->getJsonObject();
+    timeline::Reply bad;
+    bad.status = 400;
+    if (!json || !json->isMember("on") || !(*json)["on"].isBool())
+    {
+        bad.error = "body must be {\"on\": true | false, \"client\"?: string, \"lease_ms\"?: 0..3600000}";
+        return ReplyTimeline(callback, bad);
+    }
+    const std::string client = json->isMember("client") && (*json)["client"].isString() ? (*json)["client"].asString()
+                                                                                        : std::string("rest");
+    uint32_t leaseMs = timeline::kDefaultLeaseMs;
+    if (json->isMember("lease_ms"))
+    {
+        if (!(*json)["lease_ms"].isUInt() || (*json)["lease_ms"].asUInt() > 3600000)
+        {
+            bad.error = "lease_ms is 0..3600000 (0: until released)";
+            return ReplyTimeline(callback, bad);
+        }
+        leaseMs = (*json)["lease_ms"].asUInt();
+    }
+    ReplyTimeline(callback, timeline::SetArmed(emulator.get(), client, (*json)["on"].asBool(), leaseMs));
 }
 
 /// @brief POST /api/v1/emulator/{id}/debug/pchist {"enabled": true | false} - start (empty) or stop the PC history

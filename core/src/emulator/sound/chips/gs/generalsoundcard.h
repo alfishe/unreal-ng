@@ -462,27 +462,46 @@ public:
     {
         return _execHistory;
     }
-    /// Before the instruction at `pc` in the record or the debug loop (the runner, the recorder): the profiler's step
-    /// while this run profiles, the execution history's record while it records
-    void recordExecStep(uint16_t pc)
+    /// Before the instruction at `pc` in the record or the debug loop (the runner at card time `now`, the recorder):
+    /// the profiler's step while this run profiles, the execution history's record while it records
+    void recordExecStep(uint16_t pc, int64_t now)
     {
         if (_runProfile) [[unlikely]]
             profileStep(pc);
         if (_runExec)
-            pushExecStep(pc);
+            pushExecStep(pc, now);
     }
-    /// An INT or NMI acknowledged in the record or the debug loop (`ackUnits` its length): the profiler's
-    void recordExecInterrupt(bool nmi, int64_t ackUnits)
+    /// The same from the debug loop's recorder, which has no time of its own: the card's
+    void recordExecStep(uint16_t pc)
+    {
+        recordExecStep(pc, _runExec ? cardTime() : 0);
+    }
+    /// An INT or NMI acknowledged in the record or the debug loop (`ackUnits` its length, the card at `now` after
+    /// it, `pc` the address it interrupted): the profiler's, and an event record of the execution history
+    void recordExecInterrupt(bool nmi, int64_t ackUnits, int64_t now, uint16_t pc)
     {
         if (_runProfile) [[unlikely]]
             profileInterrupt(nmi, ackUnits);
+        if (_runExec)
+            pushExecEvent(nmi ? ExecRecord::kNmi : ExecRecord::kInt, pc, now - ackUnits, 0, 0);
     }
+    /// The card CPU's clock changes at `now` from `fromHz` to `toHz` (NeoGS GSCFG0): a clock-change record while this
+    /// run records (the twin timeline's marker; the blocks before it keep their widths in units)
+    void recordExecClockChange(uint16_t pc, int64_t now, uint32_t fromHz, uint32_t toHz)
+    {
+        if (_runExec)
+            pushExecEvent(ExecRecord::kClock, pc, now,
+                          static_cast<uint8_t>(std::min<uint32_t>((fromHz + 500000) / 1000000, 255)), toHz);
+    }
+    /// Instructions the idle sleep skipped since the card was made (GSCardRunner::stepsSlept; 0: no runner)
+    virtual uint64_t cardStepsSlept() const { return 0; }
     /// The card CPU's profiler (gscardprofiler.h): off by default; start / stop / clear and its snapshot from any
     /// thread. Cards without a CPU never run it
     GSCardProfiler& profiler() { return _profiler; }
     const GSCardProfiler& profiler() const { return _profiler; }
-    /// The idle loop at `head` slept through `iterations` times: one record (ExecRecord::idle) while recording
-    void recordExecIdle(uint16_t head, uint64_t iterations);
+    /// The idle loop at `head` slept through `iterations` times from card time `start`: one record (ExecRecord::idle)
+    /// while recording
+    void recordExecIdle(uint16_t head, uint64_t iterations, int64_t start);
     /// The 16K page behind a card CPU address now (as the emulation maps it, not a table). Flash and ROM count as
     /// ROM pages
     struct CardPage
@@ -780,6 +799,8 @@ protected:
     void beginRecordedRun(int64_t now, int64_t anchor, int64_t period, int64_t unitsPerCycle, bool replay)
     {
         _runExec = execRecording();
+        if (_runExec)
+            beginExecRun(now);
         _runProfile = _profiler.On() && !replay;
         if (_runProfile)
             _profiler.RunStart(now, anchor, period, unitsPerCycle);
@@ -808,6 +829,8 @@ protected:
     GSCardProfiler _profiler;
     bool _runExec = false;     ///< this run records into the execution history
     bool _runProfile = false;  ///< this run profiles
+    int64_t _runFrameBase = 0; ///< a recording run: the card time its frame started at (the records' `t` origin)
+    uint32_t _runFrame = 0;    ///< a recording run: the frame its records belong to
     /// The run records its instructions without a debugger's hooks: the record loop (GSCardRunner::runToRecord).
     /// Only asked after the hooks' test, so the fast loop pays one more test a run
     bool execRecording() const;
@@ -864,8 +887,18 @@ private:
     /// The debugger's hooks alone, or the recorder in front of them while the history is on; the result of
     /// setDebugHooks
     bool bindHooks();
-    /// The instruction into the execution history
-    void pushExecStep(uint16_t pc);
+    /// The instruction into the execution history, started at card time `now`
+    void pushExecStep(uint16_t pc, int64_t now);
+    /// A recording run starts at card time `now`: the records' frame and time origin
+    void beginExecRun(int64_t now);
+    /// An event record (ExecRecord::kInt / kNmi / kClock) at card time `at`
+    void pushExecEvent(uint8_t kind, uint16_t pc, int64_t at, uint8_t page, uint32_t idle);
+    /// Card time `at` as a record's `t` (from the run's frame start)
+    uint32_t execT(int64_t at) const
+    {
+        const int64_t t = at - _runFrameBase;
+        return t <= 0 ? 0 : static_cast<uint32_t>(std::min<int64_t>(t, UINT32_MAX));
+    }
 
     history::DeviceHistory<ExecRecord>* _execHistory = nullptr;
     const EmulatorContext* _execContext = nullptr;

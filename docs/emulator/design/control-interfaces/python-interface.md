@@ -1244,6 +1244,13 @@ emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
 # breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 emu.port_out(0x13AF, 0x20)                    # TS-Conf: RAM page 0x20 into window 3
 
+# The GS debugger's twin timeline: main CPU and card CPU on one clock; the call takes the script's lease (until
+# timeline_arm(False)) that arms the histories it reads, so blocks come once the machine ran armed
+tl = emu.timeline(cpu="gs", span=200, recent=32)  # dict {state, armed, cpu, lanes, now {frame, t, gap_t},
+                                                  #  recent {main, gs}, next, markers, density, text}
+print(tl["text"])                                 # NOW, the gap, each lane's blocks (at, width T, PC, instruction)
+emu.timeline_arm(False)                           # release (True, lease_ms=: take it without a read)
+
 # PC history: the newest instructions with their window's page; the first call starts recording
 h = emu.pc_history(depth=16)                  # dict {armed, started_now, total, capacity, entries [{address, kind, page}]}
 emu.pc_history_arm(False)                     # stop (True: restart empty); emu.debug_snapshot(pchist=16) carries it too

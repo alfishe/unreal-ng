@@ -1610,6 +1610,31 @@ TEST_F(McpTools_Test, InspectState_PcHistoryAspect)
     EXPECT_NE(result.text.find("[pchist] 1 of 7: C000 ram32"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_TimelineAspect)
+{
+    Json::Value node;
+    node["available"] = true;
+    node["state"] = "paused";
+    node["text"] = "MAIN  #800B in a,(#bb)\nNOW   frame 120 · T 987.5 · gap 12.5 T";
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/timeline?client=mcp&cpu=gs"] = {200, node};
+    Json::Value args;
+    args["aspects"].append("timeline");
+    args["cpu"] = "gs";
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[timeline]\nMAIN  #800B"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("gap 12.5 T"), std::string::npos) << "the agent reads the text" << result.text;
+
+    // No card fitted: the route's message
+    Json::Value missing;
+    missing["error"] = "Not Found";
+    missing["message"] = "no card CPU 'ms'";
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/timeline?client=mcp&cpu=ms"] = {404, missing};
+    args["cpu"] = "ms";
+    result = RunTool(*_registry, "inspect_state", args, *_caller);
+    EXPECT_NE(result.text.find("[timeline] unavailable: no card CPU 'ms'"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
 {
     _caller->routes["GET /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};

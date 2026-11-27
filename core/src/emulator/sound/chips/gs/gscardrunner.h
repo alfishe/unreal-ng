@@ -118,8 +118,8 @@ public:
     }
 
     /// The execution history's loop: the fast loop's rounds with each instruction's PC told to the card first
-    /// (`card->recordExecStep(pc)`) and each accepted INT / NMI with its acknowledge's units
-    /// (`card->recordExecInterrupt(nmi, units)`, the debug loop's too: the profiler), no hooks; an idle sleep is one
+    /// (`card->recordExecStep(pc, now)`) and each accepted INT / NMI with its acknowledge's units
+    /// (`card->recordExecInterrupt(nmi, units, now, pc)`, the debug loop's too), no hooks; an idle sleep is one
     /// record (onSlept)
     template <class Policy = void>
     void runToRecord(int64_t target)
@@ -192,13 +192,16 @@ private:
 
             if (card->nmiPending())
             {
+                [[maybe_unused]] uint16_t pcInterrupted = 0;
+                if constexpr (kDebug || kRecord)
+                    pcInterrupted = Z80CpuRegisterFilePtr(cpu)->pc;
                 const int t = Z80CpuNmi(cpu);
                 if (t > 0)
                 {
                     _now += units(t);
                     card->onNmiAccepted();
                     if constexpr (kDebug || kRecord)
-                        card->recordExecInterrupt(true, units(t));
+                        card->recordExecInterrupt(true, units(t), _now, pcInterrupted);
                     if constexpr (kDebug)
                         hooks->onEvent(GSCardEvent::Nmi, 0, 0);
                     continue;
@@ -207,13 +210,16 @@ private:
 
             if (intLine())
             {
+                [[maybe_unused]] uint16_t pcInterrupted = 0;
+                if constexpr (kDebug || kRecord)
+                    pcInterrupted = Z80CpuRegisterFilePtr(cpu)->pc;
                 const int t = Z80CpuInt(cpu);
                 if (t > 0)
                 {
                     _now += units(t);
                     card->onIntAccepted();
                     if constexpr (kDebug || kRecord)
-                        card->recordExecInterrupt(false, units(t));
+                        card->recordExecInterrupt(false, units(t), _now, pcInterrupted);
                     if constexpr (kDebug)
                         hooks->onEvent(GSCardEvent::Int, 0, 0);
                 }
@@ -234,7 +240,7 @@ private:
             else if constexpr (kCanSleep)
             {
                 if constexpr (kRecord)
-                    card->recordExecStep(_regs->pc);
+                    card->recordExecStep(_regs->pc, _now);
                 const uint16_t pcBefore = _regs->pc;
                 const int64_t stepStart = _now;
                 const int t = Z80CpuStep(cpu);
@@ -251,7 +257,7 @@ private:
                 continue;
             }
             if constexpr (kRecord)
-                card->recordExecStep(Z80CpuRegisterFilePtr(cpu)->pc);
+                card->recordExecStep(Z80CpuRegisterFilePtr(cpu)->pc, _now);
             const int t = Z80CpuStep(cpu);
             if (t <= 0)
                 break; // defensive: a stuck core must not hang the emulator

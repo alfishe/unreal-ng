@@ -373,6 +373,33 @@ struct MainPosition
     Z80MCycleList cycles;     ///< `pc`'s machine cycles (Z80MCycleDecoder), the way `totalT` counts
 };
 
+/// A card CPU's lane at a stop (gs-debugger design §7.2, the twin timeline): where the card stands on its own clock
+/// and how far main's time is ahead of it
+struct CardLanePosition
+{
+    bool known = false;       ///< a card with a CPU in the slot
+    bool frameEnd = false;    ///< the card runs the frame-end catch-up: main is already past the frame end
+    uint16_t pc = 0;          ///< the card's next instruction (it stops on instruction boundaries only)
+    int64_t units = 0;        ///< card time since its frame start (cardFrameTime)
+    int64_t cycle = 0;        ///< that as CPU cycles at the clock now (cardCycles)
+    uint32_t clockHz = 0;     ///< the card CPU's clock now
+    double unitsPerT = 0.0;   ///< card units per main T (GSHostClock::unitsPerZxTact)
+    double gapT = 0.0;        ///< main's time minus the card's, in main T (NOW = main T - gapT)
+};
+
+/// Both lanes at a stop: main's frame and T, and each card CPU's lane (index 0 `gs`, 1 `ms`). Taken on the emulation
+/// thread as a breakpoint or step stops (a request's pause has none: a reader takes Emulator::StopPositionsNow)
+struct StopPositions
+{
+    bool known = false;
+    uint64_t frame = 0;       ///< main's frame (frame_counter)
+    uint32_t mainT = 0;       ///< main's T in the frame (Z80::t)
+    uint16_t mainPc = 0;      ///< main's next instruction (PC)
+    uint32_t frameT = 0;      ///< the frame's length in main T (a card's lane in the frame-end catch-up counts from
+                              ///< the frame before)
+    CardLanePosition cards[2];
+};
+
 /// Payload for NC_EMULATOR_STATE_CHANGE.
 /// `_payloadNumber` carries the new EmulatorStateEnum value (StateRun /
 /// StatePaused / StateResumed / StateStopped) — same as the legacy
@@ -390,6 +417,7 @@ public:
     std::string cpu{"main"};  ///< the CPU whose breakpoint it was ("gs": a card's, the machine parked with it)
     uint16_t cpuPc{0};        ///< that CPU's instruction (a card: the instruction the access belonged to)
     MainPosition main;        ///< a card's stop: where the main CPU parked with it
+    StopPositions positions;  ///< a breakpoint's or step's stop: both lanes (main and each card CPU's)
 
     EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
         : SimpleNumberPayload(newState), emulatorId(id) {}

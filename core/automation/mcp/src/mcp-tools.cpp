@@ -2893,7 +2893,7 @@ const std::vector<std::string>& InspectStateAspects()
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
-                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "timeline", "slots",
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
                                "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
@@ -2919,6 +2919,11 @@ void RegisterInspectState(ToolRegistry& registry)
         "prev_regs, pages, stack, time, 'count' code lines from PC, the 'windows' memory windows (base64) and 'pchist' PC "
         "history entries. 'pchist' = the PC history alone (GET /debug/pchist): the newest 'count' instructions the CPU "
         "started with their window's page; the first request starts recording. "
+        "'timeline' = the GS debugger's twin timeline (GET /debug/timeline): the main CPU and a sound card's CPU on one "
+        "clock; paused: NOW (main T minus the gap to the card), each lane's recent blocks with their measured widths "
+        "(at / duration in main T, the card's in its own cycles too), the next instructions, markers (breakpoints, host "
+        "port accesses, INT/NMI, the NeoGS clock change); running: the density per frame. 'cpu' gs | ms picks the card "
+        "lane; the request holds a 30 s lease that arms the histories it reads. "
         "'paging' = tagged paging latches + bank table (P1-2 design), 'ports' = static port map with semantic tags, "
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
@@ -3280,7 +3285,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_divmmc" && aspect != "next_nmi" && aspect != "next_magic_port" && aspect != "next_audio" && aspect != "next_input" && aspect != "next_uart" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
-                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
+                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" && aspect != "timeline" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
                     aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices" && aspect != "boards" &&
                     aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0 &&
@@ -3526,6 +3531,21 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             const std::string path =
                                 Endpoint(id, "/debug/pchist") + "?depth=" + std::to_string(std::min(count, 1024u));
+                            steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    acc[aspect] = std::move(body);
+                                    if (status != 200)
+                                        acc[aspect]["http_status"] = status;
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "timeline")
+                        {
+                            // The twin timeline (twintimeline.h): a card lane named by `cpu` (gs | ms), else the first
+                            std::string path = Endpoint(id, "/debug/timeline") + "?client=mcp";
+                            if (cpu == "gs" || cpu == "ms")
+                                path += "&cpu=" + cpu;
                             steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     acc[aspect] = std::move(body);
@@ -4155,7 +4175,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                 out << "\n[" << aspect << "] unavailable: " << value["unavailable"].asString();
                                 continue;
                             }
-                            if (value.isMember("cpu") && value["cpu"].isString())
+                            if (value.isMember("cpu") && value["cpu"].isString() && aspect != "timeline")  // both lanes
                                 out << "\n[" << aspect << "] cpu " << value["cpu"].asString() << ":";
                             if (aspect == "registers")
                             {
@@ -4277,6 +4297,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << item;
                                 }
                             }
+                            else if (aspect == "timeline" && value.isMember("text"))
+                                out << "\n[timeline]\n" << value["text"].asString();
+                            else if (aspect == "timeline" && value.isMember("message"))
+                                out << "\n[timeline] unavailable: " << value["message"].asString();
                             else if (aspect == "snapshot" && value.isMember("message"))
                                 out << "\n[snapshot] refused: " << value["message"].asString();
                             else if (aspect == "memory_map" && value.isMember("blocks"))

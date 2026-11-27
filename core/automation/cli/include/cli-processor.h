@@ -150,6 +150,7 @@ private:
     void HandleNext(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleTimeline(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args);
     /// card_run_to <until> [value] [--cpu gs|ms]: a card CPU's run to a moment (RunControl::CardRunTo)
     void HandleCardRunTo(const ClientSession& session, const std::vector<std::string>& args);

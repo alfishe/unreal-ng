@@ -834,6 +834,13 @@ page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
 -- breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
 ok, err = port_out(0x13AF, 0x20)            -- TS-Conf: RAM page #20 into window 3 -> true
 
+-- The GS debugger's twin timeline: main CPU and card CPU on one clock; the call takes the script's lease (until
+-- timeline_arm(false)) that arms the histories it reads, so blocks come once the machine ran armed
+tl = timeline({cpu = "gs", span = 200, recent = 32})  -- {state, armed, cpu, lanes, now {frame, t, gap_t}, recent {main, gs},
+                                                      --  next, markers, density, text}
+print(tl.text)                                         -- NOW, the gap, each lane's blocks (at, width T, PC, instruction)
+timeline_arm(false)                                    -- release (true[, lease_ms]: take it without a read)
+
 -- PC history: the newest instructions with their window's page; the first call starts recording
 h = pc_history(16)                          -- {armed, started_now, total, capacity, entries = {{address, kind, page}, ...}}
 pc_history_arm(false)                       -- stop (true: restart empty); debug_snapshot{pchist = 16} carries it too

@@ -234,6 +234,8 @@ public:
         bool step = false;
         /// Another CPU's stop in the emulator's own run: where the main CPU parked with it
         MainPosition main;
+        /// A breakpoint's or step's stop: both lanes as it stopped (StopPositionsNow, the emulation thread)
+        StopPositions positions;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -1146,6 +1148,9 @@ public:
     void ParkInsideCardRun();
     /// Where the main CPU stands as card `cpu` stops (the emulation thread, inside the card's run)
     MainPosition MainPositionAt(DebugCpuId cpu) const;
+    /// Both lanes now: main's frame, T and PC, and each card CPU's time, clock and gap to main (design §7.2). The
+    /// caller makes sure nothing runs the machine meanwhile (the emulation thread at a stop, a coherent moment)
+    StopPositions StopPositionsNow() const;
     /// MainPositionAt's instruction progress: elapsed and total T, the machine cycle under way (design §5.4)
     void FillInstructionProgress(MainPosition& position) const;
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
