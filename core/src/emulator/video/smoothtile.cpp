@@ -24,7 +24,7 @@ void Tile::SetMode(Mode mode)
     _engine.Reset();
     _engine.SetMode(mode);
     _engine.SetLite(false);
-    _guard.Reset();
+    _guard.StartOver();
     _stats.steppedDown = _stats.tooSlow = _stats.framesOnly = false;
     _shown = {};
 }
@@ -46,7 +46,7 @@ bool Tile::StepDown()
         _stats.framesOnly = true;
         _engine.Reset();
     }
-    _guard.Reset();
+    _guard.StartOver();  // the wall's step: for good (the wall's own guard decides it), no retry of the tile's own
     _shown = {};
     return true;
 }
@@ -151,6 +151,21 @@ Tile::Step Tile::AdvanceTimed(const NextFrame& next, int width, int height, int6
     if (_lastSerial == 0 || _engine.LastSerial() == 0)
         return Step::Nothing;
 
+    // A step down of the tile's own guard is for a while (SmoothGuard::SteppedDown): one level up again when due
+    if ((_stats.tooSlow || _stats.steppedDown) && !_stats.framesOnly && _guard.RetryDue(tNs))
+    {
+        if (_stats.tooSlow)
+            _stats.tooSlow = false;
+        else
+        {
+            _stats.steppedDown = false;
+            _engine.SetLite(false);
+        }
+        _guard.Reset();
+        if (_stats.steppedDown)
+            _guard.RetryLater(tNs);
+        _shown = {};
+    }
     SmoothMotion::Result plan = _engine.Plan(tNs);
     if (plan.kind == Kind::None)
         return Step::Nothing;
@@ -185,6 +200,7 @@ Tile::Step Tile::AdvanceTimed(const NextFrame& next, int width, int height, int6
         }
         else
             _stats.tooSlow = true;
+        _guard.SteppedDown(tNs);
     }
     _shown = plan;
     for (const Pulled& pulled : _pulled)

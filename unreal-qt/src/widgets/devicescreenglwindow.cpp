@@ -1476,6 +1476,8 @@ void DeviceScreenGLWindow::retrySmoothStep()
         _smoothShown = {};
     }
     _smoothGuard.Reset(_presenter ? _presenter->LatePresents() : 0);
+    if (_smoothSteppedDown)
+        _smoothGuard.RetryLater(SteadyNowNs());  // the full interpolation is tried next, after the same wait
     qInfo() << "DeviceScreenGLWindow: smooth motion tries" << (_smooth.Lite() ? "the cheap interpolation" : "the interpolation")
             << "again";
 }

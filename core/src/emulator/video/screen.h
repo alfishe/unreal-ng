@@ -1122,6 +1122,7 @@ protected:
     bool _lastStampHadAudio = false;
     int64_t _lastStampEmulatedEnd = 0;
     bool _lastStampHadEmulated = false;
+    int64_t _lastStampTemporal = 0;  // the temporal effect's delay at the last stamp: a change cuts the frame clock
     std::atomic<bool> _frameClockResetPending{false};
     // Feature `lowlatency`: frames are due at their latch, not when their sound is heard (any thread writes, the
     // emulation thread and the readers read)

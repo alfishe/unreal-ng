@@ -1587,6 +1587,11 @@ void Screen::StampPresentTiming(const FrameStampInput& in)
     const int64_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
     const int64_t emulatedDelay = (temporal > 1 ? temporal : 1) * period;
     const int64_t latchDelay = temporal * period;
+    // The effect switched on or off (or another look-ahead): the delay steps by its look-ahead, the sound with it at
+    // the same latch (UpdateAudioDelay). Cut to the new time at once: carried, the step (up to 7 frames) was paid back
+    // over seconds, the frames due before their output could come (smooth motion starved for ~3 s, the picture
+    // ahead of its sound meanwhile)
+    bool delayChanged = _haveLastStamp && temporal != _lastStampTemporal;
 
     // The untimed frames latched since the last stamp, oldest first (one per machine frame; an external picture
     // at its own rate may give none or several)
@@ -1609,6 +1614,9 @@ void Screen::StampPresentTiming(const FrameStampInput& in)
         input.emulatedDelayNs = emulatedDelay;
         input.latchDelayNs = latchDelay;
         input.maxDelayNs = static_cast<int64_t>(kMaxVideoDelayFrames) * input.periodNs;
+        input.cut = delayChanged;
+        delayChanged = false;
+        _lastStampTemporal = temporal;
         if (in.haveAudio && device && !lowLatency)
         {
             const uint64_t streamFrame =
@@ -1876,11 +1884,12 @@ bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, P
         if (dstSize < _presentBufferSize)
             return false;
         size_t indices[PRESENT_SLOTS];
-        size_t count = EligibleSlotsLocked(indices);
-        // A temporal effect's newest frames are not written yet (see ChooseSlotLocked)
+        const size_t count = EligibleSlotsLocked(indices);
+        // A temporal effect's newest frames are not written yet: each frame waits for its own output, not for the
+        // effect's whole delay (look-ahead + 1 for the worker). Cut by the delay, the read ahead got a frame one latch
+        // after its output was in, and the frame after the one due came only as that one was due: smooth motion had
+        // no next frame to go towards for about half the frames (starved) with ZX DLSS on
         const size_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
-        if (temporal > 0 && !IsExternalPictureActive())
-            count = count > temporal ? count - temporal : 0;
         for (size_t k = 0; k < count; k++)
         {
             const size_t index = indices[k];

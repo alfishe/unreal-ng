@@ -57,7 +57,7 @@ FrameTimingResult FrameClock::Next(const FrameTimingInput& in)
     // Turbo frames have no cadence to keep, and leaving turbo starts a new one
     const bool cut = !_started || in.latchNs - _lastLatchNs > kGapPeriods * period ||
                      result.source == FrameClockSource::Latch || _lastSource == FrameClockSource::Latch ||
-                     std::llabs(step) > kMaxCarryNs;
+                     std::llabs(step) > kMaxCarryNs || in.cut;
 
     int64_t target = raw;
     if (cut)

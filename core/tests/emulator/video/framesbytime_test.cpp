@@ -568,25 +568,22 @@ TEST_F(FramesByTime_Test, NextFrameWaitsForTheTemporalOutputToCome)
     std::vector<uint8_t> out(_size);
     PresentFrameInfo info;
     uint64_t serial = 0;
-    for (int k = 0; k < 3; k++)  // 10 latched, 7 frames of delay: frames 1..3 are served
+    for (int k = 0; k < 4; k++)  // the frames whose output is in are served
     {
         ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
         EXPECT_NE(out[0], Marker(k)) << "frame " << k << " processed";
         serial = info.serial;
     }
-    EXPECT_FALSE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false)) << "frame 4 not served yet";
+    EXPECT_FALSE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false)) << "frame 5 not served yet";
 
-    // The worker held writing frame 5's output (pushed with frame 11), frame 12 queued behind it: frames 1..5 are
-    // past the delay, frame 4's output is in, frame 5's still to come
+    // The worker held writing frame 5's output (pushed with frame 11), frame 12 queued behind it: frame 5's output
+    // still to come
     _gate->Set(false);
     LatchAndStamp();
     ASSERT_TRUE(TestWait::For([&] { return _gate->Waiting() != 0; }));
     const uint64_t held = _gate->Waiting();
     LatchAndStamp();
-    ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
-    EXPECT_NE(out[0], Marker(3)) << "frame 4 processed";
-    serial = info.serial;
-    EXPECT_EQ(held, serial + 1) << "the worker holds the frame after it";
+    EXPECT_EQ(held, serial + 1) << "the worker holds the frame after the last one served";
     EXPECT_FALSE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false))
         << "frame 5 waits for its output, not handed out raw";
 
@@ -613,6 +610,71 @@ TEST_F(FramesByTime_Test, NextFrameWaitsForTheTemporalOutputToCome)
     ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false)) << "nothing to wait for";
     EXPECT_EQ(out[0], Marker(6)) << "frame 7 raw";
     _gate->Set(true);
+}
+
+/// The read ahead (smooth motion) gets a ZX DLSS frame as soon as its output is in, not a whole delay (look-ahead + 1
+/// for the worker) after its latch: cut by the delay, the frame after the one due came only when that one was due,
+/// and smooth motion had no next frame to go towards for about half the frames (live, 2026-11-27: starved 165 of 339)
+TEST_F(FramesByTime_Test, NextFrameServedOnceItsTemporalOutputIsIn)
+{
+    StartTemporalEffect();
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    uint64_t serial = 0;
+    int served = 0;
+    // In step with the worker: frame k's output comes with frame k + 6 (6 frames of look-ahead)
+    for (int k = 0; k < 20; k++)
+    {
+        LatchProcessed();
+        while (_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false))
+        {
+            EXPECT_NE(out[0], Marker(static_cast<int>(info.serial) - 1)) << "frame " << info.serial << " processed";
+            serial = info.serial;
+            served++;
+        }
+        if (k >= 6)
+            EXPECT_EQ(static_cast<int>(serial), k - 5) << "latch " << k + 1 << ": every frame with its output in";
+    }
+    EXPECT_EQ(served, 14);
+    EXPECT_EQ(_screen->GetTemporalStats().restarts, 0u);
+}
+
+/// ZX DLSS switched on or off mid-stream steps the video's delay by its look-ahead, the sound with it at the same
+/// latch: the frames' targets take the new delay at once. Carried (0.2 ms a frame), the step of 6 frames was paid back
+/// over 600 frames: frames due before their output could come (smooth motion starved for ~3 s live), the picture off
+/// its sound meanwhile
+TEST_F(FramesByTime_Test, TemporalEffectSwitchCutsTheFrameClock)
+{
+    for (int k = 0; k < 10; k++)
+        LatchAndStamp();
+    const uint64_t cutsBefore = _screen->GetPresentTimingStats().cuts;
+
+    StartTemporalEffect();
+    for (int k = 0; k < 20; k++)
+        LatchProcessed();
+    PresentTimingStats stats = _screen->GetPresentTimingStats();
+    EXPECT_EQ(stats.carryNs, 0) << "the delay's step taken at once, not carried";
+    EXPECT_EQ(stats.cuts, cutsBefore + 1);
+    // The frames after the switch: each due its look-ahead (7 frames) after its end
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    uint64_t serial = 0;
+    while (_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false))
+        serial = info.serial;
+    ASSERT_EQ(serial, 24u) << "the frames with their output in";
+    EXPECT_EQ(info.targetNs, kBase + static_cast<int64_t>(serial + 7) * kPeriod);
+
+    // Off again: back to one frame of delay at once
+    ASSERT_TRUE(_screen->SetTemporalAlgorithm(""));
+    for (int k = 0; k < 3; k++)
+        LatchAndStamp();
+    stats = _screen->GetPresentTimingStats();
+    EXPECT_EQ(stats.carryNs, 0);
+    EXPECT_EQ(stats.cuts, cutsBefore + 2);
+    while (_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false))
+        serial = info.serial;
+    EXPECT_EQ(serial, 33u);
+    EXPECT_EQ(info.targetNs, Target(32));
 }
 
 /// ZX DLSS switched on mid-stream: its look-ahead (7 frames) is longer than the delay so far, but the picture never
