@@ -1,8 +1,8 @@
 #include "smoothlite.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
-#include <unordered_map>
 #include <vector>
 
 namespace smoothmotion
@@ -19,35 +19,61 @@ constexpr int kMaxBlocksWide = LiteFlow::kMaxWidth / kBlock;
 constexpr uint64_t kLowBits = 0x0101010101010101ull;
 constexpr uint64_t kHighBits = 0x8080808080808080ull;
 
-/// The colours met, in the order met: every frame's planes index the same list
+/// The colours met, in the order met since the palette was last compacted: every frame's planes index the same list
 struct Palette
 {
+    static constexpr unsigned kSlots = 1024;  ///< open addressing, a quarter full at most
     std::vector<uint32_t> colours;
-    std::unordered_map<uint32_t, uint8_t> indexOf;
+    uint16_t slots[kSlots] = {};  ///< a colour's index + 1, 0: empty
+
+    Palette() { colours.reserve(static_cast<size_t>(LiteFlow::kMaxColours)); }
 
     /// -1: full
     int Index(uint32_t colour)
     {
-        const auto it = indexOf.find(colour);
-        if (it != indexOf.end())
-            return it->second;
+        unsigned slot = (colour * 0x9E3779B1u) >> 22;
+        for (; slots[slot]; slot = (slot + 1) & (kSlots - 1))
+            if (colours[slots[slot] - 1u] == colour)
+                return slots[slot] - 1;
         if (colours.size() >= static_cast<size_t>(LiteFlow::kMaxColours))
             return -1;
-        indexOf.emplace(colour, static_cast<uint8_t>(colours.size()));
         colours.push_back(colour);
+        slots[slot] = static_cast<uint16_t>(colours.size());
         return static_cast<int>(colours.size()) - 1;
     }
-    int Planes() const
+    /// The planes `count` colours need
+    static int PlanesFor(size_t count)
     {
         int planes = 1;
-        while ((1u << planes) < colours.size())
+        while ((static_cast<size_t>(1) << planes) < count)
             planes++;
         return planes;
     }
+    int Planes() const { return PlanesFor(colours.size()); }
     void Clear()
     {
         colours.clear();
-        indexOf.clear();
+        std::memset(slots, 0, sizeof(slots));
+    }
+};
+
+/// A set of palette indices
+struct Indices
+{
+    uint64_t bits[4] = {};
+    void Add(int index) { bits[index >> 6] |= 1ull << (index & 63); }
+    bool Has(int index) const { return (bits[index >> 6] >> (index & 63)) & 1; }
+    void Unite(const Indices& o)
+    {
+        for (int i = 0; i < 4; i++)
+            bits[i] |= o.bits[i];
+    }
+    int Count() const
+    {
+        int count = 0;
+        for (uint64_t b : bits)
+            count += std::popcount(b);
+        return count;
     }
 };
 
@@ -61,8 +87,11 @@ struct Planes
 {
     uint64_t id = 0;
     int width = 0, height = 0, stride = 0;
+    uint64_t used = 0;   ///< when last found or packed (the slot least recently used is packed over)
+    Indices colours;     ///< the indices the frame has
     std::vector<uint64_t> bits;
 
+    bool Empty() const { return width == 0; }
     const uint64_t* Row(int plane, int y) const
     {
         return bits.data() + (static_cast<size_t>(plane) * (height + 2 * kMarginRows) + (y + kMarginRows)) * stride;
@@ -79,59 +108,85 @@ struct Planes
         width = picture.width;
         height = picture.height;
         stride = Words() + 2;
-        bits.assign(static_cast<size_t>(kMaxPlanes) * (height + 2 * kMarginRows) * stride, 0);
+        colours = Indices{};
+        // every word is written below: the pixels' words a word at a time, the margins after
+        bits.resize(static_cast<size_t>(kMaxPlanes) * (height + 2 * kMarginRows) * stride);
+        const int words = Words();
+        // the last two colours met and their indices: ink and paper alternate
+        uint32_t lastColour = picture.pixels[0];
+        int index = palette.Index(lastColour);
+        if (index < 0)
+            return false;
+        colours.Add(index);
+        uint32_t otherColour = lastColour;
+        int otherIndex = index;
         for (int y = 0; y < height; y++)
         {
             const uint32_t* row = picture.pixels + static_cast<size_t>(y) * width;
-            uint32_t lastColour = ~row[0];
-            int index = 0;
+            uint64_t* out[kMaxPlanes];
+            for (int p = 0; p < kMaxPlanes; p++)
+                out[p] = Row(p, y);
             int first = 0;
-            // eight pixels' indices in a word, then each plane's eight bits out of it with one multiply
-            for (int x = 0; x < width; x += 8)
+            for (int j = 0; j < words; j++)
             {
-                const int count = width - x < 8 ? width - x : 8;
-                uint64_t eight = 0;
-                // eight pixels of the last colour (paper, border): its index in every byte
-                uint32_t others = 0;
-                if (count == 8 && x > 0)
-                    for (int i = 0; i < 8; i++)
-                        others |= row[x + i] ^ lastColour;
-                if (count == 8 && x > 0 && others == 0)
-                    eight = static_cast<uint64_t>(index) * kLowBits;
-                else
-                    for (int i = 0; i < count; i++)
-                    {
-                        if (row[x + i] != lastColour)
-                        {
-                            lastColour = row[x + i];
-                            index = palette.Index(lastColour);
-                            if (index < 0)
-                                return false;
-                        }
-                        eight |= static_cast<uint64_t>(index) << (8 * i);
-                    }
-                if (x == 0)
-                    first = static_cast<int>(eight & 0xFF);
-                for (int p = 0; p < kMaxPlanes && (eight >> p) != 0; p++)
+                uint64_t word[kMaxPlanes] = {};
+                const int end = std::min(width, 64 * j + 64);
+                // eight pixels' indices in a word, then each plane's eight bits out of it with one multiply
+                for (int x = 64 * j; x < end; x += 8)
                 {
-                    const uint64_t planeBits = (((eight >> p) & kLowBits) * 0x0102040810204080ull) >> 56;
-                    if (planeBits)
-                        Row(p, y)[1 + (x >> 6)] |= planeBits << (x & 63);
+                    const int count = end - x < 8 ? end - x : 8;
+                    uint64_t eight = 0;
+                    // eight pixels of the last colour (paper, border): its index in every byte
+                    uint32_t others = 0;
+                    if (count == 8)
+                        for (int i = 0; i < 8; i++)
+                            others |= row[x + i] ^ lastColour;
+                    if (count == 8 && others == 0)
+                        eight = static_cast<uint64_t>(index) * kLowBits;
+                    else
+                        for (int i = 0; i < count; i++)
+                        {
+                            if (row[x + i] != lastColour)
+                            {
+                                std::swap(lastColour, otherColour);
+                                std::swap(index, otherIndex);
+                                if (row[x + i] != lastColour)
+                                {
+                                    lastColour = row[x + i];
+                                    index = palette.Index(lastColour);
+                                    if (index < 0)
+                                        return false;
+                                    colours.Add(index);
+                                }
+                            }
+                            eight |= static_cast<uint64_t>(index) << (8 * i);
+                        }
+                    if (x == 0)
+                        first = static_cast<int>(eight & 0xFF);
+                    // the planes the eight indices have: as many as the highest's bits
+                    uint64_t bytes = eight | (eight >> 32);
+                    bytes |= bytes >> 16;
+                    bytes |= bytes >> 8;
+                    const int top = std::bit_width(static_cast<unsigned>(bytes & 0xFF));
+                    for (int p = 0; p < top; p++)
+                        word[p] |= ((((eight >> p) & kLowBits) * 0x0102040810204080ull) >> 56) << (x & 63);
                 }
+                for (int p = 0; p < kMaxPlanes; p++)
+                    out[p][1 + j] = word[p];
             }
             // the margins: the edge pixels again
             const int last = index;
             for (int p = 0; p < kMaxPlanes; p++)
             {
-                uint64_t* r = Row(p, y);
-                if (first & (1 << p))
-                    r[0] = ~0ull;
+                uint64_t* r = out[p];
+                r[0] = (first & (1 << p)) ? ~0ull : 0;
+                r[words + 1] = 0;
                 if (last & (1 << p))
                 {
                     const int tail = width & 63;
                     if (tail)
-                        r[Words()] |= ~0ull << tail;
-                    r[Words() + 1] = ~0ull;
+                        r[words] |= ~0ull << tail;
+                    r[words + 1] = ~0ull;
                 }
             }
         }
@@ -142,6 +197,52 @@ struct Planes
                 std::memcpy(Row(p, height - 1 + m), Row(p, height - 1), sizeof(uint64_t) * stride);
             }
         return true;
+    }
+
+    /// Every index i turned into map[i] (the palette compacted). `spread`: a byte's bits, one a byte
+    void Remap(const uint8_t* map, const uint64_t* spread)
+    {
+        const size_t words = static_cast<size_t>(height + 2 * kMarginRows) * stride;
+        uint64_t* plane[kMaxPlanes];
+        for (int p = 0; p < kMaxPlanes; p++)
+            plane[p] = bits.data() + p * words;
+        for (size_t k = 0; k < words; k++)
+        {
+            uint64_t old[kMaxPlanes];
+            bool flat = true;
+            unsigned flatIndex = 0;
+            for (int p = 0; p < kMaxPlanes; p++)
+            {
+                old[p] = plane[p][k];
+                flat &= old[p] == 0 || old[p] == ~0ull;
+                flatIndex |= static_cast<unsigned>(old[p] & 1) << p;
+            }
+            if (flat)
+            {
+                for (int p = 0; p < kMaxPlanes; p++)
+                    plane[p][k] = ((map[flatIndex] >> p) & 1) ? ~0ull : 0;
+                continue;
+            }
+            uint64_t now[kMaxPlanes] = {};
+            for (int byte = 0; byte < 8; byte++)
+            {
+                uint64_t index = 0;
+                for (int p = 0; p < kMaxPlanes; p++)
+                    index |= spread[(old[p] >> (8 * byte)) & 0xFF] << p;
+                uint64_t mapped = 0;
+                for (int i = 0; i < 8; i++)
+                    mapped |= static_cast<uint64_t>(map[(index >> (8 * i)) & 0xFF]) << (8 * i);
+                for (int p = 0; p < kMaxPlanes; p++)
+                    now[p] |= ((((mapped >> p) & kLowBits) * 0x0102040810204080ull) >> 56) << (8 * byte);
+            }
+            for (int p = 0; p < kMaxPlanes; p++)
+                plane[p][k] = now[p];
+        }
+        Indices mapped;
+        for (int i = 0; i < LiteFlow::kMaxColours; i++)
+            if (colours.Has(i))
+                mapped.Add(map[i]);
+        colours = mapped;
     }
 };
 
@@ -544,25 +645,50 @@ struct LiteFlow::Impl
 {
     Stats stats;
     Palette palette;
-    static constexpr size_t kCached = 3;
+    /// Two pairs and the frame before each: a pair asked again finds its frames
+    static constexpr size_t kCached = 4;
     Planes cached[kCached];
-    size_t nextCached = 0;
+    uint64_t clock = 0;  ///< Planes::used
     KeptField field;
-    // the pair the field and the masks are of
-    bool hasPair = false;
-    uint64_t pairA = 0, pairB = 0;
-    uint64_t pairBefore = 0;  ///< the id of the frame before the pair's a, 0: none
-    int planes = 0;
-    std::vector<V> vectors;            ///< the moving ones, most blocks first
-    std::vector<uint64_t> own, nearby;   ///< per vector, block row and word: the pixels of the blocks it may take
-    /// per block row, words + 2 (a margin word each side, the edge block again): the pixels of the blocks the field
-    /// matched still
-    std::vector<uint64_t> stillBlocks;
-    std::vector<uint64_t> free, unlike;  ///< Confirm's own, a block row's words each
+    int planes = 0;  ///< the palette's, for the pair being drawn
+
+    /// A pair estimated: what its pictures are drawn from
+    struct Pair
+    {
+        bool valid = false;
+        uint64_t a = 0, b = 0;
+        uint64_t before = 0;  ///< the id of the frame before a, 0: none
+        int width = 0, height = 0, blocksHigh = 0;
+        std::vector<V> vectors;                ///< the moving ones, most blocks first
+        std::vector<uint64_t> own, nearby;     ///< per vector, block row and word: the pixels of the blocks it may take
+        /// per block row, words + 2 (a margin word each side, the edge block again): the pixels of the blocks the
+        /// field matched still
+        std::vector<uint64_t> stillBlocks;
+        /// per block row and word: the pixels unlike in a and b on some row of the block row (the next pair's
+        /// `unlike`); empty: not counted
+        std::vector<uint64_t> changed;
+        std::vector<std::pair<V, size_t>> confirmedBy;  ///< a moving vector confirmed, and the block that did
+        /// per vector, row and word: the pixels it carries their colour, a(x) to b(x + v) or b(x) from a(x - v) (by
+        /// Credible, on the block rows it counted: those Draw asks and more)
+        std::vector<uint64_t> carries;
+        std::vector<uint64_t> same;  ///< per row and word: the pixels alike in a and b (by Credible; empty: none)
+    };
+    /// The last two pairs estimated; `current` the one drawn last. A pair asked again is drawn as it was the first
+    /// time (the kept field moves on only with a pair new to it)
+    Pair pairs[2];
+    int current = 0;
+    uint64_t refusedA = 0, refusedB = 0;  ///< the ids of the last pair refused for its colours
+
+    // Confirm's: per block row and word, computed when first asked
+    std::vector<uint64_t> free, unlike;  ///< the detailed blocks; the pixels where a and the frame before differ
+    std::vector<uint8_t> freeKnown, unlikeKnown, confirmed;
+    // Credible's
     std::vector<int> explains, unexplained, roundRow;
     std::vector<uint64_t> any;
     std::vector<uint8_t> candidate;
-    uint64_t spread[256];              ///< a byte's bits, one a byte
+    std::vector<std::pair<V, int>> allVectors;  ///< Prepare's
+    Palette scratch;      ///< FitsWith's
+    uint64_t spread[256];  ///< a byte's bits, one a byte
 
     Impl()
     {
@@ -576,56 +702,153 @@ struct LiteFlow::Impl
         }
     }
 
-    /// The palette and the planes that index it; the field's kept vectors stay
-    void ForgetColours()
+    void Forget()
     {
         for (Planes& p : cached)
             p = Planes{};
-        hasPair = false;
         palette.Clear();
-    }
-    void Forget()
-    {
-        ForgetColours();
         field.Reset();
+        for (Pair& p : pairs)
+            p.valid = false;
+        refusedA = refusedB = 0;
+    }
+
+    /// The slot empty (its words kept for the next frame)
+    static void Drop(Planes& slot)
+    {
+        slot.id = 0;
+        slot.width = slot.height = slot.stride = 0;
+        slot.colours = Indices{};
+    }
+    size_t SlotOf(const Planes* planes) const { return static_cast<size_t>(planes - cached); }
+
+    /// The palette cut to the colours of the cached frames in `keep` (a bit a slot), in their order; their planes
+    /// re-indexed, the other slots dropped. The pictures are the same: they ask only which pixels are equal
+    void Compact(unsigned keep)
+    {
+        Indices live;
+        for (size_t i = 0; i < kCached; i++)
+            if ((keep >> i) & 1)
+                live.Unite(cached[i].colours);
+            else
+                Drop(cached[i]);
+        uint8_t map[kMaxColours] = {};
+        uint32_t colours[kMaxColours];
+        int count = 0;
+        for (size_t i = 0; i < palette.colours.size(); i++)
+            if (live.Has(static_cast<int>(i)))
+            {
+                map[i] = static_cast<uint8_t>(count);
+                colours[count++] = palette.colours[i];
+            }
+        palette.Clear();
+        for (int i = 0; i < count; i++)
+            palette.Index(colours[i]);
+        for (size_t i = 0; i < kCached; i++)
+            if (((keep >> i) & 1) && !cached[i].Empty())
+                cached[i].Remap(map, spread);
+        stats.palettes++;
+    }
+
+    /// Whether `picture`'s colours and those of `keep` (null: none) are kMaxColours at most
+    bool FitsWith(const Picture& picture, const Planes* keep)
+    {
+        scratch.Clear();
+        if (keep)
+            for (size_t i = 0; i < palette.colours.size(); i++)
+                if (keep->colours.Has(static_cast<int>(i)))
+                    scratch.Index(palette.colours[i]);
+        const size_t pixels = static_cast<size_t>(picture.width) * picture.height;
+        uint32_t last = picture.pixels[0];
+        if (scratch.Index(last) < 0)
+            return false;
+        for (size_t p = 1; p < pixels; p++)
+            if (picture.pixels[p] != last)
+            {
+                last = picture.pixels[p];
+                if (scratch.Index(last) < 0)
+                    return false;
+            }
+        return true;
     }
 
     /// The planes of the frame before the pair's `a` when still kept, else nullptr
-    const Planes* Before(const Picture& a) const
+    const Planes* Before(const Pair& pair, const Picture& a)
     {
-        if (!pairBefore)
+        if (!pair.before)
             return nullptr;
-        for (const Planes& kept : cached)
-            if (kept.id == pairBefore && kept.width == a.width && kept.height == a.height)
+        for (Planes& kept : cached)
+            if (kept.id == pair.before && kept.width == a.width && kept.height == a.height)
+            {
+                kept.used = ++clock;
                 return &kept;
+            }
         return nullptr;
     }
 
-    /// The planes of `picture`, packed now unless kept by its id. nullptr: the palette is full
+    /// The planes of `picture`, packed now unless kept by its id, never over `keep`. The palette is compacted when it
+    /// holds two planes' worth more than the frames kept need, or fills. nullptr: more than kMaxColours colours in
+    /// the picture and `keep`
     Planes* PlanesOf(const Picture& picture, const Planes* keep)
     {
         if (picture.id)
             for (Planes& p : cached)
                 if (p.id == picture.id && p.width == picture.width && p.height == picture.height)
+                {
+                    p.used = ++clock;
                     return &p;
-        Planes* slot = &cached[nextCached];
-        if (slot == keep)
-            slot = &cached[(nextCached + 1) % kCached];
-        nextCached = (static_cast<size_t>(slot - cached) + 1) % kCached;
-        slot->id = 0;
-        if (!slot->Pack(picture, palette))
+                }
+        Planes* slot = nullptr;
+        for (Planes& p : cached)
+            if (&p != keep && (!slot || p.used < slot->used))
+                slot = &p;
+        Drop(*slot);
+        const unsigned others = ((1u << kCached) - 1) & ~(1u << SlotOf(slot));
+        if (palette.colours.size() > 16)
+        {
+            Indices live;
+            for (const Planes& p : cached)
+                live.Unite(p.colours);
+            if (palette.Planes() >= Palette::PlanesFor(static_cast<size_t>(live.Count())) + 2)
+                Compact(others);
+        }
+        bool packed = slot->Pack(picture, palette);
+        if (!packed)
+        {
+            Drop(*slot);
+            Compact(others);
+            packed = slot->Pack(picture, palette);
+        }
+        if (!packed)
+        {
+            // the frames kept but `keep` go only for a picture that fits without them
+            Drop(*slot);
+            if (!FitsWith(picture, keep))
+                return nullptr;
+            Compact(keep ? 1u << SlotOf(keep) : 0u);
+            packed = slot->Pack(picture, palette);
+        }
+        if (!packed)
+        {
+            Drop(*slot);
             return nullptr;
+        }
         slot->id = picture.id;
+        slot->used = ++clock;
         stats.packed++;
         return slot;
     }
 
-    /// The pair's vectors and the masks of the blocks each may take
-    void Prepare(const Planes* before, const Planes& a, const Planes& b)
+    /// The pair's vectors and the masks of the blocks each may take. `last`: the pair before, ending at a
+    void Prepare(Pair& pair, const Pair* last, const Planes* before, const Planes& a, const Planes& b)
     {
         field.Estimate(a, b, planes);
         stats.pairs++;
         const int bw = field.blocksWide, bh = field.blocksHigh, words = a.Words();
+        pair.width = a.width;
+        pair.height = a.height;
+        pair.blocksHigh = bh;
+        std::vector<uint64_t>& stillBlocks = pair.stillBlocks;
         stillBlocks.assign(static_cast<size_t>(bh) * (words + 2), 0);
         for (int j = 0; j < bh; j++)
         {
@@ -649,7 +872,8 @@ struct LiteFlow::Impl
         // the moving vectors by their blocks, most first (equals: the first met)
         int16_t indexOf[64][64];  // by the vector's low bits: a field's range is under 32
         std::memset(indexOf, -1, sizeof(indexOf));
-        std::vector<std::pair<V, int>> all;
+        std::vector<std::pair<V, int>>& all = allVectors;
+        all.clear();
         for (const MotionField::Block& block : field.blocks)
         {
             if (!block.matched || block.v == V{})
@@ -664,15 +888,21 @@ struct LiteFlow::Impl
                 all[static_cast<size_t>(index)].second++;
         }
         std::stable_sort(all.begin(), all.end(), [](const auto& p, const auto& q) { return p.second > q.second; });
-        if (all.size() > static_cast<size_t>(kVectors))
-            all.resize(static_cast<size_t>(kVectors));
+        std::vector<V>& vectors = pair.vectors;
         vectors.clear();
-        for (const auto& c : all)
-            vectors.push_back(c.first);
+        for (size_t c = 0; c < all.size() && c < static_cast<size_t>(kVectors); c++)
+            vectors.push_back(all[c].first);
 
         const size_t per = static_cast<size_t>(bh) * words;
+        std::vector<uint64_t>& own = pair.own;
+        std::vector<uint64_t>& nearby = pair.nearby;
         own.assign(vectors.size() * per, 0);
         nearby.assign(vectors.size() * per, 0);
+        pair.changed.clear();
+        pair.same.clear();
+        pair.confirmedBy.clear();
+        if (vectors.empty())
+            return;  // nothing moves: still or the nearer frame, pixel by pixel
         // own: one pass over the blocks; nearby: own spread a block each way, by words
         for (int j = 0; j < bh; j++)
             for (int i = 0; i < bw; i++)
@@ -724,115 +954,175 @@ struct LiteFlow::Impl
                             nearOf[static_cast<size_t>(j + dj) * words + w] |= wide[w];
             }
         }
-        Credible(a, b);
-        Confirm(before, a, b, words);
-    }
-
-    /// `own` and `nearby` of the moving vectors not confirmed cut to the detailed blocks, as LayerFlow's: a vector is
-    /// confirmed by a block the field matched to it that is detailed (its pixels unlike their right and lower
-    /// neighbours at least kDetail times each: too much to match by chance) or whose pixels it carries exactly to b
-    /// and that came exactly from `before`, the frame before a: by the same vector (the motion going on) or in place
-    /// (a held frame, a motion starting from rest). The field matches a block within MotionField::kAccept, and a line
-    /// of one color across the block holds 8 values, not 64: content new every frame (a tape loader's lines) matches
-    /// some vector by chance in every pair, never exactly over three frames. No frame before (the first pair, a
-    /// seek): detail alone confirms
-    void Confirm(const Planes* before, const Planes& a, const Planes& b, int words)
-    {
-        const int bw = field.blocksWide, bh = field.blocksHigh;
-        const size_t per = static_cast<size_t>(bh) * words;
-        // free: the detailed blocks; unlike: per block row and word, the pixels where a and `before` differ in place
-        free.assign(per, 0);
-        unlike.assign(per, 0);
-        for (int j = 0; j < bh; j++)
-        {
-            uint64_t across[kMaxWords], down[kMaxWords];
-            std::fill_n(across, words, 0);
-            std::fill_n(down, words, 0);
-            for (int r = 0; r < kBlock; r++)
-            {
-                const int y = j * kBlock + r;
-                for (int w = 0; w < words; w++)
-                {
-                    uint64_t right = 0, below = 0, changed = 0;
-                    for (int q = 0; q < planes; q++)
-                    {
-                        const uint64_t* row = a.Row(q, y);
-                        right |= row[w + 1] ^ Shifted(row, w + 1, 1);
-                        if (r + 1 < kBlock)
-                            below |= row[w + 1] ^ a.Row(q, y + 1)[w + 1];
-                        if (before)
-                            changed |= row[w + 1] ^ before->Row(q, y)[w + 1];
-                    }
-                    // within the block: a byte's last pixel is not compared with the next block's first
-                    across[w] += ByteOnes(right & ~kHighBits);
-                    down[w] += ByteOnes(below);
-                    unlike[static_cast<size_t>(j) * words + w] |= changed;
-                }
-            }
-            for (int i = 0; i < bw; i++)
-            {
-                const int shift = 8 * (i & 7);
-                if (static_cast<int>((across[i >> 3] >> shift) & 0xFF) >= LiteFlow::kDetail &&
-                    static_cast<int>((down[i >> 3] >> shift) & 0xFF) >= LiteFlow::kDetail)
-                    free[static_cast<size_t>(j) * words + (i >> 3)] |= 0xFFull << shift;
-            }
-        }
+        // which vectors are confirmed asks only the blocks the field matched to them: `own` as it is now
+        Confirm(pair, last, before, a, b);
+        Credible(pair, a, b);
+        // not confirmed: the vector moves only the detailed blocks
         for (size_t c = 0; c < vectors.size(); c++)
         {
-            const V v = vectors[c];
-            // confirmed: a block the field matched to the vector is detailed, or the vector carries its pixels
-            // exactly from `before` through a to b (or they stood in place into a, then carried)
-            bool confirmed = false;
-            for (int j = 0; j < bh && !confirmed; j++)
-                for (int w = 0; w < words && !confirmed; w++)
-                {
-                    uint64_t matched = 0;
-                    for (int i = w * 8; i < std::min(bw, w * 8 + 8); i++)
-                    {
-                        const MotionField::Block& block = field.blocks[static_cast<size_t>(j) * bw + i];
-                        if (block.matched && block.v == v)
-                            matched |= 0xFFull << (8 * (i & 7));
-                    }
-                    const size_t k = static_cast<size_t>(j) * words + w;
-                    if (!matched || (matched & free[k]))
-                    {
-                        confirmed = matched != 0;
-                        continue;
-                    }
-                    if (!before)
-                        continue;
-                    uint64_t carryBad = 0, goBad = 0;
-                    for (int r = 0; r < kBlock; r++)
-                    {
-                        const int y = j * kBlock + r;
-                        for (int q = 0; q < planes; q++)
-                        {
-                            const uint64_t here = a.Row(q, y)[w + 1];
-                            carryBad |= here ^ Shifted(b.Row(q, y + v.y), w + 1, v.x);
-                            goBad |= here ^ Shifted(before->Row(q, y - v.y), w + 1, -v.x);
-                        }
-                    }
-                    confirmed = (matched & ZeroBytes(carryBad) & (ZeroBytes(goBad) | ZeroBytes(unlike[k]))) != 0;
-                }
-            if (confirmed)
+            if (confirmed[c])
                 continue;
-            // not confirmed: the vector moves only the detailed blocks
             uint64_t* ownOf = own.data() + c * per;
             uint64_t* nearOf = nearby.data() + c * per;
             for (size_t k = 0; k < per; k++)
+                if (ownOf[k] | nearOf[k])
+                {
+                    const uint64_t detailed = Free(a, k, bw, words);
+                    ownOf[k] &= detailed;
+                    nearOf[k] &= detailed;
+                }
+        }
+    }
+
+    /// The detailed blocks of block row and word `k` (Confirm)
+    uint64_t Free(const Planes& a, size_t k, int bw, int words)
+    {
+        if (freeKnown[k])
+            return free[k];
+        const int j = static_cast<int>(k / static_cast<size_t>(words)), w = static_cast<int>(k % words);
+        uint64_t across = 0, down = 0;
+        for (int r = 0; r < kBlock; r++)
+        {
+            const int y = j * kBlock + r;
+            uint64_t right = 0, below = 0;
+            for (int q = 0; q < planes; q++)
             {
-                ownOf[k] &= free[k];
-                nearOf[k] &= free[k];
+                const uint64_t* row = a.Row(q, y);
+                right |= row[w + 1] ^ Shifted(row, w + 1, 1);
+                if (r + 1 < kBlock)
+                    below |= row[w + 1] ^ a.Row(q, y + 1)[w + 1];
             }
+            // within the block: a byte's last pixel is not compared with the next block's first
+            across += ByteOnes(right & ~kHighBits);
+            down += ByteOnes(below);
+        }
+        uint64_t detailed = 0;
+        for (int i = w * 8; i < std::min(bw, w * 8 + 8); i++)
+        {
+            const int shift = 8 * (i & 7);
+            if (static_cast<int>((across >> shift) & 0xFF) >= LiteFlow::kDetail &&
+                static_cast<int>((down >> shift) & 0xFF) >= LiteFlow::kDetail)
+                detailed |= 0xFFull << shift;
+        }
+        freeKnown[k] = 1;
+        free[k] = detailed;
+        return detailed;
+    }
+
+    /// The pixels of block row and word `k` where a and `before` differ in place, on some row of the block row
+    uint64_t Unlike(const Planes& before, const Planes& a, size_t k, int words)
+    {
+        if (unlikeKnown[k])
+            return unlike[k];
+        const int j = static_cast<int>(k / static_cast<size_t>(words)), w = static_cast<int>(k % words);
+        uint64_t changed = 0;
+        for (int r = 0; r < kBlock; r++)
+            for (int q = 0; q < planes; q++)
+                changed |= a.Row(q, j * kBlock + r)[w + 1] ^ before.Row(q, j * kBlock + r)[w + 1];
+        unlikeKnown[k] = 1;
+        unlike[k] = changed;
+        return changed;
+    }
+
+    /// The blocks of `matched` (block row and word `k`) that confirm `v`: detailed, or carried exactly to b by it
+    /// and come exactly from `before` (by it, or in place)
+    uint64_t Confirming(V v, uint64_t matched, const Planes* before, const Planes& a, const Planes& b, size_t k,
+                        int bw, int words)
+    {
+        const uint64_t detailed = matched & Free(a, k, bw, words);
+        if (detailed || !before)
+            return detailed;
+        const int j = static_cast<int>(k / static_cast<size_t>(words)), w = static_cast<int>(k % words);
+        uint64_t carryBad = 0;
+        for (int r = 0; r < kBlock; r++)
+        {
+            const int y = j * kBlock + r;
+            for (int q = 0; q < planes; q++)
+                carryBad |= a.Row(q, y)[w + 1] ^ Shifted(b.Row(q, y + v.y), w + 1, v.x);
+        }
+        const uint64_t carried = matched & ZeroBytes(carryBad);
+        if (!carried)
+            return 0;
+        if (const uint64_t held = carried & ZeroBytes(Unlike(*before, a, k, words)))
+            return held;
+        uint64_t goBad = 0;
+        for (int r = 0; r < kBlock; r++)
+        {
+            const int y = j * kBlock + r;
+            for (int q = 0; q < planes; q++)
+                goBad |= a.Row(q, y)[w + 1] ^ Shifted(before->Row(q, y - v.y), w + 1, -v.x);
+        }
+        return carried & ZeroBytes(goBad);
+    }
+
+    /// `confirmed`: the moving vectors that move more than the detailed blocks, as LayerFlow's: a vector is confirmed
+    /// by a block the field matched to it that is detailed (its pixels unlike their right and lower neighbours at
+    /// least kDetail times each: too much to match by chance) or whose pixels it carries exactly to b and that came
+    /// exactly from `before`, the frame before a: by the same vector (the motion going on) or in place (a held frame,
+    /// a motion starting from rest). The field matches a block within MotionField::kAccept, and a line of one color
+    /// across the block holds 8 values, not 64: content new every frame (a tape loader's lines) matches some vector
+    /// by chance in every pair, never exactly over three frames. No frame before (the first pair, a seek): detail
+    /// alone confirms. Any block that confirms will do: the one that did at the last pair is asked first
+    void Confirm(Pair& pair, const Pair* last, const Planes* before, const Planes& a, const Planes& b)
+    {
+        const int bw = field.blocksWide, bh = field.blocksHigh, words = a.Words();
+        const size_t per = static_cast<size_t>(bh) * words;
+        free.resize(per);
+        freeKnown.assign(per, 0);
+        unlike.resize(per);
+        if (last && !last->changed.empty())
+        {
+            // the last pair was (before, a): what changed there is what changed here
+            unlike = last->changed;
+            unlikeKnown.assign(per, 1);
+        }
+        else
+            unlikeKnown.assign(per, 0);
+        const size_t n = pair.vectors.size();
+        confirmed.assign(n, 0);
+        for (size_t c = 0; c < n; c++)
+        {
+            const V v = pair.vectors[c];
+            const uint64_t* ownOf = pair.own.data() + c * per;
+            size_t by = per;
+            uint64_t blocks = 0;
+            if (last)
+                for (const auto& [u, block] : last->confirmedBy)
+                    if (u == v)
+                    {
+                        const size_t i = block % static_cast<size_t>(bw);
+                        const size_t k = block / static_cast<size_t>(bw) * static_cast<size_t>(words) + i / 8;
+                        const uint64_t byte = 0xFFull << (8 * (i % 8));
+                        if (ownOf[k] & byte)
+                        {
+                            blocks = Confirming(v, ownOf[k] & byte, before, a, b, k, bw, words);
+                            by = k;
+                        }
+                    }
+            for (size_t k = 0; k < per && !blocks; k++)
+                if (ownOf[k])
+                {
+                    blocks = Confirming(v, ownOf[k], before, a, b, k, bw, words);
+                    by = k;
+                }
+            if (!blocks)
+                continue;
+            confirmed[c] = 1;
+            const size_t j = by / static_cast<size_t>(words), w = by % static_cast<size_t>(words);
+            pair.confirmedBy.push_back(
+                {v, j * static_cast<size_t>(bw) + w * 8 + static_cast<size_t>(std::countr_zero(blocks)) / 8});
         }
     }
 
     /// `own` and `nearby` cut to the blocks where their vector is credible: in the 3 x 3 blocks round a block, the
     /// changed pixels the vector carries both ways (a(y) to b(y + v), b(y) from a(y - v)) are some, and no fewer
     /// than the changes no vector explains there. Colour changing in place fits a moving vector by chance and
-    /// explains nothing
-    void Credible(const Planes& a, const Planes& b)
+    /// explains nothing. The pair's `changed` on the way
+    void Credible(Pair& pair, const Planes& a, const Planes& b)
     {
+        const std::vector<V>& vectors = pair.vectors;
+        std::vector<uint64_t>& own = pair.own;
+        std::vector<uint64_t>& nearby = pair.nearby;
         const int words = a.Words(), bw = field.blocksWide, bh = field.blocksHigh;
         const int width = a.width, height = a.height;
         const size_t blocks = static_cast<size_t>(bw) * bh;
@@ -842,6 +1132,21 @@ struct LiteFlow::Impl
         unexplained.assign(blocks, 0);
         any.assign(static_cast<size_t>(height) * words, 0);
         candidate.resize(static_cast<size_t>(bh));
+        // a and b alike, every row: the still pixels; per block row the changed ones (the next pair's `unlike`)
+        std::vector<uint64_t>& same = pair.same;
+        same.resize(static_cast<size_t>(height) * words);
+        pair.changed.assign(per, 0);
+        for (int y = 0; y < height; y++)
+            for (int w = 0; w < words; w++)
+            {
+                uint64_t alike = ~0ull;
+                for (int p = 0; p < planes; p++)
+                    alike &= ~(a.Row(p, y)[w + 1] ^ b.Row(p, y)[w + 1]);
+                same[static_cast<size_t>(y) * words + w] = alike;
+                pair.changed[static_cast<size_t>(y / kBlock) * words + w] |= ~alike;
+            }
+        // Draw's too: where a vector carries a pixel's colour, the rows counted (a superset of those Draw asks)
+        pair.carries.resize(n * height * words);
         for (size_t c = 0; c < n; c++)
         {
             const V v = vectors[c];
@@ -868,15 +1173,14 @@ struct LiteFlow::Impl
                     for (int w = 0; w < words; w++)
                     {
                         const int jj = w + 1;
-                        uint64_t same = ~0ull, onward = ~0ull, from = ~0ull;
+                        uint64_t onward = ~0ull, from = ~0ull;
                         for (int p = 0; p < planes; p++)
                         {
-                            const uint64_t pa = a.Row(p, y)[jj], pb = b.Row(p, y)[jj];
-                            same &= ~(pa ^ pb);
-                            onward &= ~(pa ^ Shifted(b.Row(p, y + v.y), jj, v.x));
-                            from &= ~(pb ^ Shifted(a.Row(p, y - v.y), jj, -v.x));
+                            onward &= ~(a.Row(p, y)[jj] ^ Shifted(b.Row(p, y + v.y), jj, v.x));
+                            from &= ~(b.Row(p, y)[jj] ^ Shifted(a.Row(p, y - v.y), jj, -v.x));
                         }
-                        const uint64_t explained = onward & from & ~same;
+                        pair.carries[(c * height + y) * words + w] = onward | from;
+                        const uint64_t explained = onward & from & ~same[static_cast<size_t>(y) * words + w];
                         any[static_cast<size_t>(y) * words + w] |= explained;
                         sums[w] += ByteOnes(explained);
                     }
@@ -895,10 +1199,7 @@ struct LiteFlow::Impl
                 const int y = j * kBlock + r;
                 for (int w = 0; w < words; w++)
                 {
-                    uint64_t same = ~0ull;
-                    for (int p = 0; p < planes; p++)
-                        same &= ~(a.Row(p, y)[w + 1] ^ b.Row(p, y)[w + 1]);
-                    uint64_t changed = ~same & ~any[static_cast<size_t>(y) * words + w];
+                    uint64_t changed = ~same[static_cast<size_t>(y) * words + w] & ~any[static_cast<size_t>(y) * words + w];
                     if (w == words - 1 && (width & 63))
                         changed &= (1ull << (width & 63)) - 1;  // the margin past the picture is not a change
                     sums[w] += ByteOnes(changed);
@@ -942,10 +1243,14 @@ struct LiteFlow::Impl
     }
 
     /// `before`: the frame before a (null: none kept), for the carried step's still samples
-    void Draw(const Planes* before, const Planes& a, const Planes& b, int w, uint32_t* out) const
+    void Draw(const Pair& pair, const Planes* before, const Planes& a, const Planes& b, int w, uint32_t* out) const
     {
+        const std::vector<V>& vectors = pair.vectors;
+        const std::vector<uint64_t>& own = pair.own;
+        const std::vector<uint64_t>& nearby = pair.nearby;
+        const std::vector<uint64_t>& stillBlocks = pair.stillBlocks;
         const Planes& nearer = w < kOne / 2 ? a : b;
-        const int width = a.width, height = a.height, words = a.Words(), bh = field.blocksHigh;
+        const int width = a.width, height = a.height, words = a.Words(), bh = pair.blocksHigh;
         const size_t per = static_cast<size_t>(bh) * words;
         const int n = static_cast<int>(vectors.size());
         int sx[kVectors], sy[kVectors];
@@ -975,15 +1280,11 @@ struct LiteFlow::Impl
                         fit[c] = 0;
                         continue;
                     }
-                    uint64_t eq = ~0ull, onward = ~0ull, from = ~0ull;
+                    uint64_t eq = ~0ull;
                     for (int p = 0; p < planes; p++)
-                    {
                         eq &= ~(Shifted(a.Row(p, y - sy[c]), jj, -sx[c]) ^
                                 Shifted(b.Row(p, y - sy[c] + v.y), jj, -sx[c] + v.x));
-                        onward &= ~(a.Row(p, y)[jj] ^ Shifted(b.Row(p, y + v.y), jj, v.x));
-                        from &= ~(b.Row(p, y)[jj] ^ Shifted(a.Row(p, y - v.y), jj, -v.x));
-                    }
-                    fit[c] = eq & (onward | from);
+                    fit[c] = eq & pair.carries[(static_cast<size_t>(c) * height + y) * words + j];
                 }
                 const auto take = [&](uint64_t mask, int c) {
                     if (!mask)
@@ -998,8 +1299,11 @@ struct LiteFlow::Impl
                 // still
                 {
                     uint64_t same = ~0ull;
-                    for (int p = 0; p < planes; p++)
-                        same &= ~(a.Row(p, y)[jj] ^ b.Row(p, y)[jj]);
+                    if (!pair.same.empty())
+                        same = pair.same[static_cast<size_t>(y) * words + j];
+                    else
+                        for (int p = 0; p < planes; p++)
+                            same &= ~(a.Row(p, y)[jj] ^ b.Row(p, y)[jj]);
                     const uint64_t mask = same & ~taken;
                     taken |= mask;
                     for (int p = 0; p < planes; p++)
@@ -1101,39 +1405,51 @@ const LiteFlow::Stats& LiteFlow::GetStats() const
 bool LiteFlow::Compose(const Picture& a, const Picture& b, int w, uint32_t* out)
 {
     Impl& impl = *_impl;
-    if (!out || !a.pixels || !b.pixels || a.width != b.width || a.height != b.height || !Fits(a.width, a.height))
+    if (!out || !a.pixels || !b.pixels || a.width != b.width || a.height != b.height || !Fits(a.width, a.height) ||
+        (a.id && b.id && impl.refusedA == a.id && impl.refusedB == b.id))
     {
         impl.stats.refused++;
         return false;
     }
-    const bool samePair = impl.hasPair && a.id && b.id && impl.pairA == a.id && impl.pairB == b.id;
     Planes* pa = impl.PlanesOf(a, nullptr);
     Planes* pb = pa ? impl.PlanesOf(b, pa) : nullptr;
     if (!pa || !pb)
     {
-        // The palette filled up: start it over with these two frames alone (the planes kept index the old one)
-        impl.ForgetColours();
-        impl.stats.palettes++;
-        pa = impl.PlanesOf(a, nullptr);
-        pb = pa ? impl.PlanesOf(b, pa) : nullptr;
-        if (!pa || !pb)
-        {
-            impl.ForgetColours();
-            impl.stats.refused++;
-            return false;
-        }
+        // over kMaxColours colours in the two: not asked again
+        impl.refusedA = a.id;
+        impl.refusedB = b.id;
+        impl.stats.refused++;
+        return false;
     }
-    if (!samePair || !impl.hasPair)
+    impl.planes = impl.palette.Planes();
+    using Pair = Impl::Pair;
+    const auto isPair = [&](const Pair& p) {
+        return p.valid && p.a == a.id && p.b == b.id && p.width == a.width && p.height == a.height;
+    };
+    Pair* pair = nullptr;
+    if (a.id && b.id)
+        for (int i : {impl.current, 1 - impl.current})
+            if (isPair(impl.pairs[i]))
+            {
+                pair = &impl.pairs[i];
+                impl.current = i;
+                break;
+            }
+    if (!pair)
     {
         // the frame before a: the pair before's first when that pair ended at a
-        impl.pairBefore = impl.hasPair && a.id && impl.pairB == a.id ? impl.pairA : 0;
-        impl.planes = impl.palette.Planes();
-        impl.Prepare(impl.Before(a), *pa, *pb);
-        impl.hasPair = true;
-        impl.pairA = a.id;
-        impl.pairB = b.id;
+        const Pair& last = impl.pairs[impl.current];
+        const bool follows = last.valid && a.id && last.b == a.id && last.width == a.width && last.height == a.height;
+        impl.current = 1 - impl.current;
+        pair = &impl.pairs[impl.current];
+        pair->valid = false;
+        pair->a = a.id;
+        pair->b = b.id;
+        pair->before = follows ? last.a : 0;
+        impl.Prepare(*pair, follows ? &last : nullptr, impl.Before(*pair, a), *pa, *pb);
+        pair->valid = true;
     }
-    impl.Draw(impl.Before(a), *pa, *pb, std::clamp(w, 0, kOne), out);
+    impl.Draw(*pair, impl.Before(*pair, a), *pa, *pb, std::clamp(w, 0, kOne), out);
     return true;
 }
 

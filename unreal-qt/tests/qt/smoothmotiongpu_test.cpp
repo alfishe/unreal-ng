@@ -50,7 +50,7 @@ struct Image
 Image DotsImage(int width, int height, int k, bool layered)
 {
     Image img(width, height);
-    img.pixels = smoothscenes::Dots(width, height, k, layered);
+    img.pixels = layered ? smoothscenes::Dots(width, height, k, true) : smoothscenes::DotsOverLayers(width, height, k);
     return img;
 }
 
@@ -70,36 +70,11 @@ Image Scene(int width, int height, int dx, int dy, int sx, int sy, int noise)
     return img;
 }
 
-/// Frame k of layers LayerFlow's rules work on: a row of dots moving by its period (the still look-alike ties with
-/// the motion, the row's ends tell), dashes of period 8 moving by 1 over a still pattern (+1 and -7 alike), a sprite
-/// over paper (its holes: cover), a scrolled band and a blinking cell
+/// Frame k of the layers' rules' scene (smoothscenes::LayerScene)
 Image LayerScene(int width, int height, int k)
 {
     Image img(width, height);
-    for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-            img.At(x, y) = 0xFF202020u;
-    for (int y = 4; y < 6; y++)
-        for (int i = 0; i < 12; i++)
-            img.At(8 + 4 * k + 4 * i, y) = 0xFFE0E0E0u;
-    for (int y = 12; y < 20; y++)
-        for (int x = 0; x < width; x++)
-        {
-            if ((x * 7 + y * 3) % 11 == 0)
-                img.At(x, y) = 0xFF4080C0u;
-            if ((x - k) % 8 < 3 && (x - k) >= 0)
-                img.At(x, y) = 0xFFF0C040u;
-        }
-    for (int y = 0; y < 10; y++)
-        for (int x = 0; x < 10; x++)
-            if ((x + y) % 3 != 0)
-                img.At(30 + 6 * k + x, 30 + 2 * k + y) = PatternAt(x + 9000, y + 9000);
-    for (int y = height - 16; y < height - 6; y++)
-        for (int x = 0; x < width; x++)
-            img.At(x, y) = PatternAt(x + 3 * k, y) & 0xFF7F7F7Fu;
-    for (int y = 0; y < 6; y++)
-        for (int x = 0; x < 6; x++)
-            img.At(width - 10 + x, 30 + y) = k % 2 ? 0xFFFF0000u : 0xFF0000FFu;
+    img.pixels = smoothscenes::LayerScene(width, height, k);
     return img;
 }
 
@@ -238,7 +213,7 @@ TEST_P(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
     // An odd size (a partial block row and column); the first pair after a seek (p = a, everything still before)
     LayerFlow cpu;
     int asks = 0, edges = 0;
-    for (const auto& [width, height] : {std::pair{120, 74}, {96, 64}})
+    for (const auto& [width, height] : {std::pair{101, 77}, {96, 64}})
         for (int k : {1, 2})
         {
             SCOPED_TRACE(testing::Message() << width << "x" << height << " k " << k);
@@ -293,6 +268,98 @@ TEST_P(SmoothMotionGPU_Test, BorderEffectsOnTheGpuAreTheCpus)
         }
 }
 
+TEST_P(SmoothMotionGPU_Test, LayerFlowAtTheEndWeightsIsTheCpus)
+{
+    // The weights whose shift rounds to nothing (w <= 15) or to the whole vector (w >= 241): the frames themselves on
+    // the CPU (LayersAtTheEndWeightsAreTheFrames), the same bits here; a weight past the pair clamped as there
+    LayerFlow cpu;
+    for (int scene = 0; scene < 3; scene++)
+    {
+        SCOPED_TRACE(scene == 0 ? "layer scene" : scene == 1 ? "border stripes" : "dots past the cap");
+        const auto frame = [&](int k) {
+            if (scene == 0)
+                return LayerScene(96, 64, k);
+            if (scene == 1)
+            {
+                Image img(128, 96);
+                img.pixels = smoothscenes::Border(128, 96, 16, k, false);
+                return img;
+            }
+            return DotsImage(128, 96, k, false);
+        };
+        const Image p = frame(0), a = frame(1), b = frame(2);
+        MotionField prev, next;
+        prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+        next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+        for (int w : {-50, 1, 15, 241, 255, 256, 400})
+        {
+            Image expected(a.width, a.height), out(a.width, a.height);
+            cpu.Compose(p.View(), a.View(), b.View(), prev, next, w, expected.pixels.data());
+            ASSERT_TRUE(gpu.ComposeLayers(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data()))
+                << gpu.Log().toStdString();
+            EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "w " << w;
+        }
+    }
+}
+
+TEST_P(SmoothMotionGPU_Test, LayerFlowOnAPageFlipIsTheCpus)
+{
+    // A page of text flipped (letters a cell apart match exactly): a cut, no layer moves (PageFlipInventsNothing on
+    // the CPU), the same bits here
+    LayerFlow cpu;
+    const auto page = [](int k) {
+        Image img(128, 96);
+        img.pixels = smoothscenes::TextPage(128, 96, k);
+        return img;
+    };
+    const Image p = page(1), a = page(1), b = page(2);
+    MotionField prev, next;
+    prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+    next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+    LayerFlow::Layers layers;
+    LayerFlow::Prepare(prev, next, p.View(), a.View(), b.View(), layers);
+    ASSERT_TRUE(layers.cut) << "a flipped page is a cut";
+    for (int w : {43, 128, 213})
+    {
+        Image expected(a.width, a.height), out(a.width, a.height);
+        cpu.Compose(p.View(), a.View(), b.View(), prev, next, w, expected.pixels.data());
+        ASSERT_TRUE(gpu.ComposeLayers(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data()))
+            << gpu.Log().toStdString();
+        EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "w " << w;
+    }
+}
+
+TEST_P(SmoothMotionGPU_Test, LayerFlowScrollingByTheWholeRangeIsTheCpus)
+{
+    // The whole picture scrolled by the search range on both axes, its content at every edge, partial blocks both
+    // ways: the CPU's padded reads and the GPU's clamped ones meet at the edges
+    constexpr int kWidth = 101, kHeight = 77;
+    LayerFlow cpu;
+    for (const MotionField::Vector v : {MotionField::Vector{8, 8}, {-8, -8}, {8, -8}, {-8, 8}})
+    {
+        SCOPED_TRACE(testing::Message() << "by " << v.x << "," << v.y);
+        const auto frame = [&](int k) {
+            Image img(kWidth, kHeight);
+            for (int y = 0; y < kHeight; y++)
+                for (int x = 0; x < kWidth; x++)
+                    img.At(x, y) = PatternAt(x - v.x * k + 64, y - v.y * k + 64);
+            return img;
+        };
+        const Image p = frame(0), a = frame(1), b = frame(2);
+        MotionField prev, next;
+        prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+        next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+        for (int w : {1, 128, 255})
+        {
+            Image expected(kWidth, kHeight), out(kWidth, kHeight);
+            cpu.Compose(p.View(), a.View(), b.View(), prev, next, w, expected.pixels.data());
+            ASSERT_TRUE(gpu.ComposeLayers(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data()))
+                << gpu.Log().toStdString();
+            EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "w " << w;
+        }
+    }
+}
+
 TEST_P(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
 {
 
@@ -331,13 +398,15 @@ TEST_P(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
 
 TEST_P(SmoothMotionGPU_Test, TheWorstContentIsTheCpusBits)
 {
-    // More vectors than the cap (a block a vector of its own) and every still pixel asking the cover rule about many
-    // moving vectors: the GPU keeps the CPU's vectors and bits. The screen's size in the long tier
-    const int width = TestTier::Long() ? 352 : 96, height = TestTier::Long() ? 288 : 64;
+    // More vectors than the cap (every fourth block a vector of its own over three layers) and every still pixel
+    // asking the cover rule about many moving vectors: the GPU keeps the CPU's vectors and bits. The screen's size in
+    // the long tier
     LayerFlow cpu;
     for (bool layered : {false, true})
     {
-        SCOPED_TRACE(layered ? "layered" : "a vector a block");
+        SCOPED_TRACE(layered ? "layered" : "blocks of their own");
+        const int width = TestTier::Long() ? 352 : layered ? 96 : 128;
+        const int height = TestTier::Long() ? 288 : layered ? 64 : 96;
         // layered: every pass cut into stripes of a few rows
         gpu.SetMaxReadsPerDraw(layered ? int64_t{1} << 20 : SmoothMotionGPU::kMaxReadsPerDraw);
         const Image p = DotsImage(width, height, 0, layered), a = DotsImage(width, height, 1, layered),

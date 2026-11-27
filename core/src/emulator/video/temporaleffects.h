@@ -93,8 +93,18 @@ public:
     /// effect inactive. `notApplicable` (with planeB == nullptr): the machine shows
     /// no ZX screen now, and why (the inactive reason; Stats::applicable = false).
     /// Returns the video delay the present queue must apply (0 while inactive).
+    /// `generation` (optional): the restart the frame was queued in (Generation()); its output comes while that one
+    /// lasts, never after a restart
     int Submit(uint64_t serial, const uint16_t* planeB, int width, int height, const uint32_t* palette,
-               const std::string* notApplicable = nullptr);
+               const std::string* notApplicable = nullptr, uint64_t* generation = nullptr);
+
+    /// Any thread: bumped by every restart (an algorithm selected, Reset, a worker that fell behind). A frame queued
+    /// in an older one gets no output
+    uint64_t Generation() const { return _generationNow.load(std::memory_order_acquire); }
+
+    /// Frames the worker may be behind before the algorithm is restarted: the present queue shows raw frames for the
+    /// gap instead of an ever-growing lag
+    static constexpr size_t kMaxQueuedJobs = 3;
 
     /// An algorithm is selected (any thread; cheap: the caller skips preparing a frame when not)
     bool IsEnabled() const { return _enabled.load(std::memory_order_acquire); }
@@ -132,6 +142,8 @@ private:
     std::string _algorithmName;
     int _algorithmDelay = 0;
     uint64_t _generation = 0;           // bumped by every restart; stale jobs are dropped
+    std::atomic<uint64_t> _generationNow{0};  // _generation for the readers without _mutex (Generation)
+    void NewGenerationLocked();
     bool _stop = false;
     std::string _inactiveReason;
     bool _active = false;

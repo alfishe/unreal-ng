@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QDir>
 #include <QLabel>
 #include <QLocale>
@@ -232,4 +233,28 @@ TEST(VideoSyncWindow_Test, TheSoftwareScreenShowsItsPaintsAndNoScreenTimes)
     EXPECT_EQ(window.readout("lead"), "—");
     EXPECT_EQ(window.readout("dropped"), "13");
     EXPECT_EQ(window.readout("display_rate"), "unchanged");
+}
+
+// The box says the setting (smooth motion auto), not the step in effect: a mode set by hand has the step off, and a
+// box made from the step unticked itself at the next refresh after the owner ticked it
+TEST(VideoSyncWindow_Test, TheBoxSaysTheSettingNotTheStep)
+{
+    WindowDisplaySettings now = Quiet();
+    VideoSyncWindow window([&now]() { return now; });
+    window.show();
+    QCheckBox* box = window.findChild<QCheckBox*>();
+    ASSERT_NE(box, nullptr);
+    now.smoothMotion = "interpolate";
+    now.present.sync = "off";
+    window.refresh();
+    EXPECT_FALSE(box->isChecked());
+    now.smoothMotion = "auto";  // ticked; the step is not decided yet
+    window.refresh();
+    EXPECT_TRUE(box->isChecked());
+    now.present.sync = "interpolate";
+    window.refresh();
+    EXPECT_TRUE(box->isChecked());
+    now.smoothMotion = "off";
+    window.refresh();
+    EXPECT_FALSE(box->isChecked());
 }

@@ -54,6 +54,11 @@ public:
     /// The vectors of a refresh at most: the common ones and the blocks' most matched (a full-screen effect matches
     /// up to 289 vectors at range 8, and every per-vector pass scales with their count)
     static constexpr size_t kMaxVectors = 32;
+    /// A cut (Prepare): at least 1/kCutChanged of the blocks changed, and the kCutLayers vectors the field matches
+    /// most among them hold under kCutShare/kCutShareOf of its moving ones
+    static constexpr int kCutChanged = 4;
+    static constexpr int kCutLayers = 3;
+    static constexpr int kCutShare = 2, kCutShareOf = 3;
     /// A block's allowed vectors at most: the common ones and the 3 x 3 blocks' of both fields
     static constexpr size_t kMaxAllowed = kCommon + 2 * 9;
 
@@ -63,8 +68,9 @@ public:
     static std::vector<V> CommonVectors(const MotionField& prev, const MotionField& next, const Picture& p,
                                         const Picture& a, const Picture& b);
 
-    /// The picture between `a` and `b` at the weight `w` (0..kOne) into `out` (a's size). `p` is the frame before
-    /// `a`; `prev` the field p -> a, `next` the field a -> b, both estimated over MotionField::kRangeFrames
+    /// The picture between `a` and `b` at the weight `w` (0..kOne, clamped to it: no extrapolation) into `out` (a's
+    /// size). `p` is the frame before `a`; `prev` the field p -> a, `next` the field a -> b, both estimated over
+    /// MotionField::kRangeFrames
     void Compose(const Picture& p, const Picture& a, const Picture& b, const MotionField& prev, const MotionField& next,
                  int w, uint32_t* out);
     /// Compose's per-vector and per-pixel passes split over the pool's threads (null: the caller's alone); the same
@@ -84,8 +90,10 @@ public:
         size_t common = 0;   ///< the common ones at the front of `all`
         int reach = 0;       ///< the longest component of a vector
         int blocksWide = 0, blocksHigh = 0;
-        /// per block: the common vectors, then the 3 x 3 blocks' (next, prev) that are in `all`
+        /// per block: the common vectors, then the 3 x 3 blocks' (next, prev) that are in `all`; zero alone in a cut
         std::vector<std::vector<int>> allowed;
+        /// a cut (a page or a screen flipped): no layer moves, every block zero alone (Decide: zero or nothing)
+        bool cut = false;
         std::vector<std::pair<V, int>> counts;  ///< Prepare's own: the matched vectors and their blocks
         std::vector<uint8_t> kept;              ///< ... and which of them stay
     };
@@ -185,7 +193,7 @@ private:
     std::vector<int> _blockVector;
     std::vector<int8_t> _explainsAt;
     DecideScratch _decide;
-    std::vector<std::array<TopOf, 3>> _topAt;  ///< the aliases rule's top three per pixel of a block
+    std::vector<int> _ownAnswers, _askOf;  ///< the aliases rule's answers per ask, the asks per block
     Layers _layers;
     ThreadPool* _pool = nullptr;
     static constexpr int kVectorParts = 8;  ///< the per-vector pass's split over a pool

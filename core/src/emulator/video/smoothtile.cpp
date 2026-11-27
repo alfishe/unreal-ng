@@ -6,6 +6,16 @@
 namespace smoothmotion
 {
 
+namespace
+{
+/// The frame is of the size asked for (a source that gives no geometry: taken as it is)
+bool FitsFrame(const PresentFrameInfo& info, int width, int height)
+{
+    return info.geometry.width == 0 ||
+           (static_cast<int>(info.geometry.width) == width && static_cast<int>(info.geometry.height) == height);
+}
+}  // namespace
+
 void Tile::SetMode(Mode mode)
 {
     _engine.SetOwnThreads(false);
@@ -77,19 +87,22 @@ Tile::Step Tile::AdvanceTimed(const NextFrame& next, int width, int height, int6
                 info.serial <= _lastSerial)
                 break;
             _lastSerial = info.serial;
+            if (!FitsFrame(info, width, height))
+                continue;
+            _picture.swap(_next);  // the next read may be of another size: what came is kept now
             _geometry = info.geometry;
             _stats.frames++;
             came = true;
         }
         if (!came)
             return _lastSerial ? Step::Unchanged : Step::Nothing;
-        _picture.swap(_next);
         _shown = {Kind::Frame, _lastSerial, _lastSerial, _lastSerial, 0};
         _stats.pictures++;
         return Step::Updated;
     }
 
     // Every frame once, in order; no more than the engine keeps
+    uint64_t unpacedSerial = 0;  // the newest unpaced frame that came now
     for (size_t k = 0; k < SmoothMotion::kFrames; k++)
     {
         PresentFrameInfo info;
@@ -98,11 +111,28 @@ Tile::Step Tile::AdvanceTimed(const NextFrame& next, int width, int height, int6
         if (info.serial <= _lastSerial)
             break;  // not a newer frame: a source that repeats itself would loop here
         _lastSerial = info.serial;
-        if (info.atOnce != _atOnce)
+        // Of another size than the machine's frame now (a video mode switch between the two reads): its pixels are
+        // not rows of `width`
+        if (!FitsFrame(info, width, height))
+            continue;
+        // Low latency (due at once) or not paced to real time (turbo, stepping: timed by the latch): no picture
+        // between the frames, the newest as it is. Nothing goes to the engine (its copies and flicker searches only
+        // held the wall up; the window does the same, smoothActive)
+        const bool unpaced = info.atOnce || info.source == FrameClockSource::Latch;
+        if (unpaced != _unpaced)
         {
-            _atOnce = info.atOnce;
+            _unpaced = unpaced;
             _engine.Reset();
             _shown = {};
+        }
+        if (unpaced)
+        {
+            _picture.swap(_next);
+            _geometry = info.geometry;
+            _stats.frames++;
+            unpacedSerial = info.serial;
+            _moving = true;
+            continue;
         }
         _engine.Push(info.serial, info.targetNs, _next.data(), width, height);
         _pulled[_nextPulled] = {info.serial, info.geometry};
@@ -110,13 +140,18 @@ Tile::Step Tile::AdvanceTimed(const NextFrame& next, int width, int height, int6
         _stats.frames++;
         _moving = true;
     }
+    if (_unpaced)
+    {
+        if (unpacedSerial == 0)
+            return _shown.kind == Kind::None ? Step::Nothing : Step::Unchanged;
+        _shown = {Kind::Frame, unpacedSerial, unpacedSerial, unpacedSerial, 0};
+        _stats.pictures++;
+        return Step::Updated;
+    }
     if (_lastSerial == 0 || _engine.LastSerial() == 0)
         return Step::Nothing;
 
-    // Low latency: the newest frame as it is (the engine's times are of no use, the frame is due at once)
-    SmoothMotion::Result plan = _atOnce ? _engine.Plan(INT64_MAX) : _engine.Plan(tNs);
-    if (_atOnce && plan.kind != Kind::None)
-        plan = {Kind::Frame, plan.serial, plan.serial, plan.serial, 0};
+    SmoothMotion::Result plan = _engine.Plan(tNs);
     if (plan.kind == Kind::None)
         return Step::Nothing;
     // Never a picture older than the one shown (a late call after the frames moved on)

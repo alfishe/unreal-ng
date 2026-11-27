@@ -18,10 +18,14 @@ inline uint32_t Hash(uint32_t x, uint32_t y, uint32_t s)
     return h;
 }
 
-/// Frame k of sparse dots over black paper. Blocks: per 8 x 8 block a layer of its own, moving by its own vector (48
-/// vectors, neighbours differ): more vectors than LayerFlow::kMaxVectors. Layered: 16 layers over every pixel, each
-/// its own vector, so every still pixel asks the cover rule about many moving vectors
-inline std::vector<uint32_t> Dots(int width, int height, int k, bool layered)
+/// Sparse dots over black paper, each layer's own (DotsOf's kinds)
+enum class DotsKind
+{
+    Blocks,     ///< per 8 x 8 block a layer of its own (48 vectors, neighbors differ)
+    Layered,    ///< 16 layers over every pixel, each its own vector
+    OverLayers  ///< three layers in bands of 3 block rows, every fourth block (diagonals) a layer of its own
+};
+inline std::vector<uint32_t> DotsOf(int width, int height, int k, DotsKind kind)
 {
     using V = smoothmotion::MotionField::Vector;
     std::vector<V> vectors;
@@ -38,15 +42,68 @@ inline std::vector<uint32_t> Dots(int width, int height, int k, bool layered)
         if (h % every == 0)
             frame[static_cast<size_t>(y) * width + x] = ink[(h >> 8) & 3];
     };
+    const int blocksWide = (width + 7) / 8;
     for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
-            if (layered)
+            if (kind == DotsKind::Layered)
                 for (size_t layer = 0; layer < 16; layer++)
                     dot(x, y, layer * 3 % vectors.size(), 40);
-            else
+            else if (kind == DotsKind::Blocks)
                 dot(x, y, static_cast<size_t>(x / 8 * 7 + y / 8 * 3) % vectors.size(), 9);
+            else if ((x / 8 + y / 8) % 4 == 0)  // denser: a block of its own matches its vector, not a chance one
+                dot(x, y, static_cast<size_t>((y / 8 * blocksWide + x / 8) / 4 * 5) % vectors.size(), 5);
+            else
+                dot(x, y, static_cast<size_t>(y / 24 % 3 * 17 + 5), 9);
     return frame;
 }
+/// Frame k of sparse dots over black paper. Blocks: per 8 x 8 block a layer of its own, moving by its own vector (48
+/// vectors, neighbors differ): more vectors than LayerFlow::kMaxVectors. Layered: 16 layers over every pixel, each
+/// its own vector, so every still pixel asks the cover rule about many moving vectors
+inline std::vector<uint32_t> Dots(int width, int height, int k, bool layered)
+{
+    return DotsOf(width, height, k, layered ? DotsKind::Layered : DotsKind::Blocks);
+}
+/// Frame k of dots past LayerFlow's cap that is not a cut: three layers hold three quarters of the blocks, every
+/// fourth block moves its own way (more vectors than LayerFlow::kMaxVectors). A picture of blocks each moving its own
+/// way is a cut (LayerFlow::kCutLayers): no layer moves
+inline std::vector<uint32_t> DotsOverLayers(int width, int height, int k)
+{
+    return DotsOf(width, height, k, DotsKind::OverLayers);
+}
+/// Frame k (0..3) of layers LayerFlow's rules work on: a row of dots moving by its period (the still look-alike ties
+/// with the motion, the row's ends tell), dashes of period 8 moving by 1 over a still pattern (+1 and -7 alike), a
+/// sprite over paper (its holes: cover), a scrolled band and a blinking cell. At least 58 x 46 pixels
+inline std::vector<uint32_t> LayerScene(int width, int height, int k)
+{
+    std::vector<uint32_t> frame(static_cast<size_t>(width) * height, 0xFF202020u);
+    const auto at = [&](int x, int y) -> uint32_t& { return frame[static_cast<size_t>(y) * width + x]; };
+    const auto pattern = [](int x, int y) {
+        return Hash(static_cast<uint32_t>(x), static_cast<uint32_t>(y), 0) | 0xFF000000u;
+    };
+    for (int y = 4; y < 6; y++)
+        for (int i = 0; i < 12; i++)
+            at(8 + 4 * k + 4 * i, y) = 0xFFE0E0E0u;
+    for (int y = 12; y < 20; y++)
+        for (int x = 0; x < width; x++)
+        {
+            if ((x * 7 + y * 3) % 11 == 0)
+                at(x, y) = 0xFF4080C0u;
+            if ((x - k) % 8 < 3 && (x - k) >= 0)
+                at(x, y) = 0xFFF0C040u;
+        }
+    for (int y = 0; y < 10; y++)
+        for (int x = 0; x < 10; x++)
+            if ((x + y) % 3 != 0)
+                at(30 + 6 * k + x, 30 + 2 * k + y) = pattern(x + 9000, y + 9000);
+    for (int y = height - 16; y < height - 6; y++)
+        for (int x = 0; x < width; x++)
+            at(x, y) = pattern(x + 3 * k, y) & 0xFF7F7F7Fu;
+    for (int y = 0; y < 6; y++)
+        for (int x = 0; x < 6; x++)
+            at(width - 10 + x, 30 + y) = k % 2 ? 0xFFFF0000u : 0xFF0000FFu;
+    return frame;
+}
+
 /// The scene set the layers' rules are judged by (presenter stabilization README, section 1.6: content not covered).
 /// ZX-like pictures: the 15 colors, a cell of ink and paper per 8 x 8 (8 x 1 in multicolor). Every generator takes
 /// the frame's number `k` (>= 0) and returns RGBA8 pixels, row by row
@@ -138,6 +195,26 @@ inline std::vector<uint32_t> Border(int width, int height, int border, int k, bo
             frame[static_cast<size_t>(y) * width + x] =
                 InPaper(width, height, border, x, y) ? ZxPixel(x - border, y - border, 14) : line;
     }
+    return frame;
+}
+
+/// A page of text: per 8 x 8 cell a letter of an 8-letter alphabet or a space, white ink on blue paper (a glyph's
+/// last column and row blank, as a font's). `page` picks the letters: a page flip changes them in place, and with so
+/// few letters many a cell's new letter is the old one of a cell next to it (a block matched one cell over)
+inline std::vector<uint32_t> TextPage(int width, int height, int page)
+{
+    std::vector<uint32_t> frame(static_cast<size_t>(width) * height);
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            const uint32_t letter = Hash(static_cast<uint32_t>(x / 8), static_cast<uint32_t>(y / 8),
+                                         0x7E47u + static_cast<uint32_t>(page)) %
+                                    10;
+            const int gx = x % 8, gy = y % 8;
+            const bool ink =
+                letter < 8 && gx < 7 && gy < 7 && Hash(letter, static_cast<uint32_t>(gy * 8 + gx), 0x6C1Fu) % 8 < 3;
+            frame[static_cast<size_t>(y) * width + x] = ZxColor(ink ? 7 : 1, false);
+        }
     return frame;
 }
 

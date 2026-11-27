@@ -232,6 +232,8 @@ ScreenFrames TimedFrameSource(Screen* screen, EmulatorContext* context)
         source.displayRate = static_cast<DisplayRate>(context->config.displayRate);
     source.at = [screen, context](int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
         PresentFrameInfo shown;
+        if (info)
+            shown.content = info->content;  // the version the caller's buffer holds: not copied again
         if (!context || !screen->CopyFrameAt(hostNs, dst, dstSize, &shown))
             return false;
         if (info)
