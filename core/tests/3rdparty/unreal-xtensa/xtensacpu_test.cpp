@@ -509,10 +509,12 @@ TEST_F(XtensaCpu_Test, PsramAliasesShareOneBuffer)
 /// off, nothing is recorded and the stores take their usual path
 TEST_F(XtensaCpu_Test, WriteWatchRecordsEveryWrittenPageOnce)
 {
+    // The host address of the guest's 4 KB page (the buffer's address plus the page's offset): a buffer need not
+    // start on a host page (glibc's large malloc is the mmap'ed block plus 16 bytes; macOS's happened to be aligned)
     auto page = [&](uint32_t guest) {
-        return reinterpret_cast<uintptr_t>(guest >= kDram && guest < kDram + kDramSize ? dram.data() + (guest - kDram)
-                                                                                        : iram.data() + (guest - kIram)) &
-               ~uintptr_t(0xFFF);
+        const bool inDram = guest >= kDram && guest < kDram + kDramSize;
+        const uint32_t offset = (guest - (inDram ? kDram : kIram)) & ~0xFFFu;
+        return reinterpret_cast<uintptr_t>((inDram ? dram.data() : iram.data()) + offset);
     };
     auto count = [&](uintptr_t p) {
         return std::count(cpu.WrittenPages().begin(), cpu.WrittenPages().end(), p);
@@ -524,9 +526,10 @@ TEST_F(XtensaCpu_Test, WriteWatchRecordsEveryWrittenPageOnce)
     EXPECT_EQ(Call(kStorebyte, {kBuf + 0x10, 0x11}), 0x11u);
     EXPECT_EQ(Call(kStorebyte, {kBuf + 0x20, 0x22}), 0x22u);
     EXPECT_EQ(count(page(kBuf)), 1) << "a guest store, once per arming";
-    const uint32_t far = kBuf + 0x8000;
-    ASSERT_TRUE(cpu.Write32(far, 0xDEADBEEFu));
-    EXPECT_EQ(count(page(far)), 1) << "a host Write32";
+    // not "far": a macro of windef.h (MinGW, MSVC)
+    const uint32_t farAway = kBuf + 0x8000;
+    ASSERT_TRUE(cpu.Write32(farAway, 0xDEADBEEFu));
+    EXPECT_EQ(count(page(farAway)), 1) << "a host Write32";
     ASSERT_TRUE(cpu.Write8(kIncrement + 5, 10));  // ADDI imm8: into decoded code
     EXPECT_EQ(count(page(kIncrement)), 1) << "a code page";
     EXPECT_EQ(Call(kIncrement, {5}), 15u) << "the code still drops on a write while watched";
@@ -541,7 +544,7 @@ TEST_F(XtensaCpu_Test, WriteWatchRecordsEveryWrittenPageOnce)
 
     cpu.WatchWrites(false);
     EXPECT_EQ(Call(kStorebyte, {kBuf + 0x40, 0x44}), 0x44u);
-    ASSERT_TRUE(cpu.Write32(far, 1));
+    ASSERT_TRUE(cpu.Write32(farAway, 1));
     EXPECT_TRUE(cpu.WrittenPages().empty()) << "off: nothing recorded";
     EXPECT_EQ(dram[kBuf - kDram + 0x40], 0x44);
 }

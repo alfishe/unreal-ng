@@ -551,7 +551,8 @@ TEST_F(MemoryAccessTracker_Test, ResetWhileAnotherThreadTogglesTracking)
             }
         },
         [&] { done = true; });
-    ASSERT_TRUE(TestWait::For([&] { return toggles.load() > 0; })) << "the toggling thread runs";
+    ASSERT_TRUE(TestWait::For([&] { return toggles.load() > 0; }, std::chrono::seconds(15)))
+        << "the toggling thread runs";
     // Each reset waits for the next toggle, so both sides make progress (a reset holds the mutex for its 75 MB)
     int resets = 0;
     int interleaved = 0;
@@ -559,7 +560,9 @@ TEST_F(MemoryAccessTracker_Test, ResetWhileAnotherThreadTogglesTracking)
     {
         const int before = toggles.load();
         _tracker->ResetCounters();
-        interleaved += TestWait::For([&] { return toggles.load() > before; }) ? 1 : 0;
+        // The bound is for a stuck toggler only: on a loaded machine (24 test processes) the thread waits seconds
+        // for a CPU, and 2 s missed a toggle
+        interleaved += TestWait::For([&] { return toggles.load() > before; }, std::chrono::seconds(15)) ? 1 : 0;
     }
     toggler.Join();
     EXPECT_EQ(interleaved, resets) << "a free or an allocation ran after every reset";
@@ -600,7 +603,8 @@ TEST_F(MemoryAccessTracker_Test, ReadsWhileAnotherThreadSwitchesTrackingOff)
             }
         },
         [&] { done = true; });
-    ASSERT_TRUE(TestWait::For([&] { return toggles.load() > 0; })) << "the toggling thread runs";
+    ASSERT_TRUE(TestWait::For([&] { return toggles.load() > 0; }, std::chrono::seconds(15)))
+        << "the toggling thread runs";
 
     int rounds = 0;
     int interleaved = 0;
@@ -630,7 +634,8 @@ TEST_F(MemoryAccessTracker_Test, ReadsWhileAnotherThreadSwitchesTrackingOff)
         sum += _tracker->GetZ80AddressReadCount(0x8000) + _tracker->GetZ80AddressExecuteCount(0xFFFF) +
                _tracker->GetPageTotalAccessCount(5) + _tracker->GetPageWriteAccessCount(5) +
                (_tracker->HasActivity(0x4000, 0x40FF) ? 1 : 0);
-        interleaved += TestWait::For([&] { return toggles.load() > before; }) ? 1 : 0;
+        // A bound for a stuck toggler only (see ResetWhileAnotherThreadTogglesTracking)
+        interleaved += TestWait::For([&] { return toggles.load() > before; }, std::chrono::seconds(15)) ? 1 : 0;
     }
     toggler.Join();
     EXPECT_EQ(interleaved, rounds) << "a free or an allocation ran after every read";
