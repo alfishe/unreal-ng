@@ -196,11 +196,6 @@ const ChipTable& GetChipTable(EveModel model)
     return model == EVE_MODEL_VDAC4 ? kVdac4Table : kFt812Table;
 }
 
-const RegInfo& RegisterInfo(const EveChip& chip, Reg reg)
-{
-    return chip.table->registers[static_cast<size_t>(reg)];
-}
-
 const RegInfo* FindRegister(const EveChip& chip, uint32_t address)
 {
     const RegisterLookup& lookup = kFt812Lookup;
@@ -212,13 +207,6 @@ const RegInfo* FindRegister(const EveChip& chip, uint32_t address)
     if (index == 0)
         return nullptr;
     return &chip.table->registers[index - 1];
-}
-
-uint32_t RegGet(const EveChip& chip, Reg reg)
-{
-    // The chip works with the register's own bits; the storage may hold more.
-    const RegInfo& info = RegisterInfo(chip, reg);
-    return LoadLe32(RegisterBytes(chip, info)) & info.mask;
 }
 
 void RegSet(EveChip& chip, Reg reg, uint32_t value)

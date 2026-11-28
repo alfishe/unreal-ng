@@ -106,6 +106,8 @@ public:
     uint32_t RasterAt(uint32_t t) const;
     /// Latch the events up to frame T-state t (before a write changes the mask or the frame INT position)
     void CatchUpTo(uint32_t t) { CatchUp(RasterAt(t)); }
+    /// OnMachineStep with the raster already known (RasterAt of the step's T-state: the engine computes it once)
+    void OnMachineStepAt(uint32_t raster) { CatchUp(raster); }
 
 private:
     /// Latch the events of raster tacts [intLastRaster, raster]
