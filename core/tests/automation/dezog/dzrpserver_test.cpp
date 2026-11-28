@@ -69,8 +69,15 @@ public:
         }
     }
 
+    // A bound for a broken server only: INIT pauses the machine and starts its history, seconds on a loaded machine
+    // (24 test processes at once), and an answer late past the bound was read as the next command's
+    static int WireTimeoutMs()
+    {
+        return static_cast<int>(TestWait::Scaled(std::chrono::milliseconds(15000)).count());
+    }
+
     // Returns full frame body (seq byte + payload), empty on timeout/close
-    std::vector<uint8_t> recvFrame(int timeoutMs = 3000)
+    std::vector<uint8_t> recvFrame(int timeoutMs = WireTimeoutMs())
     {
         std::vector<uint8_t> header(4);
         if (!recvExact(header, timeoutMs))
@@ -132,7 +139,7 @@ public:
         bool valid = false;
     };
 
-    PauseNotification waitNotification(int timeoutMs = 3000)
+    PauseNotification waitNotification(int timeoutMs = WireTimeoutMs())
     {
         PauseNotification ntf;
         std::vector<uint8_t> body;
@@ -192,6 +199,10 @@ std::vector<uint8_t> cat(std::initializer_list<std::vector<uint8_t>> parts)
 
 }  // namespace
 
+// The bound of a wait for the server's own thread (a connection seen, a session released): a broken server only, the
+// waits end at the event; 2 s missed it with 24 test processes on the machine
+constexpr std::chrono::milliseconds kServerWait{15000};
+
 class DZRPServer_test : public DezogEmulatorFixture
 {
 protected:
@@ -216,7 +227,7 @@ protected:
         // not yet a session. Waiting on the server's view of that - rather than
         // on a 20 ms guess paid by all 24 tests in this suite - is both faster
         // and the thing the next command actually depends on.
-        ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)))
+        ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, kServerWait))
             << "server never accepted the client session";
     }
 
@@ -522,7 +533,7 @@ TEST_F(DZRPServer_test, PauseCommandNotifiesManual)
 
     auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0));
     ASSERT_TRUE(cont.valid);
-    EXPECT_TRUE(TestWait::For([&] { return !_emulator->IsPaused(); }, std::chrono::milliseconds(2000)))
+    EXPECT_TRUE(TestWait::For([&] { return !_emulator->IsPaused(); }, kServerWait))
         << "CMD_CONTINUE did not resume the emulator";
 
     auto pause = _client.command(dzrp::CommandId::CMD_PAUSE);
@@ -608,12 +619,12 @@ TEST_F(DZRPServer_test, CloseThenReconnect)
     auto close = _client.command(dzrp::CommandId::CMD_CLOSE);
     ASSERT_TRUE(close.valid);
     _client.disconnect();
-    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, kServerWait))
         << "server did not release the closed session";
 
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, kServerWait));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     auto resp = second.command(dzrp::CommandId::CMD_INIT, payload);
     EXPECT_TRUE(resp.valid);
@@ -635,7 +646,7 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
     // server notices the dropped socket on its own thread.
     EXPECT_TRUE(TestWait::For(
         [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
-        std::chrono::milliseconds(2000)))
+        kServerWait))
         << "dropped session left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
         << " breakpoints, paused=" << _emulator->IsPaused();
 
@@ -646,7 +657,7 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
     // Fresh session works as if nothing happened
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, kServerWait));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_INIT, payload).valid);
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_PAUSE).valid);
@@ -667,7 +678,7 @@ TEST_F(DZRPServer_test, CloseCommandResumesAndDropsBreakpoints)
 
     EXPECT_TRUE(TestWait::For(
         [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
-        std::chrono::milliseconds(2000)))
+        kServerWait))
         << "CMD_CLOSE left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
         << " breakpoints, paused=" << _emulator->IsPaused();
 
@@ -779,7 +790,7 @@ TEST_F(DZRPServer_test, HistoryEntryWireFormat)
 TEST_F(DZRPServer_test, NotificationWithoutClientDoesNotCrash)
 {
     _client.disconnect();
-    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, kServerWait))
         << "server still holds a session; the notify below would not exercise the no-client path";
     _server->notifyPause(dzrp::BreakReason::MANUAL, 0x1234, 0);
     SUCCEED();

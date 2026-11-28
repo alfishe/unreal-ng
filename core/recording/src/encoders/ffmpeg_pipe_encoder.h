@@ -150,6 +150,7 @@ private:
         std::string ymapPath;
         bool neighbor = false;  ///< swscale's nearest scaling, no remap tables (NeighborIsFrameScaler)
         std::thread stderrThread;
+        std::atomic<bool> stderrDone{false};  ///< the reader reached the end of ffmpeg's stderr
         int exitCode = 0;
     };
     bool startSegment(uint32_t width, uint32_t height);
@@ -238,6 +239,7 @@ private:
     // Continuously drains ffmpeg's stderr into _diagnostics. Without a reader
     // the stderr pipe fills on long recordings and ffmpeg blocks mid-encode.
     std::thread _stderrThread;
+    std::atomic<bool> _stderrDone{false};
     std::mutex _queueMutex;
     std::condition_variable _queueCond;
 
@@ -255,6 +257,11 @@ private:
     void recycleFrameBuffer(std::vector<uint8_t>&& buffer);  // call with _queueMutex held
     std::deque<FrameData> _audioQueue;
 
+    // Since when (steady clock, ms; 0: frames flow) the video writer waits for its ffmpeg to take a first frame: the
+    // pipe's connection, the process start and the encoder's opening (a GPU encoder: about a second on Windows, more
+    // on a loaded machine). Stop counts that as progress, up to STARTUP_MS, and does not kill a starting ffmpeg
+    std::atomic<int64_t> _writerStartingSinceMs{0};
+    void markWriterStarting();
     std::atomic<bool> _cancelRequested{false};   // Hard abort: in-flight writes give up
     std::atomic<bool> _drainRequested{false};    // Graceful stop: flush queues, then exit
     std::atomic<bool> _workerFailed{false};

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -102,15 +103,29 @@ private:
 #endif
     }
 
+    static bool IsPidName(const std::string& name)
+    {
+        // PIDs fit in 10 digits on every supported platform; anything
+        // longer or non-numeric is a named folder, not a process dir.
+        return !name.empty() && name.size() <= 10 && name.find_first_not_of("0123456789") == std::string::npos;
+    }
+
     /// Remove scratch/<pid>/ directories of processes that are no longer
     /// running (crashed or killed hard - normal exits clean up after
     /// themselves). Collects candidates first so the directory iterator is
     /// never advanced over an entry being removed.
+    ///
+    /// Processes started together sweep together: each stale directory is
+    /// first claimed by a rename to sweep-<pid>-<own pid> (one process wins,
+    /// the others skip it), and only its claimer removes it. Two remove_all
+    /// over one tree lost entries under each other, and libstdc++'s
+    /// remove_all on Windows (MinGW) then spun forever at full CPU in main().
+    /// A claim left by a sweeper that died is claimed again.
     static void SweepStaleProcessDirs(const fs::path& scratchRoot)
     {
-        std::vector<fs::path> stale;
+        std::vector<std::pair<fs::path, std::string>> stale;
         std::error_code ec;
-        const fs::path ownDir = scratchRoot / std::to_string(CurrentPid());
+        const std::string ownPid = std::to_string(CurrentPid());
         for (const auto& entry : fs::directory_iterator(scratchRoot, ec))
         {
             if (!entry.is_directory(ec))
@@ -118,22 +133,33 @@ private:
                 continue;
             }
             const std::string name = entry.path().filename().string();
-            // PIDs fit in 10 digits on every supported platform; anything
-            // longer or non-numeric is a named folder, not a process dir.
-            if (name.empty() || name.size() > 10 || name.find_first_not_of("0123456789") != std::string::npos)
+            std::string pid = name;
+            std::string owner = name;
+            if (name.rfind("sweep-", 0) == 0)
+            {
+                const size_t dash = name.find('-', 6);
+                if (dash == std::string::npos)
+                    continue;
+                pid = name.substr(6, dash - 6);
+                owner = name.substr(dash + 1);
+            }
+            if (!IsPidName(pid) || !IsPidName(owner) || owner == ownPid ||
+                IsProcessAlive(std::strtoull(owner.c_str(), nullptr, 10)))
             {
                 continue;
             }
-            if (entry.path() == ownDir || IsProcessAlive(std::strtoull(name.c_str(), nullptr, 10)))
-            {
-                continue;
-            }
-            stale.push_back(entry.path());
+            stale.emplace_back(entry.path(), pid);
         }
-        for (const fs::path& path : stale)
+        for (const auto& [path, pid] : stale)
         {
+            const fs::path claimed = scratchRoot / ("sweep-" + pid + "-" + ownPid);
             std::error_code removeEc;
-            fs::remove_all(path, removeEc);
+            fs::rename(path, claimed, removeEc);
+            if (removeEc)
+            {
+                continue;  // another process claimed it first
+            }
+            fs::remove_all(claimed, removeEc);
         }
     }
 
