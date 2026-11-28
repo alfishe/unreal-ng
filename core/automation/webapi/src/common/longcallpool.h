@@ -1,9 +1,11 @@
 #pragma once
 
-// Long run-control calls off the HTTP workers (debugger additions tdd §5, finding F4). The server has two drogon
+// Long calls (run control, synchronous TTD and analysis verbs) off the HTTP workers (debugger additions tdd §5,
+// finding F4). The server has two drogon
 // worker threads; a /skip_until of 700 million T-states on one of them stalled every other request. A long handler
 // hands its work to this pool and returns; the pool thread answers through drogon's callback (drogon allows that
-// from any thread), so the reply is the same as before and the workers stay free.
+// from any thread), so the reply is the same as before and the workers stay free. The work keeps the asker's
+// operation source (coordinator::SetThreadSource), so the operation log names WebAPI / MCP as on the worker.
 
 #include <condition_variable>
 #include <deque>
@@ -11,6 +13,8 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+
+#include "emulator/coordinator/machineop.h"
 
 class LongCallPool
 {
@@ -26,7 +30,10 @@ public:
     {
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            _queue.push_back(std::move(work));
+            _queue.push_back([source = coordinator::CurrentSource(), work = std::move(work)]() {
+                const coordinator::SourceScope scope(source);
+                work();
+            });
         }
         _ready.notify_one();
     }

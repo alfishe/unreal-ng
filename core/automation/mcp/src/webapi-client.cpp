@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace mcp
 {
@@ -37,45 +38,58 @@ namespace
 
 /// region <WebApiClient>
 
-WebApiClient::~WebApiClient()
+/// The loopback connections and the calls each has not answered yet
+struct WebApiClient::Connections
 {
-    delete static_cast<drogon::HttpClientPtr*>(_client);
-}
-
-void WebApiClient::EnsureClient()
-{
-    if (_client != nullptr)
+    struct Connection
     {
-        return;
+        drogon::HttpClientPtr client;
+        size_t unanswered = 0;
+    };
+
+    /// The connection for the next call (requires the drogon app loop to be running); Release gives it back
+    std::pair<drogon::HttpClientPtr, size_t> Acquire()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        size_t best = 0;
+        for (size_t i = 1; i < list.size(); ++i)
+            if (list[i].unanswered < list[best].unanswered)
+                best = i;
+        if (list.empty() || (list[best].unanswered != 0 && list.size() < kMaxConnections))
+        {
+            // The drogon app loop is available once the WebAPI thread has called run(). Calls can only arrive
+            // through the /mcp endpoint which is served after that, so getLoop() is always valid here.
+            long port = 8090;
+            if (const char* portEnv = std::getenv("UNREAL_WEBAPI_PORT"))
+            {
+                const long parsed = std::strtol(portEnv, nullptr, 10);
+                if (parsed >= 1 && parsed <= 65535)
+                    port = parsed;
+            }
+            const std::string url = "http://127.0.0.1:" + std::to_string(port);
+            list.push_back({drogon::HttpClient::newHttpClient(url, drogon::app().getLoop()), 0});
+            best = list.size() - 1;
+        }
+        ++list[best].unanswered;
+        return {list[best].client, best};
     }
 
-    // The drogon app loop is available once the WebAPI thread has called run().
-    // Calls can only arrive through the /mcp endpoint which is served by the
-    // same loop, so getLoop() is always valid here.
-    long port = 8090;
-    if (const char* portEnv = std::getenv("UNREAL_WEBAPI_PORT"))
+    void Release(size_t index)
     {
-        const long parsed = std::strtol(portEnv, nullptr, 10);
-        if (parsed >= 1 && parsed <= 65535)
-            port = parsed;
+        std::lock_guard<std::mutex> lock(mutex);
+        --list[index].unanswered;
     }
-    const std::string url = "http://127.0.0.1:" + std::to_string(port);
-    auto* client = new drogon::HttpClientPtr(drogon::HttpClient::newHttpClient(url, drogon::app().getLoop()));
-    _client = client;
-}
+
+    std::mutex mutex;
+    std::vector<Connection> list; // only grows: an index stays valid
+};
+
+WebApiClient::WebApiClient() : _connections(std::make_shared<Connections>()) {}
+
+WebApiClient::~WebApiClient() = default;
 
 void WebApiClient::Call(const std::string& method, const std::string& path, const Json::Value* body, ApiCallback callback)
 {
-    EnsureClient();
-
-    auto* holder = static_cast<drogon::HttpClientPtr*>(_client);
-    if (!holder || !*holder)
-    {
-        std::cerr << "MCP WebApiClient: loopback client unavailable" << std::endl;
-        callback(0, Json::Value());
-        return;
-    }
-
     drogon::HttpRequestPtr req;
     if (body != nullptr)
     {
@@ -120,7 +134,10 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
     req->addHeader("X-Unreal-Source", "mcp");   // the operation log names the MCP server, not the WebAPI
 
     // No timeout (0): a long call (run_frames, record/frames, the window recording's stop) answers when it is done
-    (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+    const auto [client, index] = _connections->Acquire();
+    client->sendRequest(req, [this, callback, connections = _connections, index = index](
+                                 drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+        connections->Release(index); // first: the callback's next call may take it
         if (result != drogon::ReqResult::Ok || !resp)
         {
             callback(0, Json::Value());
@@ -143,16 +160,6 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
                            const std::map<std::string, std::string>& headers,
                            ApiCallback callback)
 {
-    EnsureClient();
-
-    auto* holder = static_cast<drogon::HttpClientPtr*>(_client);
-    if (!holder || !*holder)
-    {
-        std::cerr << "MCP WebApiClient: loopback client unavailable" << std::endl;
-        callback(0, Json::Value());
-        return;
-    }
-
     auto req = drogon::HttpRequest::newHttpRequest();
     SetRequestPath(req, path);
     req->setBody(std::string(reinterpret_cast<const char*>(body.data()), body.size()));
@@ -172,7 +179,10 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
         req->addHeader("X-Unreal-Session", session);
     req->addHeader("X-Unreal-Source", "mcp");   // the operation log names the MCP server, not the WebAPI
 
-    (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+    const auto [client, index] = _connections->Acquire();
+    client->sendRequest(req, [this, callback, connections = _connections, index = index](
+                                 drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+        connections->Release(index); // first: the callback's next call may take it
         if (result != drogon::ReqResult::Ok || !resp)
         {
             callback(0, Json::Value());

@@ -85,7 +85,9 @@ What the check found instead, in the open tasks of the
    request at a time. During the synchronous search every MCP call waited for it (3.5 and 5.7 s here) and so did
    each REST call that landed on the same I/O thread (every second one). A job leaves both free. The `jobs` tool's
    `wait` is a long-poll on that same loopback connection: while one client waits, the other MCP calls wait with
-   it (3.7 and 5.5 s here); `jobs status` does not. Not changed here.
+   it (3.7 and 5.5 s here); `jobs status` does not.
+   Fixed the same day: MCP takes a loopback connection per unanswered call, and the synchronous long TTD and analysis
+   verbs answer from the long-call pool, off the I/O threads (`tools/verification/mcp/test_parallel_calls.py`).
 2. `memory-at` at a frame start and `memory-diff` read the piece store only and still pause a running machine.
    Outcome (RQ-2, 2026-11-27): fixed. `memory-at` at a frame start, `memory-diff` and `memory-series` hold the
    machine for the call only; a running machine runs on and a recording keeps recording, with the bytes the

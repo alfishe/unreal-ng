@@ -672,6 +672,11 @@ The WebAPI's `skip_until`, `run_to_pixel` and the listing routes run on the long
 since 2026-10-21 (the listing ones ran on an I/O thread before); `skip_until` answers `hit`, `target`, `max_tstates`
 and `stop`.
 
+So do, since 2026-11-27, the synchronous forms of the long TTD verbs (those that take `async=true`: `find-last`,
+`reverse-continue`, `probe-frames`, `dump`, `load`, ...) and of `analysis` `experiment`, `cover`, `trace` and `build`
+with `wait`: a long call of one client holds no other client's request. The pool has 4 threads, a fifth long call
+waits for one.
+
 **Run until, and frame watches** (`core/src/debugger/watch/framewatch.h`,
 [design](../../../inprogress/2026-11-03-run-until-watches/README.md)). One spec, checked at every frame end: `if` (the
 conditional-breakpoint language without access operands: `M(x)`, `W(x)`, registers, `FRAME`, `x@prev`, labels), `text`

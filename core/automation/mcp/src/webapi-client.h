@@ -60,14 +60,20 @@ public:
 
 /// region <WebApiClient>
 
-/// IApiCaller implementation based on drogon::HttpClient against the loopback WebAPI
+/// IApiCaller implementation based on drogon::HttpClient against the loopback WebAPI.
+///
+/// A set of keep-alive connections, one unanswered call each: HTTP/1.1 answers a connection's requests in order, so
+/// on a single connection a long call (a synchronous search, `jobs wait`) held every other agent's call back. A call
+/// takes an idle connection, a new one is opened when all are busy (at most kMaxConnections, then the least busy)
 class WebApiClient : public IApiCaller
 {
 public:
-    WebApiClient() = default;
-    ~WebApiClient() override; // frees the lazily created drogon client
+    static constexpr size_t kMaxConnections = 16;
 
-    // Non-copyable: owns an opaque heap-allocated drogon client handle
+    WebApiClient();
+    ~WebApiClient() override;
+
+    // Non-copyable: owns the connections
     WebApiClient(const WebApiClient&) = delete;
     WebApiClient& operator=(const WebApiClient&) = delete;
 
@@ -90,10 +96,9 @@ private:
     std::string _implicitAdvice;      // pending for the dispatcher (guarded by _sessionMutex)
     std::string _advisedSession;      // the implicit session the agent was already told about
 
-    /// Lazily created loopback client (requires the drogon app loop to be running)
-    void EnsureClient();
-
-    void* _client = nullptr; // Opaque drogon::HttpClientPtr — avoids drogon types in this header
+    struct Connections; // the drogon clients — keeps drogon types out of this header
+    /// Shared with the response callbacks, which give their connection back
+    std::shared_ptr<Connections> _connections;
 };
 
 /// endregion </WebApiClient>

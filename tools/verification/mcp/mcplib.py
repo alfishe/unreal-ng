@@ -336,6 +336,8 @@ def launch(binary, port_base, needs=()):
             env[name] = str(port_base + offset)
     # No Stream Deck daemon of its own, whatever the user's setting says (test_streamdeck.py)
     env.setdefault('UNREAL_STREAMDECK_SUPERVISOR', 'off')
+    # Silent from the first sample (offscreen already plays nothing by default; this also holds with UNREAL_WINDOWLESS_DEVICES=sound)
+    env['UNREAL_START_MUTED'] = '1'
     # The picture as the defaults draw it: the user's View settings (GPU, CRT, scale, HUD) stay out
     env.setdefault('UNREAL_QT_VIEW_SETTINGS', 'off')
     # The files the scripts open stay out of the user's File > Recent Files (kept in memory only)

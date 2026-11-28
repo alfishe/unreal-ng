@@ -162,6 +162,14 @@ Core-level companions: `Z80TextAssembler_Test`, `ListingParser_Test`,
 `CoverageAnalyzer_Test`, `ScreenDigest_Test`, `CallTraceBuffer_Test`
 (hot/cold buffer pipeline incl. `FlushAllHotToCold` and Reset semantics).
 
+## The loopback connections
+
+A tool call reaches the emulator through the WebAPI on `127.0.0.1` (`webapi-client.cpp`). Each unanswered call has a
+keep-alive connection of its own (up to 16, then calls queue on the least busy one), so a long call or a `jobs wait`
+holds no other tool call back. On the WebAPI side long verbs answer from the long-call pool, not the HTTP workers
+([command-interface](../../../docs/emulator/design/control-interfaces/command-interface.md)). Live check:
+`tools/verification/mcp/test_parallel_calls.py`.
+
 ## Comparison with xspeccy-mcp
 
 | Aspect | xspeccy-mcp | unreal-ng (this module) |

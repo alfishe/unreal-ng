@@ -26,6 +26,7 @@
 #include <map>
 #include <string>
 
+#include "../common/longcallpool.h"
 #include "../common/statenode_json.h"
 #include "../emulator_api.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
@@ -54,8 +55,8 @@ void RespondError(HttpStatusCode status, const std::string& phrase, const std::s
     callback(resp);
 }
 
-void RespondAnalysis(const std::string& id, const std::string& action, const analysis::Options& options,
-                     std::function<void(const HttpResponsePtr&)>& callback)
+void RunAnalysis(const std::string& id, const std::string& action, const analysis::Options& options,
+                 std::function<void(const HttpResponsePtr&)>& callback)
 {
     auto emulator = getEmulatorByIdOrIndex(id);
     if (!emulator)
@@ -79,6 +80,23 @@ void RespondAnalysis(const std::string& id, const std::string& action, const ana
     resp->setStatusCode(static_cast<HttpStatusCode>(reply.HttpStatus()));
     addCorsHeaders(resp);
     callback(resp);
+}
+
+/// experiment, cover and trace run to their end, build blocks for its wait: without async they answer from the
+/// long-call pool, the HTTP workers stay free for other clients
+void RespondAnalysis(const std::string& id, const std::string& action, const analysis::Options& options,
+                     std::function<void(const HttpResponsePtr&)>& callback)
+{
+    const bool isLong = options.count("async") == 0 &&
+                        (action == "experiment" || action == "cover" || action == "trace" ||
+                         (action == "build" && options.count("wait") != 0));
+    if (!isLong)
+    {
+        RunAnalysis(id, action, options, callback);
+        return;
+    }
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([id, action, options, answer]() { RunAnalysis(id, action, options, *answer); });
 }
 
 /// The query parameters an action takes (others, a cache buster, are ignored)

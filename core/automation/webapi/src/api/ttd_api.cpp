@@ -44,6 +44,7 @@
 #include <emulator/emulator.h>
 #include <json/json.h>
 
+#include <algorithm>
 #include <map>
 #include <string>
 
@@ -69,9 +70,8 @@ extern void addCorsHeaders(HttpResponsePtr& resp);
 // The verbs TTDControl implements for every surface (Phase 5, Step 1): a route
 // turns its JSON body into string options and sends the reply back as JSON
 // ---------------------------------------------------------------------------
-static void RespondTTD(const std::string& id, const std::string& verb, std::map<std::string, std::string> options,
-                       std::function<void(const HttpResponsePtr&)>& callback,
-                       const std::function<void(ttd::TTDReply&)>& reshape = {})
+static void RunTTD(const std::string& id, const std::string& verb, std::map<std::string, std::string> options,
+                   std::function<void(const HttpResponsePtr&)>& callback)
 {
     auto emulator = getEmulatorByIdOrIndex(id);
     if (!emulator)
@@ -97,12 +97,27 @@ static void RespondTTD(const std::string& id, const std::string& verb, std::map<
         return;
     }
     ttd::TTDReply reply = ttd::TTDControl(emulator->GetContext()).Execute({verb, std::move(options)});
-    if (reshape)
-        reshape(reply);
     auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.ToValue()));
     resp->setStatusCode(static_cast<HttpStatusCode>(reply.HttpStatus()));
     addCorsHeaders(resp);
     callback(resp);
+}
+
+/// A long verb (TTDControl::AsyncVerbs) called synchronously walks or replays for seconds: it answers from the
+/// long-call pool, the HTTP workers stay free for other clients. With async given the verb only queues a job
+static void RespondTTD(const std::string& id, const std::string& verb, std::map<std::string, std::string> options,
+                       std::function<void(const HttpResponsePtr&)>& callback)
+{
+    const auto& longVerbs = ttd::TTDControl::AsyncVerbs();
+    if (std::find(longVerbs.begin(), longVerbs.end(), verb) == longVerbs.end() || options.count("async") != 0)
+    {
+        RunTTD(id, verb, std::move(options), callback);
+        return;
+    }
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([id, verb, options = std::move(options), answer]() mutable {
+        RunTTD(id, verb, std::move(options), *answer);
+    });
 }
 
 /// A GET route's query parameters as TTDControl options: only the names the verb
@@ -483,10 +498,7 @@ void EmulatorAPI::createTTDBranch(const HttpRequestPtr& req,
     if (!OptionsFromJson(req, options, callback))
         return;
     options.emplace("created_by", "webapi");
-    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
-    LongCallPool::Instance().Run([id, options = std::move(options), answer]() mutable {
-        RespondTTD(id, "branch-create", std::move(options), *answer);
-    });
+    RespondTTD(id, "branch-create", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/branches/prune
