@@ -323,19 +323,22 @@ void LuaEmulator::RegisterTimeTravelAndWindow(sol::state& lua)
 
     // Search the CPU view of memory for a byte pattern (hex string or byte table)
     // mem_find(pattern [, start, end, alignment, max, space, mask]) - MemorySearch: hex text with ?? / A?
-    // wildcards or a byte table; space "cpu" (default), "ram" (every RAM page) or a page ("ram5", "rom2")
+    // wildcards or a byte table; space "cpu" (default), "ram" (every RAM page) or a page ("ram5", "rom2"); `cpu`
+    // last ("gs" / "ms": the sound card CPU's own 64K view, space cpu only). A refusal: {error, code}
     lua.set_function("mem_find",
                      [this](sol::this_state s, sol::object patternValue, sol::optional<uint32_t> startOpt,
                             sol::optional<uint32_t> endOpt, sol::optional<unsigned> alignOpt,
                             sol::optional<unsigned> maxOpt, sol::optional<std::string> spaceOpt,
-                            sol::optional<std::string> maskOpt) -> sol::object {
+                            sol::optional<std::string> maskOpt, sol::optional<std::string> cpuOpt) -> sol::object {
         StateNode error = StateNode::Object();
         Emulator* emulator = effectiveEmulator();
         if (!emulator)
         {
             error["error"] = "no emulator";
+            error["code"] = std::string(DebugError::kNotFound);
             return StateNodeToLua(s, error);
         }
+        const DebugCpuId cpu = ScriptCpu(cpuOpt);
         std::vector<uint8_t> bytes;
         const bool table = patternValue.is<sol::table>();
         if (table)
@@ -354,8 +357,10 @@ void LuaEmulator::RegisterTimeTravelAndWindow(sol::state& lua)
                                         request, message))
         {
             error["error"] = message;
+            error["code"] = std::string(DebugError::kInvalidArgument);
             return StateNodeToLua(s, error);
         }
+        request.cpu = cpu;
         return StateNodeToLua(s, MemorySearch::ToState(request, MemorySearch::Search(emulator->GetContext(), request)));
     });
 

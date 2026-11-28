@@ -233,10 +233,15 @@ void LuaEmulator::RegisterLabelsAndBoards(sol::state& lua)
     });
 
     // Physical page disassembly
-    lua.set_function("disasm_page", [this](const std::string& type, int page, sol::optional<int> offset, sol::optional<int> count) -> sol::table {
+    // `cpu` last: the machine's pages are the main CPU's (a card CPU is a script error: disasm(addr, n, cpu) reads it)
+    lua.set_function("disasm_page", [this](const std::string& type, int page, sol::optional<int> offset, sol::optional<int> count,
+                                           sol::optional<std::string> cpuName) -> sol::table {
         sol::table result = _lua->create_table();
         Emulator* emulator = effectiveEmulator();
         if (!emulator) return result;
+        if (const std::string refused = CpuView::MainOnly(ScriptCpu(cpuName), "the disassembly of a machine page");
+            !refused.empty())
+            throw std::runtime_error(DebugError::WithCode(refused, DebugError::kNotSupported));
         auto* ctx = emulator->GetContext();
         if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
         

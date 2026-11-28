@@ -79,6 +79,11 @@
                "carry being paid back now)}");
             for (const char* count : {"presented", "shown", "dropped", "late"})
                 pf(count, "integer", "Presents since the start: handed over, on screen, never on screen, a refresh late");
+            pf("back_pressure", "object",
+               "A presenter that shows every present it is handed (Metal, Vulkan FIFO) gets one per refresh: {held "
+               "(new frames held for a refresh another present already took, handed over at the next free one, or "
+               "for the presenter's pool full: Metal with every drawable waiting for the screen), pool (of them, "
+               "for the pool), gave_way (of them all, given up for a newer frame due by then: never shown)}");
             pf("lead_ms", "number", "The adaptive lead: how long before its time a frame is drawn and handed over");
             pf("error_ms", "object", "{p50, p99, max}: screen time minus the time asked for");
             pf("beat", "object",

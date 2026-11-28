@@ -78,6 +78,12 @@ struct WindowPresentStats
     uint64_t shown = 0;
     uint64_t dropped = 0;
     uint64_t late = 0;        ///< shown more than a refresh after their time
+    /// Back-pressure of a presenter that queues every present (Metal, Vulkan FIFO; PresentSlot): new frames held for a
+    /// refresh another present already took or for its pool full (Metal: every drawable waiting for the screen), of
+    /// them for the pool, and of all those given up for a newer frame due by the next free refresh
+    uint64_t held = 0;
+    uint64_t heldForPool = 0;
+    uint64_t gaveWay = 0;
     double leadMs = 0.0;      ///< the adaptive lead in effect
     double errorP50Ms = 0.0;  ///< screen (or paint) time minus the time asked for
     double errorP99Ms = 0.0;

@@ -268,6 +268,12 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
     // and the fall back to GL)
     if (const QByteArray fail = qgetenv("UNREAL_TEST_PRESENT_FAIL"); !fail.isEmpty())
         _presentFailAtNs = SteadyNowNs() + static_cast<int64_t>(fail.toInt()) * 1'000'000'000;
+    // UNREAL_TEST_PRESENT_RATE=<Hz>: the back-pressure test, the frame on screen handed over as a new frame that often
+    // at its own times (frames faster than the display, which no machine makes on a 60 Hz display); the machine's
+    // frames are not presented meanwhile. UNREAL_TEST_PRESENT_SLOT=0: no back-pressure, the A/B's other side
+    if (const double hz = qgetenv("UNREAL_TEST_PRESENT_RATE").toDouble(); hz > 0)
+        _testRatePeriodNs = static_cast<int64_t>(1e9 / hz);
+    _testSlotOff = qgetenv("UNREAL_TEST_PRESENT_SLOT") == "0";
 #endif
     // [VIDEO] DisplayRate: the display's mode follows the application's focus and the window's display
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this]() { updateDisplayRate(); });
@@ -601,6 +607,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
         _presentPending = _presentPending || force;
         _presentHidden = true;
         _recovery.Hidden();
+        _presentSlot.Reset();
         settleSmoothGuard();
         _smoothRefreshNs = 0;
         _idleRefreshes++;
@@ -674,8 +681,9 @@ void DeviceScreenGLWindow::renderNative(bool force)
         _smoothPeriodNs = periodNs;
         updateTexture(_smoothRefreshNs, true);
     }
-    else
+    else if (!_presentSlot.HoldingForPool())
     {
+        // A frame held for the presenter's pool full keeps the texture until it is handed over (PresentSlot)
         updateTexture(now + lead, false);
     }
     // New: another serial (or a source without serials uploaded). refresh() marks the texture on every latch, so the
@@ -702,6 +710,43 @@ void DeviceScreenGLWindow::renderNative(bool force)
         }
         _smoothDrained = _presenter->Presented();
     }
+    // Back-pressure (PresentSlot): a presenter that queues every present gets one per refresh. A new frame for a
+    // refresh a present already took is held, the window wakes for the next free refresh and hands over the newest
+    // frame then: the one held, or a newer one due by that time (the one held gives way). Only frames at their own
+    // times: the display link's ticks and smooth motion ask for one refresh each already. A forced repaint goes at
+    // once as before, the held frame with it
+    int64_t gridRefreshNs = 0;
+    int64_t gridPeriodNs = 0;
+    if (!_presenter->QueuesPresents() || !_presenter->RefreshGrid(gridRefreshNs, gridPeriodNs))
+        gridPeriodNs = 0;
+    uint64_t frameSerial = _uploadedSerial;
+    int64_t frameTargetNs = _shownInfo.targetNs;
+    bool frameAtOnce = _shownInfo.atOnce;
+#ifdef UNREAL_TEST_HOOKS
+    if (_testSlotOff)
+        gridPeriodNs = 0;
+    if (_testRatePeriodNs > 0 && !paced && _smoothRefreshNs == 0)
+    {
+        // UNREAL_TEST_PRESENT_RATE: the frames of the hook only, each a lead ahead of its time
+        newFrame = false;
+        if (_testRateNextNs == 0 || _testRateNextNs < now - _testRatePeriodNs)
+            _testRateNextNs = now + lead;
+        if (_testRateNextNs <= now + lead)
+        {
+            newFrame = true;
+            frameTargetNs = _testRateNextNs;
+            _testRateSerial++;
+            _testRateNextNs += _testRatePeriodNs;
+        }
+        frameSerial = (uint64_t{1} << 62) + _testRateSerial;
+        frameAtOnce = false;
+    }
+#endif
+    const PresentSlot::Turn turn =
+        _presentSlot.Decide({newFrame, force, paced, _smoothRefreshNs != 0, frameSerial, frameAtOnce, frameTargetNs,
+                             gridPeriodNs > 0 && _presenter->PoolFull()},
+                            now, lead, gridRefreshNs, gridPeriodNs);
+    newFrame = turn.present;
     if (newFrame || force)
     {
         const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
@@ -716,7 +761,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
             }
             paintGL();
             // A forced repaint of the frame on screen goes at once; a new frame at its target
-            int64_t at = newFrame && _shownInfo.targetNs > 0 ? _shownInfo.targetNs : 0;
+            int64_t at = newFrame && frameTargetNs > 0 ? frameTargetNs : 0;
             // The picture and its time on the frame clock, for the beat and the screen-to-sound offset: the frame, or
             // smooth motion's picture for its refresh
             NativePresenter::TraceInfo trace{_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now,
@@ -725,8 +770,10 @@ void DeviceScreenGLWindow::renderNative(bool force)
                 at = pacedRefreshNs - _linkPeriodNs / 2;  // shown at the first refresh after it: that one
             // Low-latency video: the newest frame at once, at the first refresh it can make (a refresh asked for a
             // lead ahead would hold it that long)
-            if (newFrame && _shownInfo.atOnce)
+            if (newFrame && frameAtOnce)
                 at = 0;
+            if (turn.retry)
+                at = turn.atNs;  // the frame held: the next free refresh's
             if (newFrame && _smoothRefreshNs != 0)
             {
                 at = _smoothRefreshNs - _smoothPeriodNs / 2;
@@ -735,6 +782,8 @@ void DeviceScreenGLWindow::renderNative(bool force)
             }
             _presenter->PresentFrame(at, trace);
             _frameTarget = nullptr;
+            if (!_presenter->PresentFailed())
+                _presentSlot.Presented(at, now, gridRefreshNs, gridPeriodNs);
             if (newFrame && !_presenter->PresentFailed())
                 captureForRecording();  // after the present: the frame shown, the GUI free until the next one
             // Drawn and not handed on (Vulkan: no image to present into): the same way as no framebuffer
@@ -943,11 +992,21 @@ void DeviceScreenGLWindow::scheduleNative()
     else
     {
         // Nothing timed after the frame on screen: poll a refresh while frames may come, stop after a quarter second
-        // idle (a paused machine); the next latch starts it again (refresh)
-        if (_idleRefreshes > idleLimit)
+        // idle (a paused machine); the next latch starts it again (refresh). A frame held goes all the same
+        if (_idleRefreshes > idleLimit && !_presentSlot.Holding())
             return;
         wakeNs = now + refreshPeriodNs();
     }
+    // A frame held (PresentSlot): its wake, a lead before the next free refresh or just after the next one for the
+    // presenter's pool, if no frame comes sooner
+    if (_presentSlot.HoldingForPool())
+        wakeNs = _presentSlot.WakeNs();  // no newer frame is uploaded before it goes: a wake for one would spin
+    else if (_presentSlot.Holding())
+        wakeNs = std::min(wakeNs, _presentSlot.WakeNs());
+#ifdef UNREAL_TEST_HOOKS
+    if (_testRatePeriodNs > 0 && _testRateNextNs != 0)
+        wakeNs = std::min(wakeNs, _testRateNextNs - presentLeadNs());  // UNREAL_TEST_PRESENT_RATE's next frame
+#endif
     // Rounded up: a wake before the target - lead would find the same frame and spin
     const int64_t delayMs = std::max<int64_t>(0, (wakeNs - now + 999'999) / 1'000'000);
     _presentPlannedNs = wakeNs;
@@ -985,6 +1044,9 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
         out.shown = s.shown;
         out.dropped = s.dropped;
         out.late = s.late;
+        out.held = _presentSlot.Held();
+        out.heldForPool = _presentSlot.HeldForPool();
+        out.gaveWay = _presentSlot.GaveWay();
         out.leadMs = s.leadMs;
         out.errorP50Ms = s.errorP50;
         out.errorP99Ms = s.errorP99;
@@ -1560,6 +1622,7 @@ void DeviceScreenGLWindow::dropPresenter()
     _presenter.reset();
     _smoothDrained = 0;
     _smoothLag = 0;
+    _presentSlot.Reset();
 }
 
 bool DeviceScreenGLWindow::smoothActive() const

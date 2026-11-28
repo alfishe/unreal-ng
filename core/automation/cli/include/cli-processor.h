@@ -154,6 +154,7 @@ private:
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleTimeline(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDebugTargets(const ClientSession& session, const std::vector<std::string>& args);
     /// card_run_to <until> [value] [--cpu gs|ms]: a card CPU's run to a moment (RunControl::CardRunTo)
     void HandleCardRunTo(const ClientSession& session, const std::vector<std::string>& args);
     // Device boards: board list | board <id> [values] | board <id> <action> [arg] (core DebugBoards)
@@ -380,6 +381,13 @@ private:
     // `--cpu main|gs|ms` anywhere in a breakpoint command: taken out of `args`, the CPU in `cpu` (main without it).
     // False after the reply when the name is not one
     bool TakeCpuOption(const ClientSession& session, std::vector<std::string>& args, DebugCpuId& cpu) const;
+    /// TakeCpuOption, and a card CPU named must be there now: false after the error line (with its code)
+    bool TakeAvailableCpu(const ClientSession& session, Emulator& emulator, std::vector<std::string>& args,
+                          DebugCpuId& cpu) const;
+    /// A main-only command (`what`: "the call trace", ...) with --cpu: false after the refusal of a card CPU (code
+    /// not_supported) or a bad name; `args` loses the option
+    bool MainCpuOnly(const ClientSession& session, Emulator& emulator, std::vector<std::string>& args,
+                     const std::string& what) const;
     // The breakpoints of that CPU (a card's: gs-debugger design §3.1)
     static BreakpointManager* BreakpointsOf(Emulator& emulator, DebugCpuId cpu);
     // `--cpu gs|ms` on registers / memory / disasm (gs-debugger design §7.1): the sound card CPU's answer, true when

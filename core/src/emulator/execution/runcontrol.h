@@ -104,7 +104,11 @@ struct RunReply
     std::string error;    ///< "" on success; else "Run-control held", "Not Found", "revoked_by_user", ...
     std::string message;  ///< one sentence a user can act on
     StateNode body = StateNode::Object();
+    std::string code;     ///< the error code (debugerror.h) where the status alone does not say it; Code() reads it
 
+    /// The error code: `code`, else the status's (not_found, run_control_held, revoked, refused, invalid_argument,
+    /// internal); "" on success
+    const char* Code() const;
     bool Ok() const { return status == Status::Ok || status == Status::Queued; }
     /// 200, 202 (queued), 404, 409, 400, 500
     int HttpStatus() const;

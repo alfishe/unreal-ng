@@ -7,6 +7,7 @@
 #include <optional>
 #include <utility>
 
+#include "debugger/debugerror.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/disassemblywindow.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -357,6 +358,92 @@ StateNode Windows(EmulatorContext* context, DebugCpuId cpu)
         windows.push(window);
     }
     ret["windows"] = windows;
+    return ret;
+}
+StateNode MemoryInfo(EmulatorContext* context, DebugCpuId cpu)
+{
+    const GeneralSoundCard* card = Card(context, cpu);
+    if (!card)
+        return StateNode::Object();
+    StateNode ret = Windows(context, cpu);
+    StateNode pages = StateNode::Object();
+    pages["ram_count"] = static_cast<uint64_t>(card->cardPageCount(GeneralSoundCard::CardPage::Ram));
+    pages["rom_count"] = static_cast<uint64_t>(card->cardPageCount(GeneralSoundCard::CardPage::Rom));
+    ret["pages"] = pages;
+    return ret;
+}
+
+StateNode Targets(EmulatorContext* context)
+{
+    StateNode ret = StateNode::Object();
+    DebugManager* debug = context ? context->pDebugManager : nullptr;
+    ret["selected"] = std::string(DebugCpuName(debug ? debug->SelectedCpu() : DebugCpuId::Main));
+    StateNode targets = StateNode::Array();
+    for (const DebugCpuId cpu : {DebugCpuId::Main, DebugCpuId::GS, DebugCpuId::MultiSoundGS})
+    {
+        StateNode target = StateNode::Object();
+        target["cpu"] = std::string(DebugCpuName(cpu));
+        const GeneralSoundCard* card = Card(context, cpu);
+        target["available"] = cpu == DebugCpuId::Main || card != nullptr;
+        if (card)
+            target["card"] = std::string(card->implementation() == GSCardImplementation::NGS ? "neogs" : "gs");
+        targets.push(target);
+    }
+    ret["targets"] = targets;
+    return ret;
+}
+
+const char* SelectCode(const std::string& name)
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    return DebugManager::ParseCpuName(Lower(name), cpu) ? DebugError::kCpuUnavailable : DebugError::kInvalidArgument;
+}
+
+std::string MainOnly(DebugCpuId cpu, const std::string& what)
+{
+    if (!IsCardCpu(cpu))
+        return {};
+    return std::string("cpu ") + DebugCpuName(cpu) + ": " + what + " is the main CPU's only";
+}
+
+std::string PageRead(EmulatorContext* context, DebugCpuId cpu, const std::string& kind, uint32_t page,
+                     uint32_t offset, uint32_t length, std::vector<uint8_t>& out)
+{
+    out.clear();
+    const GeneralSoundCard* card = Card(context, cpu);
+    if (!card)
+        return std::string("cpu ") + DebugCpuName(cpu) + " not available: no card with a CPU in its slot";
+    const std::string type = Lower(kind);
+    if (type != "rom" && type != "ram")
+        return std::string("cpu ") + DebugCpuName(cpu) + ": a card CPU's page is rom or ram";
+    const bool rom = type == "rom";
+    const uint32_t pages = card->cardPageCount(rom ? GeneralSoundCard::CardPage::Rom : GeneralSoundCard::CardPage::Ram);
+    const uint8_t* host = page < pages ? (rom ? card->cardRomPage(page) : card->cardRamPage(page)) : nullptr;
+    if (!host)
+        return std::string("cpu ") + DebugCpuName(cpu) + " has no " + type + " page " + std::to_string(page) + " (" +
+               std::to_string(pages) + " " + type + " pages)";
+    if (offset >= kCardPageSize)
+        return "offset " + std::to_string(offset) + " is past the 16K page";
+    length = std::min(length, kCardPageSize - offset);
+    out.assign(host + offset, host + offset + length);
+    return {};
+}
+
+StateNode Stack(EmulatorContext* context, DebugCpuId cpu, unsigned words)
+{
+    StateNode ret = StateNode::Object();
+    GeneralSoundCard* card = Card(context, cpu);
+    Z80CpuRegisters r{};
+    if (!card || !card->cardRegisters(r))
+        return ret;
+    ret["cpu"] = std::string(DebugCpuName(cpu));
+    ret["sp"] = static_cast<int>(r.sp);
+    std::vector<uint8_t> bytes;
+    Read(context, cpu, r.sp, words * 2, bytes);
+    StateNode list = StateNode::Array();
+    for (size_t i = 0; i + 1 < bytes.size(); i += 2)
+        list.push(StateNode(static_cast<int>(bytes[i] | (bytes[i + 1] << 8))));
+    ret["words"] = list;
     return ret;
 }
 }  // namespace CpuView

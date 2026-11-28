@@ -6,6 +6,7 @@
 #include <exception>
 
 #include "common/uuid.h"
+#include "debugger/debugerror.h"
 #include "debugger/debugmanager.h"
 #include "debugger/listing/listingparser.h"
 #include "debugger/targets/gscardtarget.h"
@@ -132,6 +133,24 @@ void AddMainPosition(StateNode& stop, const MainPosition& main)
         stop["main"] = MainPositionNode(main);
 }
 }  // namespace
+
+const char* RunReply::Code() const
+{
+    if (!code.empty())
+        return code.c_str();
+    switch (status)
+    {
+        case Status::Ok:
+        case Status::Queued: return "";
+        case Status::NotFound: return DebugError::kNotFound;
+        case Status::Held: return DebugError::kRunControlHeld;
+        case Status::Revoked: return DebugError::kRevoked;
+        case Status::Refused: return DebugError::kRefused;
+        case Status::BadRequest: return DebugError::kInvalidArgument;
+        case Status::Failed: return DebugError::kInternal;
+    }
+    return DebugError::kInternal;
+}
 
 int RunReply::HttpStatus() const
 {
@@ -346,10 +365,11 @@ RunReply RunControl::StepOut(const Requester& requester)
 namespace
 {
 /// A card reply's refusal
-RunReply CardRefusal(RunReply::Status status, const std::string& message)
+RunReply CardRefusal(RunReply::Status status, const std::string& message, const char* code = "")
 {
     RunReply reply;
     reply.status = status;
+    reply.code = code;
     reply.error = status == RunReply::Status::BadRequest ? "Bad Request" : "Conflict";
     reply.message = message;
     reply.body["status"] = "error";
@@ -389,9 +409,11 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
     GSCardTarget* target =
         context && context->pDebugManager ? context->pDebugManager->GetCardTarget(cpu) : nullptr;
     if (!target)
-        return CardRefusal(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) + " not available");
+        return CardRefusal(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) + " not available",
+                           DebugError::kCpuUnavailable);
     if (!_emulator->IsPaused())
-        return CardRefusal(RunReply::Status::Refused, "Emulator is not paused: pause it before a step");
+        return CardRefusal(RunReply::Status::Refused, "Emulator is not paused: pause it before a step",
+                           DebugError::kNotPaused);
     if (const std::string error = target->ArmStep(step, count, address); !error.empty())
         return CardRefusal(RunReply::Status::Refused, error);
 
@@ -436,9 +458,11 @@ RunReply RunControl::CardRunTo(const Requester& requester, DebugCpuId cpu, const
     GeneralSoundCard* card = target ? target->Card() : nullptr;
     if (!card)
         return CardRefusal(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) +
-                                                          " not available: no card with a CPU in its slot");
+                                                          " not available: no card with a CPU in its slot",
+                           DebugError::kCpuUnavailable);
     if (!_emulator->IsPaused())
-        return CardRefusal(RunReply::Status::Refused, "Emulator is not paused: pause it before a run");
+        return CardRefusal(RunReply::Status::Refused, "Emulator is not paused: pause it before a run",
+                           DebugError::kNotPaused);
     const std::string name = DebugCpuName(cpu);
 
     if (mainT)

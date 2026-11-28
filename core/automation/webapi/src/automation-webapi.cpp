@@ -15,6 +15,7 @@
 #include "common/threadhelper.h"
 #include "common/companion_helper.h"
 #include "common/request_gates.h"
+#include "debugger/debugerror.h"
 #include "../../common/answerbudget.h"  // max_chars (header only)
 #include "common/session_helper.h"
 #include "emulator/coordinator/machineop.h"
@@ -152,6 +153,28 @@ static std::string loadHtmlFile(const std::string& filename)
 
 namespace webapi_gate
 {
+void AddErrorCode(const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp)
+{
+    if (!resp || static_cast<int>(resp->statusCode()) < 400 || req->path().rfind("/mcp", 0) == 0 ||
+        resp->contentType() != drogon::CT_APPLICATION_JSON)
+        return;
+    const std::string_view text = resp->body();
+    Json::Value body;
+    Json::CharReaderBuilder reader;
+    std::string errors;
+    const std::unique_ptr<Json::CharReader> parser(reader.newCharReader());
+    if (!parser->parse(text.data(), text.data() + text.size(), &body, &errors) || !body.isObject() ||
+        !body.isMember("error") || body.isMember("code"))
+        return;
+    const std::string error = body["error"].isString() ? body["error"].asString() : std::string();
+    body["code"] = error == "revoked_by_user"            ? DebugError::kRevoked
+                   : error.rfind("Run-control held", 0) == 0 ? DebugError::kRunControlHeld
+                                                              : DebugError::OfHttpStatus(static_cast<int>(resp->statusCode()));
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    resp->setBody(Json::writeString(writer, body));
+}
+
 void FitAnswer(const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp)
 {
     if (!resp || req->path().rfind("/mcp", 0) == 0 || req->attributes()->find("unreal.budget_fitted"))
@@ -527,6 +550,11 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
                                          ? coordinator::OpSource::Companion
                                      : req->getHeader("X-Unreal-Source") == "mcp" ? coordinator::OpSource::Mcp
                                                                                   : coordinator::OpSource::WebApi);
+    });
+
+    // The error code of every error reply (debugerror.h) where the route set none: first, so the notes below keep it
+    app.registerPostHandlingAdvice([](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) -> void {
+        webapi_gate::AddErrorCode(req, resp);
     });
 
     // Add CORS headers to all responses

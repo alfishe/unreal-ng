@@ -58,7 +58,9 @@ read journal (`engine/ttdmediajournal.*`) let a replay run without live devices 
 settings runs and reports that it is not bit-exact.
 
 **Navigation while recording.** A seek, step or reverse query while recording pauses the recording (D8); it goes on
-from where it paused. Resuming from a past point drops the history after it.
+from where it paused. A read of the store at frame starts (`memory-at` without `tinframe`, `memory-diff`,
+`memory-series`) does not: the recording thread is held for the read and records on (RQ-2, 2026-11-27;
+`TimeTravelController::StoredFramesReadableLive` says when). Resuming from a past point drops the history after it.
 
 **What ends a session (D42, D43).** A reset, a snapshot load and a change of the machine end the recording session;
 the same machine's history stays browsable. A recording the user started refuses media loads and holds the host

@@ -247,6 +247,42 @@ the four 16K windows (`kind` `rom` / `ram` / `none`, `page`, `offset`). A regist
 A name that is not `main`, `gs` or `ms` is a 400 (a script error, Python `ValueError`); a card CPU that is not there
 (no card with a CPU in its slot) is a 404 (`RuntimeError`, a Lua error, MCP `unavailable` with the reason).
 
+**Every other CPU read and command** (debugger model Phase 3 stage 3). The rest of the debugger takes the same `cpu`
+on every plane, through `CpuView` (`Targets`, `MemoryInfo`, `PageRead`, `Stack`), `DebugSnapshot::Options::cpu` and
+`MemorySearchRequest::cpu`:
+
+- **The CPU list**: `{selected, targets: [{cpu, available, card}]}`, every value `cpu` takes, whether it is there now
+  and its card (`gs`, `neogs`).
+- **The snapshot**: `cpu` stays `"z80"` (the instruction set), `debug_cpu` names the CPU. A card CPU's snapshot has its
+  registers, `prev_regs` null, `pages` its four windows `{window, start, kind, page}`, `stack` from its SP, `time`
+  `{frame, t, frame_t, card_time}`, code from its PC and memory windows in its view (space `cpu` or the CPU's name).
+- **Block and page I/O**: the scripts' block functions read and write the card's view; a page read takes the card's
+  own `rom` / `ram` page by number (offset inside its 16K); a page write is refused (write the view instead).
+- **Find, fill, assemble**: find searches the card CPU's 64K view (space `cpu` only), fill and assemble's write go to
+  its view as a tool edit.
+- **The stack**: MCP aspect `stack` reads the card's SP and view; the snapshot's `stack`.
+- **Main only**: the call trace, the PC history and the page disassembly (the machine's pages) refuse a card CPU with
+  the code `not_supported`.
+
+| Read / command | CLI | Lua | Python | MCP | REST (WebSocket: a `call` of it) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| CPU list | `debug-targets` | `debug_targets()` | `emu.debug_targets()` | `inspect_state` aspect `debug_targets` | `GET /debug/targets` |
+| Snapshot | `debug-snapshot --cpu gs` | `debug_snapshot({cpu = "gs"})` | `emu.debug_snapshot(cpu="gs")` | aspect `snapshot` + `cpu` | `GET /debug/snapshot?cpu=gs` |
+| Block I/O | (`memory [read] / write --cpu`) | `mem_read_block`, `mem_write_block`, `mem_hexdump`, `mem_read_word`, `mem_write_word`: `cpu` last | the same, `cpu=` | `memory_access` space `gs` | `GET /memory/read/{address}?cpu=`, `POST /memory/write {cpu}` |
+| Page read | `memory read rom\|ram <page> <offset> [len] --cpu gs` | `page_read`, `page_read_block`: `cpu` last | `cpu=` | - | `GET /memory/{type}/{page}/{offset}?cpu=`, `GET /memory/page/{type}/{page}?cpu=` |
+| Memory info | `memory info --cpu gs` | `memory_info("gs")` | `emu.memory_info(cpu="gs")` | aspect `memory_banks` + `cpu` | `GET /memory/info?cpu=` |
+| Find | `find <pattern> --cpu gs` | `mem_find(..., cpu)` (8th) | `emu.mem_find(..., cpu="gs")` | `debug_code` `find_bytes` + `cpu` | `POST /memory/find {cpu}` |
+| Fill | `memory fill <addr> <len> <byte> --cpu gs` | (`mem_write_block`) | (`mem_write_block`) | (`memory_access` write) | (`POST /memory/write`) |
+| Assemble | `assemble <addr> <code> --write --cpu gs` | `assemble(code, addr, write, "gs")` | `emu.assemble(..., cpu="gs")` | `debug_code` `assemble` + `cpu` | `POST /assemble {cpu}` |
+| Breakpoint note / group / select | `bpnote`, `bpgroup` `--cpu` | `bp_note`, `bp_group`, `bp_select`: `cpu` last | `cpu=` | `control_execution` `cpu` | `/breakpoints...?cpu=` |
+| Main only (refused for a card) | `calltrace`, `pchist`, `disasm_page` with `--cpu gs` | `disasm_page(..., "gs")` | `calltrace`, `disasm_page` with `cpu=` | `debug_code` `trace`, aspect `pchist` + `cpu` | `/calltrace`, `/debug/pchist`, `/disasm/page` `?cpu=` |
+
+Each refusal and error carries one code beside its text ([protocol §4.5](../../../inprogress/2026-09-28-debugger-model/protocol.md#45-errors)):
+`cpu_unavailable` (a card CPU that is not there), `invalid_argument` (a bad name), `not_supported` (main only, a page
+write on a card, a find in another space). The surface-parity test (`AutomationParity_Test`,
+`core/tests/automation/lua/automation-parity_test.cpp`) runs one card scenario through Lua and through the core calls
+the other planes answer with and compares the answers field by field.
+
 **Stepping the card CPU** (gs-debugger design §5.3). A step of the card CPU arms a one-shot park at a card instruction
 boundary (`GSCardTarget::ArmStep`), resumes the machine and waits until it pauses again (`RunControl::CardStep`):
 

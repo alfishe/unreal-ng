@@ -3056,7 +3056,8 @@ const std::vector<std::string>& InspectStateAspects()
                                "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
                                "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
                                "board.neogs_flash", "board.gs_stats", "audio_gs_stats", "audio_gs_firmware",
-                               "audio_gs_firmware_profiles", "audio_gs_zxdma", "audio_gs_profile", "audio_gs_events"};
+                               "audio_gs_firmware_profiles", "audio_gs_zxdma", "audio_gs_profile", "audio_gs_events",
+                               "debug_targets"};
     return aspects;
 }
 
@@ -3073,6 +3074,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["default"].append("screen_ocr");
     schema["properties"]["aspects"]["description"] =
         "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address (hexdump default). "
+        "'debug_targets' = the CPUs a debugger can name now (main, gs, ms: available, card). "
         "'memory_map' = sparse non-zero block overview of the 64K address space or physical RAM banks (view=address|ram, TD-3). "
         "'snapshot' = one coherent debugger picture read at one moment (GET /debug/snapshot): seq, state, last stop, regs, "
         "prev_regs, pages, stack, time, 'count' code lines from PC, the 'windows' memory windows (base64) and 'pchist' PC "
@@ -3385,9 +3387,10 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["max_blocks"]["description"] = "'memory_map' block budget before zero-run granularity coarsens";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
-        "Whose 'registers', 'memory', 'disasm', 'memory_map' and 'breakpoints': main (default), gs (the CPU of the "
-        "General Sound / NeoGS card: its registers, its address space, its code from its PC, its four 16K windows) "
-        "or ms (the General Sound on a MultiSound card)";
+        "Whose 'registers', 'memory', 'disasm', 'memory_map', 'memory_banks', 'stack', 'snapshot' and 'breakpoints': "
+        "main (default), gs (the CPU of the General Sound / NeoGS card: its registers, its address space, its code "
+        "from its PC, its four 16K windows) or ms (the General Sound on a MultiSound card). 'pchist' is the main "
+        "CPU's only (a card CPU is refused, code not_supported). 'debug_targets' lists which CPUs are there now";
     schema["properties"]["include_image"]["type"] = "boolean";
     schema["properties"]["include_image"]["default"] = false;
     schema["properties"]["include_image"]["description"] = "Include base64 image data for 'screen_image' (large payload)";
@@ -3450,7 +3453,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect.rfind("board.", 0) != 0 && aspect != "audio_gs_stats" && aspect.rfind("audio_gs_stats.", 0) != 0 &&
                     aspect != "audio_gs_firmware" && aspect.rfind("audio_gs_firmware.", 0) != 0 &&
                     aspect != "audio_gs_firmware_profiles" && aspect != "audio_gs_zxdma" && aspect != "audio_gs_profile" &&
-                    aspect != "audio_gs_events")
+                    aspect != "audio_gs_events" && aspect != "debug_targets")
                 {
                     done(ToolResult::Error(UnknownValueText("aspect", aspect, InspectStateAspects()) +
                                             "; also board.<id>, audio_gs_stats.<section>, audio_gs_firmware.<object>"));
@@ -3625,8 +3628,13 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "registers" || aspect == "breakpoints" || aspect == "memory_banks")
                         {
-                            std::string suffix = aspect == "registers" ? "/registers" : (aspect == "breakpoints" ? "/breakpoints" : "/state/memory");
-                            const std::string cpuQuery = cpu.empty() || aspect == "memory_banks" ? std::string() : "?cpu=" + cpu;
+                            // memory_banks of a card CPU: its windows and page counts (GET /memory/info?cpu=)
+                            const bool cardBanks = aspect == "memory_banks" && !cpu.empty() && cpu != "main";
+                            std::string suffix = aspect == "registers" ? "/registers"
+                                                 : aspect == "breakpoints" ? "/breakpoints"
+                                                 : cardBanks ? "/memory/info" : "/state/memory";
+                            const std::string cpuQuery =
+                                cpu.empty() || (aspect == "memory_banks" && !cardBanks) ? std::string() : "?cpu=" + cpu;
                             steps.push_back([&caller, id, aspect, suffix, cpuQuery](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, suffix + cpuQuery), nullptr, [&caller, id, aspect, cpuQuery, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -3688,10 +3696,24 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "pchist")
                         {
-                            const std::string path =
-                                Endpoint(id, "/debug/pchist") + "?depth=" + std::to_string(std::min(count, 1024u));
+                            // A card CPU is refused (the PC history is the main CPU's: 400 not_supported)
+                            const std::string path = Endpoint(id, "/debug/pchist") + "?depth=" +
+                                                     std::to_string(std::min(count, 1024u)) +
+                                                     (cpu.empty() ? std::string() : "&cpu=" + cpu);
                             steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    acc[aspect] = std::move(body);
+                                    if (status != 200)
+                                        acc[aspect]["http_status"] = status;
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "debug_targets")
+                        {
+                            // The CPUs a debugger can name now (GET /debug/targets): {selected, targets}
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/debug/targets"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     acc[aspect] = std::move(body);
                                     if (status != 200)
                                         acc[aspect]["http_status"] = status;
@@ -3718,8 +3740,10 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             // One coherent picture (GET /debug/snapshot): registers, previous registers, pages, stack,
                             // time, code from PC and the asked memory windows, read at one moment
-                            const std::string path =
-                                Endpoint(id, "/debug/snapshot") + "?disasm=" + std::to_string(std::min(count, 100u)) + snapshotWindows;
+                            // `cpu` gs / ms: the card CPU's snapshot (debug_cpu names it)
+                            const std::string path = Endpoint(id, "/debug/snapshot") + "?disasm=" +
+                                                     std::to_string(std::min(count, 100u)) + snapshotWindows +
+                                                     (cpu.empty() ? std::string() : "&cpu=" + cpu);
                             steps.push_back([&caller, path, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     acc[aspect] = std::move(body);
@@ -3731,22 +3755,29 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "stack")
                         {
-                            // Two chained calls: registers (for SP), then 32 bytes at SP decoded as words
-                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
-                                caller.Call("GET", Endpoint(id, "/registers"), nullptr, [&caller, id, aspect, &acc, next](int status, Json::Value registers) mutable {
+                            // Two chained calls: registers (for SP), then 32 bytes at SP decoded as words; `cpu` gs /
+                            // ms: the card CPU's SP and view
+                            const std::string cpuQuery = cpu.empty() ? std::string() : "cpu=" + cpu;
+                            steps.push_back([&caller, id, aspect, cpu, cpuQuery](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/registers") + (cpuQuery.empty() ? std::string() : "?" + cpuQuery), nullptr, [&caller, id, aspect, cpu, cpuQuery, &acc, next](int status, Json::Value registers) mutable {
                                     if (status != 200 || !registers.isObject() || !registers["special"].isObject())
                                     {
+                                        if (!cpu.empty())
+                                            acc[aspect]["unavailable"] = registers["message"];
                                         next(true);
                                         return;
                                     }
                                     unsigned sp = registers["special"]["sp"].asUInt() & 0xFFFFu;
                                     // format=full: the stack aspect machine-parses the byte
                                     // array; the TD-3 hexdump default would drop data[]
-                                    std::string path = Endpoint(id, "/memory/" + std::to_string(sp)) + "?len=32&format=full";
-                                    caller.Call("GET", path, nullptr, [sp, aspect, &acc, next](int memStatus, Json::Value memory) mutable {
+                                    std::string path = Endpoint(id, "/memory/" + std::to_string(sp)) + "?len=32&format=full" +
+                                                       (cpuQuery.empty() ? std::string() : "&" + cpuQuery);
+                                    caller.Call("GET", path, nullptr, [sp, aspect, cpu, &acc, next](int memStatus, Json::Value memory) mutable {
                                         if (memStatus == 200 && memory["data"].isArray())
                                         {
                                             Json::Value stack;
+                                            if (!cpu.empty())
+                                                stack["cpu"] = cpu;
                                             stack["sp"] = sp;
                                             Json::Value words(Json::arrayValue);
                                             const Json::Value& data = memory["data"];
@@ -7144,7 +7175,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
         "recording); 'journal_build_cancel' stops a build that runs. find_last works without it too: outside the journal it replays one frame. "
-        "Reads of the past (the machine does not move): 'memory_at' (bytes of space at frame: the state at the start of "
+        "Reads of the past (the machine does not move; memory_at at a frame start, memory_diff and memory_series read "
+        "the store: a running machine runs on and a recording keeps recording, while a tinframe read or screen_at "
+        "pauses both): 'memory_at' (bytes of space at frame: the state at the start of "
         "that frame, before its first instruction - the answer says so in words, with at_tinframe where the CPU "
         "stood; with tinframe: inside the frame; space cpu without frame: the machine now), 'memory_series' (one call "
         "instead of a memory_at loop: memory_ranges at the start of every frame from_frame..to_frame by step (default: "

@@ -50,9 +50,39 @@ So the pile is not reached in what a user can set today; a machine clearly faste
   (`linuxpresent::NextForPlan`). One frame waiting is the usual case and stays: giving way to it lost 0.4 frames a
   second on the Deck (48.83 Hz on 60 Hz); with the pile rule 0 dropped in the measured 20 s (5 during the start and
   the snapshot's load).
-- Open, Vulkan and Metal: a present handed over cannot be taken back (an acquired image, a drawable). The way is
-  back-pressure in the window: while a present waits for its refresh the next frame is not handed over, the newest one
-  goes when the presenter is free. Not built: nothing reproduces the pile there yet.
+- Done, Vulkan (FIFO) and Metal: a present handed over cannot be taken back (an acquired image, a drawable), so the
+  window holds it before (`PresentSlot`, `NativePresenter::QueuesPresents`). A new frame at its own time for a
+  refresh a present already took is not handed over; the window wakes for the next free refresh (a lead before it)
+  and hands over the newest frame then: the one held (where the queue would have shown it: nothing lost), or a newer
+  one due by then (the one held gives way, the delay stays). Judged by the times asked for, never by the screen's: the
+  display link's ticks and smooth motion ask for one refresh each and never collide, a compositor a refresh behind
+  (D13) holds nothing, frames slower than the display are always a refresh apart, VRR (no grid) holds nothing. Counted
+  as `present.back_pressure.held` / `gave_way` (REST, MCP's text). Where it matters on macOS: the timer path (VRR off
+  with no display link: macOS 12-13, `UNREAL_PRESENT_DISPLAY_LINK=0`, a stopped link), Vulkan's FIFO everywhere.
+  Metal's pool as well (`NativePresenter::PoolFull`): with as many presents waiting for the screen as drawables (3),
+  `nextDrawable` blocked the GUI thread until the next refresh, 12-16 ms a present (95-100 % of such presents on the
+  owner's Mac, almost none with one or two in flight). A lead over two refreshes or a compositor a refresh behind fills
+  the pool with frames at the display's rate, smooth motion's included. A frame at its own time is held then and goes
+  just after the next refresh (a drawable back), asking for its own time; no newer frame is uploaded meanwhile, so
+  none is lost (`present.back_pressure.pool`). Metal's lead is judged from the hand-over before `nextDrawable`: a
+  wait for the pool is no window late, and widening the lead for it only queued more (the lead sat at its bound,
+  36.7 ms, within 3 s of the start, at 48.83 Hz too; now 22-34 ms).
+  Tests: `PresentSlot_Test` (23; faster frames 61-120 Hz on 60: the delay within a refresh where the queue grew it
+  by 10 and more, never a block on the pool with the compositor a refresh behind; negative: 48.83-59.94 Hz at any grid
+  phase with jitter, a 36 ms lead and the compositor behind, jitter at the display's rate, one present per refresh
+  for 10000 refreshes, no grid, no serials, forced repaints, the link's ticks, smooth motion: nothing held for nothing,
+  nothing dropped), each fails with its rule broken (seven mutants).
+  Live, Metal on the owner's Mac at 60 Hz, `UNREAL_TEST_PRESENT_RATE` (a new frame at that rate) against
+  `UNREAL_TEST_PRESENT_SLOT=0` in the same build, error p50 / drawable wait p50: 60 Hz 27 / 13.5 -> 8.3 / 0.03 ms,
+  75 Hz 52 / 15.5 -> 10 / 0.03 ms, 120 Hz 45 / 15.5 -> 11.7 / 0.04 ms, 0 dropped. Negative, against master: the link,
+  smooth motion (link and timer), the timer path at 48.83 Hz, 50 and 59 Hz frames: held 0, dropped 0, the same error
+  (the compositor's even 25 ms of D13 came in either build). Vulkan: the refresh hold only (no pool, no lead change).
+  Live on the Steam Deck (FIFO, 5 images, `VK_KHR_present_wait`, 59.8 Hz), the same A/B, screen minus asked p50:
+  60 Hz 41 -> 21.5 ms, 75 Hz 46 -> 27 ms, 120 Hz 46 -> 15.7 ms, 0 dropped. Negative: 50 Hz frames and the machine at
+  48.83 Hz: 0 dropped, the same error (the machine: 4 frames of 977 held, two frames of a jittered clock asked for one
+  refresh, none given way). The Deck bundle builds without Vulkan (its image has no Vulkan headers: `Vulkan renderer:
+  OFF`); the check added `libvulkan-dev` and glslang in the container. Smooth motion stayed off under Vulkan on the
+  Deck in both builds (`present.smooth.mode` off with `smooth_motion` interpolate): not checked further here.
 
 ### 1.3 Smooth motion (step 3)
 

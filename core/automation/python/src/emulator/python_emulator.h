@@ -5,6 +5,7 @@
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
 #include "emulator/execution/runcontrol.h"
+#include "debugger/debugerror.h"
 #include "debugger/watch/framewatch.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/preset/machinepreset.h"
@@ -209,11 +210,43 @@ inline DebugCpuId PythonCpu(Emulator& self, const std::string& name)
     if (name.empty())
         return cpu;
     if (!DebugManager::ParseCpuName(name, cpu))
-        throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
+        throw py::value_error(DebugError::WithCode("cpu must be 'main', 'gs' or 'ms'", DebugError::kInvalidArgument));
     const std::string error = CpuView::Select(self.GetContext(), name, cpu);
     if (!error.empty())
-        throw std::runtime_error(error);
+        throw std::runtime_error(DebugError::WithCode(error, CpuView::SelectCode(name)));
     return cpu;
+}
+
+/// `length` bytes of a card CPU's own page (CpuView::PageRead); ValueError with the code when refused
+inline std::vector<uint8_t> PythonCardPage(Emulator& self, DebugCpuId cpu, const std::string& type, int page,
+                                           int offset, int length)
+{
+    std::vector<uint8_t> bytes;
+    if (page < 0 || offset < 0 || length < 0)
+        throw py::value_error(DebugError::WithCode("page, offset and len must be >= 0", DebugError::kInvalidArgument));
+    const std::string error = CpuView::PageRead(self.GetContext(), cpu, type, static_cast<uint32_t>(page),
+                                                static_cast<uint32_t>(offset), static_cast<uint32_t>(std::max(length, 1)),
+                                                bytes);
+    if (!error.empty())
+        throw py::value_error(DebugError::WithCode(error, DebugError::kInvalidArgument));
+    if (length == 0)
+        bytes.clear();
+    return bytes;
+}
+
+/// A page write by number on a card CPU: ValueError not_supported (its view is written instead: mem_write)
+inline void PythonRefuseCardPageWrite(Emulator& self, const std::string& cpu)
+{
+    if (IsCardCpu(PythonCpu(self, cpu)))
+        throw py::value_error(DebugError::WithCode(CpuView::kCardPageWriteRefusal, DebugError::kNotSupported));
+}
+
+/// A capability only the main CPU has (the PC history, the call trace, a machine page's disassembly): ValueError
+/// not_supported for a card CPU
+inline void PythonMainOnly(Emulator& self, const std::string& cpu, const std::string& what)
+{
+    if (const std::string refused = CpuView::MainOnly(PythonCpu(self, cpu), what); !refused.empty())
+        throw py::value_error(DebugError::WithCode(refused, DebugError::kNotSupported));
 }
 
 /// The labels of the CPU a label call names ("" or "main": the main CPU's; "gs" / "ms": the sound card CPU's own store,
@@ -2458,19 +2491,36 @@ namespace PythonBindings
                 self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, 1),
                                               [&] { mem->ToolWriteToZ80Memory(addr, value); });
             }, "Write byte to memory", py::arg("addr"), py::arg("value"), py::arg("cpu") = "")
-            .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
+            .def("mem_read_word", [](Emulator& self, uint16_t addr, const std::string& cpu) -> uint16_t {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    std::vector<uint8_t> bytes;
+                    CpuView::Read(self.GetContext(), card, addr, 2, bytes);
+                    return bytes.size() == 2 ? static_cast<uint16_t>(bytes[0] | (bytes[1] << 8)) : 0;
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return 0;
                 return mem->DirectReadFromZ80Memory(addr) | (mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + 1)) << 8);
-            }, "Read 16-bit word from memory")
-            .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value) {
+            }, "Read 16-bit word from memory (cpu 'gs' / 'ms': the sound card CPU's view)", py::arg("addr"),
+               py::arg("cpu") = "")
+            .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    const std::string refused =
+                        CpuView::Write(&self, card, "Python memory write", addr,
+                                       {static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>(value >> 8)});
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return;
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, 2), [&] {
                     mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
-            }, "Write 16-bit word to memory")
+            }, "Write 16-bit word to memory (cpu 'gs' / 'ms': the sound card CPU's view)", py::arg("addr"),
+               py::arg("value"), py::arg("cpu") = "")
             .def("debug_wait", [](Emulator& self, std::optional<uint64_t> since, uint32_t timeoutMs) -> py::object {
                 const uint64_t from = since ? *since : self.DebugSeq();
                 StateNode answer;
@@ -2530,8 +2580,9 @@ namespace PythonBindings
             }, "Take (lease_ms; 0: until released) or end the script's twin timeline lease -> dict {armed, started_now, "
                "leases}", py::arg("on"), py::arg("lease_ms") = 0)
             .def("debug_snapshot", [](Emulator& self, unsigned disasm, unsigned stack, const std::vector<std::string>& memory,
-                                      unsigned pchist) -> py::object {
+                                      unsigned pchist, const std::string& cpu) -> py::object {
                 DebugSnapshot::Options options;
+                options.cpu = PythonCpu(self, cpu);
                 options.disasm = std::min(disasm, 100u);
                 options.stack = stack;
                 options.pchist = pchist;
@@ -2539,7 +2590,7 @@ namespace PythonBindings
                 options.rawBytes = true;
                 DebugSnapshot::Result result = DebugSnapshot::Build(&self, options);
                 if (!result.error.empty())
-                    throw py::value_error(result.error);
+                    throw py::value_error(DebugError::WithCode(result.error, result.code));
                 // The raw bytes are no text: take them out before the dict conversion, put them back as bytes
                 std::vector<std::string> raw;
                 if (StateNode* windows = const_cast<StateNode*>(result.snapshot.find("memory")))
@@ -2566,9 +2617,10 @@ namespace PythonBindings
                 return dict;
             }, "One coherent debugger snapshot (core DebugSnapshot, GET /debug/snapshot): seq, state, pause, consistency, "
                "regs, prev_regs, pages, stack, time, disasm, memory windows ('cpu:0x8000:256', 'ram5:0:6912') with their "
-               "bytes; ValueError when refused",
+               "bytes; cpu 'gs' / 'ms': the sound card CPU's (debug_cpu names it; pchist refused); ValueError with the "
+               "error code when refused",
                py::arg("disasm") = 0, py::arg("stack") = 8, py::arg("memory") = std::vector<std::string>(),
-               py::arg("pchist") = 0)
+               py::arg("pchist") = 0, py::arg("cpu") = "")
             .def("mem_read_bytes", [](Emulator& self, uint32_t addr, uint32_t len, const std::string& space) -> py::bytes {
                 const MemoryRead::Result read = MemoryRead::Bytes(self.GetContext(), space, addr, len);
                 if (!read.error.empty())
@@ -2719,7 +2771,13 @@ namespace PythonBindings
                "border), without breakpoints or device waits, as a TTD tool edit; paused, stopped or running. "
                "ValueError for a bad port (0..0xFFFF) / value (0..0xFF), RuntimeError when no coherent moment came",
                py::arg("port"), py::arg("value"))
-            .def("mem_read_block", [](Emulator& self, uint16_t addr, uint16_t len) -> py::bytes {
+            .def("mem_read_block", [](Emulator& self, uint16_t addr, uint16_t len, const std::string& cpu) -> py::bytes {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    std::vector<uint8_t> bytes;
+                    CpuView::Read(self.GetContext(), card, addr, len, bytes);
+                    return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return py::bytes("");
                 std::string data;
@@ -2728,7 +2786,8 @@ namespace PythonBindings
                     data.push_back(static_cast<char>(mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i))));
                 }
                 return py::bytes(data);
-            }, "Read block of bytes from memory", py::arg("addr"), py::arg("len"))
+            }, "Read block of bytes from memory (cpu 'gs' / 'ms': the sound card CPU's view)", py::arg("addr"),
+               py::arg("len"), py::arg("cpu") = "")
             // TD-3 Phase 1: sparse non-zero block overview (same core source
             // as GET /memory/map and MCP inspect_state 'memory_map')
             .def("memory_map", [](Emulator& self, const std::string& viewName, int minRun, int maxBlocks) -> py::dict {
@@ -2774,28 +2833,47 @@ namespace PythonBindings
                 return result;
             }, "Sparse non-zero memory block overview (view: 'address'|'ram'; 'gs'|'ms': a sound card CPU's windows)",
                py::arg("view") = "address", py::arg("min_run") = 64, py::arg("max_blocks") = 48)
-            .def("mem_hexdump", [](Emulator& self, uint16_t addr, int len) -> std::string {
+            .def("mem_hexdump", [](Emulator& self, uint16_t addr, int len, const std::string& cpu) -> std::string {
+                const DebugCpuId card = PythonCpu(self, cpu);
                 Memory* mem = self.GetMemory();
                 if (!mem) return "";
                 if (len < 1) len = 64;
                 if (len > 4096) len = 4096;
+                if (IsCardCpu(card))
+                {
+                    std::vector<uint8_t> bytes;
+                    CpuView::Read(self.GetContext(), card, addr, static_cast<uint32_t>(len), bytes);
+                    return FormatHexDump(bytes.data(), bytes.size(), addr);
+                }
                 std::vector<uint8_t> buffer(static_cast<size_t>(len));
                 for (size_t i = 0; i < buffer.size(); i++)
                     buffer[i] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
                 return FormatHexDump(buffer.data(), buffer.size(), addr);
-            }, "Classic 16B/line hexdump with ASCII sidebar", py::arg("addr"), py::arg("len") = 64)
-            .def("mem_write_block", [](Emulator& self, uint16_t addr, py::bytes data) {
+            }, "Classic 16B/line hexdump with ASCII sidebar (cpu 'gs' / 'ms': the sound card CPU's view)",
+               py::arg("addr"), py::arg("len") = 64, py::arg("cpu") = "")
+            .def("mem_write_block", [](Emulator& self, uint16_t addr, py::bytes data, const std::string& cpu) {
+                std::string bytes = data;
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    const std::string refused = CpuView::Write(&self, card, "Python memory write", addr,
+                                                               std::vector<uint8_t>(bytes.begin(), bytes.end()));
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return;
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                std::string bytes = data;
                 self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, bytes.size()), [&] {
                     for (size_t i = 0; i < bytes.size(); i++)
                         mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), static_cast<uint8_t>(bytes[i]));
                 });
-            }, "Write block of bytes to memory", py::arg("addr"), py::arg("data"))
+            }, "Write block of bytes to memory (cpu 'gs' / 'ms': the sound card CPU's view)", py::arg("addr"),
+               py::arg("data"), py::arg("cpu") = "")
             
             // Physical page access (ram/rom/cache/misc)
-            .def("page_read", [](Emulator& self, const std::string& type, int page, int offset) -> int {
+            .def("page_read", [](Emulator& self, const std::string& type, int page, int offset, const std::string& cpu) -> int {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardPage(self, card, type, page, offset, 1).at(0);
                 Memory* mem = self.GetMemory();
                 if (!mem) return 0;
                 ValidatePageIndex("page_read", type, page, offset);
@@ -2809,8 +2887,11 @@ namespace PythonBindings
                 else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
                 return pagePtr[offset];
-            }, "Read byte from physical page", py::arg("type"), py::arg("page"), py::arg("offset"))
-            .def("page_write", [](Emulator& self, const std::string& type, int page, int offset, uint8_t value) {
+            }, "Read byte from physical page (cpu 'gs' / 'ms': the sound card CPU's own rom / ram page)",
+               py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("cpu") = "")
+            .def("page_write", [](Emulator& self, const std::string& type, int page, int offset, uint8_t value,
+                                  const std::string& cpu) {
+                PythonRefuseCardPageWrite(self, cpu);
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 ValidatePageIndex("page_write", type, page, offset);
@@ -2830,8 +2911,15 @@ namespace PythonBindings
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
                 });
-            }, "Write byte to physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("value"))
-            .def("page_read_block", [](Emulator& self, const std::string& type, int page, int offset, int len) -> py::bytes {
+            }, "Write byte to physical page (a card CPU's page is refused: not_supported)", py::arg("type"),
+               py::arg("page"), py::arg("offset"), py::arg("value"), py::arg("cpu") = "")
+            .def("page_read_block", [](Emulator& self, const std::string& type, int page, int offset, int len,
+                                       const std::string& cpu) -> py::bytes {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    const std::vector<uint8_t> bytes = PythonCardPage(self, card, type, page, offset, len);
+                    return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return py::bytes("");
                 ValidatePageIndex("page_read_block", type, page, offset);
@@ -2849,8 +2937,11 @@ namespace PythonBindings
                 // Clamp to page boundary
                 if (len > PAGE_SIZE - offset) len = PAGE_SIZE - offset;
                 return py::bytes(reinterpret_cast<char*>(pagePtr + offset), len);
-            }, "Read block from physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("len"))
-            .def("page_write_block", [](Emulator& self, const std::string& type, int page, int offset, py::bytes data) {
+            }, "Read block from physical page (cpu 'gs' / 'ms': the sound card CPU's own rom / ram page)",
+               py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("len"), py::arg("cpu") = "")
+            .def("page_write_block", [](Emulator& self, const std::string& type, int page, int offset, py::bytes data,
+                                        const std::string& cpu) {
+                PythonRefuseCardPageWrite(self, cpu);
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 ValidatePageIndex("page_write_block", type, page, offset);
@@ -2874,8 +2965,11 @@ namespace PythonBindings
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
                 });
-            }, "Write block to physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("data"))
-            .def("memory_info", [](Emulator& self) -> py::dict {
+            }, "Write block to physical page (a card CPU's page is refused: not_supported)", py::arg("type"),
+               py::arg("page"), py::arg("offset"), py::arg("data"), py::arg("cpu") = "")
+            .def("memory_info", [](Emulator& self, const std::string& cpu) -> py::dict {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return StateNodeToPy(CpuView::MemoryInfo(self.GetContext(), card)).cast<py::dict>();
                 py::dict info;
                 Memory* mem = self.GetMemory();
                 if (!mem) return info;
@@ -2898,7 +2992,8 @@ namespace PythonBindings
                 }
                 info["z80_banks"] = banks;
                 return info;
-            }, "Get memory configuration info")
+            }, "Get memory configuration info (cpu 'gs' / 'ms': the sound card CPU's {cpu, pages, windows})",
+               py::arg("cpu") = "")
             
             // Feature management (using correct FeatureManager API)
             .def("feature_get", [](Emulator& self, const std::string& name) -> bool {
@@ -3418,6 +3513,9 @@ namespace PythonBindings
             }, "Show a CPU in the debugger front-ends ('main', 'gs', 'ms'): a card shown follows the main CPU's steps of "
                "the paused machine in tight mode, so its state is the one at the main CPU's moment; returns {cpu, follows}",
                py::arg("cpu"))
+            .def("debug_targets", [](Emulator& self) -> py::object {
+                return StateNodeToPy(CpuView::Targets(self.GetContext()));
+            }, "The CPUs a debugger can name now: {selected, targets: [{cpu, available, card}]}")
             .def("selected_cpu", [](Emulator& self) -> py::object {
                 return StateNodeToPy(CpuView::Selected(self.GetContext()));
             }, "The CPU the debugger front-ends show: {cpu, follows}")
@@ -4002,12 +4100,13 @@ namespace PythonBindings
                 BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->DeactivateBreakpoint(id) : false;
             }, "Disable breakpoint (cpu 'gs': the sound card CPU's)", py::arg("id"), py::arg("cpu") = "")
-            .def("bp_note", [](Emulator& self, uint16_t id, const std::string& note) -> bool {
+            .def("bp_note", [](Emulator& self, uint16_t id, const std::string& note, const std::string& cpu) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager(PythonCpu(self, cpu));
                 return bpm ? bpm->SetBreakpointNote(id, note) : false;
-            }, "Set a breakpoint's note (empty clears it); False for an unknown id", py::arg("id"), py::arg("note"))
+            }, "Set a breakpoint's note (empty clears it); False for an unknown id (cpu 'gs': the sound card CPU's)",
+               py::arg("id"), py::arg("note"), py::arg("cpu") = "")
             .def("bp_condition", [](Emulator& self, uint16_t id, const std::string& condition,
                                     const std::string& dialect, const std::string& cpu) -> bool {
                 BreakpointManager* bpm = PythonBreakpoints(self, cpu);
@@ -4023,25 +4122,31 @@ namespace PythonBindings
             }, "Set a breakpoint's condition (empty clears it); ValueError with the reason when it does not compile "
                "(the old condition stays); False for an unknown id (cpu 'gs': the sound card CPU's)",
                py::arg("id"), py::arg("condition"), py::arg("dialect") = "", py::arg("cpu") = "")
-            .def("bp_group", [](Emulator& self, uint16_t id, const std::string& group) -> bool {
+            .def("bp_group", [](Emulator& self, uint16_t id, const std::string& group, const std::string& cpu) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager(PythonCpu(self, cpu));
                 return bpm ? bpm->SetBreakpointGroup(id, group) : false;
-            }, "Move a breakpoint into a group (created on use); False for an unknown id or an empty name",
-               py::arg("id"), py::arg("group"))
-            .def("bp_select", [](Emulator& self, const std::string& select, const std::string& op) -> py::object {
+            }, "Move a breakpoint into a group (created on use); False for an unknown id or an empty name (cpu 'gs': "
+               "the sound card CPU's)",
+               py::arg("id"), py::arg("group"), py::arg("cpu") = "")
+            .def("bp_select", [](Emulator& self, const std::string& select, const std::string& op,
+                                 const std::string& cpu) -> py::object {
                 StateNode out = StateNode::Object();
                 std::string error;
-                BreakpointManager* bpm = self.GetBreakpointManager();
+                EmulatorContext* ctx = self.GetContext();
+                BreakpointManager* bpm =
+                    ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(PythonCpu(self, cpu)) : nullptr;
                 if (bpm && BreakpointSelection::Run(*bpm, select, op, out, error))
                     return StateNodeToPy(out);
                 out["ok"] = false;
                 out["error"] = bpm ? error : std::string("no breakpoint manager");
+                out["code"] = std::string(bpm ? DebugError::kInvalidArgument : DebugError::kNotFound);
                 return StateNodeToPy(out);
             }, "Breakpoints by selection (all, an id, a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, "
                "magic, keyboard; group:<name>): op enable | disable | toggle | remove. {select, selected, changed, active}; "
-               "a refusal: ok = False, error", py::arg("select"), py::arg("op"))
+               "a refusal: ok = False, error, code; cpu 'gs' / 'ms': the sound card CPU's breakpoints",
+               py::arg("select"), py::arg("op"), py::arg("cpu") = "")
             .def("bp_key", [](Emulator& self, const std::string& key, const std::string& on, const std::string& hits,
                               const std::string& group, const std::string& note) -> int {
                 BreakpointManager* bpm = self.GetBreakpointManager();
@@ -4484,7 +4589,9 @@ namespace PythonBindings
                "the address first; db rows for the markup's data)")
             
             // Physical page disassembly
-            .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count) -> py::list {
+            .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count,
+                                   const std::string& cpu) -> py::list {
+                PythonMainOnly(self, cpu, "the disassembly of a machine page");
                 py::list result;
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
@@ -4554,8 +4661,9 @@ namespace PythonBindings
                     currentOffset += cmdLen;
                 }
                 return result;
-            }, py::arg("type"), py::arg("page"), py::arg("offset") = 0, py::arg("count") = 10, 
-               "Disassemble from physical RAM/ROM page (bypasses Z80 paging). type='ram'|'rom'")
+            }, py::arg("type"), py::arg("page"), py::arg("offset") = 0, py::arg("count") = 10, py::arg("cpu") = "",
+               "Disassemble from physical RAM/ROM page (bypasses Z80 paging). type='ram'|'rom'; the main CPU's "
+               "pages only (a card CPU: ValueError not_supported)")
             
             // Analyzer management
             .def("analyzer_list", [](Emulator& self) -> py::list {
@@ -6255,13 +6363,15 @@ namespace PythonBindings
             }, "Reset memory access counters")
             
             // Call trace
-            .def("calltrace", [](Emulator& self, int limit) -> py::list {
+            .def("calltrace", [](Emulator& self, int limit, const std::string& cpu) -> py::list {
+                PythonMainOnly(self, cpu, "the call trace");
                 py::list result;
                 FeatureManager* fm = self.GetFeatureManager();
                 bool enabled = fm ? fm->isEnabled("calltrace") : false;
                 // TODO: Add actual call trace entries when CallTraceManager exposes API
                 return result;
-            }, "Get call trace entries (requires calltrace feature)", py::arg("limit") = 50)
+            }, "Get call trace entries (requires calltrace feature); the main CPU's only (a card CPU: ValueError "
+               "not_supported)", py::arg("limit") = 50, py::arg("cpu") = "")
             .def("is_calltrace", [](Emulator& self) -> bool {
                 FeatureManager* fm = self.GetFeatureManager();
                 return fm ? fm->isEnabled("calltrace") : false;
@@ -8003,7 +8113,8 @@ namespace PythonBindings
 
         .def("mem_find",
              [](Emulator& self, py::object patternValue, uint32_t start, py::object endValue, unsigned alignment,
-                unsigned max, const std::string& space, const std::string& mask) -> py::object {
+                unsigned max, const std::string& space, const std::string& mask, const std::string& cpu) -> py::object {
+            const DebugCpuId searched = PythonCpu(self, cpu);
             std::vector<uint8_t> bytes;
             const bool number = py::isinstance<py::int_>(patternValue);
             const bool text = number || py::isinstance<py::str>(patternValue);
@@ -8020,15 +8131,18 @@ namespace PythonBindings
             {
                 py::dict d;
                 d["error"] = message;
+                d["code"] = DebugError::kInvalidArgument;
                 return std::move(d);
             }
+            request.cpu = searched;
             return StateNodeToPy(MemorySearch::ToState(request, MemorySearch::Search(self.GetContext(), request)));
         }, "Search memory for a byte pattern (MemorySearch): hex text with ?? / A? wildcards or a byte sequence; "
            "space 'cpu' (default), 'ram' (every RAM page) or a page ('ram5', 'rom2', 'cache0'); mask = hex bytes, "
            "1 bits must match. Matches: address (cpu) or page {kind, page} + offset, context_start, context "
-           "(4 bytes before, the match, 4 after)",
+           "(4 bytes before, the match, 4 after); cpu 'gs' / 'ms': the sound card CPU's own 64K view (space cpu only). "
+           "A refusal: {error, code}",
            py::arg("pattern"), py::arg("start") = 0, py::arg("end") = py::none(), py::arg("alignment") = 1,
-           py::arg("max") = 64, py::arg("space") = "", py::arg("mask") = "")
+           py::arg("max") = 64, py::arg("space") = "", py::arg("mask") = "", py::arg("cpu") = "")
 
         .def("screen_digest",
              [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder,
@@ -9180,13 +9294,17 @@ namespace PythonBindings
 #endif
         }, "Current recording state and live statistics")
 
-        .def("assemble", [](Emulator& self, const std::string& code, py::object addressValue, bool write) -> py::dict {
+        .def("assemble", [](Emulator& self, const std::string& code, py::object addressValue, bool write,
+                            const std::string& cpu) -> py::dict {
             py::dict d;
+            const DebugCpuId target = PythonCpu(self, cpu);
+            if (IsCardCpu(target))
+                d["cpu"] = DebugCpuName(target);
             uint16_t address = 0;
             if (py::isinstance<std::string>(addressValue))
             {
                 try { address = static_cast<uint16_t>(std::stoul(addressValue.cast<std::string>(), nullptr, 0)); }
-                catch (...) { d["error"] = "invalid address"; return d; }
+                catch (...) { d["error"] = "invalid address"; d["code"] = DebugError::kInvalidArgument; return d; }
             }
             else
             {
@@ -9201,10 +9319,19 @@ namespace PythonBindings
             {
                 d["error"] = asmResult.error.message;
                 d["error_line"] = asmResult.error.line;
+                d["code"] = DebugError::kInvalidArgument;
                 return d;
             }
 
-            if (write)
+            if (write && IsCardCpu(target))
+            {
+                const std::string refused = CpuView::Write(&self, target, "Python assemble write",
+                                                           static_cast<uint16_t>(asmResult.startAddress), asmResult.bytes);
+                if (!refused.empty())
+                    throw std::runtime_error(refused);
+                d["written"] = true;
+            }
+            else if (write)
             {
                 Memory* memory = self.GetMemory();
                 if (memory)
@@ -9230,8 +9357,9 @@ namespace PythonBindings
                 d["symbols"] = symbols;
             }
             return d;
-        }, "Assemble Z80 source text; optionally write the bytes into RAM",
-           py::arg("code"), py::arg("address"), py::arg("write") = false)
+        }, "Assemble Z80 source text; optionally write the bytes into RAM (cpu 'gs' / 'ms': into the sound card "
+           "CPU's view)",
+           py::arg("code"), py::arg("address"), py::arg("write") = false, py::arg("cpu") = "")
 
         .def("label_resolve", [](Emulator& self, py::object queryValue, const std::string& cpu) -> py::dict {
             py::dict d;

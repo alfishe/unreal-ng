@@ -671,6 +671,10 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     # frame (command: command)
     # select_cpu("gs") / selected_cpu(): the CPU the front-ends show, {cpu, follows}; a card shown follows the main
     # CPU's steps of the paused machine (its state at the main CPU's moment); "main" ends it
+    # debug_targets(): {selected, targets: [{cpu, available, card}]}. cpu="gs" on debug_snapshot (debug_cpu names
+    # it), mem_read_block, mem_write_block, mem_hexdump, mem_read_word, mem_write_word, page_read, page_read_block,
+    # memory_info, mem_find, assemble, bp_note, bp_group, bp_select; page_write*, disasm_page and calltrace refuse a
+    # card CPU. Error texts end with "(code: <code>)", error dicts carry code
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""

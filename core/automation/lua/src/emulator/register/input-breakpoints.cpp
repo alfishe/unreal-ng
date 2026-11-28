@@ -681,11 +681,13 @@ void LuaEmulator::RegisterInputAndBreakpoints(sol::state& lua)
         return bpm ? bpm->DeactivateBreakpoint(id) : false;
     });
 
-    lua.set_function("bp_note", [this](uint16_t id, const std::string& note) -> bool {
+    // bp_note / bp_group / bp_select: `cpu` last ("gs" / "ms": the sound card CPU's breakpoints; a script error for a
+    // CPU that is not there)
+    lua.set_function("bp_note", [this](uint16_t id, const std::string& note, sol::optional<std::string> cpu) -> bool {
         if (!effectiveEmulator()) return false;
         auto* ctx = effectiveEmulator()->GetContext();
         if (!ctx || !ctx->pDebugManager) return false;
-        BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+        BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager(ScriptCpu(cpu));
         return bpm ? bpm->SetBreakpointNote(id, note) : false;
     });
 
@@ -708,26 +710,34 @@ void LuaEmulator::RegisterInputAndBreakpoints(sol::state& lua)
         return {true, sol::nullopt};
     });
 
-    lua.set_function("bp_group", [this](uint16_t id, const std::string& group) -> bool {
+    lua.set_function("bp_group", [this](uint16_t id, const std::string& group, sol::optional<std::string> cpu) -> bool {
         if (!effectiveEmulator()) return false;
         auto* ctx = effectiveEmulator()->GetContext();
         if (!ctx || !ctx->pDebugManager) return false;
-        BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+        BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager(ScriptCpu(cpu));
         return bpm ? bpm->SetBreakpointGroup(id, group) : false;
     });
 
     // Breakpoints by selection (BreakpointSelection: all, an id, a kind, group:<name>): bp_select(select, op) with op
     // enable | disable | toggle | remove answers {select, selected, changed, active}; a refusal: ok = false, error
-    lua.set_function("bp_select", [this](sol::this_state ts, const std::string& select, const std::string& op) -> sol::object {
+    lua.set_function("bp_select", [this](sol::this_state ts, const std::string& select, const std::string& op,
+                                         sol::optional<std::string> cpu) -> sol::object {
         StateNode out = StateNode::Object();
         std::string error;
-        BreakpointManager* bpm = effectiveEmulator() ? effectiveEmulator()->GetBreakpointManager() : nullptr;
+        const char* code = DebugError::kInvalidArgument;
+        EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+        BreakpointManager* bpm =
+            ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(ScriptCpu(cpu)) : nullptr;
         if (!bpm)
+        {
             error = "no emulator";
+            code = DebugError::kNotFound;
+        }
         else if (BreakpointSelection::Run(*bpm, select, op, out, error))
             return StateNodeToLua(ts, out);
         out["ok"] = false;
         out["error"] = error;
+        out["code"] = std::string(code);
         return StateNodeToLua(ts, out);
     });
     // bp_key(key, {on = "press" | "release" | "both", hits =, group =, note =}): stops on the first keyboard read

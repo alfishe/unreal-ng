@@ -1,3 +1,18 @@
+    // Every JSON error reply (status >= 400) of the REST and WebSocket planes: the text and one code of a short list
+    // (core/src/debugger/debugerror.h); the post-handling advice adds code where a handler gave none
+    schemas["Error"]["type"] = "object";
+    schemas["Error"]["properties"]["error"]["type"] = "string";
+    schemas["Error"]["properties"]["message"]["type"] = "string";
+    schemas["Error"]["properties"]["code"]["type"] = "string";
+    for (const char* code : {"cpu_unavailable", "invalid_argument", "not_supported", "not_found", "not_paused",
+                             "run_control_held", "revoked", "refused", "busy", "internal"})
+        schemas["Error"]["properties"]["code"]["enum"].append(code);
+    schemas["Error"]["properties"]["code"]["description"] =
+        "cpu_unavailable: the card CPU named is not there; invalid_argument: a bad parameter; not_supported: the "
+        "capability is not there for that CPU or space; not_found: no such object; not_paused: the action needs a "
+        "paused machine; run_control_held / revoked: another client holds the machine, the session was revoked; "
+        "refused: the machine refused the change; busy: try again; internal: anything else";
+
     schemas["EmulatorList"]["type"] = "object";
     schemas["EmulatorList"]["properties"]["emulators"]["type"] = "array";
     schemas["EmulatorList"]["properties"]["emulators"]["items"]["$ref"] = "#/components/schemas/EmulatorInfo";

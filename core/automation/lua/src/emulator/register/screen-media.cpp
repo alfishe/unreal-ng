@@ -229,10 +229,13 @@ void LuaEmulator::RegisterScreenAndMedia(sol::state& lua)
         return out;
     });
 
-    lua.set_function("memory_info", [this]() -> sol::table {
+    // memory_info([cpu]): "gs" / "ms" the sound card CPU's {cpu, pages = {ram_count, rom_count}, windows} (CpuView)
+    lua.set_function("memory_info", [this](sol::this_state s, sol::optional<std::string> cpuName) -> sol::table {
         sol::state_view lua_view(*_lua);
         sol::table info = lua_view.create_table();
         if (!effectiveEmulator()) return info;
+        if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            return StateNodeToLua(s, CpuView::MemoryInfo(effectiveEmulator()->GetContext(), cpu)).as<sol::table>();
         Memory* mem = effectiveEmulator()->GetMemory();
         if (!mem) return info;
         

@@ -5,7 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "debugger/debugerror.h"
 #include "debugger/debugmanager.h"
+#include "debugger/targets/cpuview.h"
 #include "debugger/watch/framewatch.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/pchistory/pchistory.h"
@@ -20,6 +22,7 @@
 #include "emulator/execution/runcontrol.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 
 namespace DebugSnapshot
 {
@@ -310,6 +313,82 @@ std::string StateName(Emulator* emulator)
     return emulator->IsPaused() ? "paused" : emulator->IsRunning() ? "running" : "stopped";
 }
 
+/// The snapshot's memory windows; "cpu:" reads the CPU the snapshot is of (a card CPU: its own view)
+void MemoryWindows(EmulatorContext* context, DebugCpuId cpu, const Options& options, StateNode& node)
+{
+    if (options.memory.empty())
+        return;
+    StateNode windows = StateNode::Array();
+    for (const std::string& text : options.memory)
+    {
+        std::string space, error;
+        uint32_t address = 0, length = 0;
+        MemoryRead::ParseWindow(text, space, address, length, error);   // checked by Validate
+        if (IsCardCpu(cpu) && (space.empty() || space == "cpu"))
+            space = DebugCpuName(cpu);
+        const MemoryRead::Result read = MemoryRead::Bytes(context, space, address, length);
+        StateNode window = StateNode::Object();
+        window["space"] = read.error.empty() ? read.space : space;
+        window["address"] = static_cast<uint64_t>(address);
+        if (!read.error.empty())
+            window["error"] = read.error;
+        else
+        {
+            window["length"] = static_cast<uint64_t>(read.bytes.size());
+            if (options.rawBytes)
+                window["bytes"] = std::string(read.bytes.begin(), read.bytes.end());
+            else
+                window["base64"] = Base64(read.bytes);
+        }
+        windows.push(window);
+    }
+    node["memory"] = windows;
+}
+
+/// A card CPU's part of the snapshot (regs ... memory) in the main CPU's shapes: its registers, its four windows as
+/// pages, its stack, the card's time beside the machine's, code from its PC. prev_regs is the main CPU's only (null)
+void CaptureCard(EmulatorContext* context, DebugCpuId cpu, const Options& options, StateNode& node)
+{
+    node["regs"] = CpuView::Registers(context, cpu);
+    node["prev_regs"] = StateNode();
+    StateNode pages = StateNode::Array();
+    StateNode windows = CpuView::Windows(context, cpu);
+    if (windows.find("windows"))
+        for (size_t w = 0; w < windows["windows"].size(); ++w)
+        {
+            StateNode& window = windows["windows"].items[w];
+            StateNode page = StateNode::Object();
+            page["window"] = static_cast<int>(w);
+            page["start"] = window["start"];
+            page["kind"] = window["kind"];
+            if (const StateNode* number = window.find("page"))
+                page["page"] = *number;
+            pages.push(page);
+        }
+    node["pages"] = pages;
+    if (options.stack)
+        node["stack"] = CpuView::Stack(context, cpu, options.stack);
+
+    StateNode time = StateNode::Object();
+    time["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
+    time["t"] = static_cast<uint64_t>(context->pCore->GetZ80()->t);
+    time["frame_t"] = static_cast<uint64_t>(context->config.frame);
+    if (const GeneralSoundCard* card = CpuView::Card(context, cpu))
+        time["card_time"] = static_cast<int64_t>(card->cardTime());
+    node["time"] = time;
+
+    if (options.disasm)
+    {
+        Z80CpuRegisters regs{};
+        GeneralSoundCard* card = CpuView::Card(context, cpu);
+        const uint16_t pc = card && card->cardRegisters(regs) ? regs.pc : 0;
+        const StateNode lines = CpuView::Disasm(context, cpu, pc, options.disasm);
+        const StateNode* instructions = lines.find("instructions");
+        node["disasm"] = instructions ? *instructions : StateNode::Array();
+    }
+    MemoryWindows(context, cpu, options, node);
+}
+
 /// Every part, read now: the caller guarantees nothing runs the machine meanwhile. `consistency` is the caller's
 /// to fill (where it ran Capture); the key is placed here to keep the field order
 StateNode Capture(Emulator* emulator, const Options& options)
@@ -318,9 +397,13 @@ StateNode Capture(Emulator* emulator, const Options& options)
     Z80* z80 = context->pCore->GetZ80();
     Memory* memory = context->pMemory;
 
+    const DebugCpuId cpu = options.cpu;
+    const bool card = IsCardCpu(cpu);
+
     StateNode node = StateNode::Object();
     node["seq"] = emulator->DebugSeq();
-    node["cpu"] = std::string("z80");
+    node["cpu"] = std::string("z80");   // the instruction set (kept); the CPU read is debug_cpu
+    node["debug_cpu"] = std::string(DebugCpuName(cpu));
     node["state"] = StateName(emulator);
     node["pause"] = PauseNode(emulator);
     if (emulator->IsPaused())
@@ -338,6 +421,11 @@ StateNode Capture(Emulator* emulator, const Options& options)
             pause["timeline"] = timeline::BuildNow(*emulator, timeline::Query{});
     }
     node["consistency"] = std::string();
+    if (card)
+    {
+        CaptureCard(context, cpu, options, node);
+        return node;
+    }
     node["regs"] = Registers(context);
     Z80State previous;
     node["prev_regs"] = emulator->PreviousStopRegisters(previous) ? RegistersOf(previous) : StateNode();
@@ -392,32 +480,7 @@ StateNode Capture(Emulator* emulator, const Options& options)
         node["disasm"] = instructions ? *instructions : StateNode::Array();
     }
 
-    if (!options.memory.empty())
-    {
-        StateNode windows = StateNode::Array();
-        for (const std::string& text : options.memory)
-        {
-            std::string space, error;
-            uint32_t address = 0, length = 0;
-            MemoryRead::ParseWindow(text, space, address, length, error);   // checked by Validate
-            const MemoryRead::Result read = MemoryRead::Bytes(context, space, address, length);
-            StateNode window = StateNode::Object();
-            window["space"] = read.error.empty() ? read.space : space;
-            window["address"] = static_cast<uint64_t>(address);
-            if (!read.error.empty())
-                window["error"] = read.error;
-            else
-            {
-                window["length"] = static_cast<uint64_t>(read.bytes.size());
-                if (options.rawBytes)
-                    window["bytes"] = std::string(read.bytes.begin(), read.bytes.end());
-                else
-                    window["base64"] = Base64(read.bytes);
-            }
-            windows.push(window);
-        }
-        node["memory"] = windows;
-    }
+    MemoryWindows(context, cpu, options, node);
     return node;
 }
 }  // namespace
@@ -432,7 +495,25 @@ Result Build(Emulator* emulator, const Options& options)
     }
     result.error = Validate(options);
     if (!result.error.empty())
+    {
+        result.code = DebugError::kInvalidArgument;
         return result;
+    }
+    if (IsCardCpu(options.cpu))
+    {
+        if (!CpuView::Card(emulator->GetContext(), options.cpu))
+        {
+            result.error = std::string("cpu ") + DebugCpuName(options.cpu) + " not available: no card with a CPU in its slot";
+            result.code = DebugError::kCpuUnavailable;
+            return result;
+        }
+        if (options.pchist)
+        {
+            result.error = CpuView::MainOnly(options.cpu, "the PC history (pchist)");
+            result.code = DebugError::kNotSupported;
+            return result;
+        }
+    }
 
     const Emulator::CoherentMoment where = emulator->RunAtCoherentMoment(
         [&]() { result.snapshot = Capture(emulator, options); }, 500);
@@ -442,6 +523,7 @@ Result Build(Emulator* emulator, const Options& options)
         return result;
     }
     result.busy = true;
+    result.code = DebugError::kBusy;
     result.error = "no coherent moment within 500 ms (the emulator is stepping or changing state); try again";
     return result;
 }

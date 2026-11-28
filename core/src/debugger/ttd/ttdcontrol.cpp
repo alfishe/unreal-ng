@@ -425,10 +425,15 @@ private:
     TTDReply CoverageRare(const TTDRequest& request);
     TTDReply CoverageSummary(const TTDRequest& request);
     TTDReply MemoryAt(const TTDRequest& request);
-    /// memory-at space cpu: Z80 addresses through the mapping at that point (the controller's ReadCpuView)
+    /// memory-at space cpu: Z80 addresses through the mapping at that point (the controller's ReadCpuViewStored at a
+    /// frame start the store answers, else ReadCpuView)
     /// @p frame absent: the machine as it stands now
     TTDReply MemoryAtCpu(std::optional<uint64_t> frame, uint32_t tin, uint64_t offset, uint64_t length);
+    /// memory-at with a memory's name: the engine's store read inside the controller's ReadStoredFrames
+    TTDReply MemoryAtRegion(const std::string& space, uint64_t frame, uint64_t tin, uint64_t offset, uint64_t length);
     TTDReply MemoryDiff(const TTDRequest& request);
+    /// memory-diff's read of the engine's store, inside the controller's ReadStoredFrames
+    TTDReply MemoryDiffStored(const std::string& space, uint64_t fromFrame, uint64_t toFrame, uint64_t limit);
     /// memory-series (PLAN #122 S1): ranges at many frame starts in one walk of the checkpoints (the controller's
     /// ReadMemorySeries), bounded by rows and bytes
     TTDReply MemorySeries(const TTDRequest& request);
@@ -5999,14 +6004,27 @@ TTDReply TTDControlBackend::MemoryAt(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "Invalid tinframe: '" + *t + "'");
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
-    PauseAndConfirm();
     if (lower == "cpu")
         return MemoryAtCpu(frameText ? std::optional<uint64_t>(frame) : std::nullopt, static_cast<uint32_t>(tin),
                            offset, length);
+    // A frame start is read from the store: a running machine goes on, and so does a recording (RQ-2). A point
+    // inside a frame may replay the frame for its writes, and a recording that runs pauses for it, as for frames
+    // the store cannot give while it records (D8): the machine is parked first and stays parked
+    const bool inside = tin > 0;
+    if (inside || _manager->StoredFramesPauseRecording(frame, frame))
+        PauseAndConfirm();
+    TTDReply reply;
+    _manager->ReadStoredFrames(frame, frame, inside, [&] { reply = MemoryAtRegion(*space, frame, tin, offset, length); });
+    return reply;
+}
+
+TTDReply TTDControlBackend::MemoryAtRegion(const std::string& space, uint64_t frame, uint64_t tin, uint64_t offset,
+                                             uint64_t length)
+{
     uint32_t region = 0;
     uint32_t base = 0;
     size_t index = 0;
-    if (std::optional<TTDReply> refused = ResolveRegionAt(*space, frame, region, base, index))
+    if (std::optional<TTDReply> refused = ResolveRegionAt(space, frame, region, base, index))
         return *refused;
     const TimeTravelEngine& engine = _manager->GetEngine();
     const TTDRegionDesc& desc = engine.Regions()[region];
@@ -6113,9 +6131,19 @@ TTDReply TTDControlBackend::MemoryAtCpu(std::optional<uint64_t> frame, uint32_t 
         return Fail(TTDControlError::BadRequest, "space cpu: the bytes end at 0xFFFF (offset + length at most 65536)");
     // The machine now: no frame, or its own frame past the recorded history (a stopped recording the machine
     // ran on from, or none at all). Read as it stands, through its mapping
+    auto inHistory = [&] {
+        return _manager->GetCheckpointCount() > 0 && frame &&
+               !(_manager->SessionEndPosition() < TTDTimePoint{*frame, tin});
+    };
+    bool recorded = inHistory();
+    // A recorded frame start is tried from the store first, the machine left running (RQ-2). The machine now is
+    // read as it stands and a point inside a frame is replayed: parked first, and it stays parked
+    if (!recorded || tin > 0)
+    {
+        PauseAndConfirm();
+        recorded = inHistory();
+    }
     const TTDTimePoint now = _manager->CurrentPosition();
-    const bool recorded = _manager->GetCheckpointCount() > 0 && frame &&
-                          !(_manager->SessionEndPosition() < TTDTimePoint{*frame, tin});
     const bool live = !frame || (!recorded && *frame == now.frame);
     TTDCpuView view;
     if (live)
@@ -6136,8 +6164,13 @@ TTDReply TTDControlBackend::MemoryAtCpu(std::optional<uint64_t> frame, uint32_t 
         }
         view.ok = true;
     }
-    else
+    else if (!_manager->ReadCpuViewStored({*frame, tin}, static_cast<uint16_t>(offset), static_cast<size_t>(length), view))
+    {
+        // Only a replay can tell (no stored mapping, a point past the checkpoint), or a recording that runs
+        // cannot be read as it is: it pauses for browsing (D8). The machine is parked first and stays parked
+        PauseAndConfirm();
         view = _manager->ReadCpuView({*frame, tin}, static_cast<uint16_t>(offset), static_cast<size_t>(length));
+    }
     if (!view.ok)
     {
         const TTDTimePoint end = _manager->SessionEndPosition();
@@ -6440,64 +6473,72 @@ TTDReply TTDControlBackend::MemorySeries(const TTDRequest& request)
     query.maxRows = static_cast<size_t>(rows);
     query.maxBytes = static_cast<size_t>(bytes);
 
-    // The ranges' memories, named as memory-at names them
+    // The ranges' memories, named as memory-at names them: read from the engine inside one read of the session
     const TimeTravelEngine& engine = _manager->GetEngine();
     uint64_t rowBytes = 0;
     StateNode rangesNode = StateNode::Array();
-    for (size_t i = 0; i < asked.size(); ++i)
-    {
-        const SeriesRangeText& a = asked[i];
-        const std::string where = "ranges[" + std::to_string(i) + "] (" + a.space + ":" + a.offset + ":" + a.length + "): ";
-        uint64_t offset = 0;
-        uint64_t length = 0;
-        if (!ParseUpTo(a.offset, 0xFFFFFFFFull, offset))
-            return Fail(TTDControlError::BadRequest, where + "invalid offset '" + a.offset + "'");
-        if (!ParseUpTo(a.length, kSeriesMaxRowBytes, length) || length == 0)
-            return Fail(TTDControlError::BadRequest, where + "invalid length '" + a.length + "' (1.." +
-                                                         std::to_string(kSeriesMaxRowBytes) + ")");
-        std::string lower = a.space;
-        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        TTDSeriesRange range;
-        range.length = static_cast<uint32_t>(length);
-        StateNode node = StateNode::Object();
-        if (lower == "cpu")
+    auto resolveRanges = [&]() -> std::optional<TTDReply> {
+        for (size_t i = 0; i < asked.size(); ++i)
         {
-            if (offset + length > 0x10000)
-                return Fail(TTDControlError::BadRequest,
-                            where + "space cpu: Z80 addresses end at 0xFFFF (offset + length at most 65536)");
-            range.cpu = true;
-            range.offset = offset;
-            node["space"] = "cpu";
+            const SeriesRangeText& a = asked[i];
+            const std::string where = "ranges[" + std::to_string(i) + "] (" + a.space + ":" + a.offset + ":" + a.length + "): ";
+            uint64_t offset = 0;
+            uint64_t length = 0;
+            if (!ParseUpTo(a.offset, 0xFFFFFFFFull, offset))
+                return Fail(TTDControlError::BadRequest, where + "invalid offset '" + a.offset + "'");
+            if (!ParseUpTo(a.length, kSeriesMaxRowBytes, length) || length == 0)
+                return Fail(TTDControlError::BadRequest, where + "invalid length '" + a.length + "' (1.." +
+                                                             std::to_string(kSeriesMaxRowBytes) + ")");
+            std::string lower = a.space;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            TTDSeriesRange range;
+            range.length = static_cast<uint32_t>(length);
+            StateNode node = StateNode::Object();
+            if (lower == "cpu")
+            {
+                if (offset + length > 0x10000)
+                    return Fail(TTDControlError::BadRequest,
+                                where + "space cpu: Z80 addresses end at 0xFFFF (offset + length at most 65536)");
+                range.cpu = true;
+                range.offset = offset;
+                node["space"] = "cpu";
+            }
+            else
+            {
+                uint32_t region = 0;
+                uint32_t base = 0;
+                size_t index = 0;
+                // Only the name is checked here (against the newest checkpoint): the frames are the series' own check
+                if (std::optional<TTDReply> refused = ResolveRegionAt(a.space, UINT64_MAX, region, base, index))
+                    return Fail(refused->error, where + refused->message);
+                const TTDRegionDesc& desc = engine.Regions()[region];
+                if (base + offset + length > desc.bytes)
+                    return Fail(TTDControlError::BadRequest,
+                                where + "past the end of " + desc.name + " (" + std::to_string(desc.bytes) + " bytes)");
+                range.region = region;
+                range.offset = base + offset;
+                node["space"] = desc.name;
+            }
+            node["offset"] = range.offset;
+            node["length"] = length;
+            rangesNode.push(node);
+            rowBytes += length;
+            query.ranges.push_back(range);
         }
-        else
-        {
-            uint32_t region = 0;
-            uint32_t base = 0;
-            size_t index = 0;
-            // Only the name is checked here (against the newest checkpoint): the frames are the series' own check
-            if (std::optional<TTDReply> refused = ResolveRegionAt(a.space, UINT64_MAX, region, base, index))
-                return Fail(refused->error, where + refused->message);
-            const TTDRegionDesc& desc = engine.Regions()[region];
-            if (base + offset + length > desc.bytes)
-                return Fail(TTDControlError::BadRequest,
-                            where + "past the end of " + desc.name + " (" + std::to_string(desc.bytes) + " bytes)");
-            range.region = region;
-            range.offset = base + offset;
-            node["space"] = desc.name;
-        }
-        node["offset"] = range.offset;
-        node["length"] = length;
-        rangesNode.push(node);
-        rowBytes += length;
-        query.ranges.push_back(range);
-    }
+        return std::nullopt;
+    };
+    std::optional<TTDReply> refusedRange;
+    _manager->ReadSession([&] { refusedRange = resolveRanges(); });
+    if (refusedRange)
+        return *refusedRange;
     if (rowBytes > kSeriesMaxRowBytes)
         return Fail(TTDControlError::BadRequest, "ranges: " + std::to_string(rowBytes) + " bytes per frame; at most " +
                                                      std::to_string(kSeriesMaxRowBytes) + " (split the call)");
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
-    // A restore moves the machine for a while (put back after): a running machine is parked first. Reads from the
-    // store alone leave it running
+    // A restore moves the machine for a while (put back after), and a recording that runs pauses for it, as for
+    // frames the store cannot give while it records (D8): a running machine is parked first. Reads from the store
+    // alone leave it running, and recording
     if (_manager->MemorySeriesRestores(query))
         PauseAndConfirm();
     const TTDSeriesResult r = _manager->ReadMemorySeries(query);
@@ -6725,14 +6766,28 @@ TTDReply TTDControlBackend::MemoryDiff(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "Invalid limit: '" + *t + "' (expected integer >= 1)");
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
-    PauseAndConfirm();
+    // Two frame starts from the store: a running machine goes on, and so does a recording (RQ-2). A recording that
+    // cannot be read as it is pauses for browsing (D8): the machine is parked first and stays parked
+    const uint64_t loFrame = std::min(fromFrame, toFrame);
+    const uint64_t hiFrame = std::max(fromFrame, toFrame);
+    if (_manager->StoredFramesPauseRecording(loFrame, hiFrame))
+        PauseAndConfirm();
+    TTDReply reply;
+    _manager->ReadStoredFrames(loFrame, hiFrame, /*insideFrame=*/false,
+                               [&] { reply = MemoryDiffStored(*space, fromFrame, toFrame, limit); });
+    return reply;
+}
+
+TTDReply TTDControlBackend::MemoryDiffStored(const std::string& space, uint64_t fromFrame, uint64_t toFrame,
+                                               uint64_t limit)
+{
     uint32_t region = 0;
     uint32_t base = 0;
     size_t fromIndex = 0;
     size_t toIndex = 0;
-    if (std::optional<TTDReply> refused = ResolveRegionAt(*space, fromFrame, region, base, fromIndex))
+    if (std::optional<TTDReply> refused = ResolveRegionAt(space, fromFrame, region, base, fromIndex))
         return *refused;
-    if (std::optional<TTDReply> refused = ResolveRegionAt(*space, toFrame, region, base, toIndex))
+    if (std::optional<TTDReply> refused = ResolveRegionAt(space, toFrame, region, base, toIndex))
         return *refused;
     const TimeTravelEngine& engine = _manager->GetEngine();
     const TTDRegionDesc& desc = engine.Regions()[region];

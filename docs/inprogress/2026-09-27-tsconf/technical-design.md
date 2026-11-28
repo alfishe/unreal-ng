@@ -563,7 +563,17 @@ store through `_bank_write[bank]`. TSConf needs:
    also counts the read's DRAM cycle); the invalidation is in `AfterWrite`,
    called by the always-installed DRAM write overlay, so there is no cache
    overlay. Cost: an A/B of the TS-Conf host-frame benchmarks (see the audit
-   TODO). Timing (miss waits at 14 MHz) phase 8.
+   TODO). Timing (miss waits at 14 MHz) phase 8. A tool's write (debugger,
+   WebAPI / MCP, scripts, loaders; 2026-11-28) is seen by the CPU as after its
+   own write: `DirectWriteToZ80Memory` drops the entry a changed byte hits
+   (`ToolWroteWindow`), and `Emulator::EditMemoryFromTool` brackets an edit
+   (`ToolEditBegins` / `ToolEditEnds`) so an entry whose word a physical-page
+   write changed is dropped too; an entry a DMA left stale before the edit
+   stays. Inside the edit, so a TTD recording keeps the cache with it. Before,
+   code overwritten by a tool over bytes the CPU had fetched ran as the old
+   code with the cache on (tests `CCH4_ToolWriteOverRunCodeIsSeen`,
+   `CCH5_ToolEditOfAPageDropsWhatItChanged`). Tool paths only: the CPU's
+   paths are unchanged.
 4. **RAM page 0xFF** (vdos maps exactly that page): ~~sentinel collision~~ —
    **resolved on master in `3a6eabc6`** (PLAN #40 Phase 0, Step 1): the bank cache holds a
    16-bit `ttd::PhysPage` with `kPhysPageNone = 0xFFFF` (`ttdphyspage.h`), so

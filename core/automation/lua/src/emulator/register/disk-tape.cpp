@@ -227,6 +227,12 @@ void LuaEmulator::RegisterDiskAndTape(sol::state& lua)
             throw std::runtime_error(error);
         return StateNodeToLua(ts, CpuView::Selected(emulator->GetContext()));
     });
+    // debug_targets(): the CPUs a debugger can name now {selected, targets = {{cpu, available, card}, ...}}
+    lua.set_function("debug_targets", [this](sol::this_state ts) -> sol::object {
+        Emulator* emulator = effectiveEmulator();
+        if (!emulator) return sol::lua_nil;
+        return StateNodeToLua(ts, CpuView::Targets(emulator->GetContext()));
+    });
     lua.set_function("selected_cpu", [this](sol::this_state ts) -> sol::object {
         Emulator* emulator = effectiveEmulator();
         if (!emulator) return sol::lua_nil;

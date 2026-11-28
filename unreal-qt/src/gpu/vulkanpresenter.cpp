@@ -1297,6 +1297,12 @@ uint64_t VulkanPresenter::SteppedPresents() const
     return _impl->lead.Steps();
 }
 
+bool VulkanPresenter::QueuesPresents() const
+{
+    // The GUI thread's (PresentFrame's): FIFO shows every image presented; a mailbox or immediate one replaces
+    return _impl->mode == VK_PRESENT_MODE_FIFO_KHR || _impl->mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+}
+
 uint64_t VulkanPresenter::Presented() const
 {
     std::lock_guard<std::mutex> lock(_impl->statsMutex);

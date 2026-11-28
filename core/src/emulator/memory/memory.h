@@ -152,6 +152,12 @@ protected:
     /// A tool's write of `value` at `addr` where the CPU sees it; true when done (ROM and a write-protected page
     /// included, as DirectWriteToZ80Memory does), false: the 16K window's write applies
     virtual bool ToolWriteRedirect([[maybe_unused]] uint16_t addr, [[maybe_unused]] uint8_t value) { return false; }
+    /// Set by a model with a cache of RAM in front of the CPU (TS-Conf): DirectWriteToZ80Memory then tells it the
+    /// window byte a tool wrote (ToolWroteWindow), so the CPU sees the new byte as after its own write. False on
+    /// every other machine. Only a byte the tool changed: rewriting the same byte leaves the cache as it is
+    bool _toolWriteNotify = false;
+    /// A tool wrote RAM at `offset` of window `bank` (the byte is already in the page)
+    virtual void ToolWroteWindow([[maybe_unused]] uint8_t bank, [[maybe_unused]] uint16_t offset) {}
 
     /// Cached RAM page numbers per bank for TTD hot path optimization.
     /// Updated only when bank mapping changes (SetRAMPageToBank*).
@@ -765,6 +771,12 @@ public:
     /// @brief Tell TTD a physical RAM page was written behind the CPU's back
     /// (a tool editing the page directly), so the next checkpoint captures it.
     void MarkRamPageEdited(uint16_t page);
+
+    /// @brief Emulator::EditMemoryFromTool brackets a tool's edit with these: a model with a cache of RAM in front of
+    /// the CPU (TS-Conf) drops the entries whose RAM the edit changed, whatever path wrote it (a physical page
+    /// included). Inside the edit, so a TTD recording keeps the result with the edit
+    virtual void ToolEditBegins() {}
+    virtual void ToolEditEnds() {}
     /// endregion </TTD dirty tracker access>
     /// endregion </Memory access tracking>
 };

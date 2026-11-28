@@ -121,7 +121,10 @@ it was measured with, so a restored block reads the same as when it was made.
     or a TTD-composed picture (a frame target: the FT812 frame that finished last by the end
     of that machine frame; a moment inside a frame: plus the lines of the frame in flight
     drawn so far, above a blue line, the previous frame's lines faded below it). Paused at a
-    breakpoint the screen shows the last latched FT812 frame, and so does the window. While
+    breakpoint (or at the end of `run_frames` / `run_tstates`) inside a frame the screen
+    shows the FT812 frame in flight drawn up to that moment, as a seek there does
+    (`Screen::CatchUpExternalPicture`, since 2026-11-27); the window, like every machine's,
+    keeps the last finished frame on a pause. While
     the monitor shows the Evo the window shows the chip's last finished frame and says so.
   - Tests: `unreal-qt-tests` `Ft812LineBudgetView_Test` (classes, composition) and
     `Ft812LineChart_Test` (bar colors and lengths, the screen's scale); core

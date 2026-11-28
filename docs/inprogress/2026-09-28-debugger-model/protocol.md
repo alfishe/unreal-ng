@@ -451,6 +451,21 @@ names the extra windows it wants, so one round trip draws a whole window.
 
 HTTP status codes: 400 invalid, 404 not found, 409 for every state conflict.
 
+**As built** (2026-11-27, `core/src/debugger/debugerror.h`): `cpu_unavailable`, `invalid_argument`, `not_supported`
+(the capability is not that CPU's or space's: a page write, the call trace, the PC history or the page disassembly of
+a card CPU), `not_found`, `not_paused`, `run_control_held`, `revoked` (the user took control back), `refused` (the
+machine's state refuses it: the recorded past of a time travel session, a write refused; it stands for the planned
+`ttd_recording` / `ttd_replay`), `busy` (no coherent moment: try again) and `internal`. The code goes beside each
+surface's own error text, which stays as it was:
+
+| Surface | Where the code is |
+|---|---|
+| REST, WebSocket `call` | `code` beside `error` and `message` in every JSON error body (status >= 400). Handlers that know the reason set it; the post-handling advice `webapi_gate::AddErrorCode` adds one from the status (400 `invalid_argument`, 404 `not_found`, 409 `refused`, 503 `busy`, 5xx `internal`; `revoked_by_user` `revoked`, a held run control `run_control_held`) where a handler gave none. `/mcp` keeps its JSON-RPC errors |
+| MCP | the error text ends with `(code: <code>)` (an agent may see only `content[]`); `structuredContent` is the error body with `code` |
+| Lua | a refused call's table has `code` beside `error`; a script error's text ends with `(code: <code>)`; `debug_snapshot` returns `nil, error, code` |
+| Python | `code` in the error dicts; an exception's text ends with `(code: <code>)` |
+| CLI | the error line ends with `(code: <code>)` |
+
 ## 5. Events
 
 ### 5.1 WebSocket protocol
@@ -516,6 +531,12 @@ through `DebugService` (A1). This table is the parity checklist the tests
 use (§10).
 
 ### 6.1 CPU, registers, disassembly, memory
+
+As built (Phase 3 stage 3, 2026-11-27): a `cpu` parameter per call on the existing commands, no session default or
+target object; the names below are the planned ones, the built ones are in
+[breakpoints-and-traces.md §8](../../emulator/design/debugger/breakpoints-and-traces.md#8-the-sound-card-cpu) (the CPU
+list is CLI `debug-targets`, the snapshot `debug-snapshot --cpu`; stack and calls have no routes of their own: the
+snapshot's `stack`, the main-only call trace).
 
 | Read / command | WebAPI | CLI | MCP | Lua | Python |
 |---|---|---|---|---|---|

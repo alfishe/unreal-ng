@@ -522,9 +522,39 @@
             "PC history entries, newest first (default 0 = none, at most 1024): the snapshot's pchist {armed, "
             "started_now, total, capacity, entries [{address, kind, page}]}; the first request arms the history";
         p[4]["schema"]["type"] = "integer";
-        op["responses"]["200"]["description"] = "The snapshot";
-        op["responses"]["400"]["description"] = "Bad parameters (the message says which)";
-        op["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again";
+        p[5]["name"] = "cpu";
+        p[5]["in"] = "query";
+        p[5]["description"] =
+            "main (default), gs or ms: the CPU the snapshot is of. cpu stays 'z80' and debug_cpu names it; a card "
+            "CPU's regs are its registers (GET /registers?cpu=), prev_regs null, pages[] its four 16K windows {window, "
+            "start, kind rom | ram | none, page}, stack its SP and words, time {frame, t, frame_t, card_time}, disasm "
+            "from its PC, memory windows in its view (space cpu or the CPU's name). pchist is refused for a card CPU "
+            "(400 code not_supported)";
+        p[5]["schema"]["type"] = "string";
+        p[5]["schema"]["enum"].append("main");
+        p[5]["schema"]["enum"].append("gs");
+        p[5]["schema"]["enum"].append("ms");
+        op["responses"]["200"]["description"] = "The snapshot (debug_cpu: main | gs | ms)";
+        op["responses"]["400"]["description"] = "Bad parameters (code invalid_argument) or pchist of a card CPU (not_supported)";
+        op["responses"]["404"]["description"] = "The card CPU is not there (code cpu_unavailable)";
+        op["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again (code busy)";
+    }
+
+    // GET /api/v1/emulator/{id}/debug/targets - the CPUs a debugger can name (CpuView::Targets)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/debug/targets"]["get"];
+        op["summary"] = "The CPUs a debugger can name now";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "{selected, targets: [{cpu: main | gs | ms, available, card}]}: every value the cpu parameter takes, "
+            "whether that CPU is there now (a card with a CPU in its slot) and the card (gs, neogs). selected is the "
+            "CPU the front-ends show (GET /debug/selected_cpu).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "{selected, targets}";
+        op["responses"]["404"]["description"] = "Emulator instance not found";
     }
 
     paths["/api/v1/emulator/{id}/disasm"]["get"]["summary"] = "Disassemble Z80 code";
@@ -696,6 +726,46 @@
         paths["/api/v1/emulator/{id}/steps"]["post"]["description"] =
             paths["/api/v1/emulator/{id}/steps"]["post"]["description"].asString() +
             " With cpu=gs / ms: count (1-10000) instructions of that card CPU.";
+        // Debugger model Phase 3 stage 3: the page routes read a card CPU's own pages by number (rom | ram; a
+        // write is refused), find searches its view; the call trace, the PC history and the page disassembly are the
+        // main CPU's only (a card CPU: 400 code not_supported)
+        const char* page = "main (default), gs or ms. A card CPU: its own ROM / RAM page by number (type rom or ram, "
+                           "offset inside the 16K page), {cpu, type, page, offset, length, data, hex}; a write is "
+                           "refused (400 code not_supported: write its view, POST /memory/write with cpu)";
+        const char* mainOnly = "main (default). This is the main CPU's only: gs or ms is refused (400 code "
+                               "not_supported); 404 code cpu_unavailable for a card CPU that is not there";
+        const std::pair<const char*, const char*> cpuRoutes[] = {
+            {"/api/v1/emulator/{id}/memory/page/{type}/{page}", "get"},
+            {"/api/v1/emulator/{id}/memory/page/{type}/{page}", "post"},
+            {"/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", "get"},
+            {"/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", "put"},
+            {"/api/v1/emulator/{id}/calltrace", "get"},
+            {"/api/v1/emulator/{id}/debug/pchist", "get"},
+            {"/api/v1/emulator/{id}/disasm/page", "get"}};
+        for (const auto& [path, verb] : cpuRoutes)
+        {
+            const bool main = std::string(path).find("/memory/") == std::string::npos;
+            Json::Value& operation = paths[path][verb];
+            Json::Value cpu;
+            cpu["name"] = "cpu";
+            cpu["in"] = "query";
+            cpu["required"] = false;
+            cpu["description"] = main ? mainOnly : page;
+            cpu["schema"]["type"] = "string";
+            cpu["schema"]["enum"].append("main");
+            cpu["schema"]["enum"].append("gs");
+            cpu["schema"]["enum"].append("ms");
+            operation["parameters"].append(cpu);
+            operation["responses"]["400"]["description"] =
+                main ? "A card CPU (code not_supported)" : "Bad parameters, or a write of a card CPU's page (code not_supported)";
+            operation["responses"]["404"]["description"] = "Emulator instance not found, or the card CPU is not there";
+        }
+        Json::Value& find = paths["/api/v1/emulator/{id}/memory/find"]["post"];
+        find["requestBody"]["content"]["application/json"]["schema"]["properties"]["cpu"]["type"] = "string";
+        find["requestBody"]["content"]["application/json"]["schema"]["properties"]["cpu"]["description"] =
+            "main (default), gs or ms: a card CPU searches its 64K view (space cpu only; another space: 400 code "
+            "not_supported); the reply adds cpu";
+        find["responses"]["404"]["description"] = "Emulator instance not found, or the card CPU is not there";
         paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"] =
             paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"].asString() +
             " With cpu=gs / ms: that card CPU runs to pc (run to the cursor; a cursor at its PC means the next run "

@@ -583,6 +583,70 @@ TEST(LuaCardCpu_Test, TheCardCpuIsTheLastArgument)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+/// Phase 3 stage 3 of the debugger model: every debugger function of the scripts that reads or writes a CPU takes
+/// `cpu` last (or opts.cpu), the card CPU's own view; what only the main CPU has refuses a card with its error code
+TEST(LuaCardCpu_Test, EveryCpuFunctionTakesTheCardCpu)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    ASSERT_TRUE(FitGeneralSoundCard(emulator->GetContext()->pSoundManager, GSTypeKind::Z80));
+    emulator->RunNFrames(2, false);
+
+    BoundLua lua;
+    lua.start();
+    lua.Bind(emulator);
+    // Each row runs alone after the same setup: #4000.. of the card holds DE AD BE EF
+    const char* setup = "mem_write_block(0x4000, {0xDE, 0xAD, 0xBE, 0xEF}, 'gs')\n";
+    const struct
+    {
+        const char* name;
+        const char* code;
+    } rows[] = {
+        {"block read", "local b = mem_read_block(0x4000, 4, 'gs'); assert(#b == 4 and b[1] == 0xDE and b[4] == 0xEF)"},
+        {"word read / write", "assert(mem_read_word(0x4000, 'gs') == 0xADDE); mem_write_word(0x4002, 0x1234, 'gs');"
+                              "assert(mem_read(0x4002, 'gs') == 0x34 and mem_read(0x4003, 'gs') == 0x12)"},
+        {"hexdump", "assert(mem_hexdump(0x4000, 4, 'gs'):find('DE AD BE EF') ~= nil)"},
+        {"page read", "local m = memory_map('gs'); local w = m.windows[2];"
+                      "assert(page_read(w.kind, w.page, 0, 'gs') == 0xDE);"
+                      "local b = page_read_block(w.kind, w.page, 1, 3, 'gs'); assert(#b == 3 and b[3] == 0xEF)"},
+        {"page write refused", "local ok, e = pcall(page_write, 'ram', 0, 0, 1, 'gs');"
+                               "assert(not ok and tostring(e):find('code: not_supported'), tostring(e))"},
+        {"memory info", "local i = memory_info('gs'); assert(i.cpu == 'gs' and #i.windows == 4 and i.pages.ram_count > 0)"},
+        {"targets", "local t = debug_targets(); assert(t.selected == 'main' and #t.targets == 3);"
+                    "assert(t.targets[2].cpu == 'gs' and t.targets[2].available and t.targets[2].card == 'gs');"
+                    "assert(t.targets[3].available == false)"},
+        {"snapshot", "local s = debug_snapshot({cpu = 'gs', stack = 1, memory = {'cpu:0x4000:2'}});"
+                     "assert(s.cpu == 'z80' and s.debug_cpu == 'gs' and s.regs.cpu == 'gs' and #s.pages == 4);"
+                     "assert(s.memory[1].bytes == '\\xDE\\xAD' and s.time.card_time ~= nil)"},
+        {"snapshot pchist refused", "local s, e, c = debug_snapshot({cpu = 'gs', pchist = 4});"
+                                    "assert(s == nil and e:find('main CPU') and c == 'not_supported', e)"},
+        {"find", "local r = mem_find('DEADBEEF', 0, 0xFFFF, 1, 4, nil, nil, 'gs');"
+                 "assert(r.cpu == 'gs' and r.count == 1 and r.matches[1].address == 0x4000)"},
+        {"find other space refused", "local r = mem_find('DE', 0, 0xFFFF, 1, 4, 'ram', nil, 'gs');"
+                                     "assert(r.error ~= nil and r.code == 'not_supported', r.error)"},
+        {"assemble", "local r = assemble('ld a,1', 0x4010, true, 'gs');"
+                     "assert(r.ok and r.cpu == 'gs' and r.written and mem_read(0x4010, 'gs') == 0x3E)"},
+        {"disasm_page refused", "local ok, e = pcall(disasm_page, 'ram', 0, 0, 1, 'gs');"
+                                "assert(not ok and tostring(e):find('code: not_supported'), tostring(e))"},
+        {"breakpoint note / group / select", "local id = bp(0x0100, {cpu = 'gs'}); assert(id);"
+                                             "assert(bp_note(id, 'n', 'gs') and bp_group(id, 'g', 'gs'));"
+                                             "local r = bp_select('group:g', 'disable', 'gs'); assert(r.changed == 1, r.error)"},
+        {"absent card", "local ok, e = pcall(mem_read_block, 0, 1, 'ms');"
+                        "assert(not ok and tostring(e):find('code: cpu_unavailable'), tostring(e))"},
+        {"bad name", "local ok, e = pcall(mem_find, '00', 0, 1, 1, 1, nil, nil, 'z81');"
+                     "assert(not ok and tostring(e):find('code: invalid_argument'), tostring(e))"},
+    };
+    for (const auto& row : rows)
+    {
+        std::string message;
+        std::string output;
+        EXPECT_TRUE(lua.executeCode(std::string(setup) + row.code, message, output)) << row.name << ": " << message;
+    }
+    lua.stop();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 /// card_run_to (RunControl::CardRunTo) from a script: the reply as a table with ok; refusals are ok = false with the
 /// reason (an unknown run, a machine that is not paused), the main CPU is a script error. The runs themselves:
 /// GSCardRunTo_Test

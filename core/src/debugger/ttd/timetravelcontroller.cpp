@@ -7234,14 +7234,10 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
 
 TTDCpuView TimeTravelController::ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length)
 {
-    // At a checkpoint the store holds every mapped page: a read, the machine untouched (phase 2, B4)
-    if (_state != TTDSessionState::Recording)
-    {
-        const SessionOperation read{*this, SessionOperation::Kind::Read};
-        TTDCpuView stored;
-        if (_state != TTDSessionState::Recording && ReadCpuViewFromStore(at, offset, length, stored))
-            return stored;
-    }
+    // At a checkpoint the store holds every mapped page: a read, the machine untouched (phase 2, B4), a recording
+    // that runs left as it is (RQ-2)
+    if (TTDCpuView stored; ReadCpuViewStored(at, offset, length, stored))
+        return stored;
 
     // Replays and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};

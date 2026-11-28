@@ -6,6 +6,7 @@
 #include "../common/longcallpool.h"
 #include "../common/jsonnumber.h"
 #include "../common/cpu_selector.h"
+#include "debugger/debugerror.h"
 #include "../common/session_helper.h"
 #include "../common/statenode_json.h"
 #include "../emulator_api.h"
@@ -115,6 +116,7 @@ static bool RunControlHeldReply(const HttpRequestPtr& req, const std::shared_ptr
     Json::Value error;
     error["error"] = "Run-control held";
     error["message"] = "Run-control held by " + ctx->GetRunControlState().surfaceLabel + ". Use that surface to step.";
+    error["code"] = DebugError::kRunControlHeld;
     auto resp = HttpResponse::newHttpJsonResponse(error);
     resp->setStatusCode(HttpStatusCode::k409Conflict);
     addCorsHeaders(resp);
@@ -133,6 +135,8 @@ static void ReplyRun(const execution::RunReply& reply, std::function<void(const 
         body["error"] = reply.error;
         body["message"] = reply.message;
     }
+    if (!reply.Ok())
+        body["code"] = reply.Code();
     auto resp = HttpResponse::newHttpJsonResponse(body);
     resp->setStatusCode(static_cast<HttpStatusCode>(reply.HttpStatus()));
     addCorsHeaders(resp);
@@ -2387,6 +2391,8 @@ void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(co
 
     // Clamp to page boundary (offset <= PAGE_SIZE - 1 here, no underflow)
     if (offset + len > PAGE_SIZE) len = PAGE_SIZE - offset;
+    // ?cpu=gs / ms: the sound card CPU's own page (CpuView::PageRead)
+    if (webapi_cpu::CardPageReply(emulator, req, callback, false, typeStr, pageStr, offset, len)) return;
     
     // Get page pointer
     uint8_t* pagePtr = nullptr;
@@ -2514,6 +2520,8 @@ void EmulatorAPI::putMemoryPage(const HttpRequestPtr& req, std::function<void(co
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
+    // A card CPU's pages are not written by number (400 not_supported): its view is (PUT /memory/{addr}?cpu=)
+    if (webapi_cpu::CardPageReply(emulator, req, callback, true, typeStr, pageStr, 0, 0)) return;
     
     Memory* mem = emulator->GetMemory();
     if (!mem)
@@ -2760,12 +2768,12 @@ void EmulatorAPI::getMemoryInfo(const HttpRequestPtr& req, std::function<void(co
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    // ?cpu=gs / ms: the sound card CPU's four windows (cpuview.h)
+    // ?cpu=gs / ms: the sound card CPU's four windows and page counts (CpuView::MemoryInfo)
     DebugCpuId cpu = DebugCpuId::Main;
     if (!CpuOrError(emulator, req, callback, cpu))
         return;
     if (IsCardCpu(cpu))
-        return ReplyJson(callback, StateNodeToJson(CpuView::Windows(emulator->GetContext(), cpu)), HttpStatusCode::k200OK);
+        return ReplyJson(callback, StateNodeToJson(CpuView::MemoryInfo(emulator->GetContext(), cpu)), HttpStatusCode::k200OK);
     
     Memory* mem = emulator->GetMemory();
     if (!mem)
@@ -3025,6 +3033,7 @@ void EmulatorAPI::getCallTrace(const HttpRequestPtr& req, std::function<void(con
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
+    if (!webapi_cpu::MainOnlyOrError(emulator, req, callback, "the call trace")) return;
     
     FeatureManager* fm = emulator->GetFeatureManager();
     bool calltraceEnabled = fm ? fm->isEnabled("calltrace") : false;
@@ -3096,16 +3105,19 @@ void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
 
-    auto reply = [&callback](HttpStatusCode code, const std::string& message) {
+    auto reply = [&callback](HttpStatusCode code, const std::string& message, const char* errorCode) {
         Json::Value error;
         error["error"] = code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable" : "Bad Request";
         error["message"] = message;
+        error["code"] = errorCode;
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(code);
         addCorsHeaders(resp);
         callback(resp);
     };
     DebugSnapshot::Options options;
+    // ?cpu=gs | ms: the sound card CPU's snapshot (debug_cpu names it; "cpu" stays "z80")
+    if (!webapi_cpu::CpuOrError(emulator, req, callback, options.cpu)) return;
     auto number = [&](const char* key, unsigned& out) {
         const std::string text = req->getParameter(key);
         if (text.empty())
@@ -3117,7 +3129,8 @@ void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void
         return true;
     };
     if (!number("disasm", options.disasm) || !number("stack", options.stack) || !number("pchist", options.pchist))
-        return reply(HttpStatusCode::k400BadRequest, "disasm, stack and pchist are unsigned numbers");
+        return reply(HttpStatusCode::k400BadRequest, "disasm, stack and pchist are unsigned numbers",
+                     DebugError::kInvalidArgument);
     // memory may repeat (memory=a&memory=b) and take a comma list: read the raw query, not the parameter map
     const std::string& query = req->query();
     size_t at = 0;
@@ -3143,7 +3156,8 @@ void EmulatorAPI::getDebugSnapshot(const HttpRequestPtr& req, std::function<void
 
     const DebugSnapshot::Result result = DebugSnapshot::Build(emulator.get(), options);
     if (!result.error.empty())
-        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error);
+        return reply(result.busy ? HttpStatusCode::k503ServiceUnavailable : HttpStatusCode::k400BadRequest, result.error,
+                     result.code);
     auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(result.snapshot));
     addCorsHeaders(resp);
     callback(resp);
@@ -3280,6 +3294,7 @@ void EmulatorAPI::getPcHistory(const HttpRequestPtr& req, std::function<void(con
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
+    if (!webapi_cpu::MainOnlyOrError(emulator, req, callback, "the PC history")) return;
     uint64_t depth = 32;
     const std::string text = req->getParameter("depth");
     auto reply = [&callback](HttpStatusCode code, const std::string& message) {
@@ -3461,6 +3476,19 @@ void EmulatorAPI::postPcHistory(const HttpRequestPtr& req, std::function<void(co
     callback(resp);
 }
 
+/// @brief GET /api/v1/emulator/{id}/debug/targets - the CPUs a debugger can name now: {selected, targets: [{cpu,
+/// available, card}]} (core CpuView::Targets)
+void EmulatorAPI::getDebugTargets(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(CpuView::Targets(emulator->GetContext())));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief GET /api/v1/emulator/{id}/debug/selected_cpu - the CPU the front-ends show: {cpu, follows}
 void EmulatorAPI::getSelectedCpu(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
@@ -3496,6 +3524,7 @@ void EmulatorAPI::putSelectedCpu(const HttpRequestPtr& req, std::function<void(c
         code = known ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest;
         body["error"] = known ? "Not Found" : "Bad Request";
         body["message"] = error;
+        body["code"] = known ? DebugError::kCpuUnavailable : DebugError::kInvalidArgument;
     }
     else
         body = StateNodeToJson(CpuView::Selected(context));
@@ -3673,6 +3702,7 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
+    if (!webapi_cpu::MainOnlyOrError(emulator, req, callback, "the disassembly of a machine page")) return;
     
     EmulatorContext* ctx = emulator->GetContext();
     Memory* memory = ctx->pMemory;
@@ -4878,6 +4908,9 @@ void EmulatorAPI::assembleCode(const HttpRequestPtr& req, std::function<void(con
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
+    // "cpu" (body or ?cpu=) gs / ms: write into the sound card CPU's view (CpuView::Write, a tool edit)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu)) return;
 
     auto json = req->getJsonObject();
     if (!json || !json->isMember("code") || !json->isMember("address"))
@@ -4928,7 +4961,24 @@ void EmulatorAPI::assembleCode(const HttpRequestPtr& req, std::function<void(con
     }
 
     // Optional: write the emitted bytes into emulator RAM
-    if (write)
+    if (write && IsCardCpu(cpu))
+    {
+        if (const std::string refused = CpuView::Write(emulator.get(), cpu, "WebAPI assemble write",
+                                                       static_cast<uint16_t>(result.startAddress), result.bytes);
+            !refused.empty())
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = refused;
+            error["code"] = DebugError::kRefused;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    else if (write)
     {
         Memory* mem = emulator->GetMemory();
         if (!mem)
@@ -4943,13 +4993,33 @@ void EmulatorAPI::assembleCode(const HttpRequestPtr& req, std::function<void(con
             return;
         }
 
-        uint32_t addr = result.startAddress;
-        for (uint8_t b : result.bytes)
-            mem->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+        // A tool edit (Emulator::EditMemoryFromTool): the edited event, TTD, refused in the recorded past
+        const std::string refused = emulator->EditMemoryFromTool(
+            Emulator::ToolEdit::Of("WebAPI assemble write", "memory", static_cast<int32_t>(result.startAddress),
+                                   result.bytes.size()),
+            [&]() {
+                uint32_t addr = result.startAddress;
+                for (uint8_t b : result.bytes)
+                    mem->DirectWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+            });
+        if (!refused.empty())
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = refused;
+            error["code"] = DebugError::kRefused;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
     }
 
     Json::Value ret;
     ret["status"] = "success";
+    if (IsCardCpu(cpu))
+        ret["cpu"] = DebugCpuName(cpu);
     ret["address"] = result.startAddress;
     ret["end_address"] = result.endAddress;
     ret["size"] = static_cast<Json::UInt64>(result.bytes.size());

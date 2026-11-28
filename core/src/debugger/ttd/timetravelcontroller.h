@@ -1693,6 +1693,25 @@ public:
     /// windows' mapping. Replays there silently and puts the machine back exactly where it stood (like a frame
     /// cache build). Fails on a replay barrier before the point, or a point outside the history.
     TTDCpuView ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length);
+    /// @brief ReadCpuView where the store alone answers (a frame start whose checkpoint holds the CPU's windows): one
+    /// read of the session, nothing replayed, the machine untouched. A running machine goes on after the call and a
+    /// recording that runs stays as it is (StoredFramesReadableLive). False when only ReadCpuView can answer: it
+    /// replays, and pauses a running recording first (D8)
+    bool ReadCpuViewStored(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view);
+
+    /// @brief Run @p read as one read of the session (a caller reading the engine itself, GetEngine): one control
+    /// operation at a time, a running machine of an active session parked for the call and resumed after it. Nothing
+    /// of the session changes
+    void ReadSession(const std::function<void()>& read) const;
+    /// @brief ReadSession for the stored memory at the starts of frames @p loFrame .. @p hiFrame of the viewed line
+    /// (memory-at with a memory's name, memory-diff). A recording that runs goes on untouched when the store holds
+    /// those frames in memory (StoredFramesReadableLive); otherwise it is paused for browsing first (D8), as it is
+    /// with @p insideFrame: the read also needs writes inside a frame (the write journal, which a recording drains
+    /// at frame boundaries and a replay builds where it does not cover the frame)
+    void ReadStoredFrames(uint64_t loFrame, uint64_t hiFrame, bool insideFrame, const std::function<void()>& read);
+    /// @brief Whether ReadStoredFrames would pause a recording now: the caller parks a running machine first, so
+    /// the pause (D8) leaves it parked. False when no recording runs
+    bool StoredFramesPauseRecording(uint64_t loFrame, uint64_t hiFrame) const;
 
     /// @brief Memory over many frames in one walk (memory-series, PLAN #122 S1): each range as at the start of each
     /// asked frame, the same bytes memory-at reads there (frame, tinframe 0). The checkpoints are walked forward
@@ -1701,8 +1720,10 @@ public:
     /// session loaded from a file, the Next's 8K slots) the checkpoint is restored and read through the mapping,
     /// and the machine is put back exactly where it stood. Frames outside the history are refused.
     TTDSeriesResult ReadMemorySeries(const TTDSeriesQuery& query);
-    /// Whether ReadMemorySeries will restore checkpoints for @p query (CPU ranges over checkpoints without stored
-    /// windows): the caller parks a running machine first. False on any doubt the series refuses anyway
+    /// Whether ReadMemorySeries will move the machine for @p query: it restores checkpoints (CPU ranges over
+    /// checkpoints without stored windows), or a recording that runs cannot be left as it is for the read
+    /// (StoredFramesReadableLive) and pauses first (D8). The caller parks a running machine first. False on any
+    /// doubt the series refuses anyway
     bool MemorySeriesRestores(const TTDSeriesQuery& query);
 
     /// The sample points per frame ReadScreenAt looks for a change of the shown screen at
@@ -1925,6 +1946,15 @@ private:
     /// active lineage's first and last checkpoint frames. False with @p error when there is no history or a frame
     /// asked lies outside it
     bool ResolveSeriesQuery(TTDSeriesQuery& query, uint64_t& first, uint64_t& last, std::string& error);
+    /// @brief Whether the stored memory at the starts of frames @p loFrame .. @p hiFrame can be read while a
+    /// recording runs, the recording left exactly as it is (the caller holds a session operation: the machine is
+    /// parked between two instructions, every captured frame's checkpoint and pieces are in the engine). True when
+    /// the read only reads: the frames' segments are whole in memory (no read back from a segment file, which
+    /// changes what the store holds), and with @p lineage (a read that follows the active lineage) the frames
+    /// belong to the line being recorded (viewing an ancestor moves the journals' cursors)
+    bool StoredFramesReadableLive(uint64_t loFrame, uint64_t hiFrame, bool lineage) const;
+    /// StoredFramesReadableLive for a memory series as asked (before its frames are made concrete)
+    bool SeriesReadableLive(const TTDSeriesQuery& query) const;
 
 
     /// @brief Internal seek implementation without the Recording-state guard.
@@ -2453,6 +2483,13 @@ private:
         ~SessionOperation();
         SessionOperation(const SessionOperation&) = delete;
         SessionOperation& operator=(const SessionOperation&) = delete;
+        /// A Read that turned out to change the session (a recording paused for it, a checkpoint restored): its end
+        /// publishes as a Change's does
+        void Changes()
+        {
+            if (_kind == Kind::Read)
+                _kind = Kind::Change;
+        }
 
     private:
         const TimeTravelController& _manager;

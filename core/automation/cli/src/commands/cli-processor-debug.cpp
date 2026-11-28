@@ -8,7 +8,9 @@
 #include <3rdparty/message-center/messagecenter.h>
 #include <base/featuremanager.h>
 #include <debugger/assembler/z80textassembler.h>
+#include <debugger/debugerror.h>
 #include <debugger/debugmanager.h>
+#include <debugger/targets/cpuview.h>
 #include <debugger/disassembler/disassemblywindow.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -1140,7 +1142,7 @@ void CLIProcessor::HandleDisasm(const ClientSession& session, const std::vector<
 }
 
 // HandleDisasmPage - disassemble from physical RAM/ROM page
-void CLIProcessor::HandleDisasmPage(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleDisasmPage(const ClientSession& session, const std::vector<std::string>& argsIn)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1148,6 +1150,10 @@ void CLIProcessor::HandleDisasmPage(const ClientSession& session, const std::vec
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu: the disassembly of a machine page is the main CPU's only (a card CPU is refused, code not_supported)
+    std::vector<std::string> args = argsIn;
+    if (!MainCpuOnly(session, *emulator, args, "the disassembly of a machine page"))
+        return;
 
     Memory* memory = emulator->GetMemory();
     std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
@@ -1884,7 +1890,7 @@ void CLIProcessor::HandleSkipUntil(const ClientSession& session, const std::vect
 
 // HandleAssemble — assemble Z80 source text (mirrors the WebAPI assemble
 // endpoint). Bytes are shown; --write also stores them into emulator RAM.
-void CLIProcessor::HandleAssemble(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleAssemble(const ClientSession& session, const std::vector<std::string>& argsIn)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1892,11 +1898,16 @@ void CLIProcessor::HandleAssemble(const ClientSession& session, const std::vecto
         session.SendResponse("No emulator selected.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU (a card that is not there: an error with its code)
+    std::vector<std::string> args = argsIn;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeAvailableCpu(session, *emulator, args, cpu))
+        return;
 
-    // assemble <addr> <code...> [--write]
+    // assemble <addr> <code...> [--write] [--cpu gs|ms]
     if (args.size() < 2)
     {
-        session.SendResponse("Usage: assemble <addr> <code...> [--write]");
+        session.SendResponse("Usage: assemble <addr> <code...> [--write] [--cpu main|gs|ms]");
         return;
     }
 
@@ -1949,8 +1960,18 @@ void CLIProcessor::HandleAssemble(const ClientSession& session, const std::vecto
         return;
     }
 
-    // Optional: write the emitted bytes into emulator RAM
-    if (write)
+    // Optional: write the emitted bytes into emulator RAM (a card CPU: its view, as a tool edit)
+    if (write && IsCardCpu(cpu))
+    {
+        if (const std::string refused = CpuView::Write(emulator.get(), cpu, "CLI assemble write",
+                                                       static_cast<uint16_t>(result.startAddress), result.bytes);
+            !refused.empty())
+        {
+            session.SendResponse("Error: " + DebugError::WithCode(refused, DebugError::kRefused) + NEWLINE);
+            return;
+        }
+    }
+    else if (write)
     {
         Memory* memory = emulator->GetMemory();
         if (!memory)
@@ -1959,15 +1980,27 @@ void CLIProcessor::HandleAssemble(const ClientSession& session, const std::vecto
             return;
         }
 
-        uint32_t addr = result.startAddress;
-        for (uint8_t b : result.bytes)
-            memory->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+        // A tool edit (Emulator::EditMemoryFromTool): the edited event, TTD, refused in the recorded past
+        const std::string refused = emulator->EditMemoryFromTool(
+            Emulator::ToolEdit::Of("CLI assemble write", "memory", static_cast<int32_t>(result.startAddress),
+                                   result.bytes.size()),
+            [&]() {
+                uint32_t addr = result.startAddress;
+                for (uint8_t b : result.bytes)
+                    memory->DirectWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+            });
+        if (!refused.empty())
+        {
+            session.SendResponse("Error: " + DebugError::WithCode(refused, DebugError::kRefused) + NEWLINE);
+            return;
+        }
     }
 
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
     ss << "Assembled " << std::dec << result.bytes.size() << " bytes at $" << std::hex << std::setw(4)
-       << result.startAddress << "-$" << std::setw(4) << result.endAddress << NEWLINE;
+       << result.startAddress << "-$" << std::setw(4) << result.endAddress
+       << (IsCardCpu(cpu) ? std::string(" (cpu ") + DebugCpuName(cpu) + ")" : std::string()) << NEWLINE;
 
     for (const auto& line : result.lines)
     {

@@ -4,6 +4,8 @@
 #include <cctype>
 
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugerror.h"
+#include "debugger/targets/cpuview.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -207,21 +209,25 @@ MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& r
     Memory* memory = context ? context->pMemory : nullptr;
     if (!memory)
     {
+        result.code = DebugError::kInternal;
         result.error = "memory not available";
         return result;
     }
     if (request.pattern.empty() || request.pattern.size() > 64)
     {
+        result.code = DebugError::kInvalidArgument;
         result.error = "the pattern must be 1 to 64 bytes";
         return result;
     }
     if (!request.mask.empty() && request.mask.size() != request.pattern.size())
     {
+        result.code = DebugError::kInvalidArgument;
         result.error = "the mask must be as long as the pattern";
         return result;
     }
     if (request.alignment != 1 && request.alignment != 2)
     {
+        result.code = DebugError::kInvalidArgument;
         result.error = "alignment must be 1 or 2";
         return result;
     }
@@ -229,7 +235,28 @@ MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& r
     View view;
     view.memory = memory;
     view.space = request.space;
-    switch (request.space)
+    // A card CPU (gs / ms): its own 64K view now, read once like a page (CpuView::Read); the machine's pages and
+    // regions are the main CPU's spaces
+    if (IsCardCpu(request.cpu))
+    {
+        if (request.space != MemorySearchRequest::Space::Cpu)
+        {
+            result.code = DebugError::kNotSupported;
+            result.error = std::string("cpu ") + DebugCpuName(request.cpu) +
+                           ": a card CPU's search is its own view (space cpu), not " + SpaceName(request);
+            return result;
+        }
+        if (!CpuView::Read(context, request.cpu, 0, 0x10000, view.copy) || view.copy.size() != 0x10000)
+        {
+            result.code = DebugError::kCpuUnavailable;
+            result.error = std::string("cpu ") + DebugCpuName(request.cpu) + " not available: no card with a CPU in its slot";
+            return result;
+        }
+        view.space = MemorySearchRequest::Space::Page;
+        view.page = view.copy.data();
+        view.size = 0x10000;
+    }
+    else switch (request.space)
     {
         case MemorySearchRequest::Space::Cpu:
             view.size = 0x10000;
@@ -239,6 +266,7 @@ MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& r
             view.page = PageHost(context, request.pageType, request.page);
             if (!view.page)
             {
+                result.code = DebugError::kInvalidArgument;
                 result.error = "this machine has no page " + SpaceName(request);
                 return result;
             }
@@ -251,6 +279,7 @@ MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& r
             IDeviceMemoryRegion* region = DeviceMemory::Find(context, request.region, &error);
             if (!region || !DeviceMemory::Read(context, request.region, 0, region->Size(), view.copy, error))
             {
+                result.code = DebugError::kInvalidArgument;
                 result.error = "space must be cpu, ram, a page (ram5, rom2, cache0) or a memory region: " + error;
                 return result;
             }
@@ -401,9 +430,12 @@ StateNode ToState(const MemorySearchRequest& request, const MemorySearchResult& 
     if (!result.error.empty())
     {
         node["error"] = result.error;
+        node["code"] = std::string(*result.code ? result.code : DebugError::kInvalidArgument);
         return node;
     }
     node["space"] = SpaceName(request);
+    if (IsCardCpu(request.cpu))
+        node["cpu"] = std::string(DebugCpuName(request.cpu));
     node["count"] = static_cast<uint64_t>(result.matches.size());
     node["truncated"] = result.truncated;
     StateNode matches = StateNode::Array();

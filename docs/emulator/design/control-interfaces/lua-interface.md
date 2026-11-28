@@ -747,6 +747,14 @@ r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out(
 r = card_run_to("cycle", 120000);  r = card_run_to("int");  r = card_run_to("command", 0, "gs");  r = card_run_to("main_t", 30000)
 -- The CPU the front-ends show: a card shown follows the main CPU's steps of the paused machine; {cpu, follows}
 c = select_cpu("gs");  c = selected_cpu();  select_cpu("main")
+-- The CPUs a debugger can name now: {selected, targets = {{cpu, available, card}, ...}}
+t = debug_targets()
+-- cpu last on the block, page, find, assemble and breakpoint-note functions; opts.cpu on the snapshot
+b = mem_read_block(0x4000, 16, "gs");  mem_write_block(0x4000, {1, 2}, "gs");  w = mem_read_word(0x4000, "gs")
+v = page_read("ram", 1, 0, "gs");  i = memory_info("gs");  r = mem_find("DEADBEEF", 0, 0xFFFF, 1, 4, nil, nil, "gs")
+a = assemble("ld a,1", 0x4010, true, "gs");  bp_note(id, "text", "gs");  bp_select("group:g", "disable", "gs")
+s, err, code = debug_snapshot({cpu = "gs", stack = 4})   -- s.cpu == "z80", s.debug_cpu == "gs"; nil, error, code
+-- A card CPU is refused (the error ends with "(code: not_supported)"): page_write*, disasm_page; snapshot pchist
 
 -- Properties
 id = emu:get_id()

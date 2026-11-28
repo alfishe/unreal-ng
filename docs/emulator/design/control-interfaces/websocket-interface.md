@@ -40,6 +40,9 @@ and the others, its runs to a moment `POST /card_run_to {cpu, until, value}`; th
 the main CPU parked with the card: `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary`, and its
 instruction's progress `elapsed_t`, `total_t`, `total_t_alt`, `bus_cycles`, `bus_cycle`, `bus_cycle_index`,
 `contended`; [instruction progress](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
+The CPU list, the card's snapshot, find, assemble and page reads are the REST routes with `cpu` too (`GET
+/debug/targets`, `GET /debug/snapshot?cpu=gs`, ...). A refused call's `body` carries the error `code` as REST's does
+(the forward adds it where the handler gave none).
 An answer budget works the same way: `?max_chars=2000` in the path fits the result's `body` (a JSON object gets
 `truncated`; [answer budgets](webapi-interface.md#answer-budgets-max_chars)).
 

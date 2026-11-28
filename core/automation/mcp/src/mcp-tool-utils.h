@@ -195,11 +195,14 @@ inline std::string DescribeErrorBody(const Json::Value& body)
     }
     std::string message = body.isMember("message") ? body["message"].asString() : "";
     std::string error = body.isMember("error") ? body["error"].asString() : "";
+    // The error code (debugerror.h) after the text: an agent that sees only content[] text still reads it
+    const std::string code = body["code"].isString() ? body["code"].asString() : std::string();
+    const std::string suffix = code.empty() ? std::string() : " (code: " + code + ")";
     if (!message.empty() && !error.empty())
     {
-        return error + ": " + message;
+        return error + ": " + message + suffix;
     }
-    return message.empty() ? error : message;
+    return (message.empty() ? error : message) + suffix;
 }
 
 /// The automation gate refused the call (execution arbiter design §6a): another client's session holds the machine, or
@@ -510,7 +513,11 @@ inline void ForwardCall(const std::string& method, const std::string& path, cons
         {
             text += ": " + details;
         }
-        done(ToolResult::Error(text));
+        ToolResult result = ToolResult::Error(text);
+        // The error body with its code as structured content (an agent's program reads "code" there)
+        if (responseBody.isObject() && responseBody["code"].isString())
+            result.structured = std::move(responseBody);
+        done(std::move(result));
     });
 }
 
@@ -564,7 +571,11 @@ inline void ForwardCallRaw(const std::string& method, const std::string& path,
         {
             text += ": " + details;
         }
-        done(ToolResult::Error(text));
+        ToolResult result = ToolResult::Error(text);
+        // The error body with its code as structured content (an agent's program reads "code" there)
+        if (responseBody.isObject() && responseBody["code"].isString())
+            result.structured = std::move(responseBody);
+        done(std::move(result));
     });
 }
 

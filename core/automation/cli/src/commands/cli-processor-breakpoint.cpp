@@ -6,6 +6,7 @@
 
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/breakpoints/breakpointselection.h>
+#include <debugger/debugerror.h>
 #include <emulator/monitoring/monitoringapi.h>
 #include <cstdio>
 #include <debugger/debugmanager.h>
@@ -29,7 +30,7 @@ bool CLIProcessor::TakeCpuOption(const ClientSession& session, std::vector<std::
             continue;
         if (i + 1 >= args.size() || !DebugManager::ParseCpuName(args[i + 1], cpu))
         {
-            session.SendResponse("Error: --cpu needs main, gs or ms");
+            session.SendResponse("Error: " + DebugError::WithCode("--cpu needs main, gs or ms", DebugError::kInvalidArgument));
             return false;
         }
         args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);

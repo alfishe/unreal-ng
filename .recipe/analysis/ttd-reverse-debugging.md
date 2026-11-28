@@ -322,7 +322,7 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/summary?kind=executed" \
 
 ### memory-at / memory-diff — any memory at a past checkpoint, without seeking
 
-The engine stores every recorded memory at every checkpoint. These two read that store; the machine stays where it is. Use them when the question is "what was in it then" rather than "who wrote it":
+The engine stores every recorded memory at every checkpoint. These two read that store; the machine stays where it is, and a running machine or a recording goes on after the call (a frame-start read pauses nothing; `tinframe`, or `space: "cpu"` where the checkpoint stores no mapping, parks the machine and pauses a recording like a seek). Use them when the question is "what was in it then" rather than "who wrote it":
 
 - `space` is `ram`, `ramN` (machine RAM page N), or any memory the session records, by name or alias: `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`, `neogs.ram`, `neogs.flash`, `gs.ram`, `moonsound.wave`, `evo.flash`, and so on. `GET /memory/regions` lists them.
 - Both read checkpoint boundaries (frame starts) by default. `at_frame` names the checkpoint read, the newest at or before the frame asked.

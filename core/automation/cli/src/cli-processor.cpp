@@ -129,6 +129,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
                         {"timeline", &CLIProcessor::HandleTimeline},     // The GS debugger's twin timeline (twintimeline.h)
                         {"selected-cpu", &CLIProcessor::HandleSelectedCpu},  // The CPU front-ends show (CpuView::SetSelected)
+                        {"debug-targets", &CLIProcessor::HandleDebugTargets},  // The CPUs a debugger can name (CpuView::Targets)
                         {"board", &CLIProcessor::HandleBoard},  // Device boards (DebugBoards)
                         {"boards", &CLIProcessor::HandleBoard},
                         {"registers", &CLIProcessor::HandleRegisters},
