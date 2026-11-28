@@ -685,11 +685,14 @@ namespace EveLib
 
 // --- Register access (eve-registers.cpp) ----------------------------------------------------
 
-const RegInfo& RegisterInfo(const EveChip& chip, Reg reg);
+inline const RegInfo& RegisterInfo(const EveChip& chip, Reg reg)
+{
+    return chip.table->registers[static_cast<size_t>(reg)];
+}
 // The register at an absolute address, or nullptr for a reserved address.
 const RegInfo* FindRegister(const EveChip& chip, uint32_t address);
-// Stored value of a register (no read hook).
-uint32_t RegGet(const EveChip& chip, Reg reg);
+// Stored value of a register (no read hook): inline below (the timing reads it on every event)
+inline uint32_t RegGet(const EveChip& chip, Reg reg);
 // Store a register value as the chip itself does (no side effect).
 void RegSet(EveChip& chip, Reg reg, uint32_t value);
 void ResetRegisters(EveChip& chip);
@@ -736,6 +739,16 @@ inline void StoreLe32(uint8_t* p, uint32_t v)
     p[1] = static_cast<uint8_t>(v >> 8);
     p[2] = static_cast<uint8_t>(v >> 16);
     p[3] = static_cast<uint8_t>(v >> 24);
+}
+
+inline uint32_t RegGet(const EveChip& chip, Reg reg)
+{
+    // The chip works with the register's own bits; the storage may hold more.
+    const RegInfo& info = RegisterInfo(chip, reg);
+    const uint8_t* bytes = info.address >= kSpecialBase
+                               ? chip.regions[RegionSpecial].base + (info.address - kSpecialBase)
+                               : chip.regions[RegionReg].base + (info.address - kRamRegBase);
+    return LoadLe32(bytes) & info.mask;
 }
 
 // --- Chip (eve-chip.cpp) -------------------------------------------------------------------

@@ -388,10 +388,9 @@ void TsConfEngine::LineStart(uint32_t line)
     }
 }
 
-void TsConfEngine::CatchUp(uint32_t t)
+void TsConfEngine::CatchUpRaster(uint32_t raster)
 {
     const AdvanceScope advancing(_advancing);
-    const uint32_t raster = RasterAt(t);
     // Line by line: the budget of a line is accounted before the next line
     // starts (the CPU reads of that line feed the TSU budget)
     // Events in raster order: line starts, and ts_start of the current line,
@@ -442,10 +441,11 @@ void TsConfEngine::NoteStateApplied()
 
 void TsConfEngine::OnMachineStep(uint32_t t)
 {
-    _interrupts.OnMachineStep(t);
-    CatchUp(t);
+    const uint32_t raster = RasterAt(t);  // once: the interrupts count the same raster (Multiplier() = max(m, 1))
+    _interrupts.OnMachineStepAt(raster);
+    CatchUpRaster(raster);
     const uint32_t from = _stepEndRaster;
-    _stepEndRaster = RasterAt(t);
+    _stepEndRaster = raster;
     if (_context->beamWatch && onBeam && _stepEndRaster > from) [[unlikely]]
         onBeam(from, _stepEndRaster);
 }

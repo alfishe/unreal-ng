@@ -268,11 +268,13 @@ void TsConfInterrupts::OnWait(uint32_t ttBefore, uint32_t ticks)
     if (!(_ts.intPending & TsConfInt::Frame)) [[likely]]
     {
         const uint32_t from = _ts.intLastRaster;
-        const uint32_t to = std::min<uint32_t>(t1 / multiplier, kFrameTacts - 1);
         const uint32_t hs = _ts.regs[TsConfReg::HsInt];
         const uint32_t vs = _ts.regs[TsConfReg::VsIntL] | ((_ts.regs[TsConfReg::VsIntH] & 0x01u) << 8);
         const uint32_t frameEvent = vs * kLineTacts + hs;
-        const bool eventInside = hs < kLineTacts && vs < kLines && frameEvent >= from && frameEvent <= to;
+        // frameEvent <= min(t1 / multiplier, kFrameTacts - 1) without the division: a valid event is inside the
+        // frame, and e <= floor(t1 / m) is e * m <= t1
+        const bool eventInside = hs < kLineTacts && vs < kLines && frameEvent >= from &&
+                                 static_cast<uint64_t>(frameEvent) * multiplier <= t1;
         if (!eventInside)
             return;  // the next catch-up (the instruction's end at the latest) takes these events alike
     }

@@ -35,6 +35,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <random>
 
 namespace
 {
@@ -42,9 +43,13 @@ namespace
 std::filesystem::path makeSnapshotTempPath()
 {
     static std::atomic<uint32_t> counter{0};
-    // Process-unique prefix without platform pid headers: address of a static is
-    // stable within a process and (with ASLR) differs across processes.
-    auto processTag = reinterpret_cast<uintptr_t>(&counter);
+    // Process-unique prefix: random bits drawn once per process. Not the address of a static: Windows randomizes an
+    // image's base once per boot, so every process of one executable had the same name, and two of them (two
+    // emulators with DeZog, parallel test shards) saved over and deleted each other's snapshots
+    static const uint64_t processTag = [] {
+        std::random_device device;
+        return (static_cast<uint64_t>(device()) << 32) ^ device();
+    }();
     std::string name = "unreal-dezog-" + std::to_string(static_cast<unsigned long long>(processTag)) + "-" +
                        std::to_string(counter.fetch_add(1)) + ".sna";
     return std::filesystem::temp_directory_path() / name;

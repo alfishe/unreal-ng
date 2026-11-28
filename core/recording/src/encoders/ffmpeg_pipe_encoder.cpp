@@ -39,6 +39,32 @@ FFmpegPipeEncoder::~FFmpegPipeEncoder()
     Stop();
 }
 
+namespace
+{
+int64_t SteadyMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+/// After ffmpeg has exited: its stderr reader gets the rest of the text first, then the handle closes. Closed before,
+/// the reader lost the last lines (the error that said why ffmpeg failed). At most 2 s: on Windows a child spawned
+/// meanwhile can hold an inherited copy of the write end, and the pipe ends only with that child
+void FinishStderr(Subprocess& process, std::thread& reader, const std::atomic<bool>& done)
+{
+    for (int i = 0; i < 200 && !done; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    process.closeStderr();
+    if (reader.joinable())
+        reader.join();
+}
+}  // namespace
+
+void FFmpegPipeEncoder::markWriterStarting()
+{
+    _writerStartingSinceMs = std::max<int64_t>(SteadyMs(), 1);
+}
+
 // ============================================================================
 // Temp directory management
 // ============================================================================
@@ -258,12 +284,15 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _cancelRequested = false;
     _drainRequested = false;
     _workerFailed = false;
+    _writerStartingSinceMs = 0;
 
     // Drain stderr for the lifetime of the process (returns at EOF)
     _diagnostics.clear();
+    _stderrDone = false;
     _stderrThread = std::thread([this]() {
         ThreadHelper::setThreadName("ffmpeg-stderr");
         _diagnostics = _ffmpegProcess.readAllStderr();
+        _stderrDone = true;
     });
 
     // Spawn one writer thread per pipe (see header note — required to avoid
@@ -303,6 +332,7 @@ void FFmpegPipeEncoder::Stop()
     constexpr int PROGRESS_GRACE_MS = 2000;
     constexpr int DRAIN_CAP_MS = 120000;
     constexpr int FINALIZE_MS = 20000;  // ffmpeg flushes its encoder (x265 lookahead) after the pipe closes
+    constexpr int STARTUP_MS = 15000;   // an ffmpeg that has not taken its first frame yet: the pipe's open timeout
     const auto stopStart = std::chrono::steady_clock::now();
     auto deadline = stopStart + std::chrono::milliseconds(STOP_TIMEOUT_MS);
     size_t lastQueued = 0;
@@ -310,6 +340,7 @@ void FFmpegPipeEncoder::Stop()
         std::lock_guard<std::mutex> lock(_queueMutex);
         lastQueued = _videoQueue.size();
     }
+    uint64_t lastFrames = _framesEncoded;
 
     auto msRemaining = [&]() {
         auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -340,10 +371,21 @@ void FFmpegPipeEncoder::Stop()
                 std::lock_guard<std::mutex> lock(_queueMutex);
                 queued = _videoQueue.size();
             }
+            // Progress: the queue shrinks, or ffmpeg takes frames (the writer pops a frame before it writes it: a
+            // queue that stands still can still be moving)
+            const uint64_t frames = _framesEncoded;
             const auto now = std::chrono::steady_clock::now();
-            if (queued < lastQueued && now - stopStart < std::chrono::milliseconds(DRAIN_CAP_MS))
+            const bool progress = queued < lastQueued || frames != lastFrames;
+            if (progress && now - stopStart < std::chrono::milliseconds(DRAIN_CAP_MS))
                 deadline = std::max(deadline, now + std::chrono::milliseconds(PROGRESS_GRACE_MS));
             lastQueued = queued;
+            lastFrames = frames;
+            // A starting ffmpeg (no frame taken yet) is not stuck: it gets up to STARTUP_MS from its start. Killed
+            // there, the file was empty or its segment missing (ffmpeg exit 137 / 1 on a loaded machine)
+            const int64_t starting = _writerStartingSinceMs;
+            if (starting != 0)
+                deadline = std::max(deadline, std::chrono::steady_clock::time_point(
+                                                  std::chrono::milliseconds(starting + STARTUP_MS)));
         }
         if (done) {
             waiter.join();
@@ -359,6 +401,7 @@ void FFmpegPipeEncoder::Stop()
     };
 
     joinWithTimeout(_videoThread, true);
+    _writerStartingSinceMs = 0;  // the writer is gone: nothing starts any more
     joinWithTimeout(_audioThread, true);
 
     _isRecording = false;
@@ -402,9 +445,8 @@ void FFmpegPipeEncoder::Stop()
         _ffmpegProcess.waitForFinished(100);
     }
 
-    // 4. Close stderr to unblock the drain thread, then join briefly
-    _ffmpegProcess.closeStderr();
-    joinWithTimeout(_stderrThread, false);
+    // 4. The stderr reader gets the rest, then stderr closes (unblocks a reader of a pipe held open elsewhere)
+    FinishStderr(_ffmpegProcess, _stderrThread, _stderrDone);
 
     if (exitCode != 0 && exitCode != -1)
         _lastError = "FFmpeg exited with code " + std::to_string(exitCode);
@@ -584,6 +626,8 @@ void FFmpegPipeEncoder::failWorker(const std::string& error)
 void FFmpegPipeEncoder::videoWriterMain()
 {
     // Open video pipe (completes when ffmpeg connects its read end). Segments open theirs with their first picture
+    if (_videoPipe)
+        markWriterStarting();
     if (_videoPipe && !_videoPipe->openForWriteTimeout(15000, &_cancelRequested))
     {
         failWorker("Failed to open video pipe: " + _videoPipe->getLastError());
@@ -629,6 +673,7 @@ void FFmpegPipeEncoder::videoWriterMain()
             failWorker("Failed to write video frame: " + _videoPipe->getLastError());
             return;
         }
+        _writerStartingSinceMs = 0;
         _framesEncoded++;
 
         // Space freed — the buffer goes back to the pool, producers blocked on backpressure wake
@@ -1602,6 +1647,9 @@ bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
         return false;
     }
 
+    // Starting from here: the probe below runs an ffmpeg of its own (seconds on a loaded machine), and a Stop that took
+    // it for a stuck writer killed the segments still finishing (segment-0 missing, exit 1 on Windows)
+    markWriterStarting();
     const std::string index = std::to_string(_segmentFiles.size());
     auto segment = std::make_unique<Segment>();
     segment->neighbor =
@@ -1633,6 +1681,7 @@ bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
         return false;
     }
 
+    markWriterStarting();
     segment->process = std::make_unique<Subprocess>();
     if (!segment->process->spawn(_ffmpegPath, buildSegmentArgs(width, height, segmentFile, *segment)))
     {
@@ -1645,11 +1694,15 @@ bool FFmpegPipeEncoder::startSegment(uint32_t width, uint32_t height)
     pipe->setReaderProcess(segment->process->processId());  // only this ffmpeg may open the pipe
     // Without a reader the stderr pipe fills and ffmpeg blocks (see _stderrThread)
     Subprocess* running = segment->process.get();
-    segment->stderrThread = std::thread([this, running]() {
+    std::atomic<bool>* done = &segment->stderrDone;
+    segment->stderrThread = std::thread([this, running, done]() {
         ThreadHelper::setThreadName("ffmpeg-stderr");
         const std::string text = running->readAllStderr();
-        std::lock_guard<std::mutex> lock(_diagnosticsMutex);
-        _diagnostics += text;
+        {
+            std::lock_guard<std::mutex> lock(_diagnosticsMutex);
+            _diagnostics += text;
+        }
+        *done = true;
     });
     {
         std::lock_guard<std::mutex> lock(_processMutex);
@@ -1679,9 +1732,7 @@ int FFmpegPipeEncoder::closeSegment(Segment& segment, int timeoutMs)
         segment.process->kill();
         segment.process->waitForFinished(100);
     }
-    segment.process->closeStderr();
-    if (segment.stderrThread.joinable())
-        segment.stderrThread.join();
+    FinishStderr(*segment.process, segment.stderrThread, segment.stderrDone);
     segment.pipe.reset();
     NamedPipe::remove(segment.pipePath);
     if (!segment.xmapPath.empty())
@@ -1800,7 +1851,11 @@ bool FFmpegPipeEncoder::muxSegments()
         return false;
     }
     std::string text;
-    std::thread reader([&]() { text = mux.readAllStderr(); });
+    std::atomic<bool> textDone{false};
+    std::thread reader([&]() {
+        text = mux.readAllStderr();
+        textDone = true;
+    });
     mux.closeStdin();
     // Stream copy of the video, the sound encoded: seconds for a long recording
     constexpr int kMuxTimeoutMs = 10 * 60 * 1000;
@@ -1810,8 +1865,7 @@ bool FFmpegPipeEncoder::muxSegments()
         mux.kill();
         mux.waitForFinished(100);
     }
-    mux.closeStderr();
-    reader.join();
+    FinishStderr(mux, reader, textDone);
     {
         std::lock_guard<std::mutex> lock(_diagnosticsMutex);
         _diagnostics += text;
