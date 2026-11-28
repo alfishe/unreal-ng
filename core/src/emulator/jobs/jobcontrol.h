@@ -90,7 +90,7 @@ std::string AcceptedText(uint64_t id);
 /// "dump path=/tmp/a.ttd lineage=true" (options in name order, long values cut)
 std::string Summary(const std::string& verb, const std::map<std::string, std::string>& options);
 /// The WebSocket topic `jobs.progress` of an instance: {active: [{job, kind, summary, state, done, total, unit,
-/// percent, cancel_requested}], count}
+/// percent, hits?, cancel_requested}], count}
 StateNode ProgressTopic(const std::string& emulatorId);
 /// The topic `jobs.done`: {recent: [{job, kind, summary, state, status, error, ended_ms}] (the last 8 that ended,
 /// newest first), last_job}

@@ -6337,10 +6337,71 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournalFrames(uint64_t fro
     return BuildWriteJournal(fromT, toT, progress);
 }
 
+// ===========================================================================
+// A backward window search as a job (RQ-1)
+// ===========================================================================
+
+TimeTravelController::WindowWalkScope::WindowWalkScope(TimeTravelController& controller, jobs::Context* job,
+                                                       uint64_t floorFrame)
+    : _controller(controller)
+{
+    // A search inside another one (a lineage walk calls the per-line search) reports to the outer one's walk
+    if (job == nullptr || controller._walk.job != nullptr)
+        return;
+    _owner = true;
+    controller._walk = WindowWalk{};
+    controller._walk.job = job;
+    controller._walk.floorFrame = floorFrame;
+}
+
+TimeTravelController::WindowWalkScope::~WindowWalkScope()
+{
+    if (!_owner)
+        return;
+    const WindowWalk walk = _controller._walk;
+    _controller._walk = WindowWalk{};
+    // The last progress: the whole window, or the frames walked when a hit, the limit or a barrier ended it. A
+    // cancelled walk said where it stood
+    if (walk.started && !walk.cancelled)
+        walk.job->Progress(walk.whole ? walk.total : std::min(walk.done + 1, walk.total), walk.total, "frames",
+                           walk.hits);
+}
+
+bool TimeTravelController::WindowWalkStep(uint64_t frame)
+{
+    WindowWalk& walk = _walk;
+    if (walk.cancelled)
+        return true;
+    if (!walk.started)
+    {
+        walk.started = true;
+        walk.top = frame;
+        walk.total = frame >= walk.floorFrame ? frame - walk.floorFrame + 1 : 1;
+    }
+    walk.done = std::min(walk.top >= frame ? walk.top - frame : 0, walk.total);
+    walk.job->Progress(walk.done, walk.total, "frames", walk.hits);
+    if (walk.done > 0 && walk.job->CancelRequested())
+    {
+        walk.cancelled = true;
+        walk.stoppedFrame = frame;
+        return true;
+    }
+    return false;
+}
+
+uint64_t TimeTravelController::LineageStartFrame() const
+{
+    const std::vector<TTDCheckpoint>& trunk = _lines.front()->timeline;
+    if (!trunk.empty())
+        return trunk.front().time.frame;
+    return _line->timeline.empty() ? 0 : _line->timeline.front().time.frame;
+}
+
 std::optional<TTDSearchResult>
 TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                                   TTDExternalEvent* outBlockingMarker,
-                                  TTDSearchWindow* outWindow)
+                                  TTDSearchWindow* outWindow,
+                                  jobs::Context* job)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
@@ -6375,8 +6436,26 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         beforeGlobalT = GlobalT(now);
     }
 
+    // Run as a job (RQ-1): the frames walked are its progress. A cancel ends the walk at a frame boundary and the
+    // machine goes back where it stood (a walk without a job leaves it where its last replay ended, as before)
+    const WindowWalkScope walk{*this, job, LineageStartFrame()};
+    const TTDSessionState stateBefore = _state;
+    LiveStateSnapshot home;
+    if (_walk.job != nullptr)
+        SaveLiveState(home);
+    auto finish = [&](std::optional<TTDSearchResult> hit) {
+        _walk.hits = hit ? 1 : 0;
+        if (!_walk.cancelled)
+            return hit;
+        ReplayModeScope restore(*this);
+        RestoreLiveState(home);
+        restore.Exit();
+        SetState(stateBefore);
+        return std::optional<TTDSearchResult>{};
+    };
+
     if (_lines.size() <= 1)
-        return FindLastAccessOnLine(q, beforeGlobalT, outBlockingMarker, outWindow, nullptr);
+        return finish(FindLastAccessOnLine(q, beforeGlobalT, outBlockingMarker, outWindow, nullptr));
 
     // Branches (§4.4): the line that owns the moment first, then each parent before its child's history starts, up
     // to the trunk's start. The window reports the whole span asked about
@@ -6385,11 +6464,11 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     WalkLineageBack(beforeGlobalT, [&](uint64_t, uint64_t upTo) {
         bool blocked = false;
         hit = FindLastAccessOnLine(q, upTo, outBlockingMarker, outWindow, &blocked);
-        return !hit && !blocked;
+        return !hit && !blocked && !_walk.cancelled;
     });
     if (outWindow && outWindow->searched)
         outWindow->to = askedTo;
-    return hit;
+    return finish(hit);
 }
 
 /// FindLastAccess on the line being viewed: back from @p beforeGlobalT to that line's first checkpoint
@@ -6511,9 +6590,25 @@ std::optional<TTDSearchResult> TimeTravelController::FindLastAccessOnLine(const 
     // Walk backward from the target checkpoint to the beginning.
     TTDCoverageOffsetSet pruneOffsets;   // the query's offsets, built at the first frame the index may prune
     bool pruneOffsetsBuilt = false;
+    bool cancelled = false;
     for (size_t i = targetCpIdx + 1; i-- > 0; )
     {
         const TTDCheckpoint& cp = _line->timeline[i];
+
+        // Run as a job and cancelled: the walk ends before this frame, the frames after it were searched (a target
+        // at a frame's very start has nothing of that frame to walk)
+        if (!(i == targetCpIdx && targetTime.tInFrame == 0) && WindowWalkStops(cp.time.frame))
+        {
+            const bool none = i == targetCpIdx;   // nothing of this line was walked (an older line of the lineage)
+            reportWindow(none ? TimePointAt(beforeGlobalT) : _line->timeline[i + 1].time, targetTime);
+            if (outWindow)
+            {
+                outWindow->cancelled = true;
+                outWindow->nextBefore = none ? beforeGlobalT : startT(i + 1) - 1;
+            }
+            cancelled = true;
+            break;
+        }
 
         // Inside a journal segment: the whole run of covered frames at once
         if (!segments.empty())
@@ -6625,11 +6720,12 @@ std::optional<TTDSearchResult> TimeTravelController::FindLastAccessOnLine(const 
         }
     }
 
+    _walk.whole = !found && !blocked && !cancelled;
     if (!found)
     {
         if (outBlocked)
             *outBlocked = blocked;
-        if (!blocked)
+        if (!blocked && !cancelled)
             reportWindow(sessionStart, targetTime);  // examined everything back to the start
         return std::nullopt;
     }
@@ -6663,6 +6759,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
     const uint64_t beforeT = q.beforeGlobalT == UINT64_MAX ? GlobalT(CurrentPosition()) : q.beforeGlobalT;
     const uint64_t floorT = options.fromFrame > 0 ? GlobalT(TTDTimePoint{options.fromFrame, 0}) : 0;
     const TTDTimePoint windowTo = std::min(TimePointAt(beforeT), SessionEndPosition());
+    const WindowWalkScope walk{*this, options.job, std::max(options.fromFrame, LineageStartFrame())};   // RQ-1
     TTDFindResult result;
     TTDTimePoint reached{};
     bool walked = false;
@@ -6682,7 +6779,14 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
         }
         for (TTDFoundAccess& h : part.hits)
             result.hits.push_back(std::move(h));
+        _walk.hits = result.hits.size();
         reached = part.window.from;
+        if (part.cancelled)
+        {
+            result.cancelled = true;
+            result.nextBefore = part.nextBefore;
+            return false;
+        }
         if (part.blockingMarker.reason[0] != '\0')
         {
             result.blockingMarker = part.blockingMarker;
@@ -6729,6 +6833,9 @@ TTDFindResult TimeTravelController::FindAccessesOnLine(const TTDSearchQuery& q, 
     const uint64_t floorT = options.fromFrame > 0 ? GlobalT(TTDTimePoint{options.fromFrame, 0}) : 0;
     const TTDTimePoint sessionStart = _line->timeline.front().time;
     const TTDTimePoint windowTo = std::min(TimePointAt(beforeT), SessionEndPosition());
+    const WindowWalkScope walk{*this, options.job, std::max(options.fromFrame, LineageStartFrame())};   // RQ-1
+    const uint64_t hitsBefore = _walk.hits;   // a lineage walk: the newer lines' hits
+    TTDTimePoint cancelledAt{};               // run as a job and cancelled: where the walk stopped
     auto reportWindow = [&](const TTDTimePoint& from) {
         result.window.searched = true;
         result.window.from = from;
@@ -6921,6 +7028,19 @@ TTDFindResult TimeTravelController::FindAccessesOnLine(const TTDSearchQuery& q, 
                 break;
             }
 
+            // Run as a job and cancelled: the walk ends before this frame. Every candidate has its old byte by now
+            // (each replayed frame and journal run settles them at its checkpoint), so the hits so far are final
+            _walk.hits = hitsBefore + kept;
+            if (!(i == targetCpIdx && targetTime.tInFrame == 0) && WindowWalkStops(cp.time.frame))
+            {
+                const bool none = i == targetCpIdx;   // nothing of this line was walked (an older lineage line)
+                result.cancelled = true;
+                result.nextBefore = none ? beforeT : startT(i + 1) - 1;
+                cancelledAt = none ? TimePointAt(beforeT) : _line->timeline[i + 1].time;
+                stopped = true;
+                break;
+            }
+
             // Inside a journal segment: the whole run of covered frames at once, the machine stays
             if (!segments.empty())
             {
@@ -7036,9 +7156,13 @@ TTDFindResult TimeTravelController::FindAccessesOnLine(const TTDSearchQuery& q, 
         if (candidates[k].keep)
             result.hits.push_back(candidates[k].hit);
     result.truncated = options.all && kept > limit;
+    _walk.hits = hitsBefore + result.hits.size();
+    _walk.whole = !result.cancelled && kept < want && result.blockingMarker.reason[0] == '\0';
 
     // The walk ended at the last hit it needed (the newest one, or the list's oldest when cut)
-    if (result.truncated || (!options.all && !result.hits.empty()))
+    if (result.cancelled)
+        reportWindow(cancelledAt);
+    else if (result.truncated || (!options.all && !result.hits.empty()))
         reportWindow(result.hits.back().access.time);
     else if (result.blockingMarker.reason[0] != '\0')
         reportWindow(result.blockingMarker.time);
@@ -7566,7 +7690,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
         if (!part.empty() || r.barrier)
             result.earliestScannedGlobalT = r.earliestScannedGlobalT;
         result.barrier = r.barrier;
-        return !r.barrier && lineStart > startGlobalT;
+        return !r.barrier && lineStart > startGlobalT && !_walk.cancelled;
     });
     return result;
 }
@@ -7662,6 +7786,10 @@ TimeTravelController::EnumerateM1InRangeOnLine(uint64_t startGlobalT, uint64_t e
             hitBarrier = true;
             break;
         }
+
+        // A reverse search run as a job and cancelled (RQ-1): the records of the frames after this one stand
+        if (WindowWalkStops(cp.time.frame))
+            break;
 
         // Record the earliest globalT actually scanned (for the caller's
         // "we covered this much" logic).
@@ -7928,6 +8056,37 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     return ReverseContinue(query);
 }
 
+BreakpointConditionPtr TimeTravelController::CompileReverseCondition(const std::string& text, std::string& error) const
+{
+    BreakpointManager* breakpoints =
+        _context && _context->pDebugManager ? _context->pDebugManager->GetBreakpointsManager() : nullptr;
+    BreakpointConditionPtr condition;
+    error = "no debugger on this machine";
+    if (breakpoints)
+        condition = breakpoints->CompileCondition(BRK_MEMORY, BRK_MEM_EXECUTE, text, BreakpointConditionDialect::Unreal,
+                                                  error);
+    if (condition && condition->UsesPrevious())
+    {
+        condition.reset();
+        error = "condition: x@prev has no meaning in a backward search (it would compare with a later moment)";
+    }
+    if (!condition)
+    {
+        error = error.rfind("condition", 0) == 0 ? error : "condition: " + error;
+        return nullptr;
+    }
+    error.clear();
+    return condition;
+}
+
+std::string TimeTravelController::CheckReverseCondition(const std::string& condition) const
+{
+    std::string error;
+    if (!condition.empty())
+        (void)CompileReverseCondition(condition, error);
+    return error;
+}
+
 TimeTravelController::TTDReverseContinueResult
 TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
 {
@@ -7959,22 +8118,9 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     BreakpointConditionPtr condition;
     if (!query.condition.empty())
     {
-        BreakpointManager* breakpoints =
-            _context->pDebugManager ? _context->pDebugManager->GetBreakpointsManager() : nullptr;
-        std::string error = "no debugger on this machine";
-        if (breakpoints)
-            condition = breakpoints->CompileCondition(BRK_MEMORY, BRK_MEM_EXECUTE, query.condition,
-                                                      BreakpointConditionDialect::Unreal, error);
-        if (condition && condition->UsesPrevious())
-        {
-            condition.reset();
-            error = "condition: x@prev has no meaning in a backward search (it would compare with a later moment)";
-        }
+        condition = CompileReverseCondition(query.condition, result.error);
         if (!condition)
-        {
-            result.error = error.rfind("condition", 0) == 0 ? error : "condition: " + error;
             return result;
-        }
     }
     std::vector<uint64_t> conditionPcs;   // the wanted PCs as a 64K-bit set (the probe's filter)
     TTDAccessProbe::ExecuteFilter filter;
@@ -8046,6 +8192,10 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     if (!all)
         SaveLiveState(here);
 
+    // Run as a job (RQ-1): the frames walked are its progress, a cancel ends the walk before the next frame
+    const WindowWalkScope walk{*this, query.job, windowFloor.frame};
+    bool cancelled = false;
+
     // One enumerated interval, newest instruction first. True: the walk is over (the limit, or a barrier)
     bool done = false;
     auto collect = [&](uint64_t from, uint64_t to) {
@@ -8087,6 +8237,14 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         }
         if (!all && !result.hits.empty())
             done = true;
+        _walk.hits = result.hits.size();
+        // The cancel ended the enumeration and nothing else ended the walk: a cancelled search (a walk that has its
+        // hit, its limit or every PC by then is a complete answer)
+        if (_walk.cancelled && !done)
+        {
+            cancelled = true;
+            done = true;
+        }
     };
 
     // ------------------------------------------------------------------
@@ -8137,6 +8295,11 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         size_t wantedHit = SIZE_MAX;
         for (uint64_t frame = scanFrom + 1; !done && frame-- > scanTo;)
         {
+            if (WindowWalkStops(frame))
+            {
+                cancelled = true;
+                break;
+            }
             if (wantedHit != pcsHit)
             {
                 wanted = TTDCoverageOffsetSet{};
@@ -8167,7 +8330,7 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         // timeline starts at coverFirst - 1 or earlier. Frames below coverFirst
         // are UNKNOWN, not empty, and skipping them silently loses hits that
         // happened during the session's opening frames.
-        if (!done)
+        if (!done && !cancelled)
             collect(floorT, std::min<uint64_t>(endT, GlobalT(TTDTimePoint{coverFirst, 0})));
     }
     else
@@ -8176,7 +8339,15 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         collect(floorT, endT);
     }
 
-    if (result.truncated || (!all && !result.hits.empty()) || (query.firstPerPc && pcsHit == pcs.size()))
+    if (cancelled)
+    {
+        // The frames after the one the walk stopped before were searched: the search goes on from that frame's end
+        const TTDTimePoint reached{_walk.stoppedFrame + 1, 0};
+        result.cancelled = true;
+        result.nextBefore = GlobalT(reached) - 1;
+        reportWindow(reached);
+    }
+    else if (result.truncated || (!all && !result.hits.empty()) || (query.firstPerPc && pcsHit == pcs.size()))
         reportWindow(result.hits.back().time);
     else if (result.blockingMarker.reason[0] != '\0')
     {
@@ -8186,7 +8357,10 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
                  static_cast<unsigned>(result.blockingMarker.time.tInFrame));
     }
     else
+    {
         reportWindow(windowFloor);
+        _walk.whole = true;
+    }
 
     if (all)
     {

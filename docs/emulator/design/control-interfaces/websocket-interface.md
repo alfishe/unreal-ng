@@ -154,7 +154,7 @@ The long verbs run as jobs with `"async": true` ([jobs.md](./jobs.md), PLAN #122
 job at once, and the long-poll `GET /api/v1/jobs/{job}?wait_ms=N` is a call like any other. Its `result` comes when the
 job ends (or after `wait_ms`, at most 60000): the hub forwards it to the REST handler, which holds no thread while it
 waits, so the socket's other calls and pushes go on meanwhile. The topics `jobs.progress` and `jobs.done` tell the
-same without a call.
+same without a call (a `find-last` or `reverse-continue` job: `done` of `total` frames and its `hits` so far).
 
 ```json
 → {"op":"subscribe","topics":["jobs.*"]}

@@ -7063,10 +7063,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
         "where it is; next_before pages on; first_per_pc=true lists one hit per PC, its newest, and names the PCs that "
-        "did not run; condition keeps only hits where a breakpoint condition holds), "
+        "did not run; condition keeps only hits where a breakpoint condition holds; async=true: the search as a job), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame; "
         "changes_only=true skips writes that store the byte already there and gives old_value; all=true lists the hits "
-        "newest first up to limit, the machine stays; next_before pages on). "
+        "newest first up to limit, the machine stays; next_before pages on; async=true: the search as a job). "
         "'probe_frames' (in which frames did a game profile's probe fire: probes, a list of up to 16 {probe: exec|read|"
         "write|port-in|port-out, address, end?, page?, port_mask?, if?}, the profile's shape; each complete frame of "
         "from_frame..to_frame is replayed with the probes armed as in real time, the coverage index skipping frames no "
@@ -7328,9 +7328,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "branch_list / branch_prune: only branches created before this time (Unix seconds)";
     schema["properties"]["async"]["type"] = "boolean";
     schema["properties"]["async"]["description"] =
-        "dump, load, probe_frames, memory_series, journal_build, export_clip: run it as a job (default false): the "
-        "answer is the job id at once; the jobs tool (action 'wait', job=<id>) waits for the result. Other long "
-        "verbs: jobs action 'start'";
+        "dump, load, probe_frames, memory_series, journal_build, export_clip, find_last, reverse_continue: run it "
+        "as a job (default false): the answer is the job id at once; the jobs tool (action 'wait', job=<id>) waits "
+        "for the result. find_last / reverse_continue: use it for a search that may replay a long window (an "
+        "address or PC that is rarely touched, a condition that rarely holds, no from_frame: about 1 ms per "
+        "frame of history); the job shows frames done of the window and hits so far, jobs action 'cancel' stops it "
+        "at the next frame with what it found (cancelled, next_before to go on) and the machine where it stood. "
+        "Other long verbs: jobs action 'start'";
     schema["properties"]["lineage"]["type"] = "boolean";
     schema["properties"]["lineage"]["description"] =
         "dump: only the active branch's lineage, as one linear history (default false: every branch)";
@@ -8085,8 +8089,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
             // A long action as a job (PLAN #122 S2): async=true answers {job, state} at once, `jobs` waits for it
             if (args.isMember("async"))
             {
-                static const std::set<std::string> asyncActions = {"dump",          "load",         "probe_frames",
-                                                                   "memory_series", "journal_build", "export_clip"};
+                static const std::set<std::string> asyncActions = {"dump",          "load",          "probe_frames",
+                                                                   "memory_series", "journal_build", "export_clip",
+                                                                   "find_last",     "reverse_continue"};
                 if (!args["async"].isBool())
                 {
                     done(ToolResult::Error("'async' must be true or false"));
@@ -8094,8 +8099,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
                 if (args["async"].asBool() && asyncActions.count(action) == 0)
                 {
-                    done(ToolResult::Error("'async' is for dump, load, probe_frames, memory_series, journal_build and "
-                                           "export_clip; other long verbs: the jobs tool, action 'start'"));
+                    done(ToolResult::Error("'async' is for dump, load, probe_frames, memory_series, journal_build, "
+                                           "export_clip, find_last and reverse_continue; other long verbs: the jobs "
+                                           "tool, action 'start'"));
                     return;
                 }
                 if (asyncActions.count(action) != 0)

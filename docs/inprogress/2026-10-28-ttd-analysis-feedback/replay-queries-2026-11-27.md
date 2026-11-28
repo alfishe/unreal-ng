@@ -67,6 +67,25 @@ What the check found instead, in the open tasks of the
 
 1. `find-last` (the replay path and `all`) and `reverse-continue all` are the only window replays that are not jobs:
    38.7 s and 58.5 s at 50k frames, synchronous, no cancel.
+   Outcome (RQ-1, 2026-11-27): both take `async=true` on every plane the jobs serve. The job's progress counts the
+   frames walked of the window and the hits so far; its result is the synchronous answer field for field; a cancel
+   stops the walk before the next frame and the job ends `cancelled` with the hits of the frames it walked,
+   `covered_from` and `next_before`, the machine and the session where a finished list search leaves them
+   (`ttdsearchjobs_test.cpp`). Every form is a job, the single ones too (the same walk, ending at its first hit; the
+   job then moves the machine as the call does); a card CPU's `reverse-continue` is not. A bad request is refused
+   before a job is made. The synchronous forms are as they were, D8 included.
+   Measured through MCP on the build Mac (load average 10-34), Pentagon, `Dizzy X.sna`, 5,000 frames, no write
+   journal: a `find-last` of a read that never matches 3.8 s synchronous and 3.9 s as a job, a `reverse-continue`
+   whose condition never holds 5.9 s and 5.8 s, the answers equal; the call with `async` answers in 1.7 ms; during
+   the job `/ttd/status` answers in 1.5 ms (median of 127-192 calls, at most 3.9 ms) and a second MCP client's
+   `time_travel status` in 1.6-2.4 ms; a cancel ends the job 1.4-2.1 ms later, the position unchanged, and the same
+   query afterwards answers as before.
+   Why one long synchronous call held the other MCP calls (41 s at 50k): a WebAPI route runs its verb on the HTTP
+   I/O thread that took the request (two of them) and MCP reaches the WebAPI over one loopback connection, one
+   request at a time. During the synchronous search every MCP call waited for it (3.5 and 5.7 s here) and so did
+   each REST call that landed on the same I/O thread (every second one). A job leaves both free. The `jobs` tool's
+   `wait` is a long-poll on that same loopback connection: while one client waits, the other MCP calls wait with
+   it (3.7 and 5.5 s here); `jobs status` does not. Not changed here.
 2. `memory-at` at a frame start and `memory-diff` read the piece store only and still pause a running machine.
    Outcome (RQ-2, 2026-11-27): fixed. `memory-at` at a frame start, `memory-diff` and `memory-series` hold the
    machine for the call only; a running machine runs on and a recording keeps recording, with the bytes the

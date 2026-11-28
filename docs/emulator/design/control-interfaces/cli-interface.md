@@ -709,10 +709,10 @@ every instance's).
 | CLI Command | Description |
 | :--- | :--- |
 | `jobs [list] [all\|this\|<id>] [state=active\|finished\|all] [limit=N]` | The jobs, oldest first: id, kind, summary, state, progress, times. |
-| `jobs start <ttd\|analysis> <verb> [name=value ...]` | Run a long verb as a job (TTD `dump`, `load`, `probe-frames`, `memory-series`, `find-event`, `replay-check`, `export-clip`, `journal-build`, `branch-create`; analysis `build`, `trace`, `experiment`, `cover`), its options beside: `jobs start ttd dump path=/tmp/a.ttd`. Answers the job id at once. |
+| `jobs start <ttd\|analysis> <verb> [name=value ...]` | Run a long verb as a job (TTD `dump`, `load`, `probe-frames`, `memory-series`, `find-event`, `replay-check`, `export-clip`, `journal-build`, `branch-create`, `find-last`, `reverse-continue`; analysis `build`, `trace`, `experiment`, `cover`), its options beside: `jobs start ttd dump path=/tmp/a.ttd`, `jobs start ttd find-last addr=0x5B00 access=read all=true`, `jobs start ttd reverse-continue pcs=0x8000,0x8100 all=true`. Answers the job id at once. |
 | `jobs status <job> [result=false]` | One job; when it ended its status, error and the verb's text. |
 | `jobs wait <job> [wait_ms]` | Block this session until the job ends or `wait_ms` (default 30000, at most 60000) is up, then as `status`. |
-| `jobs cancel <job>` | A queued job ends cancelled; a running one is asked to stop (`probe-frames`, `memory-series`, `journal-build`, `analysis build`); refused when it cannot stop or ended. |
+| `jobs cancel <job>` | A queued job ends cancelled; a running one is asked to stop (`probe-frames`, `memory-series`, `journal-build`, `find-last`, `reverse-continue`, `analysis build`: they end with what they got); refused when it cannot stop or ended. |
 | `analysis build async=true` | The same through the verb (`trace`, `experiment`, `cover` too). |
 
 `--json` prints the reply's fields.

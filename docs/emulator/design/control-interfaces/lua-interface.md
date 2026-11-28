@@ -1887,7 +1887,11 @@ emu.analysis("cover", "32")                          -- a string: the budget
 
 The long verbs as jobs ([jobs.md](./jobs.md), PLAN #122 S2) through `jobs::Execute`: `emu.jobs(action, opts)`; the
 answer is a table of the reply's fields plus `text`, a refusal `{ ok = false, error = <why> }`. `wait` blocks the
-script until the job ends or `wait_ms` is up.
+script until the job ends or `wait_ms` is up. A search over a long window as a job:
+`emu.jobs("start", {domain = "ttd", verb = "find-last", addr = 0x5B00, access = "read", all = true})` or
+`verb = "reverse-continue", pcs = "0x8000", all = true` (the verbs' own option names); its `progress` counts the
+frames of the window and the `hits` so far, a cancel ends it with what it found (`result.cancelled`,
+`result.next_before`).
 
 ```lua
 local j = emu.jobs("start", {domain = "ttd", verb = "dump", path = "/tmp/a.ttd"})   -- {job, state, status_url, text}

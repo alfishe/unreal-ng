@@ -233,7 +233,8 @@ Reply Start(Emulator* emulator, const Options& options)
     const auto verbIt = options.find("verb");
     if (domainIt == options.end() || (domainIt->second != "ttd" && domainIt->second != "analysis"))
         return Refuse(Error::BadRequest, "domain: ttd (verbs dump, load, probe-frames, memory-series, find-event, "
-                                         "replay-check, export-clip, journal-build, branch-create) or analysis "
+                                         "replay-check, export-clip, journal-build, branch-create, find-last, "
+                                         "reverse-continue) or analysis "
                                          "(build, trace, experiment, cover)");
     if (verbIt == options.end() || verbIt->second.empty())
         return Refuse(Error::BadRequest, "verb: the long verb to run as a job (dump, probe-frames, build, ...)");
@@ -500,6 +501,8 @@ StateNode ProgressTopic(const std::string& emulatorId)
         item["total"] = info.total;
         item["unit"] = info.unit;
         item["percent"] = static_cast<uint64_t>(info.Percent());
+        if (info.hasHits)
+            item["hits"] = info.hits;
         item["cancel_requested"] = info.cancelRequested;
         active.push(std::move(item));
     }

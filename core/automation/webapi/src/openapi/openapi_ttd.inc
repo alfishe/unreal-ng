@@ -874,7 +874,10 @@
         "and physical page of the matching access. Optional filters: access "
         "type, value, PC range, and before-frame/tin bound. If a blocking "
         "external-event marker prevents the scan from reaching the matching "
-        "access, the response carries blocked=true with the marker details.";
+        "access, the response carries blocked=true with the marker details. "
+        "async=true runs the search as a job (202, Jobs): progress in frames of "
+        "the window and hits; a cancel ends it before the next frame, the result "
+        "then carries cancelled=true, the hits so far and next_before.";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["parameters"][0]["required"] = true;
@@ -1192,6 +1195,10 @@
         "external-event marker may also short-circuit the scan; the response then "
         "carries blocked_by_marker {kind, reason, frame, tinframe}. pcs entries "
         "may be numbers or strings (decimal, \"0x..\", \"#..\", \"$..\"). "
+        "async=true runs the search as a job (202, Jobs; not with cpu): progress "
+        "in frames of the window and hits; a cancel ends it before the next "
+        "frame, the result then carries cancelled=true, the hits so far and "
+        "next_before. "
         "With cpu naming a sound card's CPU (and no pcs): back to that card's "
         "previous hit of its own breakpoints (a TTDCardMoveResponse; status "
         "no_hit when there is none within max_frames).";

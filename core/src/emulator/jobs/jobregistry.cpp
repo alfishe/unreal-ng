@@ -65,7 +65,12 @@ Context* Current()
 
 void Context::Progress(uint64_t done, uint64_t total, const char* unit)
 {
-    _registry.ReportProgress(_id, done, total, unit);
+    _registry.ReportProgress(_id, done, total, unit, nullptr);
+}
+
+void Context::Progress(uint64_t done, uint64_t total, const char* unit, uint64_t hits)
+{
+    _registry.ReportProgress(_id, done, total, unit, &hits);
 }
 
 size_t ApproxBytes(const StateNode& node)
@@ -91,6 +96,8 @@ StateNode Info::ToNode(bool withResult) const
     progress["total"] = total;
     progress["unit"] = unit;
     progress["percent"] = static_cast<uint64_t>(Percent());
+    if (hasHits)
+        progress["hits"] = hits;
     node["progress"] = std::move(progress);
     node["cancellable"] = cancellable;
     node["cancel_requested"] = cancelRequested;
@@ -136,6 +143,8 @@ std::string Info::Text(bool withResult) const
                 out << " " << Percent() << "% (" << done << " of " << total << (unit.empty() ? "" : " ") << unit << ")";
             else if (done != 0)
                 out << " (" << done << (unit.empty() ? "" : " ") << unit << ")";
+            if (hasHits)
+                out << ", " << hits << " hit(s)";
             out << ", " << Duration(elapsed);
             if (cancelRequested)
                 out << ", cancel requested";
@@ -164,6 +173,8 @@ struct Registry::Job
     uint64_t done = 0;
     uint64_t total = 0;
     std::string unit;
+    bool hasHits = false;
+    uint64_t hits = 0;
     std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
     int64_t createdMs = 0;
     int64_t startedMs = 0;
@@ -473,6 +484,8 @@ Info Registry::InfoLocked(const Job& job) const
     info.done = job.done;
     info.total = job.total;
     info.unit = job.unit;
+    info.hasHits = job.hasHits;
+    info.hits = job.hits;
     info.cancellable = job.spec.cancellable;
     info.cancelRequested = job.cancel->load();
     info.createdMs = job.createdMs;
@@ -653,7 +666,7 @@ size_t Registry::WatchCount() const
     return _watches;
 }
 
-void Registry::ReportProgress(uint64_t id, uint64_t done, uint64_t total, const char* unit)
+void Registry::ReportProgress(uint64_t id, uint64_t done, uint64_t total, const char* unit, const uint64_t* hits)
 {
     std::string emulatorId;
     {
@@ -666,6 +679,11 @@ void Registry::ReportProgress(uint64_t id, uint64_t done, uint64_t total, const 
         job.total = total;
         if (unit != nullptr)
             job.unit = unit;
+        if (hits != nullptr)
+        {
+            job.hasHits = true;
+            job.hits = *hits;
+        }
         const int64_t now = SteadyMs();
         if (now - job.lastNotifyMs < kProgressNotifyMs)
             return;

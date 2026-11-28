@@ -75,7 +75,8 @@ bool JobsRequest(const Json::Value& args, const std::string& emulatorId, std::st
         if (verb.empty())
         {
             error = "start: verb is the long verb (ttd: dump, load, probe-frames, memory-series, find-event, "
-                    "replay-check, export-clip, journal-build, branch-create; analysis: build, trace, experiment, cover)";
+                    "replay-check, export-clip, journal-build, branch-create, find-last, reverse-continue; analysis: "
+                    "build, trace, experiment, cover)";
             return false;
         }
         method = "POST";
@@ -154,7 +155,7 @@ void RegisterJobs(ToolRegistry& registry)
     schema["properties"]["verb"]["type"] = "string";
     schema["properties"]["verb"]["description"] =
         "start: ttd dump, load, probe-frames, memory-series, find-event, replay-check, export-clip, journal-build, "
-        "branch-create; analysis build, trace, experiment, cover";
+        "branch-create, find-last, reverse-continue; analysis build, trace, experiment, cover";
     schema["properties"]["options"]["type"] = "object";
     schema["properties"]["options"]["description"] =
         "start: the verb's own options as its WebAPI route takes them ({\"path\": \"/tmp/a.ttd\"})";
@@ -162,12 +163,13 @@ void RegisterJobs(ToolRegistry& registry)
 
     registry.Register(
         "jobs",
-        "Long verbs as jobs: a TTD dump / load / probe_frames / memory_series / journal_build / export_clip with "
-        "async=true (time_travel), an analysis build / trace / experiment / cover with async=true (analysis), or any "
+        "Long verbs as jobs: a TTD dump / load / probe_frames / memory_series / journal_build / export_clip / "
+        "find_last / reverse_continue with async=true (time_travel), an analysis build / trace / experiment / cover with async=true (analysis), or any "
         "of them here with action=start (domain, verb, options) answers the job id at once. action=wait long-polls "
         "for its end (wait_ms up to 60000, then wait again) and answers its state and result; status reads it now; "
         "cancel stops a queued job, or asks a running one to stop (probe_frames, memory_series, journal_build, "
-        "analysis build; others run to their end); list shows the jobs (queued, running, done, failed, cancelled; the "
+        "find_last, reverse_continue, analysis build: they end with what they got; others run to their end). A "
+        "running search (find_last, reverse_continue) shows frames done of its window and hits so far; list shows the jobs (queued, running, done, failed, cancelled; the "
         "last 64 finished are kept up to 30 min). One job runs at a time per instance and domain, in order.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {

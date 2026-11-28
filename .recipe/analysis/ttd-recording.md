@@ -323,7 +323,8 @@ need no splitting: streams over the 1 GiB record limit are chunked.
 ### Long verbs as jobs
 
 A dump or a load of a long session, `probe-frames`, `memory-series`, `find-event`, `replay-check`, `export-clip`,
-`journal-build` and `branch-create` can outlast a client's HTTP timeout. With `async` the call answers the job's id
+`journal-build`, `branch-create`, and a `find-last` or `reverse-continue` over a long window can outlast a client's
+HTTP timeout. With `async` the call answers the job's id
 at once (HTTP 202) and the work runs in the emulator; wait for its end with a long-poll, not a `sleep` loop:
 
 ```bash
@@ -335,9 +336,10 @@ curl -s -X DELETE "$BASE/jobs/$JOB"                                    # cancel
 ```
 
 States: `queued`, `running`, `done`, `failed`, `cancelled`. The TTD jobs of one instance run one after another.
-`probe-frames`, `memory-series` and `journal-build` stop on a cancel with what they got; the others answer 409.
+`probe-frames`, `memory-series`, `journal-build`, `find-last` and `reverse-continue` stop on a cancel with what they
+got; the others answer 409.
 MCP: `async: true` on `time_travel` `dump` / `load` / `probe_frames` / `memory_series` / `journal_build` /
-`export_clip`, then `jobs {"action":"wait","job":N}`; the other long verbs through `jobs {"action":"start",...}`.
+`export_clip` / `find_last` / `reverse_continue`, then `jobs {"action":"wait","job":N}`; the other long verbs through `jobs {"action":"start",...}`.
 CLI: `jobs start ttd dump path=...`, `jobs wait 12`. Lua / Python: `emu.jobs(...)`. Without `async` every verb
 answers as before. Reference: [jobs.md](../../docs/emulator/design/control-interfaces/jobs.md).
 

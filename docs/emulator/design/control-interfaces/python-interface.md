@@ -2376,7 +2376,11 @@ emu.analysis("cover", budget=32)                       # {candidates, tried, fli
 
 The long verbs as jobs ([jobs.md](./jobs.md), PLAN #122 S2) through `jobs::Execute`: `emu.jobs(action, **options)`;
 the answer is a dict of the reply's fields plus `text`, a refusal `{"ok": False, "error": <why>}`. `wait` releases the
-GIL while it blocks (until the job ends or `wait_ms` is up).
+GIL while it blocks (until the job ends or `wait_ms` is up). A search over a long window as a job:
+`emu.jobs("start", domain="ttd", verb="find-last", addr=0x5B00, access="read", all=True)` or
+`verb="reverse-continue", pcs="0x8000", all=True` (the verbs' own option names); its `progress` counts the frames of
+the window and the `hits` so far, a cancel ends it with what it found (`result["cancelled"]`,
+`result["next_before"]`).
 
 ```python
 j = emu.jobs("start", domain="ttd", verb="dump", path="/tmp/a.ttd")   # {job, state, status_url, text}

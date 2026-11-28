@@ -333,6 +333,9 @@ public:
     virtual ~Backend() = default;
     /// @p verb is known and its options checked
     virtual TTDReply Execute(const std::string& verb, const TTDRequest& request) = 0;
+    /// Before @p verb is queued as a job: the refusal of a request the verb would refuse without touching the
+    /// session (Ok: queue it)
+    virtual TTDReply CheckJobRequest(const std::string& verb, const TTDRequest& request) = 0;
 };
 
 /// The folder the engine writes the session into as it records (empty: none - a test, nothing recorded)
@@ -364,6 +367,7 @@ class TTDControlBackend final : public TTDControl::Backend
 public:
     TTDControlBackend(EmulatorContext* context, TimeTravelController* manager) : _context(context), _manager(manager) {}
     TTDReply Execute(const std::string& verb, const TTDRequest& request) override;
+    TTDReply CheckJobRequest(const std::string& verb, const TTDRequest& request) override;
 
 private:
     TTDReply Run(const std::string& verb, const TTDRequest& request);
@@ -415,6 +419,10 @@ private:
     TTDReply BookmarkDelete(const TTDRequest& request);
     TTDReply PortEvents(const TTDRequest& request);
     TTDReply FindLast(const TTDRequest& request);
+    /// find-last's options as the controller's query; a reply: the refusal (400)
+    std::optional<TTDReply> ParseFindLast(const TTDRequest& request, TTDSearchQuery& q, TTDFindOptions& find) const;
+    /// reverse-continue's options (the main CPU's form) as the controller's query; a reply: the refusal (400)
+    std::optional<TTDReply> ParseReverseContinue(const TTDRequest& request, TTDReverseContinueQuery& query) const;
     /// find-last's list mode and changes_only (the controller's FindAccesses): the machine stays
     TTDReply FindAll(const TTDSearchQuery& q, const TTDFindOptions& find);
     TTDReply ReverseContinue(const TTDRequest& request);
@@ -641,7 +649,12 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
         TTDRequest inner{verb, request.options};
         inner.options.erase("async");
         if (async)
+        {
+            // A search's request is checked here: a bad one is refused at once, no job is made for it
+            if (TTDReply bad = _backend->CheckJobRequest(verb, inner); !bad.Ok())
+                return bad;
             return SubmitJob(verb, inner);
+        }
         return _backend->Execute(verb, inner);
     }
     return _backend->Execute(verb, request);
@@ -649,9 +662,10 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
 
 const std::vector<std::string>& TTDControl::AsyncVerbs()
 {
-    static const std::vector<std::string> verbs = {"dump",         "load",         "probe-frames",
-                                                   "memory-series", "find-event",  "replay-check",
-                                                   "export-clip",  "journal-build", "branch-create"};
+    static const std::vector<std::string> verbs = {"dump",          "load",          "probe-frames",
+                                                   "memory-series", "find-event",    "replay-check",
+                                                   "export-clip",   "journal-build", "branch-create",
+                                                   "find-last",     "reverse-continue"};
     return verbs;
 }
 
@@ -661,7 +675,8 @@ TTDReply TTDControl::SubmitJob(const std::string& verb, const TTDRequest& reques
     if (emulator == nullptr)
         return Fail(TTDControlError::NotAvailable, "async needs an emulator instance");
     // The verbs whose loops poll the job's cancel (jobs::CurrentCancelRequested) or that have their own stop
-    static const std::set<std::string> cancellable = {"probe-frames", "memory-series", "journal-build"};
+    static const std::set<std::string> cancellable = {"probe-frames", "memory-series", "journal-build", "find-last",
+                                                      "reverse-continue"};
     const bool canStop = cancellable.count(verb) != 0;
     std::function<void(Emulator&)> onCancel;
     if (verb == "journal-build")
@@ -714,6 +729,40 @@ TTDReply TTDControlBackend::Execute(const std::string& verb, const TTDRequest& r
     if (!_manager)
         return Fail(TTDControlError::NotAvailable, "TTD engine not available in this build");
     return Run(verb, request);
+}
+
+TTDReply TTDControlBackend::CheckJobRequest(const std::string& verb, const TTDRequest& request)
+{
+    // The searches (RQ-1): their options are parsed as the verb parses them, so a typo or a condition that does not
+    // compile is the call's refusal, not a failed job. The other long verbs refuse inside their job, as before
+    if (verb != "find-last" && verb != "reverse-continue")
+        return TTDReply{};
+    if (!_manager)
+        return Fail(TTDControlError::NotAvailable, "TTD engine not available in this build");
+    if (verb == "find-last")
+    {
+        TTDSearchQuery q;
+        TTDFindOptions find;
+        if (std::optional<TTDReply> bad = ParseFindLast(request, q, find))
+            return *bad;
+        return TTDReply{};
+    }
+    // A card CPU's reverse-continue is a move bounded by max_frames, not a search of the window
+    std::optional<DebugCpuId> cpu;
+    if (TTDReply fail; !CardCpuOf(request, cpu, fail))
+        return fail;
+    if (cpu)
+        return Fail(TTDControlError::BadRequest, "reverse-continue on a card CPU is a move bounded by max_frames: it "
+                                                 "answers at once, async=true is for the main CPU's search");
+    if (Option(request, "max_frames"))
+        return Fail(TTDControlError::BadRequest,
+                    "'max_frames' needs 'cpu' naming a sound card's CPU (gs, neogs, ms or multisound)");
+    TTDReverseContinueQuery query;
+    if (std::optional<TTDReply> bad = ParseReverseContinue(request, query))
+        return *bad;
+    if (const std::string error = _manager->CheckReverseCondition(query.condition); !error.empty())
+        return Fail(TTDControlError::BadRequest, error);
+    return TTDReply{};
 }
 
 TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& request)
@@ -3501,9 +3550,9 @@ void AddFindMarker(StateNode& body, const TTDExternalEvent& marker)
 }
 }  // namespace
 
-TTDReply TTDControlBackend::FindLast(const TTDRequest& request)
+std::optional<TTDReply> TTDControlBackend::ParseFindLast(const TTDRequest& request, TTDSearchQuery& q,
+                                                         TTDFindOptions& find) const
 {
-    TTDSearchQuery q;
     const std::string* addr = Option(request, "addr");
     const std::string* addrFrom = Option(request, "addr_from");
     const std::string* addrTo = Option(request, "addr_to");
@@ -3610,7 +3659,6 @@ TTDReply TTDControlBackend::FindLast(const TTDRequest& request)
         q.hasPhysPageFilter = true;
     }
     // Only accesses at or before a point: a frame [+ T-state], or a raw machine time; from_frame: not older
-    TTDFindOptions find;
     if (std::string bounds = SearchBounds(request, q.beforeGlobalT, find.fromFrame); !bounds.empty())
         return Fail(TTDControlError::BadRequest, bounds);
     // all: the list newest first (up to limit); changes_only: memory writes that changed the byte
@@ -3622,15 +3670,29 @@ TTDReply TTDControlBackend::FindLast(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, bad);
     if (find.changesOnly && q.access != TTDAccessType::Write)
         return Fail(TTDControlError::BadRequest, "changes_only compares a memory write with the byte it replaced: access write only");
+    return std::nullopt;
+}
+
+TTDReply TTDControlBackend::FindLast(const TTDRequest& request)
+{
+    TTDSearchQuery q;
+    TTDFindOptions find;
+    if (std::optional<TTDReply> bad = ParseFindLast(request, q, find))
+        return *bad;
 
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
+    // Run as a job (async=true, RQ-1): the frames walked are its progress, a cancel ends the walk
+    jobs::Context* job = jobs::Current();
     if (find.all || find.changesOnly || find.fromFrame)
+    {
+        find.job = job;
         return FindAll(q, find);
+    }
     TTDExternalEvent marker;
     TTDSearchWindow window;
-    const auto found = _manager->FindLastAccess(q, &marker, &window);
+    const auto found = _manager->FindLastAccess(q, &marker, &window, job);
     NotifyFrameRefresh();
 
     TTDReply reply;
@@ -3645,6 +3707,12 @@ TTDReply TTDControlBackend::FindLast(const TTDRequest& request)
         // A replay barrier stopped the search before any match
         if (marker.reason[0] != '\0')
             AddFindMarker(reply.body, marker);
+    }
+    // Cancelled as a job: nothing found in the frames walked (covered_from .. covered_to), the machine stayed
+    if (window.cancelled)
+    {
+        reply.body["cancelled"] = true;
+        reply.body["next_before"] = window.nextBefore;
     }
     AddSearchWindow(reply.body, window);
     return reply;
@@ -3682,6 +3750,14 @@ TTDReply TTDControlBackend::FindAll(const TTDSearchQuery& q, const TTDFindOption
         reply.body["t"] = h.globalT;
         if (find.changesOnly)
             reply.body["old_value"] = h.hasOldValue ? StateNode(static_cast<unsigned>(h.oldValue)) : StateNode();
+    }
+    // Cancelled as a job: the hits of the frames walked (covered_from .. covered_to), the rest from next_before
+    if (r.cancelled)
+    {
+        reply.body["cancelled"] = true;
+        if (find.all)
+            reply.body["truncated"] = true;
+        reply.body["next_before"] = r.nextBefore;
     }
     if (r.blockingMarker.reason[0] != '\0')
         AddFindMarker(reply.body, r.blockingMarker);
@@ -3724,12 +3800,12 @@ std::string TTDControlBackend::HitLimit(const TTDRequest& request, size_t& limit
     return "";
 }
 
-TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
+std::optional<TTDReply> TTDControlBackend::ParseReverseContinue(const TTDRequest& request,
+                                                                TTDReverseContinueQuery& query) const
 {
     const std::string* pcsText = Option(request, "pcs");
     if (!pcsText || pcsText->empty())
         return Fail(TTDControlError::BadRequest, "'pcs' must be a non-empty list of addresses");
-    TTDReverseContinueQuery query;
     size_t start = 0;
     while (start <= pcsText->size())
     {
@@ -3763,10 +3839,20 @@ TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
     // condition: only hits where it holds at the instruction's start (the breakpoint condition language)
     if (const std::string* t = Option(request, "condition"))
         query.condition = *t;
+    return std::nullopt;
+}
+
+TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
+{
+    TTDReverseContinueQuery query;
+    if (std::optional<TTDReply> bad = ParseReverseContinue(request, query))
+        return *bad;
 
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
+    // Run as a job (async=true, RQ-1): the frames walked are its progress, a cancel ends the walk
+    query.job = jobs::Current();
     TTDReverseContinueResult r;
     r = _manager->ReverseContinue(query);
     if (!r.error.empty())
@@ -3805,7 +3891,7 @@ TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
                 none.push(static_cast<unsigned>(pc));
             reply.body["pcs_without_hit"] = none;
         }
-        reply.body["truncated"] = r.truncated;
+        reply.body["truncated"] = r.truncated || r.cancelled;
         // The next page: pass it back as `before` (at or before), the oldest hit excluded
         if (r.truncated && !r.hits.empty())
             reply.body["next_before"] = r.hits.back().globalT - 1;
@@ -3827,6 +3913,13 @@ TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
         m["frame"] = r.blockingMarker.time.frame;
         m["tinframe"] = static_cast<unsigned>(r.blockingMarker.time.tInFrame);
         reply.body["blocked_by_marker"] = m;
+    }
+    // Cancelled as a job: the hits of the frames walked (covered_from .. covered_to; the single form: none, the
+    // machine stayed), the rest from next_before
+    if (r.cancelled)
+    {
+        reply.body["cancelled"] = true;
+        reply.body["next_before"] = r.nextBefore;
     }
     AddSearchWindow(reply.body, r.window);
     return reply;

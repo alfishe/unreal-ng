@@ -108,6 +108,8 @@ class Memory;
 class PortDecoder;
 struct Z80State;
 struct EmulatorState;
+class BreakpointConditionProgram;
+namespace jobs { class Context; }
 namespace ttd { class TTDDirtyTracker; class TimeTravelEngine; }
 
 namespace ttd {
@@ -1373,12 +1375,15 @@ public:
     /// search would cross a marker, returns std::nullopt and (if non-null)
     /// fills *outBlockingMarker with the barrier. *outWindow (if non-null)
     /// receives the part of history the search examined (TD-8).
+    /// @p job: the job the search runs as (RQ-1): the frames walked are its progress; its cancel ends the walk at
+    /// a frame boundary, the machine back where it stood (*outWindow: cancelled, nextBefore).
     ///
     /// Preconditions: emulator paused, state is Recording or Detached.
     std::optional<TTDSearchResult> FindLastAccess(
         const TTDSearchQuery& query,
         TTDExternalEvent* outBlockingMarker = nullptr,
-        TTDSearchWindow* outWindow = nullptr);
+        TTDSearchWindow* outWindow = nullptr,
+        jobs::Context* job = nullptr);
 
     /// @brief Regenerate one recorded frame's memory writes by replaying it
     /// (TTD v2 Phase 3, Step 7: the write journal as an index derived from a
@@ -1744,6 +1749,9 @@ public:
     /// Single mode: the newest hit in (fromFrame, before], the machine moved there. All mode: up to `limit` hits,
     /// newest first; the machine is replayed from checkpoints and put back exactly where it stood.
     TTDReverseContinueResult ReverseContinue(const TTDReverseContinueQuery& query);
+    /// @brief Why ReverseContinue would refuse @p condition (it does not compile on this machine, it reads x@prev);
+    /// empty: it takes it. No session is touched: a job's request is checked with it before the job is made
+    std::string CheckReverseCondition(const std::string& condition) const;
 
     /// Most hits an all-mode reverse search or find-last returns
     static constexpr size_t kReverseHitLimitMax = 10000;
@@ -2538,6 +2546,51 @@ private:
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
     TTDExternalEvent _barrierScratch;   ///< EnumerateM1InRange's barrier, as a marker
+
+    /// A backward window search run as a job (RQ-1: find-last, reverse-continue with async=true; the caller names
+    /// the job, a search another verb makes inside its own job is not one). The frames walked of the window are the
+    /// job's progress, a cancel ends the walk before the next frame. In a synchronous call `job` is null and the
+    /// walk's check per frame is that one test
+    struct WindowWalk
+    {
+        jobs::Context* job = nullptr;   ///< the job this thread runs; null: a synchronous call
+        bool started = false;           ///< a frame was reported: top and total are set
+        uint64_t floorFrame = 0;        ///< the oldest frame the walk may reach
+        uint64_t top = 0;               ///< the frame the walk started in
+        uint64_t total = 0;             ///< frames from top down to floorFrame
+        uint64_t done = 0;              ///< frames walked before the one being examined
+        uint64_t hits = 0;              ///< hits so far, as the search counts them
+        bool whole = false;             ///< the walk reached its floor (no hit, limit or barrier ended it)
+        bool cancelled = false;         ///< a cancel ended it
+        uint64_t stoppedFrame = 0;      ///< cancelled: the frame it stopped before (not examined)
+    };
+    WindowWalk _walk;
+    /// The outermost search of a call owns the walk: it starts it from the job the thread runs and reports the last
+    /// progress when it ends (the whole window, or the frames walked)
+    class WindowWalkScope
+    {
+    public:
+        WindowWalkScope(TimeTravelController& controller, jobs::Context* job, uint64_t floorFrame);
+        ~WindowWalkScope();
+        WindowWalkScope(const WindowWalkScope&) = delete;
+        WindowWalkScope& operator=(const WindowWalkScope&) = delete;
+
+    private:
+        TimeTravelController& _controller;
+        bool _owner = false;
+    };
+    /// Before the walk examines @p frame: the progress, and true when a cancel ends the walk here (never before the
+    /// first frame was walked, so a cancelled search always moves its bound)
+    bool WindowWalkStops(uint64_t frame)
+    {
+        return _walk.job != nullptr && WindowWalkStep(frame);
+    }
+    bool WindowWalkStep(uint64_t frame);
+    /// The first frame of the active lineage's history (the trunk's start)
+    uint64_t LineageStartFrame() const;
+    /// The condition of a reverse search, compiled; null with @p error
+    std::shared_ptr<const BreakpointConditionProgram> CompileReverseCondition(const std::string& condition,
+                                                                              std::string& error) const;
     TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has the controller's journals
     std::vector<TTDPendingFact> _shadowFacts;   ///< the live machine's facts since the last boundary
     /// A fact at the current instant (normalized past the frame's end)

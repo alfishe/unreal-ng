@@ -55,7 +55,8 @@
         start["tags"].append("Jobs");
         start["description"] =
             "The same as the verb with async=true: domain ttd (dump, load, probe-frames, memory-series, find-event, "
-            "replay-check, export-clip, journal-build, branch-create) or analysis (build, trace, experiment, cover), "
+            "replay-check, export-clip, journal-build, branch-create, find-last, reverse-continue) or analysis "
+            "(build, trace, experiment, cover), "
             "the verb's own options beside (scalars, lists of scalars).";
         start["parameters"].append(pathParam("id", "Emulator id or index"));
         Json::Value& startBody = start["requestBody"]["content"]["application/json"]["schema"];
@@ -97,7 +98,8 @@
             cancel["tags"].append("Jobs");
             cancel["description"] =
                 "A queued job ends cancelled and never runs; a running one is asked to stop (probe-frames, "
-                "memory-series, journal-build, analysis build stop early with what they got; the others cannot: 409).";
+                "memory-series, journal-build, find-last, reverse-continue, analysis build stop early with what they "
+                "got; the others cannot: 409).";
             cancel["parameters"].append(pathParam("job", "The job id"));
             jobRef(cancel["responses"]["200"], "Cancelled (cancel: cancelled) or asked (cancel: requested)");
             cancel["responses"]["404"]["description"] = "No such job";
@@ -109,7 +111,8 @@
         for (const char* route : {"/api/v1/emulator/{id}/ttd/dump", "/api/v1/emulator/{id}/ttd/load",
                                   "/api/v1/emulator/{id}/ttd/probe-frames", "/api/v1/emulator/{id}/ttd/memory-series",
                                   "/api/v1/emulator/{id}/ttd/export-clip", "/api/v1/emulator/{id}/ttd/journal/build",
-                                  "/api/v1/emulator/{id}/ttd/branches", "/api/v1/emulator/{id}/analysis/build",
+                                  "/api/v1/emulator/{id}/ttd/branches", "/api/v1/emulator/{id}/ttd/find-last",
+                                  "/api/v1/emulator/{id}/ttd/reverse-continue", "/api/v1/emulator/{id}/analysis/build",
                                   "/api/v1/emulator/{id}/analysis/trace", "/api/v1/emulator/{id}/analysis/experiment",
                                   "/api/v1/emulator/{id}/analysis/cover"})
         {

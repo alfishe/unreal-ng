@@ -10,7 +10,8 @@
 /// - States: queued -> running -> done | failed | cancelled (a queued job cancelled never runs).
 /// - Lanes: the jobs of one lane run one at a time in submission order (a TTD job of an instance waits for the one
 ///   before it); lanes run side by side on a small pool of workers (Limits::workers).
-/// - Progress: the work reports done / total (Context::Progress, or CurrentProgress from deep inside a verb); the
+/// - Progress: the work reports done / total (Context::Progress, or CurrentProgress from deep inside a verb), a
+///   search also the hits it has so far; the
 ///   instance's `jobs` readouts are told at most every kProgressNotifyMs per job, state changes at once (the
 ///   WebSocket topics jobs.progress / jobs.done read List, published state only: a short lock, never the worker).
 /// - Cancel: a queued job ends cancelled; a running one is asked (CancelRequested, Spec::onCancel) and ends when its
@@ -74,6 +75,8 @@ public:
     /// @p done of @p total units (frames, rows; @p unit names them). Cheap: stores, the readouts are told at most
     /// every kProgressNotifyMs
     void Progress(uint64_t done, uint64_t total, const char* unit = nullptr);
+    /// The same for a search: @p hits found so far (the job's progress shows them)
+    void Progress(uint64_t done, uint64_t total, const char* unit, uint64_t hits);
 
 private:
     friend class Registry;
@@ -123,6 +126,8 @@ struct Info
     uint64_t done = 0;
     uint64_t total = 0;
     std::string unit;
+    bool hasHits = false;   ///< the work is a search that reports its hits so far
+    uint64_t hits = 0;
     bool cancellable = true;
     bool cancelRequested = false;
     int64_t createdMs = 0;  ///< wall clock, ms since the epoch
@@ -133,7 +138,7 @@ struct Info
     Outcome outcome;             ///< final jobs only
 
     uint32_t Percent() const { return total == 0 ? 0 : static_cast<uint32_t>(done >= total ? 100 : done * 100 / total); }
-    /// {job, kind, emulator_id, summary, state, progress {done, total, unit, percent}, cancellable, cancel_requested,
+    /// {job, kind, emulator_id, summary, state, progress {done, total, unit, percent, hits?}, cancellable, cancel_requested,
     /// created_ms, started_ms, ended_ms, elapsed_ms, queue_position?; final: status, error, text, result?}
     StateNode ToNode(bool withResult = true) const;
     /// One line ("job 12 ttd.dump on <id>: running 45% (450 of 1000 frames)"); final: the outcome's text below
@@ -219,7 +224,7 @@ private:
     void Finish(const std::shared_ptr<Job>& job, Outcome outcome, bool ran);
     void PruneLocked(std::vector<std::shared_ptr<Job>>& dropped);
     Info InfoLocked(const Job& job) const;
-    void ReportProgress(uint64_t id, uint64_t done, uint64_t total, const char* unit);
+    void ReportProgress(uint64_t id, uint64_t done, uint64_t total, const char* unit, const uint64_t* hits);
     void Notify(const std::string& emulatorId);
     void EnsureWorkersLocked();
 

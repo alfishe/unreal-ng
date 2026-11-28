@@ -365,6 +365,25 @@ Space `cpu` (the default) reads Z80 addresses through the paging stored with eac
 `"async": true` answers a job id at once and `GET /jobs/{job}?wait_ms=` waits for the result (MCP: `async` on
 `probe_frames` / `memory_series`, then the `jobs` tool) - [ttd-recording.md](ttd-recording.md#long-verbs-as-jobs).
 
+`find-last` and `reverse-continue` usually answer in 5 to 70 ms: the coverage index rules most frames out. They
+replay every frame it cannot rule out, about 1 ms each: a `value` or `condition` that rarely holds, a rarely
+touched address, many PCs. Over a long history (4 to 6 s per 5,000 frames) run them as a job:
+
+```bash
+JOB=$(curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" -H 'Content-Type: application/json' \
+      -d '{"pcs": "0x8F00", "all": true, "condition": "A == 0", "async": true}' | jq -r .job)
+curl -s "$BASE/jobs/$JOB" | jq .progress          # {done, total, unit: "frames", percent, hits}
+curl -s "$BASE/jobs/$JOB?wait_ms=60000" | jq '{state, result}'   # the answer of the call without async
+curl -s -X DELETE "$BASE/jobs/$JOB"               # stops before the next frame
+```
+
+A cancelled search ends `cancelled` with the hits of the frames it walked (`cancelled: true`, `covered_from`,
+`next_before`: pass it as `before` to go on); the machine stays where it stood. A bad request is refused at once
+(400), no job. While the job runs `status` and `position` answer; other TTD verbs wait for it. `from_frame` bounds
+the window when you know where to look. MCP: `time_travel {"action":"find_last", ..., "async":true}`, then
+`jobs {"action":"wait","job":N}`; a synchronous MCP call over a long window holds every other MCP call until it
+ends, the job does not.
+
 ## Workflow: crash post-mortem (summary)
 
 1. Record through the crash ([ttd-recording.md](ttd-recording.md)); stop.

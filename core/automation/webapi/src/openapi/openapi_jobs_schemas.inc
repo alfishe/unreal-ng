@@ -15,8 +15,10 @@
             job["properties"][name]["type"] = "boolean";
         Json::Value& progress = job["properties"]["progress"];
         progress["type"] = "object";
-        for (const char* name : {"done", "total", "percent"})
+        for (const char* name : {"done", "total", "percent", "hits"})
             progress["properties"][name]["type"] = "integer";
+        progress["properties"]["hits"]["description"] =
+            "A search (find-last, reverse-continue): its hits so far; done of total frames of the window";
         progress["properties"]["unit"]["type"] = "string";
         job["properties"]["result"]["type"] = "object";
         job["properties"]["result"]["description"] = "The verb's answer, as the call without async gives it";

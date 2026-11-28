@@ -32,6 +32,11 @@
 
 struct FrameSnapshot;   // emulator/video/screen.h: one frame's pixels and geometry (screen-at)
 
+namespace jobs
+{
+class Context;
+}
+
 namespace ttd
 {
 /// @brief Recording mode: which surface owns the session lifecycle.
@@ -740,6 +745,8 @@ struct TTDFindOptions
     bool changesOnly = false;   ///< Memory writes only: skip a write that stores the byte already there
     size_t limit = 100;         ///< all: most hits returned
     uint64_t fromFrame = 0;     ///< Not older than this frame's start
+    /// The job the search runs as (RQ-1): the frames walked are its progress, its cancel ends the walk. Null: none
+    jobs::Context* job = nullptr;
 };
 
 /// @brief One access FindAccesses found.
@@ -758,6 +765,10 @@ struct TTDFindResult
     bool truncated = false;               ///< Stopped at the limit: older hits exist
     TTDExternalEvent blockingMarker{};    ///< Set iff a barrier ended the walk
     TTDSearchWindow window{};
+    /// Run as a job and cancelled (RQ-1): the hits of the frames walked so far, the walk stopped at window.from (a
+    /// frame boundary); the same search with `before` = nextBefore goes on from there
+    bool cancelled = false;
+    uint64_t nextBefore = 0;
 };
 
 /// @brief One probe's answer of a probe-frames query (TimeTravelController::ProbeFrames)
@@ -801,6 +812,8 @@ struct TTDReverseContinueQuery
     /// the instruction's start with the machine as the replay has it there - where a live execution breakpoint
     /// checks its own. Empty: every hit. `x@prev` is refused (a backward walk has no "before"); HITS reads 0
     std::string condition;
+    /// The job the search runs as (RQ-1): the frames walked are its progress, its cancel ends the walk. Null: none
+    jobs::Context* job = nullptr;
 };
 
 /// @brief One instruction start a reverse search found.
@@ -823,6 +836,10 @@ struct TTDReverseContinueResult
     std::vector<TTDReverseHit> hits;     ///< Newest first; single mode: the one hit
     bool truncated = false;              ///< all: the walk stopped at the limit, older hits may exist
     std::string error;                   ///< The query was refused (a condition that does not compile): no walk
+    /// Run as a job and cancelled (RQ-1): the hits of the frames walked so far (single mode: none, the machine
+    /// stays), the walk stopped at window.from (a frame's start); `before` = nextBefore goes on from there
+    bool cancelled = false;
+    uint64_t nextBefore = 0;
 };
 
 /// @brief What a reverse step over did (TimeTravelController::ReverseStepOver).

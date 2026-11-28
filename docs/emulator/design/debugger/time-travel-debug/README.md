@@ -187,7 +187,7 @@ Tests:
   journal, timeline, branches, analysis queries).
 - Live MCP: [tools/verification/mcp/](../../../../../tools/verification/mcp/README.md) `test_time_travel.py`,
   `test_ttd_past_reads.py`, `test_ttd_card_positions.py`, `test_ttd_card_oracle.py`, `test_timeline.py`, `test_jobs.py`
-  (TTD verbs as jobs); TTD calls also in
+  (TTD verbs as jobs), `test_search_jobs.py` (`find_last` / `reverse_continue` as jobs: progress, cancel); TTD calls also in
   `test_surfaces.py`, `test_ws_surface.py`.
 
 Tools, POCs and data:
@@ -211,7 +211,7 @@ Tools, POCs and data:
 
 ## Open tasks
 
-Collected 2026-11-20 from every plan doc; statuses brought up to date 2026-11-27 (open without RZX: S3, RQ-1). Four
+Collected 2026-11-20 from every plan doc; statuses brought up to date 2026-11-27 (open without RZX: S3). Four
 items were dropped for good by the owner on 2026-11-27 and are no longer listed in any table here (the clone pool
 among them: [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md)). Not TTD, kept because they sit next to it: F8, E3. Pure non-TTD items of
 the same TODO (V6 and the rest) are left out.
@@ -245,7 +245,7 @@ Open, by priority:
 | DM limit | Diff of two moments: name the fields that changed inside a device | - | done 2026-11-21 (`TTDDescribeFields`, counters apart) | [diff plan](../../../../inprogress/2026-11-03-ttd-diff-moments/plan.md#device-fields-2026-11-21-the-dm-limit) |
 | PD-Q2 | "Same T-state in the next frame" as an explicit operation | - | closed 2026-11-21: `seek` frame + 1 with the T wanted, one call on every plane | [positioning design §7](../../../../inprogress/2026-09-28-ttd-positioning-and-display/design.md#7-open-questions) |
 | R5 | RZX and TTD interop (player state blob, TTD while playing, import, export) | low | open | [rzx TODO](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) |
-| RQ-1 | `find-last` (the replay path, `all`) and `reverse-continue all` as jobs with progress and cancel: the only window replays that are synchronous (38.7 s and 58.5 s at 50k frames, measured 2026-11-27) | P2 | open | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
+| RQ-1 | `find-last` (the replay path, `all`) and `reverse-continue all` as jobs with progress and cancel: the only window replays that are synchronous (38.7 s and 58.5 s at 50k frames, measured 2026-11-27) | P2 | done 2026-11-27 (`async=true` on both verbs, every main CPU form: progress in frames of the window and hits, a cancel before the next frame with the hits so far and `next_before`, the machine where it stood, a bad request refused before the job; the synchronous forms unchanged; `ttdsearchjobs_test.cpp`, `tools/verification/mcp/test_search_jobs.py`) | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
 | RQ-2 | `memory-at` at a frame start and `memory-diff` read the piece store only and still pause a running machine | P3 | done 2026-11-27 (with `memory-series`: the machine runs on, a recording keeps recording, the bytes equal the stopped recording's, `ttdstorereads_test.cpp`; D8 stays for a point inside a frame, a replay or restore, a parent branch's frames and a segment evicted to its file; left as they are: `find-last` and `find-event` park the machine) | [replay queries 2026-11-27](../../../../inprogress/2026-10-28-ttd-analysis-feedback/replay-queries-2026-11-27.md) |
 
 Blocked or deferred (waiting for a trigger):

@@ -115,7 +115,9 @@ item was built; all of them have landed since (commits in the
   `branch-create` and analysis `build`, `trace`, `experiment`, `cover` answers 202 `{job, state, status_url}` at
   once; without it nothing changes. States queued / running / done / failed / cancelled; the TTD jobs of an instance
   run in order in one lane, its analysis jobs in another, 4 workers; `probe-frames`, `memory-series` (stop at the next
-  frame, `cancelled: true` with what they got), `journal-build` and the build cancel, the others refuse (409). The
+  frame, `cancelled: true` with what they got), `journal-build` and the build cancel, the others refuse (409).
+  Added 2026-11-27 (RQ-1): `find-last` and `reverse-continue` take `async` too, with progress in frames of the window
+  and hits, and a cancel before the next frame. The
   `analysis build` job (L1Jobs) runs on the registry now (no thread of its own; `analysis.progress` /
   `analysis.ready` as before, state `queued` added). REST `GET /api/v1/jobs`, `GET|POST /api/v1/emulator/{id}/jobs`,
   `GET /api/v1/jobs/{job}?wait_ms=` (long-poll up to 60000 ms, more refused; a registry watch and an event-loop timer,

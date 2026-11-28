@@ -19,12 +19,15 @@ every plane calls). Planes: [command-interface.md §19](./command-interface.md#1
 | :--- | :--- | :--- | :--- |
 | TTD | `dump`, `load`, `find-event`, `replay-check`, `export-clip`, `branch-create` | `ttd.<verb>` | no: runs to its end (a cancel is refused, 409) |
 | TTD | `probe-frames`, `memory-series` | `ttd.<verb>` | yes: stops at the next frame, the result holds what it got (`cancelled: true`, `truncated`, `next_from_frame`) |
+| TTD | `find-last`, `reverse-continue` (the main CPU's; RQ-1) | `ttd.<verb>` | yes: stops before the next frame of the window, the result holds the hits of the frames walked (`cancelled: true`, a list `truncated: true`, `covered_from` where it stopped, `next_before` to go on), the machine where it stood |
 | TTD | `journal-build` | `ttd.journal-build` | yes: through `journal-build-cancel` |
 | Analysis | `build` | `analysis.build` | yes: stops at the next replayed frame |
 | Analysis | `trace`, `experiment`, `cover` | `analysis.<verb>` | no |
 
 `async=true` on any other verb is refused (400) with the list; `async=false` is the call as before. `build` takes
-`async` or `wait`, not both. The generic form `jobs start domain=<ttd|analysis> verb=<verb> <options>` runs any of
+`async` or `wait`, not both. The two searches check their request before the job is made: a bad option or a
+`condition` that does not compile is the call's 400 and no job exists (the other verbs refuse inside their job, which
+ends `failed`); `reverse-continue` with `cpu` naming a card is a bounded move and is refused as a job. The generic form `jobs start domain=<ttd|analysis> verb=<verb> <options>` runs any of
 them (the same as the verb with `async=true`); the planes without a per-verb `async` (CLI, Lua and Python TTD
 methods) use it.
 
@@ -46,7 +49,7 @@ queued ──► running ──► done
 | `kind`, `summary` | `ttd.dump`, `dump path=/tmp/a.ttd` |
 | `emulator_id` | the instance it works on |
 | `state` | `queued`, `running`, `done`, `failed`, `cancelled` |
-| `progress` | `{done, total, unit, percent}` (`total` 0: the end is not known ahead, `done` counts) |
+| `progress` | `{done, total, unit, percent}` (`total` 0: the end is not known ahead, `done` counts); a search adds `hits`, its hits so far (`find-last`, `reverse-continue`: `done` of `total` frames of the window, counted from the newest; a search that ends at its hit or its limit ends below `total`) |
 | `cancellable`, `cancel_requested` | whether a cancel can stop it; whether one was asked |
 | `created_ms`, `started_ms`, `ended_ms`, `elapsed_ms` | wall clock (ms since the epoch), the time it took |
 | `queue_position` | queued: jobs ahead of it in its lane |
@@ -89,7 +92,7 @@ atomic flag: one answer), the other does nothing (the timer takes its watch back
 
 | Topic | Scope | Value |
 | :--- | :--- | :--- |
-| `jobs.progress` | an instance | `count`, `active` [{`job`, `kind`, `summary`, `state`, `done`, `total`, `unit`, `percent`, `cancel_requested`}]: its queued and running jobs |
+| `jobs.progress` | an instance | `count`, `active` [{`job`, `kind`, `summary`, `state`, `done`, `total`, `unit`, `percent`, `hits` (a search), `cancel_requested`}]: its queued and running jobs |
 | `jobs.done` | an instance | `last_job`, `recent` [{`job`, `kind`, `summary`, `state`, `status`, `error`, `ended_ms`}] (the last 8 that ended, newest first) |
 
 The registry tells the instance's readouts when a job is queued, starts or ends, and at most every 100 ms of a job's

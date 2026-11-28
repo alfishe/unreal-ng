@@ -91,7 +91,8 @@ public:
 
     static const std::vector<std::string>& Verbs();
     /// The verbs that take async=true: dump, load, probe-frames, memory-series, find-event, replay-check,
-    /// export-clip, journal-build, branch-create
+    /// export-clip, journal-build, branch-create, find-last, reverse-continue (the main CPU's; a search's bad
+    /// request is refused before a job is made)
     static const std::vector<std::string>& AsyncVerbs();
     /// The option names @p verb takes; {"*"} = any (port-events forwards them to its parser)
     static const std::vector<std::string>& OptionsFor(const std::string& verb);

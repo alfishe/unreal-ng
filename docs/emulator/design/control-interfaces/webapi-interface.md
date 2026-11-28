@@ -2556,8 +2556,13 @@ Everything else is reported in a 200 body: `reached: false`, `stepped: false`, `
 
 The long verbs as jobs (PLAN #122 S2, [jobs.md](./jobs.md); `jobs_api.cpp` over `jobs::Execute`; OpenAPI tag `Jobs`).
 `"async": true` in the body (or `?async=true` on a GET verb) of TTD `dump`, `load`, `probe-frames`, `memory-series`,
-`find-event`, `replay-check`, `export-clip`, `journal/build`, `branches` (create) and analysis `build`, `trace`,
-`experiment`, `cover` answers **202** at once; the job holds the answer the call gives without `async`.
+`find-event`, `replay-check`, `export-clip`, `journal/build`, `branches` (create), `find-last`, `reverse-continue`
+and analysis `build`, `trace`, `experiment`, `cover` answers **202** at once; the job holds the answer the call
+gives without `async`. `find-last` and `reverse-continue` over a long window (about 1 ms per frame the coverage
+index cannot rule out) report `progress` `{done, total, unit: "frames", hits}` and stop on a cancel before the next
+frame: the job ends `cancelled`, its `result` holds the hits so far with `cancelled: true`, `covered_from` and
+`next_before` (pass it as `before` to go on), the machine where it stood; their bad requests are refused (400)
+before a job is made.
 
 ```
 POST   /api/v1/emulator/{id}/ttd/dump       {"path": "/tmp/a.ttd", "async": true}

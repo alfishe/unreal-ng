@@ -105,6 +105,10 @@ struct TTDSearchWindow
     bool         searched = false;  ///< False when the search was refused (recording, no history)
     TTDTimePoint from{};            ///< Where the backward search ended
     TTDTimePoint to{};              ///< Where it started (the query's upper bound)
+    /// Run as a job and cancelled (RQ-1): the walk stopped at `from`, a frame boundary, with nothing found yet;
+    /// the same search with `before` = nextBefore goes on from there
+    bool         cancelled = false;
+    uint64_t     nextBefore = 0;
 };
 
 /// @brief Single search hit returned to the caller.
